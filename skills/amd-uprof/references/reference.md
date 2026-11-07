@@ -8,8 +8,8 @@ UTF-8 JSON (a BOM is tolerated). The keys the tools read:
 
 | Key | Used for |
 |---|---|
-| `collection.events.pmcEvents.pmcEventList[]` | PMC mode: `hwId` 118, `interval`, `isSampling`, `encodedEventId` |
-| `collection.events.ibsEvents.{op,opInterval,opCycleCount,fetch,fetchInterval}` | IBS mode and interval control |
+| `collection.events.pmcEvents.pmcEventList[]` | PMC mode: `hwId` 118, `interval`, `isSampling`, `os`, `encodedEventId` |
+| `collection.events.ibsEvents.{op,opInterval,opCycleCount,fetch,fetchInterval,opOs,fetchOs}` | IBS mode, interval control and the OS-mode request bit of each sampler |
 | `auxiliary.ibsOpSampling` | IBS-versus-PMC detection |
 | `auxiliary.eventColumnIds[]` | event name → `event#0x<encodedId>` sample column |
 | `collection.target.{systemWide,attachedProcesses[].processId}` | capture mode check |
@@ -148,38 +148,54 @@ op-count interval no time rate follows and the line says so.
 
 ### Kernel coverage
 
-With `os=1` requested, an unelevated capture contains no kernel-mode samples; an elevated capture is
-required for kernel coverage. `os=1` alone is not sufficient, and the limitation is real rather than
-a dropped option: `session.uprof` records the OS-mode bit and the encoded event selector carries it
-(`0x03000076` for `user=1,os=1`), but the kernel samples are lost at capture time, before the raw
-dump is written. The raw `.ri` metadata has no elevation or kernel-mode toggle, so the capture never
-records that it was degraded; only a privileged capture fills the kernel ring.
+An OS-mode request is necessary but not sufficient for kernel coverage: an unelevated capture
+contains no kernel-mode samples, and an elevated capture is required. The request is applied and
+encoded — the PMC selector carries `0x03000076` for `user=1,os=1`, and IBS records `opOs`/`fetchOs`
+— but the kernel samples are lost at capture time, before the raw dump is written. The raw `.ri`
+metadata has no elevation or kernel-mode toggle, so the capture never records that it was degraded;
+only a privileged capture fills the kernel ring.
 
 The tool reports the condition at both points where it is observable. `collect` states the
-consequence before the capture runs: an unelevated cycle capture appends
-`; kernel-mode (OS) samples are omitted without elevation` to its unelevated warning, worded
-separately from the warning about missing elevated processes. `profile` then prints
-`KERNEL_COVERAGE` only when the applied sampler requested OS-mode samples and the whole capture
-contains no sample in a kernel image. It is computed from `v_capture_modules`, which lists every
-module with its sample count before the `--image`/`--pid` and `--time-filter` selections, so an empty
-or user-only scope neither creates nor hides the warning; the field is about kernel coverage, not
-elevated user processes. The OS-mode request is read from the applied event in `session.uprof`: the
-PMC `pmcEventList` entry's `os`, or IBS `opOs`/`fetchOs`.
+consequence before the capture runs for either event it applies: the cycle spec passes `user=1,os=1`,
+and the IBS event samples user and OS by default with no toggle exposed, so both request OS mode.
+An unelevated capture of either appends `; kernel-mode (OS) samples are omitted without elevation`
+to its unelevated warning, worded separately from the warning about missing elevated processes.
 
-The check is content-based, not privilege-based: it looks for a kernel-image sample in the capture,
-so an elevated capture profiled unelevated emits no field, and a translate of an elevated raw
-capture retains its kernel samples even when the translate runs unelevated.
+`profile` prints `KERNEL_COVERAGE` only when the applied sampler requested OS-mode samples and the
+whole capture contains no sample in a kernel image. The request is read from the applied event in
+`session.uprof`: the PMC `pmcEventList` entry's `os`, or an enabled IBS sampler's `opOs`/`fetchOs`
+(a disabled sampler's recorded bit is ignored, and a session recording both samplers takes the bit
+from either). The warning states what was observed — the sampler's bit name and the absence of a
+kernel-image sample — and names elevation only conditionally, as how kernel-mode samples are
+obtained. When the whole capture holds no sample of any kind, it reports the empty capture instead:
+re-capturing is the remedy and elevation is not mentioned. The field is about kernel coverage, not
+elevated user processes; a user-only scope neither creates nor hides it.
 
-A kernel image is matched by **basename**: ends in `.sys` or `.ko`, or equals `ntoskrnl.exe`,
-`ntkrnlmp.exe`, `ntkrnlpa.exe`, `ntkrpamp.exe` or `hal.dll`. The basename rule is load-bearing in
-both directions: a path-suffix test for `hal.dll` also matches user-mode `marshal.dll`, and
-`Module.isSystemModule` is true for user-mode `ntdll.dll`/`kernelbase.dll`, so neither identifies
-the kernel.
+The check shares the whole-capture scan the `ACHIEVED` line already runs: `v_capture_modules` holds
+one row per sample with its module, producing context (CPU for a dump, `coreId` for PMC), sample
+count and kernel-image flag, so neither value costs a second query. It covers the whole capture,
+before the `--image`/`--pid` and `--time-filter` selections. It is suppressed when `session.uprof`
+records a `translate --time-filter`: the resolved dump may have been produced by that window and
+need not hold the whole capture, so it cannot testify about kernel coverage. The check is
+content-based, not privilege-based: it looks for a kernel-image sample in the capture, so an
+elevated capture profiled unelevated emits no field, and a translate of an elevated raw capture
+retains its kernel samples even when the translate runs unelevated.
+
+A kernel image is classified from its module catalog entry: a module whose
+`ModuleInstance.loadAddress` lies in the kernel half of the x64 address space
+(`>= 0xFFFF800000000000`) is a kernel image. That covers kernel DLLs such as `ci.dll` that carry no
+`.sys` suffix without relying on `Module.isSystemModule`, which is true for user-mode
+`ntdll.dll`/`kernelbase.dll`. When the export has no `ModuleInstance` table, or a module has no
+instance, the **basename** fallback applies: ends in `.sys` or `.ko`, or equals `ntoskrnl.exe`,
+`ntkrnlmp.exe`, `ntkrnlpa.exe`, `ntkrpamp.exe`, `hal.dll`, `vmlinux`, `vmlinuz` or
+`[kernel.kallsyms]`. The basename rule stays load-bearing in both directions: a path-suffix test
+for `hal.dll` also matches user-mode `marshal.dll`, and `Module.isSystemModule` is not a kernel
+predicate.
 
 The measured case: an unelevated PMC capture with `user=1,os=1` had 21,489 samples and none in a
 kernel image, while an elevated capture of the same event had 45,489 kernel samples across 67
 images; an unelevated translate of that elevated raw capture reproduced the kernel samples, so the
-loss is in capture, not translation.
+loss is in capture, not translation. The numbers are recorded in `references/validation.md`.
 
 ## Symbolization
 
@@ -238,7 +254,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `has_tag` | the dump header carries `IbsTagToRetCtr`; `v_dump_sanity.tag_values` counts non-null values |
 | `top_n`, `time_start`, `time_end` | typed row cap and window |
 
-The 13 views:
+The 15 views:
 
 | View | Role |
 |---|---|
@@ -251,7 +267,8 @@ The 13 views:
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |
 | `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds the scope's own sampling cadence |
 | `v_scope_totals` | `total_samples` (0 when empty); feeds the empty-scope warning |
-| `v_capture_modules` | whole-capture module paths with sample counts, before scope and time filters; feeds `KERNEL_COVERAGE` |
+| `v_module_catalog` | one row per module path with its highest `ModuleInstance.loadAddress` and kernel-image flag; empty when the export has no `ModuleInstance` |
+| `v_capture_modules` | one row per whole-capture sample: module, context (CPU for a dump, `coreId` for PMC), sample count and kernel-image flag; before scope and time filters; feeds `ACHIEVED` and `KERNEL_COVERAGE` from one scan |
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
 | `v_function_rows` | by `Function.id`; `<unresolved>` row; attribution `unique`/`unresolved`; `<other functions>` |
 | `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; `<other lines>` |
@@ -278,7 +295,7 @@ For PMC every weight is NULL, so ranking falls through to `samples`; the share-s
 
 ## Known limitations
 
-- **Unelevated captures have no kernel coverage.** `os=1` is applied and encoded, but an unelevated uProf capture contains no kernel-mode samples; elevate the capture. `collect` notes this before the capture runs and `profile` prints `KERNEL_COVERAGE` when the whole capture confirms no kernel-image sample (see Kernel coverage).
+- **Unelevated captures have no kernel coverage.** The OS-mode request is applied and encoded, but an unelevated uProf capture contains no kernel-mode samples; elevate the capture. `collect` notes this before the capture runs and `profile` prints `KERNEL_COVERAGE` when the whole capture confirms no kernel-image sample (see Kernel coverage).
 - **Inline overloads.** The display rule is in `SKILL.md`, Frame rule and sentinels; a true overload set (two or more out-of-line signatures) shows `<multiple>` on a shared source line.
 - **Empty or junk tag column.** `has_tag` tests column presence; `uprof_tag_available` requires an IBS OP dump and at least one non-null value. An all-NULL or non-numeric `IbsTagToRetCtr` hides `pct_cycles` and prints the empty-column disclosure; a non-numeric cell is NULL, never the clipped maximum.
 - **Module paths are lowercased.** `module_key` lowercases and replaces `\` with `/`; the module column shows that normalized spelling, and two paths differing only in case or separator collide.

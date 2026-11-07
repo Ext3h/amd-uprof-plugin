@@ -225,7 +225,8 @@ the 2 s width, reporting `OK` with leading 0.300 s and trailing 1.200 s gaps.
 
 The `--by function --time-filter 1:39.5 --image '%storage_test%' --top 25` rows on
 `loop-2mib-swwide` are byte-identical to the pre-change baseline (`baseline-loop2-function.txt`);
-only the SANITY and ACHIEVED header lines differ.
+only the SANITY, ACHIEVED and KERNEL_COVERAGE header lines differ. That capture was taken
+unelevated, so its OS-mode request yielded no kernel-image sample.
 
 Anchoring, verified with `uprof.py anchor`: attached BEGIN −0.700 s, system-wide BEGIN −0.151 s,
 system-wide END +40.182 s (the capture starts during the warm-up pass, so the loop's BEGIN precedes
@@ -290,3 +291,20 @@ Anchor exact values: `loop-2mib-ibs --qpc 42140285053 --freq 10000000` printed
 `RELATIVE_S=-0.699788599`; `loop-2mib-swwide --qpc 43099238262 --freq 10000000` printed
 `RELATIVE_S=-0.150568799`. Without `--freq`, `HZ_SOURCE=default (10 MHz; the session records no QPC
 frequency)`.
+
+## Kernel-coverage evidence (2026-11-07)
+
+An unelevated 15 s system-wide PMC capture of `user=1,os=1` (requested through `collect`,
+`Elevated=False`) held 21,489 samples and none in a kernel image; `Module` had no `.sys` row with a
+sample and one `ntoskrnl.exe` row with zero. The elevated `kernel-2mib` capture of the same event
+held 56,605 samples, 45,489 of them in 67 kernel images (66 `.sys` plus `ntoskrnl.exe` 32,078;
+`dxgmms2.sys` 7,458; 247 `.sys` images are present in the module table). Translating that raw
+capture from the same unelevated account reproduced the 45,489 kernel samples in the same 67
+images, so the loss is at capture time. An unelevated `user=0,os=1` 2 s capture held 4 samples, all
+user-mode: a kernel-only request does not fall back to user-mode sampling.
+
+The counts come from the event column grouped by `Module.path` through DuckDB
+(`SELECT m.path, sum(s."event#...") FROM UnifiedSampleSeries s JOIN Module m ON m.id = s.moduleId
+GROUP BY 1`); the classifier for this measurement was basename-based. The encoded selector
+(`0x03000076` = user + os + `0x76`; `user=1,os=0` gives `0x01000076`, `user=0,os=1` gives
+`0x02000076`) and the raw-metadata comparison are part of the issue #17 RCA.

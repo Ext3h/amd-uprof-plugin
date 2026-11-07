@@ -23,6 +23,18 @@
 -- Macros are TEMP because cpu.db is opened read-only.
 CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/');
 CREATE OR REPLACE TEMP MACRO pct(part, whole) AS 100.0 * part / NULLIF(whole, 0);
+-- A kernel image is loaded in the kernel half of the x64 address space, or, when the catalog has
+-- no instance to ask, has a basename only the kernel uses. 0xFFFF800000000000 starts that half;
+-- the Windows kernel and HAL carry no .sys suffix, and Linux core images carry no suffix at all.
+-- The basename match is required: a suffix test for hal.dll also matches user-mode marshal.dll,
+-- and Module.isSystemModule is true for user-mode ntdll.dll and kernelbase.dll.
+CREATE OR REPLACE TEMP MACRO kernel_basename(p) AS regexp_extract(p, '([^/]+)$', 1);
+CREATE OR REPLACE TEMP MACRO is_kernel_image(p, load_address) AS
+    COALESCE(load_address >= 18446603336221196288, false)
+    OR kernel_basename(p) IN ('vmlinux', 'vmlinuz', '[kernel.kallsyms]')
+    OR regexp_matches(kernel_basename(p), '^(ntoskrnl|ntkrnlmp|ntkrnlpa|ntkrpamp)\.exe$')
+    OR kernel_basename(p) = 'hal.dll'
+    OR regexp_matches(kernel_basename(p), '\.(sys|ko)$');
 -- Columns hidden from every projection: internal weights and totals, pct_time unless the dump
 -- exists, and pct_cycles unless this sampler's tag column supplied values.
 CREATE OR REPLACE TEMP MACRO projected(c) AS
@@ -128,6 +140,11 @@ SET VARIABLE has_tag = (
               WHERE column_name = 'IbsTagToRetCtr'$tag$
     ELSE 'SELECT false AS has_tag' END)
 );
+
+-- Older exports carry no ModuleInstance table; the kernel check then has only module paths.
+SET VARIABLE has_module_instances = (
+  SELECT count(*) > 0 FROM duckdb_tables()
+  WHERE lower(schema_name) = 'main' AND lower(table_name) = 'moduleinstance');
 
 SET VARIABLE top_n = greatest(CAST(COALESCE(getvariable('uprof_top'), 20) AS BIGINT), 0);
 SET VARIABLE time_start = CAST(COALESCE(NULLIF(getvariable('uprof_time_start'), ''), '0') AS BIGINT);
@@ -450,19 +467,37 @@ CREATE OR REPLACE TEMP VIEW v_scope_totals AS
 SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT) AS total_samples
 FROM v_scoped;
 
+-- One row per module path with its highest load address, or an empty relation when the export has
+-- no ModuleInstance table. v_capture_modules asks it whether a module sits in kernel space.
+CREATE OR REPLACE TEMP VIEW v_module_catalog AS
+SELECT * FROM query(CASE WHEN getvariable('has_module_instances') THEN $instances$
+  SELECT module_key(m.path) AS module_name, max(i.loadAddress) AS load_address
+  FROM Module m
+  JOIN ModuleInstance i ON i.moduleId = m.id
+  GROUP BY module_key(m.path)$instances$
+ELSE $absent$
+  SELECT CAST(NULL AS VARCHAR) AS module_name, CAST(NULL AS UBIGINT) AS load_address
+  WHERE false$absent$ END);
+
 -- Whole-capture module list for kernel-coverage detection: the module path and its sample count,
 -- before the process and time filters. One dump row is one sample; a PMC row carries its event
--- count. Python classifies the paths because the kernel predicate is a basename match.
+-- count. kernel_image comes from the module catalog's load address, or from the basename when the
+-- catalog has no instance for the module.
 CREATE OR REPLACE TEMP VIEW v_capture_modules AS
 SELECT * FROM query(CASE WHEN getvariable('has_dump') THEN $dump$
-  SELECT module_name, CAST(count(*) AS BIGINT) AS samples
-  FROM v_dump
-  GROUP BY module_name$dump$
+  SELECT d.module_name,
+         CAST(count(*) AS BIGINT) AS samples,
+         max(is_kernel_image(d.module_name, c.load_address)) AS kernel_image
+  FROM v_dump d
+  LEFT JOIN v_module_catalog c ON c.module_name = d.module_name
+  GROUP BY d.module_name$dump$
 ELSE $pmc$
   SELECT module_key(m.path) AS module_name,
-         CAST(COLUMNS(lambda c: c = getvariable('uprof_event_column')) AS BIGINT) AS samples
+         CAST(COLUMNS(lambda c: c = getvariable('uprof_event_column')) AS BIGINT) AS samples,
+         is_kernel_image(module_key(m.path), c.load_address) AS kernel_image
   FROM UnifiedSampleSeries s
-  JOIN Module m ON m.id = s.moduleId$pmc$ END);
+  JOIN Module m ON m.id = s.moduleId
+  LEFT JOIN v_module_catalog c ON c.module_name = module_key(m.path)$pmc$ END);
 
 -- Process shares. samples is the per-row sample count summed over the group (one per dump row, the
 -- event-column count per PMC row). When --top truncates, one <other processes> row carries the

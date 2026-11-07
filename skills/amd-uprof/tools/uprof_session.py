@@ -11,20 +11,13 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 from uprof_util import UprofError
 
 PMC_EVENT = "event#0x3000076"
 IBS_OP_EVENT = "event#0x100000000f100"
 IBS_FETCH_EVENT = "event#0x100000000f000"
-
-# Kernel images by basename. Drivers end in .sys on Windows and .ko on Linux; the named
-# executables are the Windows kernel and HAL, whose names carry no such suffix.
-KERNEL_IMAGE_BASENAMES: Final = frozenset({
-    "ntoskrnl.exe", "ntkrnlmp.exe", "ntkrnlpa.exe", "ntkrpamp.exe", "hal.dll"})
-KERNEL_IMAGE_SUFFIXES: Final = (".sys", ".ko")
-
 
 @dataclass
 class Sampler:
@@ -202,17 +195,6 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
     else:
         metric = "METRIC: no PMC or IBS event recorded in session.uprof -- sample shares: not established"
     return Sampler(metric=metric)
-
-
-def is_kernel_image(module_path: str) -> bool:
-    """True when the path names a kernel image, judged by basename alone.
-
-    module_key supplies lowercase paths with '/' separators. The basename match is required: a
-    suffix test for 'hal.dll' would also match the user-mode 'marshal.dll'. Module.isSystemModule
-    is not a kernel predicate (it is true for ntdll.dll and kernelbase.dll).
-    """
-    name = module_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
-    return name.endswith(KERNEL_IMAGE_SUFFIXES) or name in KERNEL_IMAGE_BASENAMES
 
 
 def kernel_coverage_warning(sampler: Sampler, kernel_samples: int,

@@ -58,7 +58,7 @@ sample shares and time shares — stating what each share measures.
 | `schema` | whether the capture's export is the one the SQL expects |
 | `tools` | which external tools will be used, at which versions |
 
-`interval` does not exist: its estimator is the source of every `pct_time` column, and its sanity
+`interval` does not exist: its estimator is the source of every `time_share` column, and its sanity
 line appears in the `profile` header, which validates the dump it consumes, whether generated on
 demand or reused from the cache.
 
@@ -79,14 +79,18 @@ demand or reused from the cache.
 
 | `--by` | row key | columns | symbolization |
 |---|---|---|---|
-| `process` | process | process, pid, samples, pct_samples, pct_time, pct_cycles | no |
-| `function` | function | function, module, attribution, samples, pct_samples, pct_time, pct_cycles | no |
-| `line` | file:line | file, line, function, module, attribution, samples, pct_samples, pct_time, pct_cycles | yes |
-| `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, pct_samples, pct_time, pct_cycles | yes |
+| `process` | process | process, pid, samples, sample_share, time_share, tag_to_retire_share | no |
+| `function` | function | function, module, attribution, samples, sample_share, time_share, tag_to_retire_share | no |
+| `line` | file:line | file, line, function, module, attribution, samples, sample_share, time_share, tag_to_retire_share | yes |
+| `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, sample_share, time_share, tag_to_retire_share | yes |
 
-`pct_time` is absent for PMC captures (no per-sample timestamps); `pct_cycles` is absent for PMC,
-IBS fetch, and IBS OP dumps without a usable `IbsTagToRetCtr` column (absent, or carrying no non-null
-value); every output states which columns apply and why.
+Every share is a fraction 0.0-1.0; `samples` stays a raw count. `time_share` is absent for PMC
+captures (the export aggregates PMC samples per window); `tag_to_retire_share` is absent for PMC,
+IBS fetch, and IBS OP dumps without a usable `IbsTagToRetCtr` column (absent, or carrying no
+non-null value); every output states which columns apply and why. An all-zero `IbsTagToRetCtr`
+has non-null values, so the column is present, but every `tag_to_retire_share` is NULL and the
+column does not sum to 1.0 because no tag cycles were counted. A tag cell counts only when it is
+an unsigned decimal integer; negative, fractional and exponent spellings are excluded.
 
 No filter is a prerequisite for any granularity. `line` and `instruction` symbolize every module in
 scope and print a uProf-vs-symbolizer agreement summary; modules without usable symbols appear as
@@ -124,29 +128,50 @@ the UTC start is reported with its precision.
   capture — computed before `--image`/`--pid` and `--time-filter`, so a user-only scope can neither
   create nor hide it — and states that elevation is required; it is the profile-time counterpart of
   the capture-time note.
-- `--json`: the same rows and header information as structured data.
+- Every output carries a short three-line legend. `COLUMNS` states the unit once (share columns are
+  fractions 0.0-1.0), `samples` as raw count, `sample_share`'s mode-dependent meaning, the
+  `time_share` and `tag_to_retire_share` labels, the `attribution` definition when the scope emits
+  it, and any absent column with its reason; the detailed definitions stay in the `METRIC`,
+  `TIME_SHARE` and `TAG_TO_RETIRE_SHARE` header lines. `READ` states which column ranks where time
+  went, that `sample_share` is not a per-op cost, that `tag_to_retire_share` is total tag-to-retire
+  cycles (higher = more wait), and that the `<other ...>` row is last, not ranked. `NEXT` gives
+  full runnable calls joined by `&&`, each derived from the current `--by` and keeping the session,
+  the `--pid`/`--image`/time-filter scope and a non-default `--top`, with the last call adding
+  `--json` to `--by instruction`; the JSON `next` array holds the same commands.
+- `--json`: the same rows, header information and legend semantics as structured data; the legend
+  is a `legend` object with `share_unit` (`fraction`), `share_scale` (`1`), `denominators`,
+  `columns`, `absent`, `impact` (`order_by`, `gap_weighted`, `estimate`), `remainder_last` and
+  `next`.
 - No CSV mode and no table-rendering dependency on the database library.
-- Percentages are emitted at full precision; no rounding is applied.
+- Shares are fractions 0.0-1.0 at full precision; no rounding or multiplication is applied.
 
 ## 4. Columns and capture modes
 
 | column | meaning | mode-dependent |
 |---|---|---|
 | `samples` | raw number of samples in the row | no |
-| `pct_samples` | share of samples; what a sample represents depends on the sampler (below) | **yes** |
-| `pct_time` | share of elapsed CPU time, from per-sample timestamp gaps | absent for PMC captures (no per-sample timestamps); the estimator still defines its meaning |
-| `pct_cycles` | share of sampled op latency (tag-to-retire), clipped; never time | present only for an IBS OP dump with a usable `IbsTagToRetCtr` (at least one non-null value) |
+| `sample_share` | fraction of samples; what a sample represents depends on the sampler (below) | **yes** |
+| `time_share` | share of time estimated from per-sample DeltaTick gaps; an estimate, not unqualified impact | absent for PMC captures (the export aggregates PMC samples per window); the estimator still defines its meaning |
+| `tag_to_retire_share` | share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, queue/stalls included; clipped at 131070); a total, not per-op latency | present only for an IBS OP dump with a usable `IbsTagToRetCtr` (at least one non-null value) |
 
-| capture | a sample represents | `pct_samples` is | status |
+| capture | a sample represents | `sample_share` is | status |
 |---|---|---|---|
-| PMC `CYCLES_NOT_IN_HALT` | fixed cycles | share of CPU time | verified |
-| IBS OP, interval in cycles | fixed cycles | share of CPU time | implemented, no capture available to verify |
-| IBS OP, interval in ops | fixed retired ops | share of instructions — not time | verified |
-| IBS fetch | fetch events | fetch share | supported, unverified |
+| PMC, supported cycle event (`CYCLES_NOT_IN_HALT`, hwId 118, sampling) | fixed cycle count | busy core-cycle share (halted excluded) | verified |
+| PMC, any other event (not the supported cycle event, or not sampling) | one event-column count | not established | not established |
+| IBS OP, interval in cycles | selected op (cycle-controlled interval) | core-cycle share (fixed cycles per sample), not wall time, not a per-op cost | implemented; verified on an external cycle-controlled capture |
+| IBS OP, interval in ops | selected op (op-count interval) | dispatched-op frequency share (fixed dispatched ops per sample), not a per-op cost | verified |
+| IBS fetch | fetch event | fetch-sample frequency share (fixed fetch events per sample) | supported, unverified |
 
 Every output states the capture's mode and what each column measures, derived from the capture's
-metadata; for `pct_time` it states the estimator and window, or why `pct_time` is unavailable.
-An instruction share must never be presented as CPU time.
+metadata; for `time_share` it states the estimator and window, or why `time_share` is unavailable.
+An instruction or op share must never be presented as CPU time or as a per-operation cost. The
+`COLUMNS` legend restates the `sample_share` reading for the mode. For the supported cycle event,
+fixed cycles make the share the busy core-cycle share and the sample order the ranking; any other
+PMC event leaves it not established. For op-count and fetch, a raw sample counts selected
+operations or events, so the share is a frequency share; for cycle-controlled it is a core-cycle
+share, not wall time. None is a per-op cost, and the cheap-often/expensive-rarely caveat applies
+only to frequency shares. `READ` names `time_share` (estimated from gaps) as the ordering estimate;
+`tag_to_retire_share`, where present, is total tag-to-retire cycles, a total, not per-op latency.
 
 ## 5. Failure behaviour
 

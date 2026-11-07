@@ -2,6 +2,51 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 2.0.0 — 2026-11-08
+
+### Breaking
+
+- Profile share columns are renamed and emitted as fractions 0.0-1.0 instead of percentages:
+  `pct_samples` -> `sample_share`, `pct_time` -> `time_share`, `pct_cycles` ->
+  `tag_to_retire_share`. `samples` is unchanged, while the `AGREEMENT` field keeps its
+  human-readable percentages. Multiply an old `pct_*` value by 0.01 to get the new value.
+- `sample_share` states what a sample represents in each mode: the supported PMC cycle event is
+  the busy core-cycle share (halted excluded); any other PMC event is not established; IBS OP
+  cycle-controlled is the core-cycle share, not wall time; IBS OP op-count is the dispatched-op
+  frequency share; IBS fetch is the fetch-sample frequency share (fetch path unverified). None is
+  a per-operation cost.
+- `time_share` is a time share estimated from gaps, not unqualified impact. Idle/wait is charged
+  to the ending sample, the first sample per CPU is ignored (no gap before it), and NULL sorts
+  last.
+- `tag_to_retire_share` is the share of tag-to-retire cycles summed over sampled ops (AMD tag at
+  dispatch to retirement, queue/stalls included); it is a total, not per-op latency.
+
+### Added
+
+- `profile` prints a short three-line legend with every result. `COLUMNS` states the fraction unit
+  once, the mode-specific `sample_share` label, the `time_share` and `tag_to_retire_share` labels,
+  the `attribution` definition when the scope emits it, and any absent column with the reason; the
+  detailed definitions stay in the `METRIC`, `TIME_SHARE` and `TAG_TO_RETIRE_SHARE` header lines. `READ` states which column ranks where
+  time went, that `sample_share` is not a per-op cost, that `tag_to_retire_share` is total
+  tag-to-retire cycles (higher = more wait), and that the `<other ...>` row is last, not ranked.
+  `NEXT` joins full runnable calls with `&&`, each keeping the session, the
+  `--pid`/`--image`/time-filter scope and a non-default `--top`, with the last call adding `--json`
+  to `--by instruction`.
+- The JSON `legend` is machine-readable: `share_unit` (`fraction`), `share_scale` (`1`),
+  `denominators`, `columns`, `absent`, `impact` (`order_by`, `gap_weighted`, `estimate`),
+  `remainder_last` and `next`.
+- `test_output_legend.py` covers PMC, an unsupported PMC event, an unsampled cycle event, IBS OP
+  cycle-controlled, IBS OP op-count, IBS fetch, tagless, empty-tag and all-zero-tag dumps,
+  fraction sums and range, ordering agreement with `views.sql`, the `<other ...>` remainder,
+  runnable NEXT calls and the tag-cell exclusion rules.
+
+### Changed
+
+- Header fields `PCT_TIME` and `PCT_CYCLES` are now `TIME_SHARE` and `TAG_TO_RETIRE_SHARE`.
+- The SQL share macro is `share(part, whole) = part / NULLIF(whole, 0)`, and the dump gap column
+  `weight` is documented as the DeltaTick gap in nanoseconds, charged to the later sample.
+- `references/validation.md` figures for these columns are fractions.
+
 ## 1.0.9 — 2026-11-07
 
 ### Fixed

@@ -1,6 +1,6 @@
 """Profile orchestration: validate the arguments, resolve the dump and symbols, emit the result.
 
-All set, join, aggregation, top-N and percentage work lives in the SQL files. Python owns argument
+All set, join, aggregation, top-N and share work lives in the SQL files. Python owns argument
 validation, session.uprof parsing, symbolization, temp files and output formatting.
 """
 
@@ -14,7 +14,7 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import Final, TextIO
+from typing import Any, Final, TextIO
 
 import uprof_db
 import uprof_dump
@@ -132,18 +132,194 @@ def _dump_field(dump: uprof_dump.DumpInfo) -> str:
     return f"{dump.path}, {size_mb} MB; {dump.reason}"
 
 
+_TIME_SHARE_MEANING: Final = (
+    "time share estimated from the gaps between per-sample timestamps (idle/wait is charged to "
+    "the ending sample; the first sample per CPU is ignored, no gap before it; NULL sorts last)")
+_TAG_SHARE_MEANING: Final = (
+    "share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, "
+    "queue/stalls included; clipped at 131070); a total, not per-op latency")
+# Only for frequency shares: those count sampled operations, not fixed work per sample.
+_SAMPLE_CAVEAT: Final = ("a raw share cannot separate a cheap operation run often from an "
+                         "expensive one run rarely")
+_NEXT_BY: Final = {
+    "process": ("function", "line", "instruction"),
+    "function": ("line", "instruction"),
+    "line": ("instruction",),
+    "instruction": (),
+}
+
+
+def _sample_share_meaning(sampler: uprof_session.Sampler,
+                          dump: uprof_dump.DumpInfo | None) -> str:
+    """What sample_share is a fraction of in this capture mode."""
+    if dump is None:
+        if sampler.pmc_cycle_shares:
+            return "busy core-cycle share (fixed cycles per sample; halted excluded)"
+        return "not established (this PMC event is not the supported cycle event)"
+    if sampler.ibs_dump_kind == "ibsfetch-event-dump":
+        return "fetch-sample frequency share (fixed fetch events per sample)"
+    if sampler.interval_units == "ops":
+        return "dispatched-op frequency share (fixed dispatched ops per sample)"
+    if sampler.ibs_dump_kind == "ibsop-event-dump":
+        return "core-cycle share (fixed cycles per sample), not wall time"
+    return "not established (the session records no usable sampler)"
+
+
+def _quote(text: str) -> str:
+    """Quote one shell argument; on Windows also protect %NAME% from cmd.exe expansion."""
+    if os.name == "nt":
+        text = text.replace("%", "%%")
+    if text and all(char.isalnum() or char in "._-/:\\%+," for char in text):
+        return text
+    return '"' + text.replace('"', '\\"') + '"'
+
+
+def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
+    """A runnable drill-down command that keeps the session and the process/image scope."""
+    parts = ["python", _quote(str(TOOLS_DIR / "uprof.py")), "profile",
+             "--session", _quote(str(util.absolute(args.session))), "--by", by]
+    if args.pid is not None:
+        parts += ["--pid", str(args.pid)]
+    elif args.image is not None and args.image != "%":
+        parts += ["--image", _quote(args.image)]
+    if args.time_filter:
+        parts += ["--time-filter", _quote(args.time_filter)]
+    if args.top != "20":
+        parts += ["--top", str(args.top)]
+    if json_mode:
+        parts.append("--json")
+    return " ".join(parts)
+
+
+def _next_calls(args: argparse.Namespace) -> list[str]:
+    """Drill-down calls from the current --by; the last one is the JSON document."""
+    calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
+    calls.append(_profile_command(args, "instruction", json_mode=True))
+    return calls
+
+
+def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
+            has_tag: bool, tag_available: bool,
+            args: argparse.Namespace) -> dict[str, Any]:
+    """Machine-readable meaning of every share column, the ordering estimate and next calls.
+
+    sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
+    unqualified impact; tag_to_retire_share is a summed total, not per-op latency. A PMC capture
+    has no DeltaTick gaps, so its rows fall back to the raw sample count.
+    """
+    columns: dict[str, str] = {
+        "samples": "raw sample count",
+        "sample_share": _sample_share_meaning(sampler, dump),
+    }
+    if args.by != "process":
+        columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
+    denominators: dict[str, str] = {"sample_share": "total_samples"}
+    absent: dict[str, str] = {}
+    if dump is None:
+        absent["time_share"] = "this export aggregates PMC samples per window"
+        absent["tag_to_retire_share"] = "this export has no tag-to-retire counter"
+    else:
+        columns["time_share"] = _TIME_SHARE_MEANING
+        denominators["time_share"] = "total_weight"
+        if tag_available:
+            columns["tag_to_retire_share"] = _TAG_SHARE_MEANING
+            denominators["tag_to_retire_share"] = "total_tag_cycles"
+        elif sampler.ibs_dump_kind == "ibsop-event-dump" and not has_tag:
+            absent["tag_to_retire_share"] = "this dump has no IbsTagToRetCtr column"
+        elif sampler.ibs_dump_kind == "ibsop-event-dump":
+            absent["tag_to_retire_share"] = "IbsTagToRetCtr has no non-null values in this dump"
+        else:
+            absent["tag_to_retire_share"] = "this export has no tag-to-retire counter"
+    # A PMC sample is a fixed cycle count, so the sample order ranks cycles when the event is the
+    # supported cycle event; an IBS sample is a selected operation and only time_share ranks.
+    if dump is None:
+        order_by = ["samples"]
+        gap_weighted = False
+        if sampler.pmc_cycle_shares:
+            estimate = ("sample_share is the busy core-cycle share (fixed cycles per sample, "
+                        "halted excluded), so the sample count ranks where cycles were spent")
+        else:
+            estimate = ("row order is raw sample count only; sample_share is not established, "
+                        "so this is not a time or impact claim")
+    else:
+        order_by = ["time_share", "samples"]
+        gap_weighted = True
+        estimate = ("time_share is a time share estimated from the gaps between per-sample "
+                    "timestamps; idle/wait is charged to the ending sample, the first sample per "
+                    "CPU is ignored (no gap before it), and NULL sorts last")
+    return {
+        "share_unit": "fraction",
+        "share_scale": 1,
+        "denominators": denominators,
+        "columns": columns,
+        "absent": absent,
+        "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
+        "remainder_last": True,
+        "next": _next_calls(args),
+    }
+
+
+def _read_text(legend: dict[str, Any]) -> str:
+    """The positive reading rule, plus the ranking and remainder rule."""
+    sample = legend["columns"]["sample_share"]
+    if legend["impact"]["gap_weighted"]:
+        read = "time_share ranks where time went; sample_share is not a per-op cost"
+        if "tag_to_retire_share" in legend["columns"]:
+            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
+        if sample.startswith(("dispatched-op", "fetch-sample")):
+            read += f"; {_SAMPLE_CAVEAT}"
+    elif sample.startswith("not established"):
+        read = ("sample_share is not established for this event; rows are ordered by raw sample "
+                "count only, not a time or impact claim")
+    else:
+        read = ("sample_share is the busy core-cycle share, so the sample order ranks where "
+                "cycles were spent")
+    read += "; the <other ...> row is last, not ranked"
+    return read
+
+
+def _next_text(calls: list[str]) -> str:
+    """Full runnable calls joined by && so the Markdown line can be pasted as one command."""
+    return " && ".join(calls)
+
+
+def _legend_fields(legend: dict[str, Any]) -> list[tuple[str, str]]:
+    """The short legend: columns and unit, what to read, and runnable next calls."""
+    parts = []
+    if "attribution" in legend["columns"]:
+        parts.append(f"attribution = {legend['columns']['attribution']}")
+    parts += ["samples = raw count", f"sample_share = {legend['columns']['sample_share']}"]
+    if "time_share" in legend["columns"]:
+        parts.append("time_share = time share")
+    else:
+        parts.append(f"time_share absent ({legend['absent']['time_share']})")
+    if "tag_to_retire_share" in legend["columns"]:
+        parts.append("tag_to_retire_share = tag-to-retire cycle share")
+    else:
+        parts.append(f"tag_to_retire_share absent "
+                     f"({legend['absent']['tag_to_retire_share']})")
+    return [("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
+            ("READ", _read_text(legend)),
+            ("NEXT", _next_text(legend["next"]))]
+
+
 def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
                    dump: uprof_dump.DumpInfo | None, has_tag: bool,
                    tag_available: bool) -> list[tuple[str, str]]:
-    """Header lines carried above the table and as named fields in the JSON document."""
+    """Detailed capture fields carried above the table and in the JSON document."""
     fields = [("METRIC", sampler.metric.removeprefix("METRIC: "))]
     if dump is None:
+        if sampler.pmc_cycle_shares:
+            share = ("sample_share is the busy core-cycle share (fixed cycles per sample; "
+                     "halted excluded)")
+        else:
+            share = "sample_share is not established for this PMC event"
         fields.append(("DUMP", "none; this PMC capture has no IBS ASCII dump, so samples are the "
-                               "UnifiedSampleSeries event-column counts (fixed cycles per sample)"))
-        fields.append(("PCT_TIME", "not applicable; PMC samples carry no per-sample timestamps, so "
-                                   "pct_time is omitted; pct_samples is the CPU-time share"))
-        fields.append(("PCT_CYCLES", "not applicable; PMC samples carry no tag-to-retire counter, "
-                                     "so pct_cycles is omitted"))
+                               f"UnifiedSampleSeries event-column counts; {share}"))
+        fields.append(("TIME_SHARE", "not applicable; this export aggregates PMC samples per "
+                                     "window, so time_share is omitted"))
+        fields.append(("TAG_TO_RETIRE_SHARE", "not applicable; this export has no tag-to-retire "
+                                              "counter, so tag_to_retire_share is omitted"))
     else:
         fields.append(("DUMP", _dump_field(dump)))
         dump_dir = dump.path.parent
@@ -153,32 +329,48 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
                                  f"the original session ({session_full / 'cpu.db'})"))
         window = ("the whole capture" if args.time_filter is None
                   else f"the time filter {args.time_filter}")
-        fields.append(("PCT_TIME", "share of elapsed CPU time from per-sample DeltaTick gaps "
-                                   f"within {window}; the first sample per CPU inside the window "
-                                   "carries no weight; a gap is charged whole to the later sample"))
+        fields.append(("TIME_SHARE", "share of time estimated from the per-sample DeltaTick "
+                                     f"gaps within {window}; an estimate: idle/wait is charged "
+                                     "to the ending sample, the first sample per CPU inside the "
+                                     "window is ignored (no gap before it), and NULL sorts last; "
+                                     "with few samples the share is coarse, so check "
+                                     "sample_share"))
         if sampler.ibs_dump_kind == "ibsop-event-dump":
             if not has_tag:
-                fields.append(("PCT_CYCLES", "not available for this dump: no IbsTagToRetCtr "
-                                             "column; pct_samples and pct_time are unaffected"))
+                fields.append(("TAG_TO_RETIRE_SHARE", "not available for this dump: no "
+                                                      "IbsTagToRetCtr column; sample_share and "
+                                                      "time_share are unaffected"))
             elif tag_available:
-                fields.append(("PCT_CYCLES", "share of sampled op latency (tag-to-retire, "
-                                             "IbsTagToRetCtr), clipped at 131070; never time"))
+                fields.append(("TAG_TO_RETIRE_SHARE", "share of tag-to-retire cycles summed "
+                                                      "over sampled ops (AMD tag at dispatch to "
+                                                      "retirement, queue/stalls included; "
+                                                      "clipped at 131070); a total, not "
+                                                      "per-op latency: a higher share means more "
+                                                      "total tag-to-retire cycles, not a higher "
+                                                      "per-op cost"))
             else:
-                fields.append(("PCT_CYCLES", "not available for this dump: IbsTagToRetCtr has no "
-                                             "non-null values; pct_samples and pct_time are "
-                                             "unaffected"))
+                fields.append(("TAG_TO_RETIRE_SHARE", "not available for this dump: IbsTagToRetCtr "
+                                                      "has no non-null values; sample_share and "
+                                                      "time_share are unaffected"))
         else:
-            fields.append(("PCT_CYCLES", "not applicable; IBS fetch samples carry no "
-                                         "tag-to-retire counter, so pct_cycles is omitted"))
+            fields.append(("TAG_TO_RETIRE_SHARE", "not applicable; this export has no "
+                                                  "tag-to-retire counter, so "
+                                                  "tag_to_retire_share is omitted"))
     if dump is None:
-        weights = "PMC sample counts from UnifiedSampleSeries; pct_samples is the CPU-time share"
+        if sampler.pmc_cycle_shares:
+            weights = ("PMC sample counts from UnifiedSampleSeries; sample_share is the busy "
+                       "core-cycle share")
+        else:
+            weights = ("PMC sample counts from UnifiedSampleSeries; sample_share is not "
+                       "established for this event")
     else:
         window = ("whole capture" if args.time_filter is None
                   else f"time filter {args.time_filter} (first sample per CPU inside the window "
                        "excluded)")
-        weights = ("exact DeltaTick-gap weights per CPU_Number (first sample per CPU excluded; gap "
-                   f"time is charged to the later sample); {window}; pct_samples is the dump's raw "
-                   "sample share")
+        weights = ("exact DeltaTick-gap weights per CPU_Number (the first sample per CPU is "
+                   "ignored, no gap before it; gap time is charged to the later sample); "
+                   f"{window}; sample_share is the dump's raw sample share and time_share "
+                   "weights the same rows by gap")
     fields.append(("WEIGHTS", f"{weights}; --by {args.by}: {GRANULARITY_LABELS[args.by]}"))
     return fields
 
@@ -363,7 +555,8 @@ def run_query_command(args: argparse.Namespace) -> None:
     if sampler.pmc:
         if args.time_filter:
             raise util.UprofError(
-                "--time-filter cannot be applied to a PMC capture: PMC samples carry no "
+                "--time-filter cannot be applied to a PMC capture: this export aggregates PMC "
+                "samples per window and carries no "
                 "per-sample timestamps, so the window cannot be selected; capture with "
                 "--event ibs-op to use --time-filter")
         dump = None
@@ -405,7 +598,10 @@ def run_query_command(args: argparse.Namespace) -> None:
                              and tag_values > 0)
             uprof_db.set_variables(connection, {
                 "uprof_tag_available": "true" if tag_available else "false"})
+            legend = _legend(sampler, dump, has_tag, tag_available, args)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available)
+            # The legend sits directly below METRIC, before the detailed capture fields.
+            fields[1:1] = _legend_fields(legend)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
             check_kernel = sampler.os_requested and not dump_windowed
@@ -421,7 +617,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 if agreement:
                     fields.append(("AGREEMENT", agreement))
             uprof_db.output(connection, TOOLS_DIR / f"profile-{args.by}.sql", fields,
-                            args.json, out_path)
+                            args.json, out_path, legend)
         success = True
     finally:
         if artifacts is not None:

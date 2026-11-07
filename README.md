@@ -13,9 +13,13 @@ where the cycles go — with shares by process, function, source line or instruc
 - Symbolizes with llvm-symbolizer: PDB data on Windows, DWARF on Linux, down to file/line and
   instruction attribution. ICF-folded addresses are labelled shared instead of being credited
   to one name.
-- Profiles by process, function, source line or instruction. IBS dumps get exact DeltaTick-gap
-  time weighting, so the time share is elapsed core time and not a sample count; op-count
-  sample shares are instruction shares, and the two are never conflated.
+- Profiles by process, function, source line or instruction. Shares are fractions 0.0-1.0.
+  `sample_share` states what a sample counts in that capture mode (busy core cycles for the
+  supported PMC cycle event, core cycles for cycle-controlled IBS OP, dispatched ops for
+  op-count IBS, fetch samples for IBS fetch); `time_share` is a time share estimated from gaps,
+  not unqualified impact; `tag_to_retire_share` is tag-to-retire cycles summed over sampled
+  ops, a total, not per-op latency. The three are never conflated, and a three-line
+  `COLUMNS`/`READ`/`NEXT` legend says so with every result.
 - Queries the capture in DuckDB, with the schema and views shipped as `tools/views.sql`.
 - Anchors a workload's QueryPerformanceCounter reading to capture-relative seconds; a negative
   value is attach latency, not the workload's own start.

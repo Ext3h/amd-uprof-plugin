@@ -11,13 +11,16 @@ EPILOG = """\
 Sampling modes and what a share means:
   cycle sampling (default): event=CYCLES_NOT_IN_HALT (hwId 118). --sample-interval is a time
       (ns, us, ms or s) converted to core cycles at the machine's reported core frequency; the
-      value, frequency and source are printed. Sample shares are time (cycle samples): busy
-      non-halted CPU time, frequency-dependent, summed over cores in a system-wide capture.
+      value, frequency and source are printed. sample_share is the busy core-cycle share (fixed
+      cycles per sample; halted excluded), summed over cores in a system-wide capture.
       Default 1ms.
-  IBS OP, cycle-controlled (--ibs-count-control cycles): the same time conversion.
+  IBS OP, cycle-controlled (--ibs-count-control cycles): the same time conversion for the
+      interval; sample_share is the core-cycle share (fixed cycles per sample), not wall time,
+      not a per-op cost.
   IBS OP, op-count interval (--ibs-count-control op, the default): --sample-interval is a
-      positive integer work count (dispatched ops), not a time; default 1000000 ops. Sample
-      shares are instruction share (op counts), not time.
+      positive integer work count (dispatched ops), not a time; default 1000000 ops.
+      sample_share is the dispatched-op frequency share (fixed dispatched ops per sample), not
+      a per-op cost.
 
 collect captures PMC cycle samples or IBS OP samples; it does not capture IBS fetch. An IBS
 fetch dump produced elsewhere can be translated (--ascii ibsfetch-event-dump) and profiled,
@@ -25,18 +28,24 @@ but no capture of IBS fetch has been validated (unverified).
 
 profile reads the IBS ASCII dump (IbsOpDump.csv or IbsFetchDump.csv). Within each CPU_Number the
 samples are ordered by DeltaTick and weighed by the gap to the previous sample; the first sample
-per CPU carries no weight. --time-filter selects samples by DeltaTick and excludes the first
-sample per CPU inside the window. A missing dump is generated on a cached copy of the session,
-never in place. pct_samples is the raw sample share; what a sample represents depends on the
-sampler above. line and instruction symbolize every module in scope and print the
-uProf-vs-symbolizer agreement summary.
+per CPU is ignored, having no gap before it. --time-filter selects samples by DeltaTick and
+excludes the first sample per CPU inside the window. A missing dump is generated on a cached copy
+of the session, never in place. sample_share is the raw sample share; what a sample represents
+depends on the sampler above. time_share is a time share estimated from those gaps;
+tag_to_retire_share is the share of tag-to-retire cycles summed over sampled ops, a total, not
+per-op latency. All shares are fractions (0.0-1.0). line and instruction symbolize every
+module in scope and print the uProf-vs-symbolizer agreement summary.
 
-Output is a Markdown pipe table with the METRIC, DUMP, PCT_TIME, PCT_CYCLES, WEIGHTS and
-AGREEMENT header lines above it; --json emits those fields and the rows as a JSON document.
-Shares are emitted at full precision. Table cells and header values show CR, LF, TAB, NUL, other
-C0 controls and DEL as visible \\n, \\r, \\t or \\xNN escapes; JSON keeps the original characters,
-so table and JSON agree modulo this display escaping for control characters. --top N returns N
-rows and a <other ...> remainder row when the result is truncated; --top all returns every row.
+Output is a Markdown pipe table with the METRIC, COLUMNS, READ, NEXT, DUMP, TIME_SHARE,
+TAG_TO_RETIRE_SHARE, WEIGHTS and AGREEMENT header lines above it; --json emits those fields, a
+structured legend and the rows as a JSON document. COLUMNS names what each share measures in the
+capture mode; READ states which column ranks where time went and that the <other ...> remainder
+is last, not ranked; NEXT lists runnable calls that keep the session and scope. Shares are
+emitted at full precision. Table cells and header values show CR, LF, TAB, NUL, other
+C0 controls and DEL as
+visible \\n, \\r, \\t or \\xNN escapes; JSON keeps the original characters, so table and JSON
+agree modulo this display escaping for control characters. --top N returns N rows and a
+<other ...> remainder row when the result is truncated; --top all returns every row.
 --out-file writes exactly the bytes stdout would carry: UTF-8 without a BOM, LF newlines.
 """
 

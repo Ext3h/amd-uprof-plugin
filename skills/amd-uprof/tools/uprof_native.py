@@ -6,6 +6,7 @@ is installed here. The Linux branches are kept but unverified on this host.
 
 from __future__ import annotations
 
+import csv
 import ctypes
 import os
 import re
@@ -16,6 +17,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Final
 
+from uprof_session import achieved_summary, derive_sampler, read_meta
 from uprof_util import (DUMP_FILENAMES, UprofError, absolute, copy_session, parse_time_filter,
                         tail_lines)
 
@@ -303,6 +305,42 @@ def translate_command(uprof: str | Path, session: str | Path, *,
     return command
 
 
+def dump_shape(path: Path) -> tuple[int, int]:
+    """Sample rows and distinct CPU_Number values in an ASCII dump, streamed without a database."""
+    samples = 0
+    cpus: set[str] = set()
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as handle:
+        reader = csv.reader(handle)
+        header = next(reader, None)
+        if header is None:
+            return 0, 0
+        try:
+            cpu_index = header.index("CPU_Number")
+        except ValueError:
+            return 0, 0
+        for row in reader:
+            if not row:
+                continue
+            samples += 1
+            if len(row) > cpu_index:
+                cpus.add(row[cpu_index])
+    return samples, len(cpus)
+
+
+def _dump_window_s(session: Path, time_filter: str | None) -> float | None:
+    """The dump's window: the translate window when given, else the recorded capture elapsed."""
+    if time_filter:
+        bounds = parse_time_filter(time_filter)
+        if bounds is not None:
+            return float(bounds[1] - bounds[0])
+    meta = read_meta(session) or {}
+    elapsed_ms = ((meta.get("collection") or {}).get("schedule") or {}).get("elapsed")
+    try:
+        return int(elapsed_ms) / 1000.0
+    except (TypeError, ValueError):
+        return None
+
+
 def translate(session_dir: Path | str, out_dir: Path | str,
               pdb_dir: Path | str | None = None, symbol_cache: Path | str | None = None,
               symbol_servers: list[str] | None = None, time_filter: str | None = None,
@@ -357,3 +395,9 @@ def translate(session_dir: Path | str, out_dir: Path | str,
             raise UprofError(f"translate --ascii {ascii_kind} did not produce "
                              f"{DUMP_FILENAMES[ascii_kind]} in {out}")
         print(f"ASCII_DUMP={dump}")
+        samples, cpus = dump_shape(dump)
+        sampler = derive_sampler(out)
+        window_s = _dump_window_s(out, time_filter)
+        print(f"ACHIEVED: {achieved_summary(samples, window_s, cpus, sampler)}")
+    else:
+        print("ACHIEVED: reported at profile time (translate wrote no dump without --ascii)")

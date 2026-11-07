@@ -186,13 +186,8 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
 
 def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace,
                     sampler: uprof_session.Sampler,
-                    dump: uprof_dump.DumpInfo | None) -> tuple[str, str] | None:
-    """The achieved sampling rate against the requested interval.
-
-    A capture can accept an interval it cannot deliver: the collector's effective cadence is far
-    below the request in both modes. Samples per second per CPU makes that visible instead of
-    leaving a sparse capture to look authoritative.
-    """
+                    dump: uprof_dump.DumpInfo | None) -> tuple[str, str]:
+    """The achieved sampling rate over the whole capture, independent of the scope filter."""
     meta = uprof_session.read_meta(args.session) or {}
     schedule = (meta.get("collection") or {}).get("schedule") or {}
     elapsed_ms = schedule.get("elapsed")
@@ -204,66 +199,22 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
         if dump is not None and dump.time_filter:
             bounds = util.parse_time_filter(dump.time_filter)
             if bounds is not None:
-                window_s = bounds[1] - bounds[0]
+                window_s = float(bounds[1] - bounds[0])
     else:
-        rows = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
+        # PMC samples are the event-column counts in UnifiedSampleSeries; coreId is the CPU.
+        rows = connection.sql(
+            "SELECT CAST(COALESCE(sum(COLUMNS(lambda c: c = "
+            "getvariable('uprof_event_column'))), 0) AS BIGINT), count(DISTINCT coreId) "
+            "FROM UnifiedSampleSeries").fetchall()
         samples = int(rows[0][0] or 0)
-        cpus = 0  # PMC cpu.db rows carry no CPU column; a per-CPU rate is not derivable
-        if args.time_filter:
-            bounds = util.parse_time_filter(args.time_filter)
-            if bounds is not None:
-                window_s = bounds[1] - bounds[0]
+        cpus = int(rows[0][1] or 0)
     if window_s is None and elapsed_ms is not None:
         try:
             window_s = int(elapsed_ms) / 1000.0
-        except ValueError:
+        except (TypeError, ValueError):
             window_s = None
-    if window_s is None or window_s <= 0:
-        return ("ACHIEVED", f"{samples} samples; the capture records no usable duration, so the "
-                            "rate is not derivable")
+    return ("ACHIEVED", uprof_session.achieved_summary(samples, window_s, cpus, sampler))
 
-    if sampler.interval is None or sampler.interval_units is None:
-        requested = "the session records no interval"
-        ideal_note = ""
-        warn = False
-    elif sampler.interval_units == "cycles":
-        try:
-            from uprof_collect import _core_frequency
-            hertz, display, _source = _core_frequency()
-            interval_s = sampler.interval / hertz
-            shown = (f"{interval_s * 1e3:.3g} ms" if interval_s >= 1e-3
-                     else f"{interval_s * 1e6:.3g} us")
-            requested = f"{sampler.interval} cycles at {display} = {shown}"
-            ideal_note = f"; ideal {1.0 / interval_s:,.0f}/s per CPU"
-            warn = True
-        except Exception:
-            requested = f"{sampler.interval} cycles (core frequency unavailable)"
-            ideal_note = ""
-            warn = False
-    elif sampler.interval_units == "ops":
-        requested = f"{sampler.interval} dispatched ops"
-        ideal_note = "; the interval is a work count, so no time rate follows"
-        warn = False
-    else:
-        requested = f"{sampler.interval} fetch events"
-        ideal_note = ""
-        warn = False
-
-    if cpus:
-        rate = samples / window_s / cpus
-        grade = f"{samples} samples, {window_s:.3f} s, {cpus} CPUs, {rate:,.2f}/s per CPU"
-        below = warn and sampler.interval_units == "cycles" and rate < 0.1 * (1.0 / (sampler.interval / hertz))
-        text = f"{grade} (requested {requested}{ideal_note})"
-    else:
-        rate = samples / window_s
-        grade = f"{samples} samples, {window_s:.3f} s, {rate:,.2f}/s over the capture"
-        below = False
-        text = (f"{grade} (requested {requested}; the per-CPU rate and ideal are not derivable "
-                "without a dump)")
-    
-    if below:
-        text += "; WARN: achieved sample rate is below 10% of the requested interval"
-    return ("ACHIEVED", text)
 
 def _dump_sanity(connection: object, has_dump: bool) -> tuple[str | None, int]:
     """The sanity message and the dump's non-null IbsTagToRetCtr value count."""

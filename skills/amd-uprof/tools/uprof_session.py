@@ -209,6 +209,58 @@ def collect_summary(meta: dict[str, Any], event: str) -> str:
             f"systemWide={target.get('systemWide')}")
 
 
+def achieved_summary(samples: int, window_s: float | None, cpus: int,
+                     sampler: Sampler) -> str:
+    """The `ACHIEVED` text: delivered samples, capture window, CPUs and rate per CPU.
+
+    A capture can accept an interval it cannot deliver: the collector's effective cadence is far
+    below the request in both modes. Samples per second per CPU makes that visible instead of
+    leaving a sparse capture to look authoritative. cpus is 0 only when the capture records no
+    CPU id; the per-CPU rate is then not derivable and the text says so.
+    """
+    if window_s is None or window_s <= 0:
+        return (f"{samples} samples; the capture records no usable duration, so the rate is "
+                "not derivable")
+
+    ideal_per_s: float | None = None
+    ideal_note = ""
+    warn = False
+    if sampler.interval is None or sampler.interval_units is None:
+        requested = "the session records no interval"
+    elif sampler.interval_units == "cycles":
+        try:
+            from uprof_collect import _core_frequency
+            hertz, display, _source = _core_frequency()
+            interval_s = sampler.interval / hertz
+            shown = (f"{interval_s * 1e3:.3g} ms" if interval_s >= 1e-3
+                     else f"{interval_s * 1e6:.3g} us")
+            requested = f"{sampler.interval} cycles at {display} = {shown}"
+            ideal_per_s = 1.0 / interval_s
+            ideal_note = f"; ideal {ideal_per_s:,.0f}/s per CPU"
+            warn = True
+        except Exception:
+            requested = f"{sampler.interval} cycles (core frequency unavailable)"
+    elif sampler.interval_units == "ops":
+        requested = f"{sampler.interval} dispatched ops"
+        ideal_note = "; the interval is a work count, so no time rate follows"
+    else:
+        requested = f"{sampler.interval} fetch events"
+
+    if cpus:
+        rate = samples / window_s / cpus
+        grade = f"{samples} samples, {window_s:.3f} s, {cpus} CPUs, {rate:,.2f}/s per CPU"
+        below = warn and rate < 0.1 * ideal_per_s
+    else:
+        rate = samples / window_s
+        grade = f"{samples} samples, {window_s:.3f} s, {rate:,.2f}/s over the capture"
+        ideal_note += "; the capture records no CPU id, so the per-CPU rate is not derivable"
+        below = False
+    text = f"{grade} (requested {requested}{ideal_note})"
+    if below:
+        text += "; WARN: achieved sample rate is below 10% of the requested interval"
+    return text
+
+
 def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[str]:
     """Map a QueryPerformanceCounter reading onto capture-relative seconds.
 
@@ -227,7 +279,7 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
     from datetime import timezone
 
     hertz = freq or 10_000_000
-    source = "argument" if freq else "default (Windows QPC is 10 MHz on this platform)"
+    source = "argument" if freq else "default (10 MHz; the session records no QPC frequency)"
     relative = (qpc * 1e9 / hertz - int(start)) / 1e9
     lines = [
         f"QPC={qpc} HZ={hertz} HZ_SOURCE={source}",

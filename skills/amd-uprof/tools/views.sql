@@ -183,28 +183,10 @@ SELECT *, delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tic
 FROM v_dump
 WHERE delta_tick >= getvariable('time_start') AND delta_tick < getvariable('time_end');
 
--- Provenance check for the whole dump, printed in the header of every dump-backed run. The weighted
--- CTE is unfiltered on purpose: the span check compares the dump with session.uprof, independent
--- of the query's --time-filter. The empty-dump and inconsistency errors surface when the view is
--- read. Its coverage verdict is dump-wide across all processes; v_scope_sanity judges the report's
--- --image/--pid/time-filter scope separately.
-CREATE OR REPLACE TEMP VIEW v_dump_sanity AS
-WITH weighted_all AS (
-  SELECT *, delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick) AS weight
-  FROM v_dump
-), totals AS (
-  SELECT count(*) AS dump_samples,
-         count(DISTINCT cpu) AS dump_cpus,
-         count(*) FILTER (WHERE weight IS NULL) AS excluded_first,
-         sum(weight) AS total_weight,
-         max(delta_tick) AS latest_tick,
-         count(tag_cycles) AS tag_values
-  FROM weighted_all
-), per_cpu AS (
-  SELECT cpu, min(delta_tick) AS first_ns, max(delta_tick) AS last_ns, count(*) AS n
-  FROM v_dump
-  GROUP BY cpu
-), meta AS (
+-- The capture span recorded in session.uprof, in capture-relative nanoseconds. Shared by the
+-- dump-wide provenance check and the scoped coverage verdict so neither re-reads the metadata.
+CREATE OR REPLACE TEMP VIEW v_capture_span AS
+WITH meta AS (
   SELECT * FROM query(CASE WHEN getvariable('uprof_session_meta') <> ''
     THEN $meta$SELECT translateCommand,
                       json_extract_string(collection, '$.schedule.elapsed') AS elapsed_ms,
@@ -239,6 +221,33 @@ WITH weighted_all AS (
          COALESCE(window_end_ns, elapsed_ns) AS end_ns,
          COALESCE(window_end_ns - window_start_ns, elapsed_ns) AS expected_ns
   FROM expected
+)
+SELECT translateCommand, system_wide, span_label, start_ns, end_ns, expected_ns
+FROM recorded;
+
+-- Provenance check for the whole dump, printed in the header of every dump-backed run. The weighted
+-- CTE is unfiltered on purpose: the span check compares the dump with session.uprof, independent
+-- of the query's --time-filter. The empty-dump and inconsistency errors surface when the view is
+-- read. Its coverage verdict is dump-wide across all processes; v_scope_sanity judges the report's
+-- --image/--pid/time-filter scope separately.
+CREATE OR REPLACE TEMP VIEW v_dump_sanity AS
+WITH weighted_all AS (
+  SELECT *, delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick) AS weight
+  FROM v_dump
+), totals AS (
+  SELECT count(*) AS dump_samples,
+         count(DISTINCT cpu) AS dump_cpus,
+         count(*) FILTER (WHERE weight IS NULL) AS excluded_first,
+         sum(weight) AS total_weight,
+         max(delta_tick) AS latest_tick,
+         count(tag_cycles) AS tag_values
+  FROM weighted_all
+), per_cpu AS (
+  SELECT cpu, min(delta_tick) AS first_ns, max(delta_tick) AS last_ns, count(*) AS n
+  FROM v_dump
+  GROUP BY cpu
+), recorded AS (
+  SELECT * FROM v_capture_span
 ), boundary AS (
   SELECT sum(p.first_ns - b.start_ns) AS leading_ns,
          sum(b.end_ns - p.last_ns) AS trailing_ns,
@@ -296,8 +305,7 @@ SELECT CASE
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
            CAST(worst_cpu AS VARCHAR))
 END AS message,
-CAST(tag_values AS BIGINT) AS tag_values,
-start_ns, end_ns, expected_ns, max_cpu_samples, system_wide
+CAST(tag_values AS BIGINT) AS tag_values
 FROM measured;
 
 -- Symbol artifact: one combined Parquet with a module_name column, else an empty typed view.
@@ -402,7 +410,7 @@ WITH span AS (
                             getvariable('time_start') / 1e9,
                             getvariable('time_end') / 1e9) END)
            AS scope_label
-  FROM v_dump_sanity
+  FROM v_capture_span
 ), scoped AS (
   -- A sampling context is one thread of one process. The cadence estimate is the window width
   -- divided by the busiest in-scope context's sample count, the same span/count form as the

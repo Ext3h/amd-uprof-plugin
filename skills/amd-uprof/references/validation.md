@@ -210,7 +210,7 @@ on the reference host with the rebuilt `v_dump_sanity`:
 | `loop-16mib-swwide` | system-wide 45 s | 5784 | 704.696 / 720.944 s | OK, boundary 16.2 s |
 | `loop-16mib-swwide2` | system-wide 75 s | 7947 | 1150.309 / 1200.464 s | OK, boundary 50.2 s |
 | `loop-2mib-nohash` | system-wide 45 s | 3373 | 683.356 / 720.304 s | OK, boundary 36.9 s |
-| `loop-2mib-ibs` | attached 39.682 s | 954 | 454.203 vs upper bound 634.912 s | OK (attached) |
+| `loop-2mib-ibs` | attached 39.682 s | 954 | 454.203 vs upper bound 634.912 s | OK (attached; dump-wide) |
 
 Previously these five verdicts were −1.25% (pass), −2.25%, −4.18%, −5.13% and −28.46% (four
 rejected). Each verdict was reproduced through `uprof_db.open_query` with a synthetic

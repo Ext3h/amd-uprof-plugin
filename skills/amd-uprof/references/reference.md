@@ -263,10 +263,12 @@ Samples weight each distinct address (one per dump row, the event count per PMC 
 | `rva` | module-relative address, `0x` hex |
 | `instruction` | mnemonic and operands as `llvm-objdump` prints them, raw bytes and trailing comments removed |
 | `samples` | raw scoped samples at this exact RVA |
-| `pct_samples` | `100 * samples / v_scope_totals.total_samples`; raw sample share, never gap-weighted time, `null` when the scope is empty |
+| `pct_samples` | `100 * samples / v_scope_totals.total_samples`; raw sample share — sampled frequency, not impact — never gap-weighted time, `null` when the scope is empty |
 | `symbol` | optional `{function, file, line}` from `llvm-symbolizer` frame 0 (`Symbol[0]`) using the PDB recorded by the symbolization pass; `line` omitted when 0; an empty or errored record leaves the field absent |
 | `import` | optional `{dll, name, slot_rva}` when the instruction is a `call`/`callq` whose operand is a `*disp(%rip)` or absolute IAT slot; register and indirect non-IAT targets stay raw; an ordinal-only symbol is `#<ordinal>` |
 | `ibs` | optional aggregated IBS OP labels, present when the dump has a row at the RVA and supplies at least one whitelisted field; the summary may carry only `samples` |
+
+`samples` counts how often the hardware selected the instruction for sampling: it is sampling/dispatch frequency, not impact, and a high count does not make the instruction costly. The table's row order — and therefore `--top` and the row cap below — is the time weight (`DeltaTick` gaps); a capture without a dump has no weight and falls back to `samples`, as the ranking section describes. The per-instruction IBS labels are the evidence for the instruction's cost.
 
 **IAT resolution.** `llvm-readobj --coff-imports` is parsed as text — its JSON style is not valid JSON. Each `Import` block's `ImportAddressTableRVA` plus `symbol index * slot width` (8 bytes for PE32+, 4 for PE32) gives the slot RVA; symbols keep the block's order and the parenthesized hint/ordinal is not part of the name. A `callq *disp(%rip)` slot is `next_rva + disp`, using the following decoded instruction for the RIP value; an absolute operand is converted to an RVA by subtracting `image_base` before the lookup. `DelayImport` blocks are not IAT slots. Import failure is not fatal: imports stay absent.
 
@@ -284,7 +286,7 @@ Samples weight each distinct address (one per dump row, the event count per PMC 
 
 **Omission shape.** `{"omitted": true, "reason": "<code>", "detail": "<text>"}`; `detail` is present only when non-empty. Reasons: `module_missing`, `readobj_missing`, `readobj_failed`, `metadata_incomplete` (headers lack `ImageBase`/`TimeDateStamp`/`CheckSum`/`Magic`, e.g. ELF), `no_code_section`, `anchor_too_far`, `hot_rva_not_instruction_start`, `objdump_missing`, `objdump_failed`, `build_mismatch`, `context_failed` (an LLVM tool timed out or a scoped query failed), `row_cap`. A build without matching checksum or size evidence is emitted unverified, not omitted. Symbolizer and import failures do not omit the block. The `<other instructions>` row (`rva` null) has no context.
 
-**Limits and caching.** At most 20 rows carry a block; later rows carry `row_cap`. Module metadata, imports, public starts and the symbolization pass's PDB choice are cached per module across rows; each anchor is decoded once for all rows under it, and samples, symbols and IBS are aggregated once per module. Each external call has a five-minute timeout. The feature is PE/COFF-only; ELF modules omit with `metadata_incomplete`.
+**Limits and caching.** At most 20 rows carry a block, in the table's row order (its time-weight impact order); later rows carry `row_cap`. Module metadata, imports, public starts and the symbolization pass's PDB choice are cached per module across rows; each anchor is decoded once for all rows under it, and samples, symbols and IBS are aggregated once per module. Each external call has a five-minute timeout. The feature is PE/COFF-only; ELF modules omit with `metadata_incomplete`.
 
 ## SQL schema — `tools/views.sql`
 
@@ -388,7 +390,7 @@ supplies it, is total tag-to-retire cycles, not per-op latency.
   as no attribution and use RVA-level samples plus disassembly.
 - **Instruction context is PE/COFF-only and JSON-only.** It reads PE headers, sections and the COFF
   import table; an ELF module omits with `metadata_incomplete`. Markdown output never carries it,
-  and only the first 20 instruction rows are expanded.
+  and only the first 20 instruction rows — the top time-weight rows — are expanded.
 - **`--json --out-file` writes no file when the query fails** (including the dump sanity error);
   the reason is on stderr and the exit code is 2, so check the exit code before reading the file.
 - **`<multiple>` is coarse.** A source line carrying several overload signatures is reported as one ambiguous annotation, not split per signature.

@@ -190,14 +190,14 @@ class SanityScopeTest(unittest.TestCase):
         try:
             connection.execute(
                 'CREATE TABLE UnifiedSampleSeries(moduleId INTEGER, functionId INTEGER, '
-                'moduleRVA BIGINT, processId INTEGER, "event#0x1" BIGINT)')
+                'moduleRVA BIGINT, coreId INTEGER, processId INTEGER, "event#0x1" BIGINT)')
             connection.execute("CREATE TABLE Process(id INTEGER, name VARCHAR)")
             connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR)")
             connection.execute("CREATE TABLE Function(id INTEGER, name VARCHAR)")
             connection.execute(r"INSERT INTO Process VALUES (100, 'c:\workload.exe')")
             connection.execute(r"INSERT INTO Module VALUES (10, 'c:\workload.exe')")
             connection.execute(
-                'INSERT INTO UnifiedSampleSeries VALUES (10, 1, 4096, 100, 5)')
+                'INSERT INTO UnifiedSampleSeries VALUES (10, 1, 4096, 0, 100, 5)')
         finally:
             connection.close()
         variables = {

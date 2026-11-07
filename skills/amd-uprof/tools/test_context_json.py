@@ -166,6 +166,19 @@ class BuildContextTest(unittest.TestCase):
         self.assertNotIn("ibs", entry)
 
 
+    def test_ibs_samples_are_kept_when_no_other_field_is_present(self):
+        build = uprof_context.parse_file_headers(FILE_HEADERS)
+        verified = uprof_context.verify_build(build, 0x1234ABCD)
+        instruction = uprof_context.DecodedInstruction(0x1000, "retq", None)
+
+        context = uprof_context.build_context(
+            uprof_context.Anchor("section", 0x1000), verified, 0x1000, [instruction],
+            samples={}, total_samples=10, symbols={}, imports={},
+            ibs={0x1000: {"samples": 2}})
+
+        self.assertEqual(context["instructions"][0]["ibs"], {"samples": 2})
+
+
 class JsonDocumentTest(unittest.TestCase):
     def test_context_is_attached_to_its_row(self):
         contexts = [{"anchor": {"kind": "section"}}, None]

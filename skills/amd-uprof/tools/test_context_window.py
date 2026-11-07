@@ -46,8 +46,12 @@ class ObjdumpParseTest(unittest.TestCase):
     def test_ignores_section_headers_and_symbol_labels(self):
         decoded = uprof_context.parse_objdump(OBJDUMP, image_base=0x140000000)
 
-        self.assertTrue(all(item.text for item in decoded))
-        self.assertNotIn("file format", " ".join(item.text for item in decoded))
+        self.assertEqual([item.text for item in decoded],
+                         ["pushq\t%rbp", "movq\t%rsp, %rbp", "subq\t$0x20, %rsp",
+                          "movl\t$0x1, %eax", "addl\t$0x2, %eax", "xorl\t%ecx, %ecx",
+                          "movl\t%eax, -0x4(%rbp)", "addl\t$0x3, %eax",
+                          "movl\t%eax, -0x8(%rbp)", "callq\t*0x1067(%rip)",
+                          "addl\t$0x4, %eax", "leave", "retq"])
 
     def test_attaches_the_next_instruction_address(self):
         decoded = uprof_context.parse_objdump(OBJDUMP, image_base=0x140000000)

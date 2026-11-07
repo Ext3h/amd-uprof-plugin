@@ -1,0 +1,171 @@
+"""AMD uProf capture and query entry point: python <SKILL_DIR>/tools/uprof.py <command> ..."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+import uprof_util as util
+
+EPILOG = """\
+Sampling modes and what a share means:
+  cycle sampling (default): event=CYCLES_NOT_IN_HALT (hwId 118). --sample-interval is a time
+      (ns, us, ms or s) converted to core cycles at the machine's reported core frequency; the
+      value, frequency and source are printed. Sample shares are time (cycle samples): busy
+      non-halted CPU time, frequency-dependent, summed over cores in a system-wide capture.
+      Default 1ms.
+  IBS OP, cycle-controlled (--ibs-count-control cycles): the same time conversion.
+  IBS OP, op-count interval (--ibs-count-control op, the default): --sample-interval is a
+      positive integer work count (dispatched ops), not a time; default 1000000 ops. Sample
+      shares are instruction share (op counts), not time.
+
+collect captures PMC cycle samples or IBS OP samples; it does not capture IBS fetch. An IBS
+fetch dump produced elsewhere can be translated (--ascii ibsfetch-event-dump) and profiled,
+but no capture of IBS fetch has been validated (unverified).
+
+profile reads the IBS ASCII dump (IbsOpDump.csv or IbsFetchDump.csv). Within each CPU_Number the
+samples are ordered by DeltaTick and weighed by the gap to the previous sample; the first sample
+per CPU carries no weight. --time-filter selects samples by DeltaTick and excludes the first
+sample per CPU inside the window. A missing dump is generated on a cached copy of the session,
+never in place. pct_samples is the raw sample share; what a sample represents depends on the
+sampler above. line and instruction symbolize every module in scope and print the
+uProf-vs-symbolizer agreement summary.
+
+Output is a Markdown pipe table with the METRIC, DUMP, PCT_TIME, PCT_CYCLES, WEIGHTS and
+AGREEMENT header lines above it; --json emits those fields and the rows as a JSON document.
+Shares are emitted at full precision. Table cells and header values show CR, LF, TAB, NUL, other
+C0 controls and DEL as visible \\n, \\r, \\t or \\xNN escapes; JSON keeps the original characters,
+so table and JSON agree modulo this display escaping for control characters. --top N returns N
+rows and a <other ...> remainder row when the result is truncated; --top all returns every row.
+--out-file writes exactly the bytes stdout would carry: UTF-8 without a BOM, LF newlines.
+"""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="uprof.py", description="AMD uProf capture, translation and DuckDB analysis.",
+        epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    collect = sub.add_parser(
+        "collect", help="capture PMC cycle or IBS OP samples (not IBS fetch)",
+        description="Capture PMC cycle samples or IBS OP samples. IBS fetch is not captured; an "
+                    "IBS fetch dump produced elsewhere can be translated "
+                    "(--ascii ibsfetch-event-dump) and profiled, but no fetch capture has been "
+                    "validated (unverified).")
+    collect.add_argument("--out-dir", required=True)
+    collect.add_argument("--seconds", type=int, default=60)
+    collect.add_argument("--process", action="append", metavar="PID[,PID]")
+    collect.add_argument(
+        "--sample-interval", metavar="TIME|OPS",
+        help="cycle modes: a time with a unit (ns, us, ms, s), e.g. 200us or 1ms, converted to "
+             "core cycles at the machine's reported core frequency; default 1ms. IBS op-count "
+             "mode: a positive integer work count (dispatched ops), not time; default 1000000 ops")
+    collect.add_argument("--event", choices=("cycles", "ibs-op"), default="cycles",
+                         help="cycles (PMC, default) or ibs-op (IBS OP)")
+    collect.add_argument("--ibs-count-control", choices=("op", "cycles"), default="op",
+                         help="IBS OP interval control: op (work count, default) or cycles "
+                              "(time converted to cycles)")
+    collect.add_argument("--dry-run", action="store_true")
+
+    translate = sub.add_parser("translate", help="resolve symbols; optionally write an ASCII dump")
+    translate.add_argument("--session", required=True)
+    translate.add_argument("--out-dir", required=True)
+    translate.add_argument("--pdb-dir")
+    translate.add_argument("--symbol-cache")
+    translate.add_argument("--symbol-server", action="append")
+    translate.add_argument("--time-filter", metavar="T1:T2")
+    translate.add_argument("--ascii", choices=("ibsop-event-dump", "ibsfetch-event-dump"))
+
+    profile = sub.add_parser("profile", help="samples and time shares at one granularity")
+    profile.add_argument("--session", required=True)
+    profile.add_argument("--by", required=True,
+                         choices=("process", "function", "line", "instruction"))
+    scope = profile.add_mutually_exclusive_group()
+    scope.add_argument("--pid", type=int, metavar="N")
+    scope.add_argument("--image", metavar="PATTERN",
+                       help="process base-image ILIKE pattern; all PIDs of matching images")
+    profile.add_argument("--time-filter", metavar="T1:T2")
+    profile.add_argument("--top", default="20", metavar="N|all")
+    profile.add_argument("--json", action="store_true",
+                         help="emit the header fields and rows as JSON")
+    profile.add_argument("--out-file")
+
+    anchor = sub.add_parser(
+        "anchor", help="map a QPC reading onto capture-relative seconds",
+        description="Map a QueryPerformanceCounter reading (for example a marker a workload "
+                    "printed) onto the capture's own clock. schedule.start/end are QPC-derived "
+                    "nanoseconds and each sample's DeltaTick is sample_ns - start, so relative "
+                    "seconds = (qpc * 1e9 / freq - start) / 1e9; negative values are attach "
+                    "latency, which the capture does not cover.")
+    anchor.add_argument("--session", required=True)
+    anchor.add_argument("--qpc", type=int, required=True, metavar="TICKS")
+    anchor.add_argument("--freq", type=int, metavar="HZ",
+                        help="QueryPerformanceFrequency; defaults to 10 MHz (Windows QPC) and "
+                             "says so in the output")
+
+    schema = sub.add_parser("schema", help="live table/column/type listing")
+    schema.add_argument("--session", required=True)
+    schema.add_argument("--out-file")
+
+    sub.add_parser("tools", help="print resolved tool paths and versions")
+    return parser
+
+
+def _parse_pids(values: list[str] | None) -> list[int]:
+    pids: list[int] = []
+    for value in values or []:
+        for part in value.split(","):
+            part = part.strip()
+            if not part:
+                raise util.UprofError("--process needs at least one positive PID")
+            try:
+                pids.append(int(part))
+            except ValueError as exc:
+                raise util.UprofError(f"--process needs integer PID(s); got {part!r}") from exc
+    return pids
+
+
+def _dispatch(args: argparse.Namespace) -> None:
+    if args.command == "collect":
+        import uprof_collect
+        uprof_collect.collect(uprof_collect.CollectOptions(
+            out_dir=args.out_dir, seconds=args.seconds, pids=_parse_pids(args.process),
+            sample_interval=args.sample_interval, event=args.event,
+            ibs_count_control=args.ibs_count_control, dry_run=args.dry_run))
+    elif args.command == "translate":
+        import uprof_native
+        uprof_native.translate(args.session, args.out_dir, args.pdb_dir, args.symbol_cache,
+                               args.symbol_server, args.time_filter, args.ascii)
+    elif args.command == "tools":
+        import uprof_native
+        uprof_native.tool_report()
+    elif args.command == "anchor":
+        import uprof_session
+        for line in uprof_session.anchor_report(args.session, args.qpc, args.freq):
+            print(line)
+    else:
+        import uprof_query
+        uprof_query.run_query_command(args)
+
+
+def main(argv: list[str] | None = None) -> int:
+    util.configure_streams()
+    args = build_parser().parse_args(argv)
+    try:
+        _dispatch(args)
+        return 0
+    except util.UprofError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except BrokenPipeError:
+        return 0
+    except KeyboardInterrupt:
+        return 130
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,15 @@
+{
+  "name": "amd-uprof-dev",
+  "description": "Local development marketplace for the AMD uProf skill",
+  "owner": {
+    "name": "andre"
+  },
+  "plugins": [
+    {
+      "name": "amd-uprof",
+      "description": "AMD uProf capture and analysis: cycle and IBS OP sampling, symbolization, and DuckDB queries",
+      "version": "1.0.0",
+      "source": "./"
+    }
+  ]
+}

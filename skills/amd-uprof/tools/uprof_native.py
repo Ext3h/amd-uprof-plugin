@@ -1,0 +1,359 @@
+"""uProf tool discovery and translation.
+
+Install paths are probed per OS with `shutil.which` plus a few conventional directories; nothing
+is installed here. The Linux branches are kept but unverified on this host.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import os
+import re
+import shutil
+import subprocess
+import sys
+from collections.abc import Iterable, Sequence
+from pathlib import Path
+from typing import Final
+
+from uprof_util import (DUMP_FILENAMES, UprofError, absolute, copy_session, parse_time_filter,
+                        tail_lines)
+
+IS_WINDOWS = os.name == "nt"
+TRANSLATE_TIMEOUT: Final = 4 * 60 * 60
+
+
+# ---------------------------------------------------------------- tool discovery
+
+def _first_existing(candidates: Iterable[str | os.PathLike[str] | None]) -> Path | None:
+    for path in candidates:
+        if path and Path(path).is_file():
+            return absolute(path)
+    return None
+
+
+def _which(name: str) -> Path | None:
+    found = shutil.which(name)
+    return Path(found) if found else None
+
+
+def _version_key(path: Path) -> tuple[int, ...]:
+    """Numeric version from an install path, so llvm-19 sorts above llvm-9."""
+    match = re.search(r"(?:llvm-|AMDuProf_|uProf_?)(\d+(?:\.\d+)*)", str(path))
+    if not match:
+        match = re.search(r"-(\d+(?:\.\d+)*)$", path.name)
+    return tuple(int(part) for part in match.group(1).split(".")) if match else ()
+
+
+def _newest(paths: Iterable[Path]) -> list[Path]:
+    return sorted(paths, key=_version_key, reverse=True)
+
+
+def find_uprof() -> Path | None:
+    env = os.environ.get("AMDUPROF_CLI")
+    candidates: list[str | os.PathLike[str] | None] = [env, _which("AMDuProfCLI")]
+    if IS_WINDOWS:
+        for base in (os.environ.get("ProgramW6432"), os.environ.get("ProgramFiles"),
+                     os.environ.get("ProgramFiles(x86)")):
+            if base:
+                candidates.append(Path(base) / "AMD" / "AMDuProf" / "bin" / "AMDuProfCLI.exe")
+    else:
+        candidates.extend(_newest(Path("/opt").glob("AMDuProf_*/bin/AMDuProfCLI")))
+        candidates.extend(_newest(Path("/opt").glob("AMD/uProf*/bin/AMDuProfCLI")))
+        candidates.append(Path("/usr/local/bin/AMDuProfCLI"))
+    return _first_existing(candidates)
+
+
+def find_symbolizer() -> Path | None:
+    env = os.environ.get("LLVM_SYMBOLIZER")
+    candidates: list[str | os.PathLike[str] | None] = [env, _which("llvm-symbolizer")]
+    if IS_WINDOWS:
+        for base in (os.environ.get("ProgramW6432"), os.environ.get("ProgramFiles")):
+            if base:
+                candidates.append(Path(base) / "LLVM" / "bin" / "llvm-symbolizer.exe")
+    else:
+        candidates.extend(_newest(Path("/usr/lib").glob("llvm-*/bin/llvm-symbolizer")))
+        candidates.extend(_newest(Path("/usr/bin").glob("llvm-symbolizer-*")))
+        candidates.append(Path("/usr/bin/llvm-symbolizer"))
+    return _first_existing(candidates)
+
+
+def find_sibling(symbolizer: Path | None, name: str) -> Path | None:
+    """llvm-pdbutil and llvm-readobj usually sit next to llvm-symbolizer."""
+    candidates: list[str | os.PathLike[str] | None] = [_which(name)]
+    if symbolizer:
+        candidates.insert(0, symbolizer.parent / (name + (".exe" if IS_WINDOWS else "")))
+    return _first_existing(candidates)
+
+
+def require_uprof() -> Path:
+    found = find_uprof()
+    if not found:
+        hint = ("install AMD uProf, or set AMDUPROF_CLI to AMDuProfCLI.exe"
+                if IS_WINDOWS else "install AMD uProf, or set AMDUPROF_CLI to the AMDuProfCLI binary")
+        raise UprofError(f"AMDuProfCLI not found; {hint}")
+    return found
+
+
+def require_symbolizer() -> Path:
+    found = find_symbolizer()
+    if not found:
+        hint = ("winget install --id LLVM.LLVM" if IS_WINDOWS
+                else "install LLVM (for example: sudo apt install llvm)")
+        raise UprofError(f"llvm-symbolizer not found; {hint} (or set LLVM_SYMBOLIZER)")
+    return found
+
+
+def run(command: Sequence[str], timeout: int | None = None, input_text: str | None = None,
+        ) -> subprocess.CompletedProcess[str]:
+    """Run a native tool with UTF-8 text output and no console-window flash."""
+    kwargs = {"capture_output": True, "text": True, "encoding": "utf-8",
+              "errors": "replace", "timeout": timeout}
+    if input_text is not None:
+        kwargs["input"] = input_text
+    if IS_WINDOWS:
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        return subprocess.run(command, **kwargs)
+    except FileNotFoundError as exc:
+        raise UprofError(f"cannot run {command[0]}: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise UprofError(f"{Path(command[0]).name} timed out after {timeout}s") from exc
+
+
+def print_output(completed: subprocess.CompletedProcess[str]) -> None:
+    if completed.stdout:
+        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
+    if completed.stderr:
+        print(completed.stderr, end="" if completed.stderr.endswith("\n") else "\n", file=sys.stderr)
+
+
+def failure_detail(completed: subprocess.CompletedProcess[str]) -> str:
+    return tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
+
+
+def symbol_cache_dir() -> Path:
+    if IS_WINDOWS:
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return Path(base) / "Symbols"
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return Path(base) / "amd-uprof" / "symbols"
+
+
+def default_symbol_servers() -> list[str]:
+    return ["https://msdl.microsoft.com/download/symbols"] if IS_WINDOWS else []
+
+
+def parse_symbol_path(value: str | None) -> tuple[str | None, list[str]]:
+    """Return (download cache, symbol servers) from a Windows-style _NT_SYMBOL_PATH."""
+    cache = None
+    servers: list[str] = []
+    if not value:
+        return cache, servers
+    for entry in value.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parts = entry.split("*")
+        if len(parts) >= 3 and parts[0].lower() == "srv":
+            if not cache and parts[1]:
+                cache = parts[1]
+            servers.append(entry)
+    return cache, servers
+
+
+def is_admin() -> bool:
+    if IS_WINDOWS:
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except (AttributeError, OSError):
+            return False
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def ibs_unavailable_reason() -> str:
+    """Explain why IBS counters are missing, naming VBS or a hypervisor when that is the cause."""
+    if IS_WINDOWS:
+        try:
+            systeminfo = run(["systeminfo"], timeout=60).stdout
+        except UprofError:
+            systeminfo = ""
+        lowered = systeminfo.lower()
+        vbs_line = next((line for line in lowered.splitlines()
+                         if "virtualization-based security" in line), "")
+        disabled = "not running" in vbs_line or "not enabled" in vbs_line
+        vbs = not disabled and ("running" in vbs_line or "enabled" in vbs_line)
+        hypervisor = "hypervisor has been detected" in lowered
+        if vbs or hypervisor:
+            state = "VBS running" if vbs else "hypervisor detected"
+            return (f"hypervisor/VBS is active ({state}; check Win32_DeviceGuard: "
+                    "VirtualizationBasedSecurityStatus is 2 when running)")
+        return ("no IBS counters are available; check that Hyper-V/VBS is disabled and "
+                "Win32_DeviceGuard reports VirtualizationBasedSecurityStatus 0")
+    try:
+        with open(Path("/proc/cpuinfo"), "r", encoding="utf-8", errors="replace") as handle:
+            if " hypervisor" in handle.read():
+                return "a hypervisor is active (/proc/cpuinfo reports the hypervisor flag)"
+    except OSError:
+        pass
+    if any(Path("/sys/module").glob("kvm*")):
+        return "the KVM kernel module is loaded; IBS counters are not exposed to this host"
+    return "no IBS counters are available; check the kernel, virtualization and perf permissions"
+
+
+def _first_version_line(path: Path, *args: str) -> str | None:
+    """The first line of `<tool> --version` that names a version, else its first line."""
+    try:
+        completed = run([str(path), *args], timeout=30)
+    except (UprofError, OSError):
+        return None
+    if completed.returncode != 0:
+        return None
+    lines = [line.strip() for line
+             in ((completed.stdout or "") + "\n" + (completed.stderr or "")).splitlines()
+             if line.strip()]
+    if not lines:
+        return None
+    return next((line for line in lines if "version" in line.lower()), lines[0])
+
+
+def _tool_row(name: str, path: Path | None, version: str | None) -> str:
+    if not path:
+        return f"{name}=; version=MISSING (not found)"
+    return f"{name}={path}; version={version or 'unavailable'}"
+
+
+def _uprof_version(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    version = _first_version_line(path, "--version")
+    if version:
+        return version
+    path_version = ".".join(str(part) for part in _version_key(path))
+    if path_version:
+        return f"{path_version} (from the install path; --version gave nothing)"
+    return "unavailable (--version failed and the install path carries no version)"
+
+
+def tool_report() -> None:
+    """Print every tool path and version, then fail once if a required tool is missing."""
+    uprof = find_uprof()
+    symbolizer = find_symbolizer()
+    pdbutil = find_sibling(symbolizer, "llvm-pdbutil")
+    readobj = find_sibling(symbolizer, "llvm-readobj")
+    try:
+        import duckdb
+        version = duckdb.__version__
+        try:
+            major = int(version.split(".")[0])
+        except (AttributeError, ValueError):
+            major = 0
+        if major < 2:
+            duckdb_version = None
+            duckdb_short = None
+            duckdb_hint = (f"DuckDB {version} is too old (need 2.x); upgrade with: "
+                           f"{sys.executable} -m pip install --upgrade duckdb")
+        else:
+            duckdb_version = f"duckdb {version} (python)"
+            duckdb_short = version
+            duckdb_hint = None
+    except ImportError:
+        duckdb_version = None
+        duckdb_short = None
+        duckdb_hint = f"DuckDB Python module (install with: {sys.executable} -m pip install duckdb)"
+    print(_tool_row("UPROF", uprof, _uprof_version(uprof)))
+    print(f"DUCKDB={duckdb_version or ''}; version={duckdb_short or 'MISSING (not installed)'}")
+    print(_tool_row("SYMBOLIZER", symbolizer,
+                    _first_version_line(symbolizer, "--version") if symbolizer else None))
+    print(_tool_row("PDBUTIL", pdbutil,
+                    _first_version_line(pdbutil, "--version") if pdbutil else None))
+    print(_tool_row("READOBJ", readobj,
+                    _first_version_line(readobj, "--version") if readobj else None))
+    missing = []
+    if not uprof:
+        missing.append("uProf CLI (install AMD uProf or set AMDUPROF_CLI)")
+    if not duckdb_version:
+        missing.append(duckdb_hint)
+    if not symbolizer:
+        missing.append("llvm-symbolizer (install LLVM or set LLVM_SYMBOLIZER)")
+    if missing:
+        raise UprofError("MISSING " + "; ".join(missing))
+
+
+# ---------------------------------------------------------------- translate
+
+def translate_command(uprof: str | Path, session: str | Path, *,
+                      symbol_cache: str | Path | None = None,
+                      symbol_servers: Iterable[str] = (),
+                      pdb_dir: str | Path | None = None,
+                      time_filter: str | None = None,
+                      ascii_kind: str | None = None) -> list[str]:
+    """The AMDuProfCLI translate argument list shared by translate and the dump cache."""
+    command = [os.fspath(uprof), "translate", "-i", os.fspath(session)]
+    if symbol_cache is not None:
+        command += ["--symbol-cache-dir", os.fspath(symbol_cache)]
+    for server in symbol_servers:
+        command += ["--symbol-server", server]
+    if pdb_dir is not None:
+        command += ["--symbol-path", os.fspath(pdb_dir)]
+    if time_filter:
+        command += ["--time-filter", time_filter]
+    if ascii_kind:
+        command += ["--ascii", ascii_kind]
+    return command
+
+
+def translate(session_dir: Path | str, out_dir: Path | str,
+              pdb_dir: Path | str | None = None, symbol_cache: Path | str | None = None,
+              symbol_servers: list[str] | None = None, time_filter: str | None = None,
+              ascii_kind: str | None = None) -> None:
+    session = absolute(session_dir)
+    if not session.is_dir():
+        raise UprofError(f"session directory not found: {session}")
+    if not (session / "session.uprof").is_file():
+        raise UprofError(f"session.uprof not found in {session}")
+    out = absolute(out_dir)
+    if out.exists() and not out.is_dir():
+        raise UprofError(f"output path exists and is not a directory: {out}; choose another "
+                         "--out-dir")
+    if os.path.normcase(os.fspath(out)) == os.path.normcase(os.fspath(session)):
+        raise UprofError("--out-dir must differ from --session: translate rewrites cpu.db, "
+                         "callstack.db and session.uprof, so it works on a copy")
+    if time_filter and parse_time_filter(time_filter) is None:
+        raise UprofError("--time-filter needs T1:T2 in seconds from capture start, e.g. 0:5")
+    if ascii_kind and ascii_kind not in DUMP_FILENAMES:
+        raise UprofError(f"unknown --ascii kind {ascii_kind!r}; use ibsop-event-dump or "
+                         "ibsfetch-event-dump")
+
+    env_cache, env_servers = parse_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
+    cache = symbol_cache or env_cache or symbol_cache_dir()
+    servers = list(dict.fromkeys([*(env_servers or default_symbol_servers()),
+                                  *(symbol_servers or [])]))
+    print(f"SYMBOL_CACHE={cache}")
+    print(f"SYMBOL_SERVERS={' | '.join(servers)}")
+
+    uprof = require_uprof()
+    copy_session(session, out)
+
+    command = translate_command(
+        uprof, out, symbol_cache=cache, symbol_servers=servers,
+        pdb_dir=absolute(pdb_dir) if pdb_dir else None,
+        time_filter=time_filter, ascii_kind=ascii_kind)
+
+    completed = run(command, timeout=TRANSLATE_TIMEOUT)
+    print_output(completed)
+    if completed.returncode != 0:
+        raise UprofError(f"translate failed with {completed.returncode}: "
+                         f"{failure_detail(completed)}")
+
+    cpu_db = out / "cpu.db"
+    if not cpu_db.is_file():
+        raise UprofError(f"translate did not produce {cpu_db}")
+    print(f"SESSION={out}")
+    print(f"CPU_DB={cpu_db}")
+    if ascii_kind:
+        dump = out / DUMP_FILENAMES[ascii_kind]
+        if not dump.is_file():
+            raise UprofError(f"translate --ascii {ascii_kind} did not produce "
+                             f"{DUMP_FILENAMES[ascii_kind]} in {out}")
+        print(f"ASCII_DUMP={dump}")

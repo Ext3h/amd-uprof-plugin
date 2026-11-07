@@ -23,6 +23,8 @@ sample shares and time shares — stating what each share measures.
   unsupported CPU) falls back to cycle sampling **visibly**: one line naming the cause before the
   fallback capture runs.
 - `--dry-run` validates the invocation without capturing.
+- The delivered sample rate can be below the requested interval. The tool reports the achieved
+  rate rather than assuming the request was met (see `profile`'s `ACHIEVED:` header).
 
 ## 2. Translation — `translate`
 
@@ -38,6 +40,7 @@ sample shares and time shares — stating what each share measures.
 | command | purpose |
 |---|---|
 | `profile` | what dominates, at a chosen granularity |
+| `anchor` | where a workload's own clock reading sits on the capture timeline |
 | `schema` | whether the capture's export is the one the SQL expects |
 | `tools` | which external tools will be used, at which versions |
 
@@ -83,10 +86,21 @@ Samples are selected by timestamp. The first sample per CPU **inside the window*
 because its gap crosses the boundary — the same rule as the first sample of a capture. Filtering
 never re-translates.
 
-### 3.5 Output
+### 3.5 Clock anchoring
+
+A workload that prints its own `QueryPerformanceCounter` reading can be placed on the capture
+timeline: `anchor` takes the session and that reading and reports seconds from capture start, the
+same units `--time-filter` uses. A negative value is attach latency — the reading precedes the
+capture start, and the capture does not cover it. Where the session records a start wall-clock time,
+the UTC start is reported with its precision.
+
+### 3.6 Output
 
 - Default: a Markdown pipe table, right-aligned numerics, with the header lines (`METRIC:`, `DUMP:`,
-  `AGREEMENT:`) as plain lines above it.
+  `SANITY:`, `ACHIEVED:`, `AGREEMENT:`) as plain lines above it. `SANITY` validates the dump against
+  the capture metadata and states the coverage it is based on; `ACHIEVED` states the samples
+  delivered, the capture window, the per-CPU rate and the requested interval, and says so when the
+  delivered rate is far below the request.
 - `--json`: the same rows and header information as structured data.
 - No CSV mode and no table-rendering dependency on the database library.
 - Percentages are emitted at full precision; no rounding is applied.

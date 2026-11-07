@@ -2,6 +2,14 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.1 — 2026-11-07
+
+### Changed
+
+- `references/spec.md` aligned with the shipped behaviour: the `anchor` command, the `SANITY` and
+  `ACHIEVED` header lines, and the contract that a delivered sample rate below the requested
+  interval is reported rather than assumed.
+
 ## 1.0.0 — 2026-11-07
 
 Initial packaging of the `amd-uprof` skill as a Claude Code plugin.

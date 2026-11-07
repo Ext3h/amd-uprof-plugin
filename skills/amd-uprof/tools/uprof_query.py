@@ -597,6 +597,18 @@ def _agreement_text(connection: object) -> str | None:
             f"(<no symbol>, {percent('unresolved_pct')} of {values['scoped_samples']} scoped)")
 
 
+def _write_profile(connection: object, args: argparse.Namespace,
+                   fields: list[tuple[str, str]], out_path: Path | None) -> None:
+    """Render the profile; instruction JSON fetches its SELECT once and joins contexts to it."""
+    if args.json and args.by == "instruction":
+        columns, types, rows = uprof_db.fetch_typed(
+            connection, TOOLS_DIR / "profile-instruction.sql")
+        contexts = uprof_context.instruction_contexts(connection, columns, rows)
+        uprof_db.output_rows(columns, types, rows, fields, args.json, out_path, contexts)
+        return
+    uprof_db.output(connection, TOOLS_DIR / f"profile-{args.by}.sql", fields, args.json, out_path)
+
+
 def run_query_command(args: argparse.Namespace) -> None:
     _check_args(args)
     session = util.require_dir(args.session, "capture directory")

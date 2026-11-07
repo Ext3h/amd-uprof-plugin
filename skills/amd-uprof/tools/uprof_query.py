@@ -250,10 +250,15 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
                                                        contexts, label))
 
 
-def _scope_filter_active(args: argparse.Namespace) -> bool:
-    """True when the report's population is narrower than the whole dump."""
+def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: str) -> bool:
+    """True when the report's population is narrower than the whole dump.
+
+    The time window is taken from the same values bound to SQL, so an empty --time-filter or a
+    defaulted sentinel end cannot make Python and the view disagree about whether it is filtered.
+    """
     return ((args.image is not None and args.image != "%")
-            or args.pid is not None or args.time_filter is not None)
+            or args.pid is not None
+            or time_start != "0" or time_end != _ALL_NS)
 
 
 def _dump_sanity(connection: object, has_dump: bool,
@@ -354,7 +359,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 uprof_db.set_variables(connection, symbols)
 
             sanity_message, tag_values = _dump_sanity(
-                connection, dump is not None, _scope_filter_active(args))
+                connection, dump is not None,
+                _scope_filter_active(args, time_start, time_end))
             tag_rows = connection.sql("SELECT getvariable('has_tag')").fetchall()
             has_tag = bool(tag_rows and tag_rows[0][0])
             tag_available = (sampler.ibs_dump_kind == "ibsop-event-dump" and has_tag

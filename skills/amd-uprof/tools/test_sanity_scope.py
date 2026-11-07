@@ -122,6 +122,19 @@ class SanityScopeTest(unittest.TestCase):
         self.assertIn("OK (attached", line)
         self.assertNotIn("scoped", line)
 
+    def test_start_only_time_filter_still_gets_a_scoped_verdict(self):
+        # The end is the default sentinel, so the window ends at the recorded span end.
+        line = self.sanity_line("--pid", "200", "--time-filter", "5:9223372036.854775807")
+
+        self.assertIn("scoped coverage (--pid 200 --time-filter 5.000:9223372036.855 s): OK",
+                      line)
+        self.assertIn("0.010 s before the scope window end at 10.000 s", line)
+
+    def test_empty_time_filter_is_not_a_scope_filter(self):
+        line = self.sanity_line("--time-filter", "")
+
+        self.assertNotIn("scoped", line)
+
 
 if __name__ == "__main__":
     unittest.main()

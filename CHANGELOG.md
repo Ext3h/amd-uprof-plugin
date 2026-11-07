@@ -13,8 +13,8 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   example). When `--image`/`--pid` or `--time-filter` narrows the report, `SANITY` now appends a
   `scoped coverage (<scope>)` verdict: the scope's last sample against the end of its window
   (the recorded span clipped to the profile time-filter window), `WARN` when the gap exceeds the
-  scope's own sampling cadence. The dump-wide verdict is labeled `dump-wide across all processes` and the scoped one
-  names its scope, so neither can be read as the other. Attached captures keep
+  scope's own sampling cadence. The dump-wide verdict is labeled `dump-wide across all processes`
+  and the scoped one names its scope, so neither can be read as the other. Attached captures keep
   `OK (attached; dump-wide)` and get no scoped verdict (a missing `systemWide` counts as
   attached); the empty-scope warning is unchanged.
 

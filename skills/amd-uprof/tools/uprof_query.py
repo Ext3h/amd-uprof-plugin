@@ -292,19 +292,19 @@ def _kernel_coverage_field(connection: object, sampler: uprof_session.Sampler,
                            captured_samples: int | None = None) -> list[tuple[str, str]]:
     """Whole-capture kernel coverage, checked only when the applied sampler requested OS mode.
 
-    v_capture_modules carries every module with its sample count, before any scope filter. The
-    kernel predicate is a basename match, so the paths are classified here rather than in SQL.
-    windowed suppresses the field: the resolved dump may have been produced by the session's
+    v_capture_modules carries every module with its sample count and whether it is a kernel
+    image, before any scope filter. windowed suppresses the field: the resolved dump may have
+    been produced by the session's
     recorded translate --time-filter, so it need not hold the whole capture. captured_samples is
     the capture total the ACHIEVED check already counted.
     """
     if not sampler.os_requested or windowed:
         return []
     rows = connection.sql(
-        "SELECT module_name, CAST(COALESCE(sum(samples), 0) AS BIGINT) "
+        "SELECT module_name, CAST(COALESCE(sum(samples), 0) AS BIGINT) AS samples, "
+        "max(kernel_image) AS kernel_image "
         "FROM v_capture_modules GROUP BY module_name").fetchall()
-    kernel_samples = sum(int(samples or 0) for name, samples in rows
-                         if uprof_session.is_kernel_image(str(name or "")))
+    kernel_samples = sum(int(samples or 0) for _name, samples, kernel in rows if kernel)
     warning = uprof_session.kernel_coverage_warning(sampler, kernel_samples, captured_samples)
     return [] if warning is None else [("KERNEL_COVERAGE", warning)]
 

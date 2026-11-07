@@ -12,10 +12,16 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import duckdb
+
 import uprof_collect
+import uprof_db
 import uprof_dump
 import uprof_query
 import uprof_session
+
+KERNEL_VA = 0xFFFFF800_00000000
+USER_VA = 0x00007FF8_00000000
 
 
 def pmc_meta(os_mode):
@@ -41,36 +47,153 @@ def ibs_meta(**fields):
     }
 
 
+EVENT_COLUMN = "event#0x100000000f100"
+
+
+def write_capture(root, *, dump_modules=None, modules=(), instances=None, series=(),
+                  translate_command=None):
+    """Write a minimal capture; return (cpu.db, session.uprof, IBS dump or None).
+
+    modules are (id, path), instances are (id, processId, moduleId, loadAddress) and series are
+    (moduleId, event_count) rows of UnifiedSampleSeries. An instances=None leaves the export
+    without ModuleInstance.
+    """
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    cpu_db = root / "cpu.db"
+    connection = duckdb.connect(str(cpu_db))
+    try:
+        connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
+        connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
+        connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)")
+        connection.execute(
+            "CREATE TABLE UnifiedSampleSeries (processId UINTEGER, threadId UINTEGER, "
+            "moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER, "
+            f'"{EVENT_COLUMN}" DOUBLE)')
+        if modules:
+            connection.executemany("INSERT INTO Module VALUES (?, ?)", list(modules))
+        if instances is not None:
+            connection.execute("CREATE TABLE ModuleInstance (id UINTEGER, processId UINTEGER, "
+                               "moduleId UINTEGER, loadAddress UBIGINT)")
+            if instances:
+                connection.executemany("INSERT INTO ModuleInstance VALUES (?, ?, ?, ?)",
+                                       list(instances))
+        if series:
+            connection.executemany(
+                "INSERT INTO UnifiedSampleSeries (processId, threadId, moduleId, functionId, "
+                f'moduleRVA, coreId, "{EVENT_COLUMN}") VALUES (1, 1, ?, NULL, 0, 0, ?)',
+                list(series))
+    finally:
+        connection.close()
+
+    meta = {"collection": {"events": {}, "target": {"systemWide": True}}, "auxiliary": {}}
+    if translate_command is not None:
+        meta["translateCommand"] = translate_command
+    meta_path = root / "session.uprof"
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    dump = None
+    if dump_modules is not None:
+        dump = root / "IbsOpDump.csv"
+        rows = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName"]
+        rows.extend(f"{index * 1000},0,{index},1,16,{module}"
+                    for index, module in enumerate(dump_modules, start=1))
+        dump.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    return cpu_db, meta_path, dump
+
+
+def kernel_field(capture, *, event_column="", sampler=None, windowed=False,
+                 captured_samples=None):
+    """Run the kernel-coverage check against a capture through the real views."""
+    cpu_db, meta_path, dump = capture
+    variables = {
+        "uprof_image": "%", "uprof_pid": "", "uprof_top": "20",
+        "uprof_time_start": "0", "uprof_time_end": "9223372036854775807",
+        "uprof_ibs_dump": str(dump) if dump is not None else "",
+        "uprof_event_column": event_column,
+        "uprof_session_meta": str(meta_path),
+        "uprof_tag_available": "false",
+        "uprof_symbols": "",
+        "uprof_aliases": "",
+    }
+    if sampler is None:
+        sampler = uprof_session.Sampler(os_requested=True, os_mode="opOs")
+    with uprof_db.open_query(cpu_db, [uprof_query.TOOLS_DIR / "views.sql"],
+                             variables) as connection:
+        return uprof_query._kernel_coverage_field(
+            connection, sampler, windowed, captured_samples)
+
+
 class KernelImageTest(unittest.TestCase):
-    """The predicate is basename-based; a path suffix is not enough."""
+    """The kernel predicate runs in DuckDB over the module catalog and the dump basenames."""
 
-    def test_windows_kernel_images_are_recognized(self):
-        for path in (
-            "c:/windows/system32/ntoskrnl.exe",
-            "c:/windows/system32/ntkrnlmp.exe",
-            "c:/windows/system32/ntkrnlpa.exe",
-            "c:/windows/system32/ntkrpamp.exe",
-            "c:/windows/system32/hal.dll",
-            "c:/windows/system32/drivers/ntfs.sys",
-            "C:\\Windows\\System32\\drivers\\amdkmpfd.sys",
-        ):
-            with self.subTest(path=path):
-                self.assertTrue(uprof_session.is_kernel_image(path))
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
 
-    def test_linux_kernel_modules_are_recognized(self):
-        self.assertTrue(uprof_session.is_kernel_image(
-            "/lib/modules/6.8.0/updates/amdgpu.ko"))
+    def capture(self, **fields):
+        return write_capture(tempfile.mkdtemp(dir=self.root), **fields)
 
-    def test_user_mode_images_are_not_kernel_images(self):
-        for path in (
-            "c:/windows/system32/ntdll.dll",
-            "c:/windows/system32/kernelbase.dll",
-            "c:/program files/mozilla firefox/marshal.dll",
-            "c:/program files/app/hal.dll.bak",
-            "c:/windows/system32/drivers.sys/ntfs",
-        ):
-            with self.subTest(path=path):
-                self.assertFalse(uprof_session.is_kernel_image(path))
+    def assert_covered(self, capture, **options):
+        self.assertEqual(kernel_field(capture, **options), [])
+
+    def assert_warned(self, capture, **options):
+        fields = kernel_field(capture, **options)
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0][0], "KERNEL_COVERAGE")
+        self.assertIn("elevat", fields[0][1].lower())
+
+    def test_kernel_dll_is_recognized_by_its_load_address(self):
+        self.assert_covered(self.capture(
+            modules=[(1, "c:/windows/system32/ci.dll"), (2, "c:/windows/system32/ntdll.dll")],
+            instances=[(1, 4, 1, KERNEL_VA), (2, 4, 2, USER_VA)],
+            dump_modules=["c:\\windows\\system32\\ci.dll",
+                          "c:\\windows\\system32\\ntdll.dll"]))
+
+    def test_load_address_matches_across_path_case_and_separators(self):
+        self.assert_covered(self.capture(
+            modules=[(1, "C:\\Windows\\System32\\CI.DLL")],
+            instances=[(1, 4, 1, KERNEL_VA)],
+            dump_modules=["c:/windows/system32/ci.dll"]))
+
+    def test_user_mode_module_with_a_low_load_address_warns(self):
+        self.assert_warned(self.capture(
+            modules=[(1, "c:/windows/system32/ntdll.dll")],
+            instances=[(1, 4, 1, USER_VA)],
+            dump_modules=["c:\\windows\\system32\\ntdll.dll"]))
+
+    def test_windows_kernel_executable_is_recognized_without_a_catalog(self):
+        self.assert_covered(self.capture(
+            dump_modules=["c:\\windows\\system32\\ntoskrnl.exe"]))
+
+    def test_kernel_driver_suffix_is_recognized_without_a_catalog(self):
+        self.assert_covered(self.capture(
+            dump_modules=["c:\\windows\\system32\\drivers\\ntfs.sys"]))
+        self.assert_covered(self.capture(
+            dump_modules=["/lib/modules/6.8.0/updates/amdgpu.ko"]))
+
+    def test_linux_core_images_are_recognized_without_a_catalog(self):
+        for image in ("vmlinux", "vmlinuz", "[kernel.kallsyms]"):
+            with self.subTest(image=image):
+                self.assert_covered(self.capture(
+                    dump_modules=[image, "c:\\windows\\system32\\ntdll.dll"]))
+
+    def test_marshal_dll_is_not_mistaken_for_hal_dll(self):
+        self.assert_warned(self.capture(
+            dump_modules=["c:/program files/mozilla firefox/marshal.dll"]))
+
+    def test_pmc_kernel_module_counts_as_coverage(self):
+        self.assert_covered(self.capture(
+            modules=[(1, "c:/windows/system32/ci.dll")],
+            instances=[(1, 4, 1, KERNEL_VA)],
+            series=[(1, 5)]), event_column=EVENT_COLUMN)
+
+    def test_pmc_user_module_warns(self):
+        self.assert_warned(self.capture(
+            modules=[(1, "c:/windows/system32/ntdll.dll")],
+            instances=[(1, 4, 1, USER_VA)],
+            series=[(1, 5)]), event_column=EVENT_COLUMN)
 
 
 class OsRequestParsingTest(unittest.TestCase):
@@ -169,65 +292,20 @@ class KernelCoverageWarningTest(unittest.TestCase):
             uprof_session.Sampler(os_requested=False), 12))
 
 
-class _Relation:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def fetchall(self):
-        return self._rows
-
-
-class _Connection:
-    """Stands in for the query connection; returns the capture's modules and sample counts."""
-
-    def __init__(self, rows):
-        self.rows = rows
-        self.queries = []
-
-    def sql(self, query):
-        self.queries.append(query)
-        return _Relation(self.rows)
-
-
-class KernelCoverageFieldTest(unittest.TestCase):
-    """End to end over the v_capture_modules rows the query would return."""
-
-    def fields(self, sampler, rows):
-        return uprof_query._kernel_coverage_field(_Connection(rows), sampler)
-
-    def test_os_request_with_only_user_samples_emits_the_field(self):
-        fields = self.fields(uprof_session.Sampler(os_requested=True), [
-            ("c:/windows/system32/ntdll.dll", 100),
-            ("c:/windows/system32/ntoskrnl.exe", 0),
-        ])
-        self.assertEqual(len(fields), 1)
-        self.assertEqual(fields[0][0], "KERNEL_COVERAGE")
-        self.assertIn("elevat", fields[0][1].lower())
-
-    def test_os_request_with_a_kernel_sample_emits_nothing(self):
-        self.assertEqual(self.fields(uprof_session.Sampler(os_requested=True), [
-            ("c:/windows/system32/ntdll.dll", 100),
-            ("c:/windows/system32/ntoskrnl.exe", 7),
-        ]), [])
+class KernelFieldGuardTest(unittest.TestCase):
+    """A request that cannot be missing OS samples must not scan the capture at all."""
 
     def test_user_only_request_does_not_query_or_warn(self):
-        connection = _Connection([("c:/windows/system32/ntdll.dll", 100)])
-        self.assertEqual(
-            uprof_query._kernel_coverage_field(
-                connection, uprof_session.Sampler(os_requested=False)), [])
-        self.assertEqual(connection.queries, [])
+        connection = mock.Mock()
+        self.assertEqual(uprof_query._kernel_coverage_field(
+            connection, uprof_session.Sampler(os_requested=False)), [])
+        connection.sql.assert_not_called()
 
-    def test_marshal_dll_is_not_mistaken_for_hal_dll(self):
-        fields = self.fields(uprof_session.Sampler(os_requested=True), [
-            ("c:/program files/mozilla firefox/marshal.dll", 100),
-        ])
-        self.assertEqual(len(fields), 1)
-        self.assertEqual(fields[0][0], "KERNEL_COVERAGE")
-
-    def test_linux_kernel_module_sample_counts_as_coverage(self):
-        self.assertEqual(self.fields(uprof_session.Sampler(os_requested=True), [
-            ("/lib/modules/6.8.0/updates/amdgpu.ko", 4),
-        ]), [])
+    def test_windowed_dump_does_not_query_or_warn(self):
+        connection = mock.Mock()
+        self.assertEqual(uprof_query._kernel_coverage_field(
+            connection, uprof_session.Sampler(os_requested=True), windowed=True), [])
+        connection.sql.assert_not_called()
 
 
 class CollectOsModeTest(unittest.TestCase):
@@ -308,13 +386,6 @@ class WindowedDumpTest(unittest.TestCase):
     def test_no_recorded_translate_filter_is_none(self):
         self.assertIsNone(uprof_dump.recorded_time_filter(
             self.session("AMDuProfCLI.exe translate -i sess --ascii ibsop-event-dump")))
-
-    def test_windowed_dump_suppresses_the_field_without_a_query(self):
-        connection = _Connection([("c:/windows/system32/ntdll.dll", 100)])
-        fields = uprof_query._kernel_coverage_field(
-            connection, uprof_session.Sampler(os_requested=True), windowed=True)
-        self.assertEqual(fields, [])
-        self.assertEqual(connection.queries, [])
 
 
 if __name__ == "__main__":

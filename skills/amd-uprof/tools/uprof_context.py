@@ -41,7 +41,7 @@ _DATE_STAMP = re.compile(r"^\s*TimeDateStamp:.*\((0x[0-9A-Fa-f]+)\)\s*$")
 _SECTION_NAME = re.compile(r"^\s*Name:\s*(\S+)(?:\s+\(([0-9A-Fa-f ]+)\))?\s*$")
 _SECTION_VIRTUAL_SIZE = re.compile(r"^\s*VirtualSize:\s*(0x[0-9A-Fa-f]+)\s*$")
 _SECTION_VIRTUAL_ADDRESS = re.compile(r"^\s*VirtualAddress:\s*(0x[0-9A-Fa-f]+)\s*$")
-_SECTION_RAW_SIZE = re.compile(r"^\s*RawDataSize:\s*(0x[0-9A-Fa-f]+)\s*$")
+_SECTION_RAW_SIZE = re.compile(r"^\s*RawDataSize:\s*(\d+)\s*$")
 _OBJDUMP_LINE = re.compile(r"^\s*([0-9A-Fa-f]+):\s+(.*)$")
 _RAW_BYTES = re.compile(r"^(?:[0-9A-Fa-f]{2}\s+)+")
 _IMPORT_BLOCK = re.compile(r"^\s*Import\s*\{\s*$")
@@ -208,7 +208,7 @@ def parse_sections(text: str) -> list[PeSection]:
         elif match := _SECTION_VIRTUAL_ADDRESS.match(line):
             current["start"] = int(match.group(1), 16)
         elif match := _SECTION_RAW_SIZE.match(line):
-            current["raw_size"] = int(match.group(1), 16)
+            current["raw_size"] = int(match.group(1), 10)
         elif "IMAGE_SCN_CNT_CODE" in line or "IMAGE_SCN_MEM_EXECUTE" in line:
             current["code"] = True
     return sections

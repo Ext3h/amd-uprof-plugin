@@ -31,7 +31,7 @@ Sections [
     Name: .text (2E 74 65 78 74 00 00 00)
     VirtualSize: 0x26
     VirtualAddress: 0x1000
-    RawDataSize: 0x200
+    RawDataSize: 512
     Characteristics [ (0x60000020)
       IMAGE_SCN_CNT_CODE (0x20)
       IMAGE_SCN_MEM_EXECUTE (0x20000000)
@@ -43,7 +43,7 @@ Sections [
     Name: .rdata (2E 72 64 61 74 61 00 00 00)
     VirtualSize: 0x1000
     VirtualAddress: 0x3000
-    RawDataSize: 0x200
+    RawDataSize: 512
     Characteristics [ (0x40000040)
       IMAGE_SCN_CNT_INITIALIZED_DATA (0x40)
       IMAGE_SCN_MEM_READ (0x40000000)
@@ -76,6 +76,13 @@ class SectionsTest(unittest.TestCase):
         code = uprof_context.find_code_section(sections, 0x1010)
         self.assertEqual((code.start, code.end), (0x1000, 0x1026))
         self.assertIsNone(uprof_context.find_code_section(sections, 0x3010))
+
+    def test_a_section_without_a_virtual_size_uses_the_decimal_raw_size(self):
+        text = SECTIONS.replace("VirtualSize: 0x26", "VirtualSize: 0x0")
+
+        code = uprof_context.find_code_section(uprof_context.parse_sections(text), 0x1010)
+
+        self.assertEqual((code.start, code.end), (0x1000, 0x1200))
 
 
 class AnchorSelectionTest(unittest.TestCase):

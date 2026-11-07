@@ -113,6 +113,20 @@ class OsRequestParsingTest(unittest.TestCase):
         self.assertFalse(sampler.os_requested)
         self.assertIsNone(sampler.os_mode)
 
+    def test_ibs_op_and_fetch_take_the_os_bit_from_either_sampler(self):
+        sampler = self.derive(ibs_meta(op=True, fetch=True, opOs=False, fetchOs=True))
+        self.assertTrue(sampler.os_requested)
+        self.assertEqual(sampler.os_mode, "fetchOs")
+
+    def test_ibs_op_and_fetch_name_both_os_bits(self):
+        sampler = self.derive(ibs_meta(op=True, fetch=True, opOs=True, fetchOs=True))
+        self.assertEqual(sampler.os_mode, "opOs, fetchOs")
+
+    def test_os_bit_of_a_disabled_sampler_is_ignored(self):
+        sampler = self.derive(ibs_meta(op=True, fetch=False, opOs=False, fetchOs=True))
+        self.assertFalse(sampler.os_requested)
+        self.assertIsNone(sampler.os_mode)
+
 
 class KernelCoverageWarningTest(unittest.TestCase):
     """The warning exists only for an OS-mode request with no kernel-image sample."""

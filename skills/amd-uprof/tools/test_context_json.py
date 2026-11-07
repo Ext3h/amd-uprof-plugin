@@ -33,7 +33,7 @@ Sections [
     Name: .text (2E 74 65 78 74 00 00 00)
     VirtualSize: 0x1000
     VirtualAddress: 0x1000
-    RawDataSize: 0x200
+    RawDataSize: 512
     Characteristics [ (0x60000020)
       IMAGE_SCN_CNT_CODE (0x20)
       IMAGE_SCN_MEM_EXECUTE (0x20000000)

@@ -102,11 +102,9 @@ def write_capture(root, *, dump_modules=None, modules=(), instances=None, series
     return cpu_db, meta_path, dump
 
 
-def run_capture_scan(capture, *, event_column=""):
-    """Run the whole-capture scan against a capture through the real views.
-
-    Returns (samples, contexts, kernel_covered), the same tuple the ACHIEVED check consumes.
-    """
+@contextlib.contextmanager
+def capture_connection(capture, *, event_column=""):
+    """Open a capture's cpu.db with views.sql bound, as the profile command does."""
     cpu_db, meta_path, dump = capture
     variables = {
         "uprof_image": "%", "uprof_pid": "", "uprof_top": "20",
@@ -120,7 +118,23 @@ def run_capture_scan(capture, *, event_column=""):
     }
     with uprof_db.open_query(cpu_db, [uprof_query.TOOLS_DIR / "views.sql"],
                              variables) as connection:
+        yield connection
+
+
+def run_capture_scan(capture, *, event_column=""):
+    """Run the whole-capture scan against a capture through the real views.
+
+    Returns (samples, contexts, kernel_covered), the same tuple the ACHIEVED check consumes.
+    """
+    with capture_connection(capture, event_column=event_column) as connection:
         return uprof_query._capture_scan(connection, True)
+
+
+def capture_rows(capture, sql, *, event_column=""):
+    """The columns and rows of one query over a capture's views."""
+    with capture_connection(capture, event_column=event_column) as connection:
+        relation = connection.sql(sql)
+        return relation.columns, relation.fetchall()
 
 
 class KernelImageTest(unittest.TestCase):
@@ -251,6 +265,34 @@ class OsRequestParsingTest(unittest.TestCase):
         sampler = self.derive(ibs_meta(op=True, fetch=False, opOs=False, fetchOs=True))
         self.assertFalse(sampler.os_requested)
         self.assertIsNone(sampler.os_mode)
+
+
+class CaptureModulesViewTest(unittest.TestCase):
+    """The view's columns and row shape stay stable for both capture kinds."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def capture(self, **fields):
+        return write_capture(tempfile.mkdtemp(dir=self.root), **fields)
+
+    def test_dump_capture_yields_one_row_per_sample(self):
+        columns, rows = capture_rows(
+            self.capture(dump_modules=["c:/app/a.dll", "c:/app/b.dll"]),
+            "SELECT * FROM v_capture_modules")
+        self.assertEqual(columns, ["module_name", "context", "samples", "kernel_image"])
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row[2] for row in rows], [1, 1])
+
+    def test_pmc_capture_yields_the_event_count_per_row(self):
+        columns, rows = capture_rows(
+            self.capture(modules=[(1, "c:/app/a.dll")], series=[(1, 5)]),
+            "SELECT * FROM v_capture_modules", event_column=EVENT_COLUMN)
+        self.assertEqual(columns, ["module_name", "context", "samples", "kernel_image"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][2], 5)
 
 
 class KernelCoverageWarningTest(unittest.TestCase):

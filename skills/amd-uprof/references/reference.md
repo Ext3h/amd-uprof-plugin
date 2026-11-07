@@ -203,13 +203,14 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `has_tag` | the dump header carries `IbsTagToRetCtr`; `v_dump_sanity.tag_values` counts non-null values |
 | `top_n`, `time_start`, `time_end` | typed row cap and window |
 
-The 12 views:
+The 13 views:
 
 | View | Role |
 |---|---|
 | `v_dump` | typed dump rows (`delta_tick`, `cpu`, `pid`, `rva`, `module_name`, `tag_cycles`); tagged/untagged branch; an empty typed relation for PMC |
 | `v_dump_weighted` | applies `[time_start, time_end)` then adds `weight = delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick)` |
-| `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs, error; attached captures report `OK (attached; dump-wide)`; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure, and `end_ns`/`expected_ns`/`max_cpu_samples`/`system_wide` for `v_scope_sanity` |
+| `v_capture_span` | the span recorded in `session.uprof`: the translate `--time-filter` window when recorded, else `collection.schedule.elapsed`, else `profileDuration`; `start_ns`/`end_ns`/`expected_ns`/`span_label`/`system_wide`, shared by the dump-wide and scoped sanity views |
+| `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs, error; attached captures report `OK (attached; dump-wide)`; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure |
 | `v_symbols` | combined symbolizer artifact: `module_name, rva, function, function_short, containing_function, file, line` |
 | `v_public_starts` | public-symbol fold cache: `module_name, rva, name_count, names` |
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |

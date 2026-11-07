@@ -215,6 +215,24 @@ class SanityScopeTest(unittest.TestCase):
 
         self.assertIsNone(message)
 
+    def test_scoped_verdict_does_not_rescan_the_dump(self):
+        variables = {
+            "uprof_image": "%", "uprof_pid": "", "uprof_top": "20",
+            "uprof_time_start": "0", "uprof_time_end": "9223372036854775807",
+            "uprof_ibs_dump": str(self.session / "IbsOpDump.csv"),
+            "uprof_event_column": "",
+            "uprof_session_meta": str(self.session / "session.uprof"),
+            "uprof_tag_available": "", "uprof_symbols": "", "uprof_aliases": "",
+        }
+
+        with uprof_db.open_query(self.session / "cpu.db", [TOOLS_DIR / "views.sql"],
+                                 variables) as connected:
+            plan = connected.sql("EXPLAIN SELECT message FROM v_scope_sanity").fetchall()[0][1]
+
+        # One read of the dump, through v_scoped. Reading v_dump_sanity for the span instead would
+        # add its two full dump scans (weighted_all and per_cpu) for every filtered profile.
+        self.assertEqual(plan.count("READ_CSV"), 1, plan)
+
 
 class ScopedQueryTest(unittest.TestCase):
     """The scoped view is only queried when the view can answer for this capture."""

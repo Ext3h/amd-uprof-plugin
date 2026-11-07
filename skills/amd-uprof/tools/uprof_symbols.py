@@ -119,38 +119,16 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
     return candidates
 
 
-def find_pdb(exe: str, symbolizer: Path | None = None) -> Path | None:
-    """The PDB whose GUID/age matches the image's debug directory, or None.
-
-    A symbolizer failure or a module without a debug directory yields None; the caller then
-    symbolizes without a PDB rather than failing the run.
-    """
-    if os.name != "nt":
-        return None
-    try:
-        symbolizer_path = symbolizer or require_symbolizer()
-    except UprofError:
-        return None
-    readobj = find_sibling(symbolizer_path, "llvm-readobj")
-    pdbutil = find_sibling(symbolizer_path, "llvm-pdbutil")
-    try:
-        pdb_name, module_guid, module_age = _readobj_info(exe, readobj)
-    except (UprofError, OSError):
-        return None
-    if module_guid is None:
-        return None
-    exe_path = Path(exe)
-    if not pdbutil:
-        beside = exe_path.parent / pdb_name
-        return beside if beside.is_file() else None
+def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str | None,
+                module_age: int | None) -> Path | None:
+    """The first candidate whose PDB matches the image, skipping unreadable or failed probes."""
     for path in _candidate_pdbs(exe_path, pdb_name, module_guid, module_age):
         try:
-            matched = path.is_file() and _pdb_matches(pdbutil, path, module_guid, module_age)
+            if path.is_file() and _pdb_matches(pdbutil, path, module_guid, module_age):
+                return path
         except (UprofError, OSError):
             # A probe timeout or an unreadable cache entry rejects this candidate only.
             continue
-        if matched:
-            return path
     return None
 
 
@@ -385,13 +363,15 @@ def _publics(pdb: Path, out_file: Path, symbolizer: Path, stream: TextIO) -> Pat
 
 def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                      stream: TextIO = sys.stdout
-                     ) -> tuple[Path | None, Path | None, tuple[str, str | None] | None]:
-    """Symbolize the RVAs into out_dir; return (parquet, publics, guid_failure).
+                     ) -> tuple[Path | None, Path | None, tuple[str, str | None] | None,
+                                Path | None]:
+    """Symbolize the RVAs into out_dir; return (parquet, publics, guid_failure, pdb).
 
     The PDB is found from the module's debug directory: beside the module or in a
-    _NT_SYMBOL_PATH cache. publics is the RVA -> public-name cache when a PDB was used.
-    guid_failure is None or (reason category, detail) when the image GUID was unavailable, so
-    no PDB was accepted; the caller reports these failures once per run.
+    _NT_SYMBOL_PATH cache. publics is the RVA -> public-name cache when a PDB was used; pdb is
+    the accepted PDB (None when there is none). guid_failure is None or (reason category, detail)
+    when the image GUID was unavailable, so no PDB was accepted; the caller reports these
+    failures once per run.
     """
     exe_input = exe  # llvm-symbolizer records this spelling as ModuleName
     exe_path = require_file(exe, "module")
@@ -425,12 +405,9 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             print("PDB=none", file=stream)
             parquet = _write_parquet(jsonl_file, parquet_file)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
-            return parquet, None, guid_failure
+            return parquet, None, guid_failure, None
         if pdbutil:
-            candidates = [path for path in _candidate_pdbs(exe_path, pdb_name, module_guid, module_age)
-                          if path.is_file()]
-            pdb = next((path for path in candidates
-                        if _pdb_matches(pdbutil, path, module_guid, module_age)), None)
+            pdb = _choose_pdb(pdbutil, exe_path, pdb_name, module_guid, module_age)
         else:
             beside = exe_path.parent / pdb_name
             pdb = beside if beside.is_file() else None
@@ -444,7 +421,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             print("PDB=none", file=stream)
             parquet = _write_parquet(jsonl_file, parquet_file)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
-            return parquet, None, None
+            return parquet, None, None, None
         print("PDB_MATCH=yes", file=stream)
 
     _run_symbolizer(symbolizer_path, exe_input, pdb, rva_path, jsonl_file)
@@ -463,7 +440,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
         publics = None
         print("FOLDS: skipped (DWARF symbols; PDB public-symbol fold detection is "
               "Windows-only, unverified)", file=stream)
-    return parquet, publics, None
+    return parquet, publics, None, pdb
 
 
 # ------------------------------------------------------------- whole-scope symbolization
@@ -537,19 +514,35 @@ def _warn_guid_failures(failures: list[tuple[str, str | None]], stream: TextIO) 
           f"become '<no symbol>'; {'; '.join(remedies)}", file=stream)
 
 
+def _write_pdb_manifest(inputs: list[tuple[str, str]], out_dir: Path) -> Path:
+    """Write the module -> PDB choice as CSV so the instruction context reuses it."""
+    path = out_dir / "symbols.pdbs.csv"
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle, lineterminator="\n")
+            writer.writerow(["module_name", "pdb"])
+            writer.writerows(inputs)
+    except OSError as exc:
+        raise UprofError(f"cannot write the PDB manifest {path}: {exc}; check free space and "
+                         "permissions on the artifact directory") from exc
+    return path
+
+
 def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | Path,
-                      stream: TextIO = sys.stdout) -> tuple[Path | None, Path | None]:
+                      stream: TextIO = sys.stdout) -> tuple[Path | None, Path | None,
+                                                             Path | None]:
     """Symbolize every module in scope and combine the artifacts.
 
     modules holds (module_name, binary_path, [rva hex text]) groups. Returns
-    (symbols.parquet, symbols.publics.csv); the parquet is None when no module could be symbolized,
-    in which case the SQL reports every address as '<no symbol>'.
+    (symbols.parquet, symbols.publics.csv, symbols.pdbs.csv); the parquet is None when no module
+    could be symbolized, in which case the SQL reports every address as '<no symbol>'.
     """
     out_path = absolute(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     require_symbolizer()
     parquet_inputs: list[tuple[str, Path]] = []
     public_inputs: list[tuple[str, Path]] = []
+    pdb_inputs: list[tuple[str, str]] = []
     guid_failures: list[tuple[str, str | None]] = []
     for index, (module_name, module_path, rvas) in enumerate(modules):
         if not module_path:
@@ -571,7 +564,7 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
                              "check free space and permissions on the artifact directory") from exc
         print(f"MODULE: {module_name}: {len(rvas)} addresses in {module_path}", file=stream)
         try:
-            parquet, publics, guid_failure = symbolize_module(
+            parquet, publics, guid_failure, pdb = symbolize_module(
                 module_path, rva_file, module_dir, stream=stream)
         except UprofError as exc:
             print(f"WARNING: symbolization failed for {module_path}: {exc}; its addresses "
@@ -584,8 +577,12 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
         parquet_inputs.append((module_name, parquet))
         if publics:
             public_inputs.append((module_name, publics))
+        if pdb:
+            pdb_inputs.append((module_name, str(pdb)))
     if guid_failures:
         _warn_guid_failures(guid_failures, stream)
     if not parquet_inputs:
-        return None, None
-    return _combine_artifacts(parquet_inputs, public_inputs, out_path)
+        return None, None, None
+    symbols_file, publics_file = _combine_artifacts(parquet_inputs, public_inputs, out_path)
+    pdbs_file = _write_pdb_manifest(pdb_inputs, out_path) if pdb_inputs else None
+    return symbols_file, publics_file, pdbs_file

@@ -74,11 +74,12 @@ ROW = ("fixture.exe", "0x101B", "main", "src\\main.cpp", 12, "unique", 3, 5.0, 2
 
 
 class FakeConnection:
-    def __init__(self, module_path, checksum=0x1234ABCD, total=60, publics=()):
+    def __init__(self, module_path, checksum=0x1234ABCD, total=60, publics=(), pdb=None):
         self.module_path = module_path
         self.checksum = checksum
         self.total = total
         self.publics = publics
+        self.pdb = pdb
         self.queries = []
 
     def execute(self, sql, parameters=None):
@@ -90,6 +91,8 @@ class FakeConnection:
             return FakeResult([(self.module_path, self.checksum)])
         if "FROM v_public_starts" in text:
             return FakeResult(list(self.publics))
+        if "FROM v_pdbs" in text:
+            return FakeResult([(self.pdb,)])
         if "FROM v_scope_totals" in text:
             return FakeResult([(self.total,)])
         if "FROM v_scoped" in text:
@@ -293,9 +296,8 @@ class InstructionContextsTest(unittest.TestCase):
                                        return_value="llvm-objdump.exe"):
                     with mock.patch.object(uprof_context, "find_symbolizer",
                                            return_value="llvm-symbolizer.exe"):
-                        with mock.patch.object(uprof_context, "find_pdb", return_value=None):
-                            contexts = uprof_context.instruction_contexts(
-                                connection, COLUMNS, [ROW])
+                        contexts = uprof_context.instruction_contexts(
+                            connection, COLUMNS, [ROW])
 
         context = contexts[0]
         self.assertEqual(context["anchor"]["kind"], "export")
@@ -312,9 +314,8 @@ class InstructionContextsTest(unittest.TestCase):
                                        return_value="llvm-objdump.exe"):
                     with mock.patch.object(uprof_context, "find_symbolizer",
                                            return_value="llvm-symbolizer.exe"):
-                        with mock.patch.object(uprof_context, "find_pdb", return_value=None):
-                            return uprof_context.instruction_contexts(
-                                connection, COLUMNS, [ROW] if rows is None else rows)
+                        return uprof_context.instruction_contexts(
+                            connection, COLUMNS, [ROW] if rows is None else rows)
 
     def two_rows(self):
         other = ("fixture.exe", "0x1015", "main", "src\\main.cpp", 12, "unique",
@@ -351,6 +352,21 @@ class InstructionContextsTest(unittest.TestCase):
         symbolizer = [command for command in calls if command[0] == "llvm-symbolizer.exe"]
         self.assertEqual(len(scoped), 1)
         self.assertEqual(len(symbolizer), 1)
+
+    def test_the_context_reuses_the_pdb_symbolization_chose(self):
+        connection = FakeConnection(module_path=__file__, pdb="C:/cache/fixture.pdb")
+        with mock.patch.object(uprof_context, "run", side_effect=fake_run):
+            with mock.patch.object(uprof_context, "find_readobj",
+                                   return_value="llvm-readobj.exe"):
+                with mock.patch.object(uprof_context, "find_objdump",
+                                       return_value="llvm-objdump.exe"):
+                    with mock.patch.object(uprof_context, "find_symbolizer",
+                                           return_value="llvm-symbolizer.exe"):
+                        with mock.patch.object(uprof_context, "symbolize_rvas",
+                                               return_value={}) as symbolized:
+                            uprof_context.instruction_contexts(connection, COLUMNS, [ROW])
+
+        self.assertEqual(symbolized.call_args.kwargs["pdb"], "C:/cache/fixture.pdb")
 
     def test_a_tool_timeout_is_a_machine_readable_omission(self):
         def timeout(command, **kwargs):

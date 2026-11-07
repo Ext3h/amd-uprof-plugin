@@ -180,7 +180,8 @@ WHERE delta_tick >= getvariable('time_start') AND delta_tick < getvariable('time
 
 -- Provenance check for the whole dump, printed in the header of every dump-backed run. The weighted
 -- CTE is unfiltered on purpose: the span check compares the dump with session.uprof, independent
--- of the query's --time-filter. The empty-dump and tolerance errors surface when the view is read.
+-- of the query's --time-filter. The empty-dump and inconsistency errors surface when the view is
+-- read.
 CREATE OR REPLACE TEMP VIEW v_dump_sanity AS
 WITH weighted_all AS (
   SELECT *, delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick) AS weight
@@ -209,32 +210,48 @@ WITH weighted_all AS (
                       NULL::VARCHAR AS duration_s, NULL::VARCHAR AS system_wide$meta$ END)
 ), expected AS (
   SELECT translateCommand, system_wide,
+         CASE WHEN translateCommand LIKE '%--time-filter%'
+              THEN TRY_CAST(regexp_extract(
+                     translateCommand, '--time-filter[ =]+([0-9.]+):([0-9.]+)', 1) AS DOUBLE) * 1e9
+              END AS window_start_ns,
+         CASE WHEN translateCommand LIKE '%--time-filter%'
+              THEN TRY_CAST(regexp_extract(
+                     translateCommand, '--time-filter[ =]+([0-9.]+):([0-9.]+)', 2) AS DOUBLE) * 1e9
+              END AS window_end_ns,
          CASE
-           WHEN translateCommand LIKE '%--time-filter%' THEN
-             greatest(0.0,
-                      (TRY_CAST(regexp_extract(translateCommand, '--time-filter[ =]+([0-9.]+):([0-9.]+)', 2) AS DOUBLE)
-                       - TRY_CAST(regexp_extract(translateCommand, '--time-filter[ =]+([0-9.]+):([0-9.]+)', 1) AS DOUBLE)) * 1e9)
+           WHEN translateCommand LIKE '%--time-filter%' THEN NULL
            WHEN TRY_CAST(elapsed_ms AS BIGINT) > 0 THEN TRY_CAST(elapsed_ms AS BIGINT) * 1e6
            WHEN TRY_CAST(duration_s AS BIGINT) > 0 THEN TRY_CAST(duration_s AS BIGINT) * 1e9
-           ELSE NULL END AS expected_ns,
+           ELSE NULL END AS elapsed_ns,
          CASE WHEN translateCommand LIKE '%--time-filter%' THEN 'window' ELSE 'elapsed' END AS span_label
   FROM meta
+), recorded AS (
+  -- A recorded translate window keeps DeltaTick start-relative, so its samples lie in
+  -- [window_start_ns, window_end_ns), not in [0, width).
+  SELECT translateCommand, system_wide, span_label,
+         COALESCE(window_start_ns, 0.0) AS start_ns,
+         COALESCE(window_end_ns, elapsed_ns) AS end_ns,
+         COALESCE(window_end_ns - window_start_ns, elapsed_ns) AS expected_ns
+  FROM expected
 ), boundary AS (
-  SELECT sum(p.first_ns) AS leading_ns,
-         sum(b.expected_ns - p.last_ns) AS trailing_ns,
+  SELECT sum(p.first_ns - b.start_ns) AS leading_ns,
+         sum(b.end_ns - p.last_ns) AS trailing_ns,
+         min(p.first_ns) AS first_sample_ns,
          max(p.last_ns) AS max_last_ns,
          max(p.n) AS max_cpu_samples,
-         count(*) FILTER (WHERE p.last_ns > b.expected_ns) AS beyond_cpus,
-         arg_max(p.cpu, p.first_ns - p.last_ns) AS worst_cpu
-  FROM per_cpu AS p CROSS JOIN expected AS b
+         count(*) FILTER (WHERE p.first_ns < b.start_ns OR p.last_ns > b.end_ns) AS beyond_cpus,
+         arg_max(p.cpu, b.start_ns + b.end_ns - p.last_ns + p.first_ns) AS worst_cpu
+  FROM per_cpu AS p CROSS JOIN recorded AS b
 ), measured AS (
   SELECT totals.dump_samples, totals.dump_cpus, totals.excluded_first, totals.total_weight,
          totals.latest_tick, totals.tag_values,
-         expected.expected_ns, expected.span_label, expected.system_wide,
-         expected.expected_ns * totals.dump_cpus AS expected_core_ns,
-         boundary.leading_ns, boundary.trailing_ns, boundary.max_last_ns,
-         boundary.max_cpu_samples, boundary.beyond_cpus, boundary.worst_cpu
-  FROM totals, expected, boundary
+         recorded.expected_ns, recorded.span_label, recorded.system_wide,
+         recorded.start_ns, recorded.end_ns,
+         recorded.expected_ns * totals.dump_cpus AS expected_core_ns,
+         boundary.leading_ns, boundary.trailing_ns, boundary.first_sample_ns,
+         boundary.max_last_ns, boundary.max_cpu_samples, boundary.beyond_cpus,
+         boundary.worst_cpu
+  FROM totals, recorded, boundary
 )
 SELECT CASE
   WHEN dump_samples = 0 THEN
@@ -243,11 +260,15 @@ SELECT CASE
     'dump ' || getvariable('uprof_ibs_dump') || ': ' || CAST(dump_samples AS VARCHAR) ||
     ' samples, ' || CAST(excluded_first AS VARCHAR) ||
     ' first-per-CPU samples excluded; WARN: session.uprof has no usable duration; total weight was not checked against the capture span'
-  WHEN total_weight > expected_core_ns OR beyond_cpus > 0 THEN
-    error(printf('dump %s disagrees with session.uprof: %.3f s of core time over %d CPUs exceeds %s %.3f s x %d CPUs = %.3f s implied (%d CPU(s) sample beyond the capture span); delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
+  WHEN total_weight > expected_core_ns THEN
+    error(printf('dump %s disagrees with session.uprof: %.3f s of core time over %d CPUs exceeds %s %.3f s x %d CPUs = %.3f s implied; delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
                  getvariable('uprof_ibs_dump'), total_weight / 1e9, dump_cpus,
-                 span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9,
-                 beyond_cpus))
+                 span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9))
+  WHEN beyond_cpus > 0 THEN
+    error(printf('dump %s disagrees with session.uprof: %d CPU(s) hold samples outside the recorded %s [%.3f, %.3f) s (sample DeltaTick range %.3f..%.3f s); delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
+                 getvariable('uprof_ibs_dump'), beyond_cpus,
+                 span_label, start_ns / 1e9, end_ns / 1e9,
+                 first_sample_ns / 1e9, max_last_ns / 1e9))
   WHEN system_wide = 'false' THEN
     printf('dump %s: %d samples, %d first-per-CPU samples excluded; OK (attached): coverage is where the attached threads ran -- %.3f s of core time over %d CPUs against an upper bound of %s %.3f s x %d CPUs = %.3f s; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
@@ -255,10 +276,10 @@ SELECT CASE
            span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9,
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
            CAST(worst_cpu AS VARCHAR))
-  WHEN (expected_ns - max_last_ns) > (expected_ns / greatest(max_cpu_samples, 1)) THEN
+  WHEN (end_ns - max_last_ns) > (expected_ns / greatest(max_cpu_samples, 1)) THEN
     printf('dump %s: %d samples, %d first-per-CPU samples excluded; WARN: the capture window ends %.3f s before the recorded span, longer than one sampling cadence, so late time is uncovered; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
-           (expected_ns - max_last_ns) / 1e9,
+           (end_ns - max_last_ns) / 1e9,
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
            CAST(worst_cpu AS VARCHAR))
   ELSE

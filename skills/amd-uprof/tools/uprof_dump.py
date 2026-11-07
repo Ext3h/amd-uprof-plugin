@@ -70,7 +70,12 @@ def newest_raw_prd(session_dir: Path | str) -> float | None:
     return max(times) if times else None
 
 
-def _time_filter(session_dir: Path | str) -> str | None:
+def recorded_time_filter(session_dir: Path | str) -> str | None:
+    """The T1:T2 window of the session's recorded translate --time-filter, or None.
+
+    A resolved dump may have been produced by that translate, so it may hold only the window's
+    samples rather than the whole capture.
+    """
     try:
         meta = json.loads(read_text(Path(session_dir) / "session.uprof"))
     except (UprofError, json.JSONDecodeError):
@@ -167,7 +172,7 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
     if path.is_file():
         return DumpInfo(absolute(path), "beside", reason="found beside the session")
 
-    time_filter = _time_filter(session_dir)
+    time_filter = recorded_time_filter(session_dir)
     cache = cache_dir(session_dir)
     cached_dump = cache / dump_name
     cache_meta = cache / "cache.json"

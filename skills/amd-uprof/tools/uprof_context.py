@@ -19,7 +19,7 @@ from typing import Final
 
 from uprof_native import find_sibling, find_symbolizer, run
 from uprof_symbols import find_pdb
-from uprof_util import tail_lines
+from uprof_util import UprofError, tail_lines
 
 ANCHOR_DISTANCE_CAP: Final = 1 << 20
 WINDOW_BEFORE: Final = 32
@@ -783,5 +783,8 @@ def instruction_contexts(connection: object, columns: Sequence[str],
                 contexts.append(builder.context(str(module), int(str(rva_text), 0)))
             except ContextOmission as exc:
                 contexts.append(exc.as_json())
+            except UprofError as exc:
+                # A tool timeout or a failing scoped query loses one optional block, not the run.
+                contexts.append(ContextOmission("context_failed", str(exc)).as_json())
     return contexts
 

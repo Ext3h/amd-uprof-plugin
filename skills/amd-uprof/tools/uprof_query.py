@@ -282,6 +282,24 @@ def _dump_sanity(connection: object, has_dump: bool, scope_filtered: bool,
     return message, tag_values
 
 
+def _kernel_coverage_field(connection: object,
+                           sampler: uprof_session.Sampler) -> list[tuple[str, str]]:
+    """Whole-capture kernel coverage, checked only when the applied sampler requested OS mode.
+
+    v_capture_modules carries every module with its sample count, before any scope filter. The
+    kernel predicate is a basename match, so the paths are classified here rather than in SQL.
+    """
+    if not sampler.os_requested:
+        return []
+    rows = connection.sql(
+        "SELECT module_name, CAST(COALESCE(sum(samples), 0) AS BIGINT) "
+        "FROM v_capture_modules GROUP BY module_name").fetchall()
+    kernel_samples = sum(int(samples or 0) for name, samples in rows
+                         if uprof_session.is_kernel_image(str(name or "")))
+    warning = uprof_session.kernel_coverage_warning(sampler, kernel_samples)
+    return [] if warning is None else [("KERNEL_COVERAGE", warning)]
+
+
 def _scope_warning(connection: object) -> list[tuple[str, str]]:
     fields: list[tuple[str, str]] = []
     empty = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
@@ -378,6 +396,7 @@ def run_query_command(args: argparse.Namespace) -> None:
             achieved = _achieved_field(connection, dump is not None, args, sampler, dump)
             if achieved:
                 fields.append(achieved)
+            fields.extend(_kernel_coverage_field(connection, sampler))
             fields.extend(_scope_warning(connection))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(connection)

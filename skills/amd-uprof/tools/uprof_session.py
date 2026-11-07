@@ -11,13 +11,19 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from uprof_util import UprofError
 
 PMC_EVENT = "event#0x3000076"
 IBS_OP_EVENT = "event#0x100000000f100"
 IBS_FETCH_EVENT = "event#0x100000000f000"
+
+# Kernel images by basename. Drivers end in .sys on Windows and .ko on Linux; the named
+# executables are the Windows kernel and HAL, whose names carry no such suffix.
+KERNEL_IMAGE_BASENAMES: Final = frozenset({
+    "ntoskrnl.exe", "ntkrnlmp.exe", "ntkrnlpa.exe", "ntkrpamp.exe", "hal.dll"})
+KERNEL_IMAGE_SUFFIXES: Final = (".sys", ".ko")
 
 
 @dataclass
@@ -27,6 +33,8 @@ class Sampler:
     ibs_dump_kind is a DUMP_FILENAMES key when an IBS ASCII dump exists; metric is the METRIC
     line printed before query results. pmc marks a PMC cycle capture, whose samples come from
     cpu.db rather than a dump; event_column names its sample column in UnifiedSampleSeries.
+    os_requested is the applied event's OS-mode bit; an unelevated capture that requests it has no
+    kernel-image samples, which kernel_coverage_warning checks.
     """
 
     ibs_dump_kind: str | None = None
@@ -35,6 +43,7 @@ class Sampler:
     event_column: str | None = None
     interval: int | None = None
     interval_units: str | None = None  # 'cycles' (time-convertible), 'ops' or 'fetch' (not)
+    os_requested: bool = False
 
 
 @dataclass
@@ -121,16 +130,19 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
                           "-- sample shares: instruction share (op counts) -- not time; "
                           "cycle attribution: per-op latency, clipped at 131070")
             return Sampler(ibs_dump_kind="ibsop-event-dump", metric=metric, interval=interval,
-                           interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops")
+                           interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops",
+                           os_requested=bool(ibs.get("opOs")))
         if ibs and ibs.get("fetch"):
             event = columns.get("IBS_FETCH", IBS_FETCH_EVENT)
             metric = (f"METRIC: IBS fetch (IBS_FETCH {event}, interval {ibs.get('fetchInterval')}) "
                       "-- sample shares: fetch-sample share, not time")
             return Sampler(ibs_dump_kind="ibsfetch-event-dump", metric=metric,
-                           interval=ibs.get("fetchInterval"), interval_units="fetch")
+                           interval=ibs.get("fetchInterval"), interval_units="fetch",
+                           os_requested=bool(ibs.get("fetchOs")))
         return Sampler(metric=(
             "METRIC: IBS capture (details not recorded in session.uprof) -- sample shares: "
-            "not established; do not read them as time"))
+            "not established; do not read them as time"),
+            os_requested=bool(ibs and (ibs.get("opOs") or ibs.get("fetchOs"))))
 
     pmc = [event for event in
            ((meta.get("collection") or {}).get("events", {}).get("pmcEvents") or {}).get("pmcEventList") or []
@@ -165,7 +177,8 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
                       f"isSampling={event.get('isSampling')}) -- sample shares: not established; "
                       "do not read the shares as time")
         return Sampler(metric=metric, pmc=True, event_column=column,
-                       interval=event.get("interval"), interval_units="cycles")
+                       interval=event.get("interval"), interval_units="cycles",
+                       os_requested=bool(event.get("os")))
 
     if from_command:
         metric = (f"METRIC: {from_command} (from collectCommand; session.uprof records no PMC or IBS "
@@ -173,6 +186,31 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
     else:
         metric = "METRIC: no PMC or IBS event recorded in session.uprof -- sample shares: not established"
     return Sampler(metric=metric)
+
+
+def is_kernel_image(module_path: str) -> bool:
+    """True when the path names a kernel image, judged by basename alone.
+
+    module_key supplies lowercase paths with '/' separators. The basename match is required: a
+    suffix test for 'hal.dll' would also match the user-mode 'marshal.dll'. Module.isSystemModule
+    is not a kernel predicate (it is true for ntdll.dll and kernelbase.dll).
+    """
+    name = module_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.endswith(KERNEL_IMAGE_SUFFIXES) or name in KERNEL_IMAGE_BASENAMES
+
+
+def kernel_coverage_warning(sampler: Sampler, kernel_samples: int) -> str | None:
+    """The warning when the applied sampler requested OS mode but the capture has no kernel sample.
+
+    kernel_samples counts the whole capture, before any process or time filter: an OS-mode request
+    is supposed to fill the kernel ring, and elevation is what makes it do so. None means no
+    warning; a user-mode-only request is expected to have no kernel samples.
+    """
+    if not sampler.os_requested or kernel_samples > 0:
+        return None
+    return ("no kernel-mode samples: the applied sampler requested OS mode (os=1), but the whole "
+            "capture has no sample in any kernel image, so kernel time is missing. An unelevated "
+            "capture omits it; capture elevated to include kernel-mode samples")
 
 
 def verify_collect(session_dir: Path | str, event: str, interval: int, count_control: str,

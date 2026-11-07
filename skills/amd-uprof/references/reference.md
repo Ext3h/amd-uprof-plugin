@@ -146,6 +146,41 @@ millisecond-scale floor.
 where the samples exist, or in `translate --ascii`, which counts the dump it just wrote. For an
 op-count interval no time rate follows and the line says so.
 
+### Kernel coverage
+
+With `os=1` requested, an unelevated capture contains no kernel-mode samples; an elevated capture is
+required for kernel coverage. `os=1` alone is not sufficient, and the limitation is real rather than
+a dropped option: `session.uprof` records the OS-mode bit and the encoded event selector carries it
+(`0x03000076` for `user=1,os=1`), but the kernel samples are lost at capture time, before the raw
+dump is written. The raw `.ri` metadata has no elevation or kernel-mode toggle, so the capture never
+records that it was degraded; only a privileged capture fills the kernel ring.
+
+The tool reports the condition at both points where it is observable. `collect` states the
+consequence before the capture runs: an unelevated cycle capture appends
+`; kernel-mode (OS) samples are omitted without elevation` to its unelevated warning, worded
+separately from the warning about missing elevated processes. `profile` then prints
+`KERNEL_COVERAGE` only when the applied sampler requested OS-mode samples and the whole capture
+contains no sample in a kernel image. It is computed from `v_capture_modules`, which lists every
+module with its sample count before the `--image`/`--pid` and `--time-filter` selections, so an empty
+or user-only scope neither creates nor hides the warning; the field is about kernel coverage, not
+elevated user processes. The OS-mode request is read from the applied event in `session.uprof`: the
+PMC `pmcEventList` entry's `os`, or IBS `opOs`/`fetchOs`.
+
+The check is content-based, not privilege-based: it looks for a kernel-image sample in the capture,
+so an elevated capture profiled unelevated emits no field, and a translate of an elevated raw
+capture retains its kernel samples even when the translate runs unelevated.
+
+A kernel image is matched by **basename**: ends in `.sys` or `.ko`, or equals `ntoskrnl.exe`,
+`ntkrnlmp.exe`, `ntkrnlpa.exe`, `ntkrpamp.exe` or `hal.dll`. The basename rule is load-bearing in
+both directions: a path-suffix test for `hal.dll` also matches user-mode `marshal.dll`, and
+`Module.isSystemModule` is true for user-mode `ntdll.dll`/`kernelbase.dll`, so neither identifies
+the kernel.
+
+The measured case: an unelevated PMC capture with `user=1,os=1` had 21,489 samples and none in a
+kernel image, while an elevated capture of the same event had 45,489 kernel samples across 67
+images; an unelevated translate of that elevated raw capture reproduced the kernel samples, so the
+loss is in capture, not translation.
+
 ## Symbolization
 
 `profile --by line|instruction` symbolizes every module in scope; there is no separate command.
@@ -216,6 +251,7 @@ The 13 views:
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |
 | `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds the scope's own sampling cadence |
 | `v_scope_totals` | `total_samples` (0 when empty); feeds the empty-scope warning |
+| `v_capture_modules` | whole-capture module paths with sample counts, before scope and time filters; feeds `KERNEL_COVERAGE` |
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
 | `v_function_rows` | by `Function.id`; `<unresolved>` row; attribution `unique`/`unresolved`; `<other functions>` |
 | `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; `<other lines>` |
@@ -242,6 +278,7 @@ For PMC every weight is NULL, so ranking falls through to `samples`; the share-s
 
 ## Known limitations
 
+- **Unelevated captures have no kernel coverage.** `os=1` is applied and encoded, but an unelevated uProf capture contains no kernel-mode samples; elevate the capture. `collect` notes this before the capture runs and `profile` prints `KERNEL_COVERAGE` when the whole capture confirms no kernel-image sample (see Kernel coverage).
 - **Inline overloads.** The display rule is in `SKILL.md`, Frame rule and sentinels; a true overload set (two or more out-of-line signatures) shows `<multiple>` on a shared source line.
 - **Empty or junk tag column.** `has_tag` tests column presence; `uprof_tag_available` requires an IBS OP dump and at least one non-null value. An all-NULL or non-numeric `IbsTagToRetCtr` hides `pct_cycles` and prints the empty-column disclosure; a non-numeric cell is NULL, never the clipped maximum.
 - **Module paths are lowercased.** `module_key` lowercases and replaces `\` with `/`; the module column shows that normalized spelling, and two paths differing only in case or separator collide.

@@ -19,6 +19,14 @@ sample shares and time shares — stating what each share measures.
   stated as such.
 - After the capture, verifies that what was requested is what was applied: event, interval,
   sampling enabled, IBS vs PMC, system-wide vs attached PIDs. A mismatch fails.
+- `os=1` requests OS-mode samples, and the request is applied and encoded in the event selector; it
+  is not sufficient for kernel coverage. An unelevated capture contains no kernel-mode samples, so
+  kernel coverage requires an elevated capture.
+- The tool states that limitation at both points where it can: `collect` notes the consequence
+  before the capture runs, and `profile` prints `KERNEL_COVERAGE` when the applied sampler requested
+  OS mode and the whole capture contains no sample in any kernel image. This is distinct from the
+  warning that elevated user processes may be missing: that one is about process coverage, this
+  one about kernel coverage.
 - An IBS capture that the machine cannot perform (no IBS counters — hypervisor/VBS active, or an
   unsupported CPU) falls back to cycle sampling **visibly**: one line naming the cause before the
   fallback capture runs.
@@ -100,7 +108,7 @@ the UTC start is reported with its precision.
 ### 3.6 Output
 
 - Default: a Markdown pipe table, right-aligned numerics, with the header lines (`METRIC:`, `DUMP:`,
-  `SANITY:`, `ACHIEVED:`, `AGREEMENT:`) as plain lines above it. `SANITY` validates the dump against
+  `SANITY:`, `ACHIEVED:`, `KERNEL_COVERAGE:`, `AGREEMENT:`) as plain lines above it. `SANITY` validates the dump against
   the capture metadata and states the coverage it is based on; the dump-wide verdict is labeled as
   such, and when `--image`/`--pid` or `--time-filter` restricts a system-wide report, a scoped
   coverage verdict follows from the scope's last sample against the end of its window; attached
@@ -109,6 +117,10 @@ the UTC start is reported with its precision.
   samples delivered, the capture window, the per-CPU rate, the requested interval, and the busiest
   sampling context's cadence, and says so when that context delivers far below the request. The
   per-CPU rate divides by every CPU and is not the delivered cadence.
+  `KERNEL_COVERAGE` appears when an OS-mode request produced no kernel-image sample in the whole
+  capture — computed before `--image`/`--pid` and `--time-filter`, so a user-only scope can neither
+  create nor hide it — and states that elevation is required; it is the profile-time counterpart of
+  the capture-time note.
 - `--json`: the same rows and header information as structured data.
 - No CSV mode and no table-rendering dependency on the database library.
 - Percentages are emitted at full precision; no rounding is applied.

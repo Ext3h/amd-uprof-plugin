@@ -22,6 +22,9 @@ from uprof_util import UprofError, absolute
 _IBS_UNAVAILABLE = "ibs counters are not available"
 _CYCLE_DEFAULT = "1ms"
 _OP_DEFAULT = "1000000"
+_KERNEL_COVERAGE_NOTE = "kernel-mode (OS) samples are omitted without elevation"
+_FALLBACK_KERNEL_WARNING = ("WARNING: unelevated: the fallback cycle capture omits kernel-mode "
+                            "(OS) samples without elevation")
 _TIME_UNITS = {"ns": Decimal("0.000000001"), "us": Decimal("0.000001"),
                "ms": Decimal("0.001"), "s": Decimal(1)}
 _TIME_INTERVAL = re.compile(r"^\s*(\d+(?:\.\d*)?|\.\d+)\s*(ns|us|ms|s)\s*$", re.IGNORECASE)
@@ -46,6 +49,18 @@ def _event_spec(options: CollectOptions, event: str, interval: int) -> str:
         return f"event=CYCLES_NOT_IN_HALT,interval={interval},user=1,os=1"
     controls = 0 if options.ibs_count_control == "cycles" else 1
     return f"event=ibs-op,ibsop-count-control={controls},interval={interval}"
+
+
+def _requests_os_mode(options: CollectOptions, event: str, interval: int) -> bool:
+    """True when the event spec asks the driver for OS-mode samples."""
+    return "os=1" in _event_spec(options, event, interval)
+
+
+def _unelevated_warning(os_requested: bool) -> str:
+    """The capture-time warning; kernel coverage is a separate absence from elevated processes."""
+    text = ("WARNING: unelevated: elevated processes (services, admin-started engines) may be "
+            "missing from the capture")
+    return f"{text}; {_KERNEL_COVERAGE_NOTE}" if os_requested else text
 
 
 def _target_args(options: CollectOptions) -> tuple[list[str], str]:
@@ -229,9 +244,9 @@ def collect(options: CollectOptions) -> None:
           f'{target_display} -d {options.seconds} -o "{options.out_dir}"')
     elevated = is_admin()
     print(f"Elevated={elevated}")
+    os_requested = _requests_os_mode(options, options.event, interval)
     if not elevated:
-        print("WARNING: unelevated: elevated processes (services, admin-started engines) may be "
-              "missing from the capture", file=sys.stderr)
+        print(_unelevated_warning(os_requested), file=sys.stderr)
     if out_dir.is_dir():
         print(f"WARNING: {options.out_dir} exists; uProf will create an AMDuProf-* subdirectory "
               "to avoid the collision", file=sys.stderr)
@@ -259,6 +274,8 @@ def collect(options: CollectOptions) -> None:
         cycle_spec = _event_spec(options, effective_event, interval)
         print(f'COMMAND="{uprof_display}" collect -e {cycle_spec} {target_display} '
               f'-d {options.seconds} -o "{options.out_dir}"')
+        if not elevated and not os_requested:
+            print(_FALLBACK_KERNEL_WARNING, file=sys.stderr)
         completed = _run_cli(uprof, cycle_spec, target_args, options)
     if completed.returncode != 0:
         raise UprofError(f"collect failed with {completed.returncode}: {failure_detail(completed)}")

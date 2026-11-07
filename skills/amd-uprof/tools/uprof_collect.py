@@ -51,9 +51,13 @@ def _event_spec(options: CollectOptions, event: str, interval: int) -> str:
     return f"event=ibs-op,ibsop-count-control={controls},interval={interval}"
 
 
-def _requests_os_mode(options: CollectOptions, event: str, interval: int) -> bool:
-    """True when the event spec asks the driver for OS-mode samples."""
-    return "os=1" in _event_spec(options, event, interval)
+def _requests_os_mode(event: str) -> bool:
+    """True when the event collect applies asks the driver for OS-mode samples.
+
+    The cycle spec passes user=1,os=1. The IBS event samples user and OS by default and collect
+    exposes no user/os toggle, so both events request OS mode.
+    """
+    return event in ("cycles", "ibs-op")
 
 
 def _unelevated_warning(os_requested: bool) -> str:
@@ -244,7 +248,7 @@ def collect(options: CollectOptions) -> None:
           f'{target_display} -d {options.seconds} -o "{options.out_dir}"')
     elevated = is_admin()
     print(f"Elevated={elevated}")
-    os_requested = _requests_os_mode(options, options.event, interval)
+    os_requested = _requests_os_mode(options.event)
     if not elevated:
         print(_unelevated_warning(os_requested), file=sys.stderr)
     if out_dir.is_dir():
@@ -274,7 +278,8 @@ def collect(options: CollectOptions) -> None:
         cycle_spec = _event_spec(options, effective_event, interval)
         print(f'COMMAND="{uprof_display}" collect -e {cycle_spec} {target_display} '
               f'-d {options.seconds} -o "{options.out_dir}"')
-        if not elevated and not os_requested:
+        # The fallback cycle capture always requests OS mode; only elevation decides the warning.
+        if not elevated:
             print(_FALLBACK_KERNEL_WARNING, file=sys.stderr)
         completed = _run_cli(uprof, cycle_spec, target_args, options)
     if completed.returncode != 0:

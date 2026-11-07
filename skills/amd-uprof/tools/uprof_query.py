@@ -204,13 +204,31 @@ def _dump_contexts(connection: object, key: str, gap_limit_ns: float | None
             for row in rows]
 
 
+def _capture_scan(connection: object,
+                  check_kernel: bool) -> tuple[int, int, bool | None]:
+    """Whole-capture sample count, context count and kernel coverage from one scan.
+
+    The kernel flag is only projected when asked for; the module join is then part of the same
+    scan the totals need. None means the flag was not requested.
+    """
+    kernel = ("COALESCE(bool_or(kernel_image), false)" if check_kernel else "NULL")
+    rows = connection.sql(
+        "SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT), count(DISTINCT context), "
+        f"{kernel} FROM v_capture_modules").fetchall()
+    if not rows:
+        return 0, 0, None if not check_kernel else False
+    samples = int(rows[0][0] or 0)
+    contexts = int(rows[0][1] or 0)
+    return samples, contexts, (None if not check_kernel else bool(rows[0][2]))
+
+
 def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace,
-                    sampler: uprof_session.Sampler,
-                    dump: uprof_dump.DumpInfo | None) -> tuple[tuple[str, str], int]:
+                    sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
+                    check_kernel: bool = False) -> tuple[tuple[str, str], int, bool | None]:
     """The achieved sampling rate over the whole capture, independent of the scope filter.
 
-    The returned sample count is the same whole-capture total, reused by the kernel-coverage
-    check so that check need not scan the capture again.
+    The same scan returns the whole-capture sample count and, when check_kernel is set, whether
+    any sample landed in a kernel image, so the kernel-coverage check adds no query of its own.
     """
     meta = uprof_session.read_meta(args.session) or {}
     schedule = (meta.get("collection") or {}).get("schedule") or {}
@@ -218,10 +236,8 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
     contexts: list[uprof_session.ContextCadence] = []
     label = "CPU"
     window_s: float | None = None
+    samples, cpus, kernel_covered = _capture_scan(connection, check_kernel)
     if has_dump:
-        rows = connection.sql("SELECT count(*), count(DISTINCT cpu) FROM v_dump").fetchall()
-        samples = int(rows[0][0] or 0)
-        cpus = int(rows[0][1] or 0)
         wide = uprof_session.system_wide(args.session)
         label = "CPU" if wide else "thread"
         contexts = _dump_contexts(connection, "cpu" if wide else "tid",
@@ -231,18 +247,10 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
             if bounds is not None:
                 window_s = float(bounds[1] - bounds[0])
     else:
-        # PMC samples are the event-column counts in UnifiedSampleSeries; coreId is the CPU.
-        rows = connection.sql(
-            "SELECT CAST(COALESCE(sum(COLUMNS(lambda c: c = "
-            "getvariable('uprof_event_column'))), 0) AS BIGINT), count(DISTINCT coreId) "
-            "FROM UnifiedSampleSeries").fetchall()
-        samples = int(rows[0][0] or 0)
-        cpus = int(rows[0][1] or 0)
         # PMC carries no per-sample timestamps, so a core's samples/s is its whole cadence.
         per_core = connection.sql(
-            "SELECT coreId, CAST(COALESCE(sum(COLUMNS(lambda c: c = "
-            "getvariable('uprof_event_column'))), 0) AS BIGINT) "
-            "FROM UnifiedSampleSeries GROUP BY coreId").fetchall()
+            "SELECT context, CAST(COALESCE(sum(samples), 0) AS BIGINT) "
+            "FROM v_capture_modules GROUP BY context").fetchall()
         contexts = [uprof_session.ContextCadence(int(row[1] or 0)) for row in per_core]
         label = "core"
     if window_s is None and elapsed_ms is not None:
@@ -252,7 +260,7 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
             window_s = None
     field = ("ACHIEVED", uprof_session.achieved_summary(samples, window_s, cpus, sampler,
                                                         contexts, label))
-    return field, samples
+    return field, samples, kernel_covered
 
 
 def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: str) -> bool:
@@ -287,25 +295,20 @@ def _dump_sanity(connection: object, has_dump: bool, scope_filtered: bool,
     return message, tag_values
 
 
-def _kernel_coverage_field(connection: object, sampler: uprof_session.Sampler,
+def _kernel_coverage_field(sampler: uprof_session.Sampler, kernel_covered: bool | None,
                            windowed: bool = False,
                            captured_samples: int | None = None) -> list[tuple[str, str]]:
     """Whole-capture kernel coverage, checked only when the applied sampler requested OS mode.
 
-    v_capture_modules carries every module with its sample count and whether it is a kernel
-    image, before any scope filter. windowed suppresses the field: the resolved dump may have
-    been produced by the session's
-    recorded translate --time-filter, so it need not hold the whole capture. captured_samples is
-    the capture total the ACHIEVED check already counted.
+    kernel_covered comes from the ACHIEVED scan and None means it was not determined. windowed
+    suppresses the field: the resolved dump may have been produced by the session's recorded
+    translate --time-filter, so it need not hold the whole capture. captured_samples is the
+    capture total that same scan counted.
     """
-    if not sampler.os_requested or windowed:
+    if not sampler.os_requested or windowed or kernel_covered is None:
         return []
-    rows = connection.sql(
-        "SELECT module_name, CAST(COALESCE(sum(samples), 0) AS BIGINT) AS samples, "
-        "max(kernel_image) AS kernel_image "
-        "FROM v_capture_modules GROUP BY module_name").fetchall()
-    kernel_samples = sum(int(samples or 0) for _name, samples, kernel in rows if kernel)
-    warning = uprof_session.kernel_coverage_warning(sampler, kernel_samples, captured_samples)
+    warning = uprof_session.kernel_coverage_warning(
+        sampler, kernel_covered, captured_samples)
     return [] if warning is None else [("KERNEL_COVERAGE", warning)]
 
 
@@ -405,12 +408,13 @@ def run_query_command(args: argparse.Namespace) -> None:
             fields = _header_fields(args, sampler, dump, has_tag, tag_available)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
-            achieved, captured_samples = _achieved_field(
-                connection, dump is not None, args, sampler, dump)
+            check_kernel = sampler.os_requested and not dump_windowed
+            achieved, captured_samples, kernel_covered = _achieved_field(
+                connection, dump is not None, args, sampler, dump, check_kernel)
             if achieved:
                 fields.append(achieved)
             fields.extend(_kernel_coverage_field(
-                connection, sampler, dump_windowed, captured_samples))
+                sampler, kernel_covered, dump_windowed, captured_samples))
             fields.extend(_scope_warning(connection))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(connection)

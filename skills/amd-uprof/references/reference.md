@@ -99,12 +99,13 @@ error.
 
 When `--image`/`--pid` or `--time-filter` narrows the report, `v_scope_sanity` appends a
 `scoped coverage (<scope>)` verdict to the same field. It takes the last sample of `v_scoped` and
-compares it with the end of the scope window — the profile `--time-filter` end when one is given,
-else the recorded translate span — using the same one-cadence threshold. The verdict says `WARN`
-and names the scope when the scope's late time is uncovered, and `OK` when the scope sampled near
-the end of its window. Attached captures get no scoped verdict: `OK (attached; dump-wide)` already
-states that coverage is where the attached threads ran. An empty scope gets none either; the
-separate no-samples warning covers it.
+compares it with the end of the scope window — the recorded translate span clipped to the profile
+`--time-filter` window — against the scope's own sampling cadence (the window width divided by the
+busiest in-scope thread's sample count). The verdict says `WARN` and names the scope when the
+scope's late time is uncovered, and `OK` when the scope sampled near the end of its window.
+Attached captures get no scoped verdict: `OK (attached; dump-wide)` already states that coverage is
+where the attached threads ran. An empty scope gets none either; the separate no-samples warning
+covers it.
 
 ### Achieved sample rate
 
@@ -212,7 +213,7 @@ The 12 views:
 | `v_symbols` | combined symbolizer artifact: `module_name, rva, function, function_short, containing_function, file, line` |
 | `v_public_starts` | public-symbol fold cache: `module_name, rva, name_count, names` |
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |
-| `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds one sampling cadence |
+| `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds the scope's own sampling cadence |
 | `v_scope_totals` | `total_samples` (0 when empty); feeds the empty-scope warning |
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
 | `v_function_rows` | by `Function.id`; `<unresolved>` row; attribution `unique`/`unresolved`; `<other functions>` |

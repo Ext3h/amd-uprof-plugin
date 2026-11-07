@@ -135,6 +135,23 @@ class SanityScopeTest(unittest.TestCase):
 
         self.assertNotIn("scoped", line)
 
+    def test_scope_uses_its_own_cadence_not_the_dump_wide_one(self):
+        # PID 100 is sampled every 0.5 s and stops one cadence before the window end; PID 200
+        # keeps the dump-wide cadence at 0.1 s. The 0.5 s gap is normal for PID 100.
+        lines = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName"]
+        for i in range(100):
+            lines.append(f"{i * 100_000_000},0,200,200,8192,background.exe")
+        for i in range(20):
+            lines.append(f"{i * 500_000_000},1,100,100,4096,workload.exe")
+        (self.session / "IbsOpDump.csv").write_text("\n".join(lines) + "\n",
+                                                     encoding="utf-8", newline="\n")
+
+        line = self.sanity_line("--pid", "100", "--time-filter", "0:10")
+
+        self.assertIn("scoped coverage (--pid 100 --time-filter 0.000:10.000 s): OK", line)
+        self.assertIn("0.500 s before the scope window end at 10.000 s", line)
+        self.assertNotIn("WARN", line)
+
 
 if __name__ == "__main__":
     unittest.main()

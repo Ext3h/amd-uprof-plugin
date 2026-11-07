@@ -106,6 +106,18 @@ def _event_from_command(meta: dict[str, Any]) -> str | None:
     return match.group(1) if match else None
 
 
+def _ibs_os_mode(ibs: dict[str, Any] | None) -> str | None:
+    """The OS-mode bit name(s) of the enabled IBS samplers, or None when none requested OS mode.
+
+    A session can record both op and fetch; each enabled sampler carries its own bit.
+    """
+    if not ibs:
+        return None
+    bits = [name for name, enabled in (("opOs", ibs.get("op")), ("fetchOs", ibs.get("fetch")))
+            if enabled and ibs.get(name)]
+    return ", ".join(bits) or None
+
+
 def derive_sampler(session_dir: Path | str) -> Sampler:
     meta = read_meta(session_dir)
     if meta is None:
@@ -120,6 +132,7 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
         ibs and (ibs.get("op") or ibs.get("fetch")))
 
     if is_ibs:
+        os_mode = _ibs_os_mode(ibs)
         if ibs and ibs.get("op"):
             event = columns.get("IBS_ALL_OPS", IBS_OP_EVENT)
             interval = ibs.get("opInterval")
@@ -133,22 +146,18 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
                           "cycle attribution: per-op latency, clipped at 131070")
             return Sampler(ibs_dump_kind="ibsop-event-dump", metric=metric, interval=interval,
                            interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops",
-                           os_requested=bool(ibs.get("opOs")),
-                           os_mode="opOs" if ibs.get("opOs") else None)
+                           os_requested=os_mode is not None, os_mode=os_mode)
         if ibs and ibs.get("fetch"):
             event = columns.get("IBS_FETCH", IBS_FETCH_EVENT)
             metric = (f"METRIC: IBS fetch (IBS_FETCH {event}, interval {ibs.get('fetchInterval')}) "
                       "-- sample shares: fetch-sample share, not time")
             return Sampler(ibs_dump_kind="ibsfetch-event-dump", metric=metric,
                            interval=ibs.get("fetchInterval"), interval_units="fetch",
-                           os_requested=bool(ibs.get("fetchOs")),
-                           os_mode="fetchOs" if ibs.get("fetchOs") else None)
+                           os_requested=os_mode is not None, os_mode=os_mode)
         return Sampler(metric=(
             "METRIC: IBS capture (details not recorded in session.uprof) -- sample shares: "
             "not established; do not read them as time"),
-            os_requested=bool(ibs and (ibs.get("opOs") or ibs.get("fetchOs"))),
-            os_mode=("opOs" if ibs and ibs.get("opOs") else
-                     "fetchOs" if ibs and ibs.get("fetchOs") else None))
+            os_requested=os_mode is not None, os_mode=os_mode)
 
     pmc = [event for event in
            ((meta.get("collection") or {}).get("events", {}).get("pmcEvents") or {}).get("pmcEventList") or []

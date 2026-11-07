@@ -30,6 +30,23 @@ ImageOptionalHeader {
 }
 """
 
+UNWIND = """\
+UnwindInformation [
+  RuntimeFunction {
+    StartAddress: (0x140001000)
+    EndAddress: (0x140001026)
+  }
+]
+"""
+
+EXPORTS = """\
+Export {
+  Ordinal: 1
+  Name: fixture_entry
+  RVA: 0x1000
+}
+"""
+
 SECTIONS = """\
 Sections [
   Section {
@@ -121,7 +138,8 @@ def fake_run(command, **_kwargs):
     if "--coff-imports" in command:
         return subprocess.CompletedProcess(command, 0, IMPORTS, "")
     if "--file-headers" in command:
-        return subprocess.CompletedProcess(command, 0, FILE_HEADERS + SECTIONS, "")
+        return subprocess.CompletedProcess(command, 0, FILE_HEADERS + SECTIONS + UNWIND + EXPORTS,
+                                           "")
     if command[0] == "llvm-objdump.exe":
         return subprocess.CompletedProcess(command, 0, OBJDUMP, "")
     if command[0] == "llvm-symbolizer.exe":

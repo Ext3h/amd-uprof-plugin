@@ -182,4 +182,4 @@ Run `uprof.py tools` first; install only when a required path prints `MISSING`. 
 
 ## References
 
-`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, the 11 SQL views, the `pct_cycles` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).
+`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, the 13 SQL views, the `pct_cycles` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).

@@ -73,19 +73,48 @@ class PdbProbeTest(unittest.TestCase):
         self.assertEqual(candidates, [Path("C:/app/fixture.pdb"),
                                       Path("C:/cache/fixture.pdb/ABCD1/fixture.pdb")])
 
-    def test_a_failing_signature_probe_does_not_abort_discovery(self):
-        with mock.patch.object(uprof_symbols.os, "name", "nt"), \
-                mock.patch.object(uprof_symbols, "require_symbolizer",
-                                  return_value=Path("llvm-symbolizer.exe")), \
-                mock.patch.object(uprof_symbols, "find_sibling",
-                                  return_value=Path("tool.exe")), \
-                mock.patch.object(uprof_symbols, "_readobj_info",
-                                  return_value=("fixture.pdb", "ABCD", 1)), \
-                mock.patch.object(uprof_symbols, "_candidate_pdbs",
-                                  return_value=[Path(__file__)]), \
+    def test_a_failing_signature_probe_rejects_only_that_candidate(self):
+        with mock.patch.object(uprof_symbols, "_candidate_pdbs",
+                               return_value=[Path(__file__)]), \
                 mock.patch.object(uprof_symbols, "_pdb_matches",
                                   side_effect=UprofError("timed out after 300s")):
-            self.assertIsNone(uprof_symbols.find_pdb("fixture.exe"))
+            self.assertIsNone(uprof_symbols._choose_pdb(
+                Path("llvm-pdbutil.exe"), Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1))
+
+
+class PdbManifestTest(unittest.TestCase):
+    def symbolize(self, pdb):
+        with tempfile.TemporaryDirectory(prefix="uprof-pdb-manifest-") as directory:
+            root = Path(directory)
+            module = root / "fixture.exe"
+            module.write_bytes(b"MZ")
+            out = root / "out"
+            with mock.patch.object(uprof_symbols, "require_symbolizer",
+                                   return_value=Path("llvm-symbolizer.exe")):
+                with mock.patch.object(
+                        uprof_symbols, "symbolize_module",
+                        return_value=(root / "symbols.parquet", None, None, pdb)):
+                    with mock.patch.object(
+                            uprof_symbols, "_combine_artifacts",
+                            return_value=(root / "symbols.parquet", None)):
+                        symbols, publics, pdbs = uprof_symbols.symbolize_modules(
+                            [("fixture.exe", str(module), ["0x101B"])], out)
+                        content = (Path(pdbs).read_text(encoding="utf-8")
+                                   if pdbs else None)
+                        return symbols, publics, content
+
+    def test_the_pdb_used_for_symbolization_is_recorded(self):
+        pdb = Path("C:/cache/fixture.pdb")
+
+        symbols, publics, manifest = self.symbolize(pdb)
+
+        rows = list(csv.DictReader(io.StringIO(manifest)))
+        self.assertEqual(rows, [{"module_name": "fixture.exe", "pdb": str(pdb)}])
+
+    def test_no_pdb_means_no_manifest(self):
+        symbols, publics, manifest = self.symbolize(None)
+
+        self.assertIsNone(manifest)
 
 
 if __name__ == "__main__":

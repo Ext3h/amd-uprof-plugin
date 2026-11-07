@@ -101,23 +101,25 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
         "uprof_tag_available": "",
         "uprof_symbols": "",
         "uprof_aliases": "",
+        "uprof_pdbs": "",
     }
 
 
 def _symbolize_scope(connection: object, artifacts: Path,
                      stream: TextIO) -> dict[str, str]:
-    """Symbolize every module in scope into artifacts; return the uprof_symbols* variables."""
+    """Symbolize every module in scope into artifacts; return the symbol artifact variables."""
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-rvas.sql")
     modules: dict[str, list] = {}
     for module_name, module_path, rva in rows:
         if module_name not in modules:
             modules[module_name] = [module_path, []]
         modules[module_name][1].append(rva)
-    symbols, publics = uprof_symbols.symbolize_modules(
+    symbols, publics, pdbs = uprof_symbols.symbolize_modules(
         [(name, path, rvas) for name, (path, rvas) in modules.items()], artifacts, stream=stream)
     return {
         "uprof_symbols": str(symbols) if symbols else "",
         "uprof_aliases": str(publics) if publics else "",
+        "uprof_pdbs": str(pdbs) if pdbs else "",
     }
 
 

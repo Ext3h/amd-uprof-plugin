@@ -46,6 +46,8 @@ class FakeConnection:
             return FakeResult([(self.module_path, self.checksum)])
         if "FROM v_public_starts" in text:
             return FakeResult(list(self.publics))
+        if "FROM v_pdbs" in text:
+            return FakeResult([(None,)])
         if "FROM v_scope_totals" in text:
             return FakeResult([(self.total,)])
         if "FROM v_scoped" in text:

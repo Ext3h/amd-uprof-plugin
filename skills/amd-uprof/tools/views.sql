@@ -15,6 +15,7 @@
 --                       non-null value; Python derives it from the sampler kind and v_dump_sanity
 --   uprof_symbols       combined symbols.parquet path for line and instruction
 --   uprof_aliases       combined symbols.publics.csv path for fold labelling
+--   uprof_pdbs          combined symbols.pdbs.csv path: the PDB symbolization chose per module
 --
 -- The SET VARIABLE statements below are the mode flags, guards and typed top/time values; no view
 -- file carries its own setup. The guards run before v_dump, so a bad capture fails once, with a
@@ -396,6 +397,15 @@ SELECT * FROM query(CASE WHEN getvariable('uprof_aliases') <> ''
             FROM read_csv(getvariable('uprof_aliases'), header = true, all_varchar = true)$pub$
   ELSE $pub$SELECT NULL::VARCHAR AS module_name, NULL::BIGINT AS rva, NULL::INTEGER AS name_count,
                    NULL::VARCHAR AS names WHERE false$pub$ END);
+
+-- PDB choice per module, recorded by symbolization: module_name, pdb. Empty when absent, so the
+-- instruction context symbolizes without a PDB instead of discovering one a second time.
+CREATE OR REPLACE TEMP VIEW v_pdbs AS
+SELECT module_name, NULLIF(pdb, '') AS pdb
+FROM query(CASE WHEN getvariable('uprof_pdbs') <> ''
+  THEN $pdbs$SELECT module_name, pdb
+              FROM read_csv(getvariable('uprof_pdbs'), header = true, all_varchar = true)$pdbs$
+  ELSE $pdbs$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS pdb WHERE false$pdbs$ END);
 
 -- Scope is every process image matching --image and, when given, the one PID named by --pid.
 -- With a dump, samples are the DeltaTick-weighted ASCII rows and weight is the exact time; without

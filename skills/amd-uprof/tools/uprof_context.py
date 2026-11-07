@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Final
 
 from uprof_native import find_sibling, find_symbolizer, run
-from uprof_symbols import find_pdb
 from uprof_util import UprofError, tail_lines
 
 ANCHOR_DISTANCE_CAP: Final = 1 << 20
@@ -742,7 +741,10 @@ class _ContextBuilder:
             (int(rva), names) for rva, names in self.connection.execute(
                 "SELECT rva, names FROM v_public_starts "
                 "WHERE module_name = CAST(? AS VARCHAR)", [module_name]).fetchall()]
-        pdb = find_pdb(module_path)
+        pdb_row = self.connection.execute(
+            "SELECT pdb FROM v_pdbs WHERE module_name = CAST(? AS VARCHAR)",
+            [module_name]).fetchone()
+        pdb = pdb_row[0] if pdb_row else None
         return _ModuleState(module_path, verified, sections, imports, public_starts,
                             str(pdb) if pdb else None)
 

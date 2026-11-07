@@ -370,28 +370,34 @@ WHERE (getvariable('uprof_pid') = '' OR s.processId = CAST(getvariable('uprof_pi
   AND COALESCE(p.name, '') ILIKE getvariable('uprof_image')$pmc$ END);
 
 -- Late-coverage verdict for the report's scope, appended to SANITY when --image/--pid or
--- --time-filter narrows the population below the whole dump. The scope window ends at the profile
--- time filter when one is given, else at the recorded translate span; the scope's last sample is
--- compared against the same sampling cadence estimate the dump-wide check uses. Attached captures
--- keep their OK (attached; dump-wide) verdict: their coverage is wherever the attached threads ran.
--- An empty scope is already reported by the scope warning, so it gets no verdict here.
+-- --time-filter narrows the population below the whole dump. The scope window is the recorded
+-- translate span clipped to the profile time filter; the scope's last sample is compared against
+-- the end of that window using the same sampling-cadence threshold the dump-wide check uses.
+-- Attached captures keep their OK (attached; dump-wide) verdict: their coverage is wherever the
+-- attached threads ran. An empty scope is already reported by the scope warning, so it gets no
+-- verdict here.
 CREATE OR REPLACE TEMP VIEW v_scope_sanity AS
 WITH span AS (
   SELECT end_ns, expected_ns, max_cpu_samples, system_wide,
          (getvariable('uprof_image') <> '%' OR getvariable('uprof_pid') <> ''
-          OR getvariable('uprof_time_end') <> '9223372036854775807') AS filtered,
-         CASE WHEN getvariable('uprof_time_end') <> '9223372036854775807'
-              THEN CAST(getvariable('uprof_time_end') AS BIGINT)
+          OR getvariable('time_start') > 0
+          OR getvariable('time_end') < 9223372036854775807) AS filtered,
+         -- The scope window is the recorded span clipped to the profile time filter. A start-only
+         -- filter leaves the end at the recorded span end instead of the unbounded default.
+         CASE WHEN getvariable('time_end') < 9223372036854775807
+              THEN LEAST(COALESCE(end_ns, getvariable('time_end')),
+                         getvariable('time_end'))
               ELSE end_ns END AS scope_end_ns,
          concat_ws(' ',
            CASE WHEN getvariable('uprof_pid') <> ''
                 THEN '--pid ' || getvariable('uprof_pid') END,
            CASE WHEN getvariable('uprof_image') <> '%'
                 THEN '--image ' || getvariable('uprof_image') END,
-           CASE WHEN getvariable('uprof_time_end') <> '9223372036854775807'
+           CASE WHEN getvariable('time_start') > 0
+                     OR getvariable('time_end') < 9223372036854775807
                 THEN printf('--time-filter %.3f:%.3f s',
-                            CAST(getvariable('uprof_time_start') AS BIGINT) / 1e9,
-                            CAST(getvariable('uprof_time_end') AS BIGINT) / 1e9) END)
+                            getvariable('time_start') / 1e9,
+                            getvariable('time_end') / 1e9) END)
            AS scope_label
   FROM v_dump_sanity
 ), scoped AS (

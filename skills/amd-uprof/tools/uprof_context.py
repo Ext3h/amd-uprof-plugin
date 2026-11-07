@@ -568,20 +568,19 @@ def instruction_share(samples: int, total_samples: int) -> float | None:
     return 100.0 * samples / total_samples
 
 
-def decode_window(module_path: str, build: BuildIdentity, anchor: Anchor, hot_rva: int,
+def decode_stream(module_path: str, build: BuildIdentity, anchor: Anchor, last_rva: int,
                   section_end: int, objdump: str | None = None) -> list[DecodedInstruction]:
-    """Decode forward from anchor and return the window around hot_rva.
+    """Decode forward from anchor far enough to window last_rva, clamped to the section end.
 
-    The stop address leaves enough room for 32 instructions after the hot RVA plus one more, so
-    the last window instruction still has a known length for RIP-relative call resolution. It is
-    clamped to the containing section's end so decoding never runs into an adjacent section.
+    The stop address leaves enough room for 32 instructions after last_rva plus one more, so the
+    last window instruction still has a known length for RIP-relative call resolution.
     """
     tool = objdump or find_objdump()
     if not tool:
         raise ContextOmission("objdump_missing",
                               "llvm-objdump not found beside llvm-symbolizer or on PATH")
     start_vma = build.image_base + anchor.rva
-    stop_rva = min(hot_rva + (WINDOW_AFTER + 2) * 16, section_end)
+    stop_rva = min(last_rva + (WINDOW_AFTER + 2) * 16, section_end)
     stop_vma = build.image_base + stop_rva
     if stop_vma <= start_vma:
         stop_vma = start_vma + 16
@@ -597,7 +596,14 @@ def decode_window(module_path: str, build: BuildIdentity, anchor: Anchor, hot_rv
     if not decoded:
         raise ContextOmission("objdump_failed",
                               f"llvm-objdump produced no instructions for 0x{anchor.rva:X}")
-    return select_window(decoded, hot_rva)
+    return decoded
+
+
+def decode_window(module_path: str, build: BuildIdentity, anchor: Anchor, hot_rva: int,
+                  section_end: int, objdump: str | None = None) -> list[DecodedInstruction]:
+    """Decode forward from anchor and return the window around hot_rva."""
+    return select_window(
+        decode_stream(module_path, build, anchor, hot_rva, section_end, objdump), hot_rva)
 
 
 # ------------------------------------------------------------------ JSON context block
@@ -686,17 +692,6 @@ class _ContextBuilder:
         self.total_samples = total_samples
         self.modules: dict[str, _ModuleState | ContextOmission] = {}
 
-    def context(self, module_name: str, hot_rva: int) -> dict[str, object]:
-        state = self._module(module_name)
-        anchor = select_anchor(hot_rva, state.sections, state.public_starts)
-        section = require_code_section(state.sections, hot_rva)
-        window = decode_window(state.path, state.build, anchor, hot_rva, section.end)
-        rvas = [instruction.rva for instruction in window]
-        return build_context(
-            anchor, state.build, hot_rva, window, self._samples(module_name, rvas),
-            self.total_samples, self._symbols(state, rvas),
-            state.imports, self._ibs(state, module_name, rvas))
-
     def _module(self, module_name: str) -> _ModuleState:
         cached = self.modules.get(module_name)
         if isinstance(cached, ContextOmission):
@@ -780,6 +775,50 @@ class _ContextBuilder:
         return state.ibs
 
 
+def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | None],
+                           module_name: str,
+                           items: list[tuple[int, int, Anchor, int]]) -> None:
+    """Decode once per anchor and annotate every row of one module in batches.
+
+    items holds (row index, hot RVA, anchor, section end) for rows that already selected an
+    anchor; contexts receives one entry per row index.
+    """
+    state = builder._module(module_name)
+    groups: dict[tuple[Anchor, int], list[tuple[int, int]]] = {}
+    for index, hot_rva, anchor, section_end in items:
+        groups.setdefault((anchor, section_end), []).append((index, hot_rva))
+    windows: dict[int, tuple[int, Anchor, list[DecodedInstruction]]] = {}
+    for (anchor, section_end), members in groups.items():
+        last_rva = max(hot_rva for _, hot_rva in members)
+        try:
+            stream = decode_stream(state.path, state.build, anchor, last_rva, section_end)
+        except ContextOmission as exc:
+            for index, _ in members:
+                contexts[index] = exc.as_json()
+            continue
+        except UprofError as exc:
+            omission = ContextOmission("context_failed", str(exc)).as_json()
+            for index, _ in members:
+                contexts[index] = omission
+            continue
+        for index, hot_rva in members:
+            try:
+                windows[index] = (hot_rva, anchor, select_window(stream, hot_rva))
+            except ContextOmission as exc:
+                contexts[index] = exc.as_json()
+    if not windows:
+        return
+    for index, (hot_rva, anchor, window) in windows.items():
+        rvas = [instruction.rva for instruction in window]
+        try:
+            contexts[index] = build_context(
+                anchor, state.build, hot_rva, window, builder._samples(module_name, rvas),
+                builder.total_samples, builder._symbols(state, rvas),
+                state.imports, builder._ibs(state, module_name, rvas))
+        except UprofError as exc:
+            contexts[index] = ContextOmission("context_failed", str(exc)).as_json()
+
+
 def instruction_contexts(connection: object, columns: Sequence[str],
                          rows: Sequence[Sequence[object]],
                          cap: int = CONTEXT_ROW_CAP) -> list[object | None]:
@@ -795,22 +834,32 @@ def instruction_contexts(connection: object, columns: Sequence[str],
     total_samples = int(total_rows[0][0] or 0) if total_rows else 0
     builder = _ContextBuilder(connection, total_samples)
     module_at, rva_at = indices["module"], indices["rva"]
-    contexts: list[object | None] = []
+    contexts: list[object | None] = [None] * len(rows)
+    planned: dict[str, list[tuple[int, int, Anchor, int]]] = {}
     built = 0
-    for row in rows:
+    for index, row in enumerate(rows):
         module, rva_text = row[module_at], row[rva_at]
         if module is None or rva_text is None:
-            contexts.append(None)
-        elif built >= cap:
-            contexts.append({"omitted": True, "reason": "row_cap"})
-        else:
-            built += 1
-            try:
-                contexts.append(builder.context(str(module), int(str(rva_text), 0)))
-            except ContextOmission as exc:
-                contexts.append(exc.as_json())
-            except UprofError as exc:
-                # A tool timeout or a failing scoped query loses one optional block, not the run.
-                contexts.append(ContextOmission("context_failed", str(exc)).as_json())
+            continue
+        if built >= cap:
+            contexts[index] = {"omitted": True, "reason": "row_cap"}
+            continue
+        built += 1
+        module_name = str(module)
+        hot_rva = int(str(rva_text), 0)
+        try:
+            state = builder._module(module_name)
+            anchor = select_anchor(hot_rva, state.sections, state.public_starts)
+            section = require_code_section(state.sections, hot_rva)
+        except ContextOmission as exc:
+            contexts[index] = exc.as_json()
+            continue
+        except UprofError as exc:
+            # A tool timeout or a failing scoped query loses one optional block, not the run.
+            contexts[index] = ContextOmission("context_failed", str(exc)).as_json()
+            continue
+        planned.setdefault(module_name, []).append((index, hot_rva, anchor, section.end))
+    for module_name, items in planned.items():
+        _build_module_contexts(builder, contexts, module_name, items)
     return contexts
 

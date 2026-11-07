@@ -2,6 +2,16 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.7 — 2026-11-07
+
+### Fixed
+
+- `translate` refuses an `--out-dir` that already holds `cpu.db`, `callstack.db` or an ASCII
+  dump instead of silently translating into it. The native translate appended to the surviving
+  database, so reusing a directory doubled the sample count (4,369 to 8,726 on the `pmc-1ms`
+  capture). `--force` replaces the generated files and the copied session inputs before
+  translating, leaving unrelated files untouched, so a repeated translate is idempotent.
+
 ## 1.0.6 — 2026-11-07
 
 ### Fixed

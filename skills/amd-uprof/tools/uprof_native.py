@@ -20,11 +20,12 @@ from typing import Final
 
 from uprof_session import (ContextCadence, achieved_summary, derive_sampler, read_meta,
                            run_gap_limit_ns, system_wide)
-from uprof_util import (DUMP_FILENAMES, UprofError, absolute, copy_session, parse_time_filter,
-                        tail_lines)
+from uprof_util import (COPY_DIRS, DUMP_FILENAMES, UprofError, absolute, copy_session,
+                        parse_time_filter, tail_lines)
 
 IS_WINDOWS = os.name == "nt"
 TRANSLATE_TIMEOUT: Final = 4 * 60 * 60
+TRANSLATE_OUTPUTS: Final = ("cpu.db", "callstack.db", *DUMP_FILENAMES.values())
 
 
 # ---------------------------------------------------------------- tool discovery
@@ -369,10 +370,28 @@ def _dump_window_s(session: Path, time_filter: str | None) -> float | None:
         return None
 
 
+def _clear_translate_outputs(out: Path) -> None:
+    """Remove what an earlier translate copied and generated in out.
+
+    The copied raw session directories are inputs to the next translation, so stale ones from a
+    different session would be translated alongside the new copy.
+    """
+    for name in (*COPY_DIRS, "session.uprof", *TRANSLATE_OUTPUTS):
+        path = out / name
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
+        except OSError as exc:
+            raise UprofError(f"cannot remove {path} for --force: {exc}; choose another "
+                             "--out-dir or fix its permissions") from exc
+
+
 def translate(session_dir: Path | str, out_dir: Path | str,
               pdb_dir: Path | str | None = None, symbol_cache: Path | str | None = None,
               symbol_servers: list[str] | None = None, time_filter: str | None = None,
-              ascii_kind: str | None = None) -> None:
+              ascii_kind: str | None = None, force: bool = False) -> None:
     session = absolute(session_dir)
     if not session.is_dir():
         raise UprofError(f"session directory not found: {session}")
@@ -385,6 +404,13 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     if os.path.normcase(os.fspath(out)) == os.path.normcase(os.fspath(session)):
         raise UprofError("--out-dir must differ from --session: translate rewrites cpu.db, "
                          "callstack.db and session.uprof, so it works on a copy")
+    conflicts = [out / name for name in TRANSLATE_OUTPUTS if (out / name).exists()]
+    if conflicts and not force:
+        shown = ", ".join(os.fspath(path) for path in conflicts)
+        raise UprofError(
+            f"--out-dir already holds a previous translation ({shown}); translate never appends "
+            "to it. Choose another --out-dir, or pass --force to replace the files translate "
+            "generated there")
     if time_filter and parse_time_filter(time_filter) is None:
         raise UprofError("--time-filter needs T1:T2 in seconds from capture start, e.g. 0:5")
     if ascii_kind and ascii_kind not in DUMP_FILENAMES:
@@ -399,6 +425,8 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     print(f"SYMBOL_SERVERS={' | '.join(servers)}")
 
     uprof = require_uprof()
+    if force:
+        _clear_translate_outputs(out)
     copy_session(session, out)
 
     command = translate_command(

@@ -251,4 +251,5 @@ The failure table in `SKILL.md` covers dump sanity, missing `session.uprof`/`cpu
 | `uProf export incomplete: missing ...` | uProf export differs from the expected schema | run `schema --session <dir>` and compare; use a matching uProf version |
 | `error: argument --image: not allowed with argument --pid` | both scope flags given | pass one |
 | capture directory locked during `translate` | open in the GUI | close it and retry |
+| `--out-dir already holds a previous translation` | a reused output directory still has `cpu.db`, `callstack.db` or an ASCII dump | pass `--force` to replace the generated files and copied inputs, or choose another `--out-dir` |
 | `SAMPLER: falling back ...` | VBS or hypervisor blocks IBS counters | disable VBS/Hyper-V, or accept cycle sampling |

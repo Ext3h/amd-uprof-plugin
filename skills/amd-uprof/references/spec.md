@@ -30,6 +30,9 @@ sample shares and time shares — stating what each share measures.
 
 - Requires an output directory; copies the session and translates the copy.
 - Never translates in place, and no message anywhere instructs a user to do so.
+- An output directory that already holds `cpu.db`, `callstack.db` or an ASCII dump is refused
+  unless `--force`; `--force` removes the generated files and the copied session inputs first, so
+  a repeated translate produces the same counts as a fresh one and unrelated files are untouched.
 - Prints the session path of the copy.
 - The source session's files and timestamps are unchanged afterwards.
 

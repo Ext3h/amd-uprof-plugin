@@ -54,10 +54,10 @@ python <SKILL_DIR>/tools/uprof.py collect --out-dir <OUT_DIR> --seconds 60 --eve
 ```text
 python <SKILL_DIR>/tools/uprof.py translate --session <SESSION_DIR> --out-dir <COPY_DIR> \
     [--pdb-dir <dir>] [--symbol-cache <dir>] [--symbol-server <srv>] \
-    [--time-filter T1:T2] [--ascii ibsop-event-dump|ibsfetch-event-dump]
+    [--time-filter T1:T2] [--ascii ibsop-event-dump|ibsfetch-event-dump] [--force]
 ```
 
-Copies `session.uprof` plus `cpu/`, `metadata/`, `.config/`, `.log/`, `sources/` and `binaries/` to `--out-dir`, translates the copy, and prints `SESSION=` / `CPU_DB=` (`ASCII_DUMP=` when `--ascii` ran). The source is never written. An existing non-directory `--out-dir`, `--out-dir == --session`, a malformed `--time-filter` or a copy failure (permission, read-only parent, collision) exits 2 with `error: ...` naming the offending path or form and a remedy, never a traceback. Close a capture open in the GUI first: it is locked.
+Copies `session.uprof` plus `cpu/`, `metadata/`, `.config/`, `.log/`, `sources/` and `binaries/` to `--out-dir`, translates the copy, and prints `SESSION=` / `CPU_DB=` (`ASCII_DUMP=` when `--ascii` ran). The source is never written. An existing non-directory `--out-dir`, `--out-dir == --session`, a malformed `--time-filter` or a copy failure (permission, read-only parent, collision) exits 2 with `error: ...` naming the offending path or form and a remedy, never a traceback. An `--out-dir` that already holds `cpu.db`, `callstack.db` or an ASCII dump is refused with exit 2 because translate would otherwise append to the old database; `--force` removes those generated files and the copied session inputs first, so a repeated translate gives the same counts as a fresh one and unrelated files stay untouched. Close a capture open in the GUI first: it is locked.
 
 - Symbol cache: `--symbol-cache`, else the first `srv*<cache>*<url>` cache in `_NT_SYMBOL_PATH`, else `%LOCALAPPDATA%\Symbols` (Windows) or `$XDG_CACHE_HOME/amd-uprof/symbols` / `~/.cache/amd-uprof/symbols` (Linux). Symbol servers: `_NT_SYMBOL_PATH` entries, else Microsoft's on Windows, none on Linux; `--symbol-server` appends.
 - `--pdb-dir` passes `--symbol-path`. `--ascii ibsop-event-dump` writes `IbsOpDump.csv`; `ibsfetch-event-dump` writes `IbsFetchDump.csv` for a fetch dump produced elsewhere, which profiles the same way but is unverified. `profile` generates a missing dump itself on a cached copy, so translating it yourself is optional.
@@ -141,6 +141,7 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 | `session.uprof` missing | error before any query; `pct_time` needs it for the sampler and the span check | 2 |
 | `cpu.db` missing | error naming the file and the `translate --session ... --out-dir ...` step | 2 |
 | translate `--out-dir` is an existing non-directory or equals `--session`; a copy fails (permission, read-only parent); a profile dump cache or symbol-artifact temp path cannot be created or written | `error:` with the offending path or rule and a permissions/free-space remedy; no traceback | 2 |
+| translate `--out-dir` already holds `cpu.db`, `callstack.db` or an ASCII dump and `--force` was not given | error naming the files and the remedy: choose another `--out-dir` or pass `--force`; `--force` replaces the generated files and copied session inputs, never unrelated files | 2 |
 | no matching PDB, missing binary, no image GUID, or `llvm-readobj` missing/failed | warning; addresses become `<no symbol>`; `AGREEMENT` reports the weight | 0 |
 | required tool missing (uProf CLI, DuckDB 2.x, llvm-symbolizer) | `tools` prints paths and versions and `error: MISSING ...`; a symbolized profile fails at symbolization | 2 |
 | `--sample-interval` is a time in IBS op-count mode, a bare integer in a cycle mode, or a non-positive work count | error naming the required form and the mode | 2 |

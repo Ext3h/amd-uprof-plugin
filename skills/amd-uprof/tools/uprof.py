@@ -76,6 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
     translate.add_argument("--symbol-server", action="append")
     translate.add_argument("--time-filter", metavar="T1:T2")
     translate.add_argument("--ascii", choices=("ibsop-event-dump", "ibsfetch-event-dump"))
+    translate.add_argument(
+        "--force", action="store_true",
+        help="replace cpu.db, callstack.db, any ASCII dump and the copied session files when "
+             "--out-dir already holds an earlier translation; without it that is an error")
 
     profile = sub.add_parser("profile", help="samples and time shares at one granularity")
     profile.add_argument("--session", required=True)
@@ -136,7 +140,7 @@ def _dispatch(args: argparse.Namespace) -> None:
     elif args.command == "translate":
         import uprof_native
         uprof_native.translate(args.session, args.out_dir, args.pdb_dir, args.symbol_cache,
-                               args.symbol_server, args.time_filter, args.ascii)
+                               args.symbol_server, args.time_filter, args.ascii, args.force)
     elif args.command == "tools":
         import uprof_native
         uprof_native.tool_report()

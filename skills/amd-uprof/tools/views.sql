@@ -424,6 +424,7 @@ SELECT CASE
   WHEN NOT filtered THEN NULL
   WHEN system_wide = 'false' THEN NULL
   WHEN COALESCE(scoped_samples, 0) = 0 THEN NULL
+  WHEN last_ns IS NULL THEN NULL
   WHEN scope_end_ns IS NULL THEN NULL
   WHEN cadence_ns IS NULL OR cadence_ns <= 0 THEN NULL
   WHEN end_gap_ns > cadence_ns THEN

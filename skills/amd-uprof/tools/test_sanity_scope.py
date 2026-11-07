@@ -22,7 +22,6 @@ TOOLS_DIR = Path(__file__).resolve().parent
 ELAPSED_MS = 10_000
 # 100 samples on the late CPU, so the dump-wide cadence estimate is 0.1 s.
 LATE_SPACING_NS = 100_909_090
-ALL_NS = "9223372036854775807"
 
 
 class SanityScopeTest(unittest.TestCase):
@@ -65,7 +64,7 @@ class SanityScopeTest(unittest.TestCase):
         for i in range(100):
             lines.append(f"{i * LATE_SPACING_NS},1,{200},{200},8192,background.exe")
         (self.session / "IbsOpDump.csv").write_text("\n".join(lines) + "\n",
-                                                     encoding="utf-8")
+                                                     encoding="utf-8", newline="\n")
 
     def write_cpu_db(self):
         connection = duckdb.connect(str(self.session / "cpu.db"))

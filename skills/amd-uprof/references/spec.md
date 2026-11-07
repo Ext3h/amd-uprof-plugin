@@ -152,7 +152,7 @@ the UTC start is reported with its precision.
 | `samples` | raw number of samples in the row | no |
 | `sample_share` | fraction of samples; what a sample represents depends on the sampler (below) | **yes** |
 | `time_share` | share of time estimated from per-sample DeltaTick gaps; an estimate, not unqualified impact | absent for PMC captures (the export aggregates PMC samples per window); the estimator still defines its meaning |
-| `tag_to_retire_share` | share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, queue/stalls included; clipped at 131070); a total, not per-op latency | present only for an IBS OP dump with a usable `IbsTagToRetCtr` (at least one non-null value) |
+| `tag_to_retire_share` | share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency | present only for an IBS OP dump with a usable `IbsTagToRetCtr` (at least one non-null value) |
 
 | capture | a sample represents | `sample_share` is | status |
 |---|---|---|---|

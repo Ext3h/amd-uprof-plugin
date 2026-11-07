@@ -128,19 +128,19 @@ are the uncapped views.
 `ibs-session` has 59,243 samples on 16 CPUs. The default (top 20) run returns 20 rows plus one
 `<other processes|functions|lines|instructions>` remainder whose identifying columns are NULL;
 the three shares still sum to 1.0 at every granularity. `tag_to_retire_share` is the share of
-`min(IbsTagToRetCtr, 131070)`; only an unsigned decimal integer cell counts, so NULL, negative,
-fractional and exponent cells are excluded from its denominator.
+`min(IbsTagToRetCtr, 65535)`, the 16-bit field's maximum; only an unsigned decimal integer cell
+counts, so NULL, negative, fractional and exponent cells are excluded from its denominator.
 
-- Clip: a copy of `ibs-session` with one `IbsTagToRetCtr` forced to 200000 gives PID 5932
-  `tag_to_retire_share=0.91524932128492`; independent CSV arithmetic with `min(tag, 131070)` gives
-  the same value, while the unclipped alternative would be 0.91692033796397.
+- Clip: a two-row fixture with tags 200000 and 1000 gives `65535/66535 = 0.9849703163748403`
+  and `1000/66535 = 0.01502968362515969`; a tag above 65535 is charged 65535. No real capture in
+  the fixture set has a value above 65535, so the clip is exercised synthetically.
 - All-zero column: a column of zeros is non-null, so `tag_to_retire_share` is present but every
   share is NULL; the column does not sum to 1.0 because no tag cycles were counted.
 - NULL tag: appending an all-blank `IbsTagToRetCtr` to `icf-session` keeps exit 0, omits
   `tag_to_retire_share`, and prints `IbsTagToRetCtr has no non-null values`. Appending mixed junk
-  and numeric cells emits `tag_to_retire_share`; instruction `0x1170` is 0.000030511060259344014,
-  whose denominator 262,200 = 5 + 7 + 131070 + 131070 + 16 × 3, so `abc`, `1.5`, `-4` and `1e5`
-  are excluded rather than charged the maximum.
+  and numeric cells emits `tag_to_retire_share`; instruction `0x1170` is
+  `8/131130 = 0.0000610081598413787844`, whose denominator 131,130 = 5 + 7 + 65535 + 65535 +
+  16 × 3, so `abc`, `1.5`, `-4` and `1e5` are excluded rather than charged the maximum.
 
 ### PMC behavior
 

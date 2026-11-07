@@ -156,11 +156,11 @@ SET VARIABLE time_end = CAST(COALESCE(NULLIF(getvariable('uprof_time_end'), ''),
 -- uProf's empty or non-numeric cells cannot force a column type. tid identifies the thread in an
 -- attached capture: the achieved-cadence check uses it as the context there and cpu for a
 -- system-wide capture. tag_cycles is the tag-to-retire cycle count of one sampled op (AMD: tagged
--- at dispatch, retired later; queue/stalls included), clipped at 131070. Only an unsigned decimal
--- integer cell counts; NULL, negative, fractional, exponent and nan/inf spellings stay NULL and
--- are excluded from the tag_to_retire_share denominator rather than being charged the maximum.
--- The empty branch gives a PMC capture a typed, empty relation so the downstream views bind
--- without touching a dump.
+-- at dispatch, retired later; queue/stalls included), clipped at 65535, the 16-bit field's
+-- maximum. Only an unsigned decimal integer cell counts; NULL, negative, fractional, exponent and
+-- nan/inf spellings stay NULL and are excluded from the tag_to_retire_share denominator rather
+-- than being charged the maximum. The empty branch gives a PMC capture a typed, empty relation so
+-- the downstream views bind without touching a dump.
 CREATE OR REPLACE TEMP VIEW v_dump AS
 SELECT * FROM query(CASE
   WHEN NOT getvariable('has_dump') THEN $empty$
@@ -183,7 +183,7 @@ SELECT * FROM query(CASE
            -- failing on a non-integer cell; signed, decimal, exponent and nan/inf spellings are
            -- NULL, never a clipped maximum.
            CASE WHEN regexp_full_match("IbsTagToRetCtr", '\s*[0-9]+\s*')
-                THEN LEAST(TRY_CAST("IbsTagToRetCtr" AS DOUBLE), 131070)
+                THEN LEAST(TRY_CAST("IbsTagToRetCtr" AS DOUBLE), 65535)
                 ELSE NULL END AS tag_cycles
     FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)$tagged$
   ELSE $untagged$

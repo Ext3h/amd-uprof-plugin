@@ -9,7 +9,10 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - Profile share columns are renamed and emitted as fractions 0.0-1.0 instead of percentages:
   `pct_samples` -> `sample_share`, `pct_time` -> `time_share`, `pct_cycles` ->
   `tag_to_retire_share`. `samples` is unchanged, while the `AGREEMENT` field keeps its
-  human-readable percentages. Multiply an old `pct_*` value by 0.01 to get the new value.
+  human-readable percentages. Multiply an old `pct_samples` or `pct_time` by 0.01 to get
+  `sample_share` or `time_share`. For `pct_cycles`, multiply by 0.01 only if every
+  `IbsTagToRetCtr` cell in the capture is at most 65535; above that the new clip changed the
+  denominator, so recompute `tag_to_retire_share` from the dump.
 - `sample_share` states what a sample represents in each mode: the supported PMC cycle event is
   the busy core-cycle share (halted excluded); any other PMC event is not established; IBS OP
   cycle-controlled is the core-cycle share, not wall time; IBS OP op-count is the dispatched-op
@@ -46,6 +49,12 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - The SQL share macro is `share(part, whole) = part / NULLIF(whole, 0)`, and the dump gap column
   `weight` is documented as the DeltaTick gap in nanoseconds, charged to the later sample.
 - `references/validation.md` figures for these columns are fractions.
+
+### Fixed
+
+- `tag_to_retire_share` clips `IbsTagToRetCtr` at 65535, the 16-bit field's maximum, instead of
+  131070. A value above the field maximum is charged 65535; NULL and non-integer cells are excluded
+  from the denominator. The validation fixture and a new test cover the clip.
 
 ## 1.0.9 — 2026-11-07
 

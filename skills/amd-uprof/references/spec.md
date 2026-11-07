@@ -19,14 +19,17 @@ sample shares and time shares — stating what each share measures.
   stated as such.
 - After the capture, verifies that what was requested is what was applied: event, interval,
   sampling enabled, IBS vs PMC, system-wide vs attached PIDs. A mismatch fails.
-- `os=1` requests OS-mode samples, and the request is applied and encoded in the event selector; it
-  is not sufficient for kernel coverage. An unelevated capture contains no kernel-mode samples, so
-  kernel coverage requires an elevated capture.
+- OS-mode samples are requested for both capture events: cycle counting passes `user=1,os=1`, and
+  IBS samples user and OS by default. The request is applied and encoded, but it is not sufficient
+  for kernel coverage. An unelevated capture contains no kernel-mode samples, so kernel coverage
+  requires an elevated capture.
 - The tool states that limitation at both points where it can: `collect` notes the consequence
   before the capture runs, and `profile` prints `KERNEL_COVERAGE` when the applied sampler requested
-  OS mode and the whole capture contains no sample in any kernel image. This is distinct from the
-  warning that elevated user processes may be missing: that one is about process coverage, this
-  one about kernel coverage.
+  OS mode and the whole capture contains no sample in any kernel image. The profile-time check names
+  the sampler's OS-mode bit (`os`, `opOs` or `fetchOs`), reports an empty capture as such, and is
+  suppressed when the session records a translate `--time-filter`, because the resolved dump may
+  hold only that window. This is distinct from the warning that elevated user processes may be
+  missing: that one is about process coverage, this one about kernel coverage.
 - An IBS capture that the machine cannot perform (no IBS counters — hypervisor/VBS active, or an
   unsupported CPU) falls back to cycle sampling **visibly**: one line naming the cause before the
   fallback capture runs.

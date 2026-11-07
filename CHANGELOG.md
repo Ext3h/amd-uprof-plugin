@@ -6,15 +6,20 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Fixed
 
-- An unelevated capture that requests OS-mode samples (`user=1,os=1`) no longer omits every
-  kernel-mode sample silently. `profile` prints a `KERNEL_COVERAGE` header line when the applied
-  sampler requested OS mode and the whole capture has no sample in a kernel image, naming the
-  missing kernel time and the elevation remedy; `collect` appends `kernel-mode (OS) samples are
-  omitted without elevation` to its unelevated warning, separately from the warning about missing
-  elevated processes. Kernel images are matched by basename (`.sys`/`.ko`, or `ntoskrnl.exe`,
-  `ntkrnlmp.exe`, `ntkrnlpa.exe`, `ntkrpamp.exe`, `hal.dll`): `Module.isSystemModule` is true for
+- An unelevated capture that requests OS-mode samples no longer omits every kernel-mode sample
+  silently. OS mode is requested for both capture events: the cycle spec passes `user=1,os=1`, and
+  the IBS event samples user and OS by default. `collect` appends `kernel-mode (OS) samples are
+  omitted without elevation` to its unelevated warning for either. `profile` prints a
+  `KERNEL_COVERAGE` header line when the applied sampler requested OS mode and the whole capture
+  has no kernel-image sample; it names the sampler's bit (`os`, `opOs` or `fetchOs`), reports an
+  empty capture as such, and names elevation only conditionally. Kernel images are classified by
+  `ModuleInstance.loadAddress` in the kernel address range, with a basename fallback for exports
+  without that table (`.sys`/`.ko`, `ntoskrnl.exe`, `ntkrnlmp.exe`, `ntkrnlpa.exe`, `ntkrpamp.exe`,
+  `hal.dll`, `vmlinux`, `vmlinuz`, `[kernel.kallsyms]`): `Module.isSystemModule` is true for
   user-mode `ntdll.dll`, and a suffix test for `hal.dll` also matches user-mode `marshal.dll`. The
-  check covers the whole capture, so a user-only scope cannot trigger it. Evidence: the unelevated
+  check shares the ACHIEVED whole-capture scan, covers the capture before scope and time filters, so
+  a user-only scope cannot trigger it, and is suppressed when the session records a translate
+  `--time-filter`, because the resolved dump may hold only that window. Evidence: the unelevated
   capture had 21,489 samples and none in a kernel image, while the elevated capture of the same
   event had 45,489 kernel samples in 67 images; translating that raw capture unelevated preserved
   them, so the loss is at capture time.

@@ -375,8 +375,8 @@ WHERE (getvariable('uprof_pid') = '' OR s.processId = CAST(getvariable('uprof_pi
 -- translate span clipped to the profile time filter; the scope's last sample is compared against
 -- the end of that window using the same sampling-cadence threshold the dump-wide check uses.
 -- Attached captures keep their OK (attached; dump-wide) verdict: their coverage is wherever the
--- attached threads ran. An empty scope is already reported by the scope warning, so it gets no
--- verdict here.
+-- attached threads ran. A missing systemWide counts as attached, matching uprof_session.system_wide.
+-- An empty scope is already reported by the scope warning, so it gets no verdict here.
 CREATE OR REPLACE TEMP VIEW v_scope_sanity AS
 WITH span AS (
   SELECT start_ns, end_ns, system_wide,
@@ -422,7 +422,7 @@ WITH span AS (
 )
 SELECT CASE
   WHEN NOT filtered THEN NULL
-  WHEN system_wide = 'false' THEN NULL
+  WHEN COALESCE(system_wide, 'false') = 'false' THEN NULL
   WHEN COALESCE(scoped_samples, 0) = 0 THEN NULL
   WHEN last_ns IS NULL THEN NULL
   WHEN scope_end_ns IS NULL THEN NULL

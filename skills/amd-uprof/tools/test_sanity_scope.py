@@ -37,19 +37,21 @@ class SanityScopeTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def write_session(self, *, system_wide, schedule=None):
+        collection = {
+            "schedule": ({"elapsed": ELAPSED_MS, "profileDuration": 10}
+                         if schedule is None else schedule),
+            "events": {"ibsEvents": {
+                "op": {"interval": 4_700_000},
+                "opInterval": 4_700_000,
+                "opCycleCount": True,
+            }},
+        }
+        if system_wide is not None:
+            collection["target"] = {"systemWide": system_wide}
         meta = {
             "translateCommand": ("AMDuProfCLI.exe translate -i session "
                                  "--ascii ibsop-event-dump"),
-            "collection": {
-                "schedule": ({"elapsed": ELAPSED_MS, "profileDuration": 10}
-                             if schedule is None else schedule),
-                "target": {"systemWide": system_wide},
-                "events": {"ibsEvents": {
-                    "op": {"interval": 4_700_000},
-                    "opInterval": 4_700_000,
-                    "opCycleCount": True,
-                }},
-            },
+            "collection": collection,
             "auxiliary": {"ibsOpSampling": True},
         }
         (self.session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
@@ -123,6 +125,15 @@ class SanityScopeTest(unittest.TestCase):
         line = self.sanity_line("--pid", "100")
 
         self.assertIn("OK (attached", line)
+        self.assertNotIn("scoped", line)
+
+    def test_missing_system_wide_is_treated_as_attached(self):
+        # uprof_session.system_wide() counts unknown metadata as attached; ACHIEVED then labels
+        # the context a thread, so the scoped population check must not run either.
+        self.write_session(system_wide=None)
+
+        line = self.sanity_line("--pid", "100")
+
         self.assertNotIn("scoped", line)
 
     def test_start_only_time_filter_still_gets_a_scoped_verdict(self):

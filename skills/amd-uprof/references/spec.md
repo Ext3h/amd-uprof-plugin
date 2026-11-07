@@ -102,8 +102,10 @@ the UTC start is reported with its precision.
 - Default: a Markdown pipe table, right-aligned numerics, with the header lines (`METRIC:`, `DUMP:`,
   `SANITY:`, `ACHIEVED:`, `AGREEMENT:`) as plain lines above it. `SANITY` validates the dump against
   the capture metadata and states the coverage it is based on; the dump-wide verdict is labeled as
-  such, and when `--image`/`--pid` or `--time-filter` restricts the report, a scoped coverage
-  verdict follows from the scope's last sample against the end of its window. `ACHIEVED` states the
+  such, and when `--image`/`--pid` or `--time-filter` restricts a system-wide report, a scoped
+  coverage verdict follows from the scope's last sample against the end of its window; attached
+  captures (or a missing `systemWide`, which counts as attached) keep the attached verdict
+  instead, because their coverage is where the attached threads ran. `ACHIEVED` states the
   samples delivered, the capture window, the per-CPU rate, the requested interval, and the busiest
   sampling context's cadence, and says so when that context delivers far below the request. The
   per-CPU rate divides by every CPU and is not the delivered cadence.

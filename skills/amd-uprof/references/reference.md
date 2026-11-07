@@ -103,9 +103,9 @@ compares it with the end of the scope window — the recorded translate span cli
 `--time-filter` window — against the scope's own sampling cadence (the window width divided by the
 busiest in-scope thread's sample count). The verdict says `WARN` and names the scope when the
 scope's late time is uncovered, and `OK` when the scope sampled near the end of its window.
-Attached captures get no scoped verdict: `OK (attached; dump-wide)` already states that coverage is
-where the attached threads ran. An empty scope gets none either; the separate no-samples warning
-covers it.
+Attached captures, and captures whose metadata lacks `systemWide` (which counts as attached), get
+no scoped verdict: `OK (attached; dump-wide)` already states that coverage is where the attached
+threads ran. An empty scope gets none either; the separate no-samples warning covers it.
 
 ### Achieved sample rate
 

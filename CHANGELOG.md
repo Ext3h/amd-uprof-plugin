@@ -15,7 +15,8 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   (the recorded span clipped to the profile time-filter window), `WARN` when the gap exceeds the
   scope's own sampling cadence. The dump-wide verdict is labeled `dump-wide across all processes` and the scoped one
   names its scope, so neither can be read as the other. Attached captures keep
-  `OK (attached; dump-wide)` and get no scoped verdict; the empty-scope warning is unchanged.
+  `OK (attached; dump-wide)` and get no scoped verdict (a missing `systemWide` counts as
+  attached); the empty-scope warning is unchanged.
 
 ### Added
 

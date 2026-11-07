@@ -10,6 +10,7 @@ from unittest import mock
 import uprof_context
 import uprof_db
 import uprof_output
+from uprof_util import UprofError
 
 
 FILE_HEADERS = """\
@@ -248,6 +249,43 @@ class InstructionContextsTest(unittest.TestCase):
         hot = next(item for item in context["instructions"] if item["rva"] == "0x101B")
         self.assertEqual(hot["import"]["name"], "ExitProcess")
         self.assertEqual(hot["symbol"]["function"], "main")
+
+    def contexts_with(self, connection, run_side_effect):
+        with mock.patch.object(uprof_context, "run", side_effect=run_side_effect):
+            with mock.patch.object(uprof_context, "find_readobj",
+                                   return_value="llvm-readobj.exe"):
+                with mock.patch.object(uprof_context, "find_objdump",
+                                       return_value="llvm-objdump.exe"):
+                    with mock.patch.object(uprof_context, "find_symbolizer",
+                                           return_value="llvm-symbolizer.exe"):
+                        with mock.patch.object(uprof_context, "find_pdb", return_value=None):
+                            return uprof_context.instruction_contexts(
+                                connection, COLUMNS, [ROW])
+
+    def test_a_tool_timeout_is_a_machine_readable_omission(self):
+        def timeout(command, **kwargs):
+            if command[0] == "llvm-objdump.exe":
+                raise UprofError("llvm-objdump timed out after 300s")
+            return fake_run(command, **kwargs)
+
+        contexts = self.contexts_with(FakeConnection(module_path=__file__), timeout)
+
+        self.assertEqual(contexts[0],
+                         {"omitted": True, "reason": "context_failed",
+                          "detail": "llvm-objdump timed out after 300s"})
+
+    def test_a_query_failure_is_a_machine_readable_omission(self):
+        class FailingConnection(FakeConnection):
+            def execute(self, sql, parameters=None):
+                if "FROM v_scoped" in " ".join(sql.split()):
+                    raise UprofError("cannot read v_scoped")
+                return super().execute(sql, parameters)
+
+        contexts = self.contexts_with(FailingConnection(module_path=__file__), fake_run)
+
+        self.assertEqual(contexts[0],
+                         {"omitted": True, "reason": "context_failed",
+                          "detail": "cannot read v_scoped"})
 
 
 class OmissionJsonTest(unittest.TestCase):

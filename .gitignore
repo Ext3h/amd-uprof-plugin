@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# The instruction-context fixture is a deliberately committed PE image.
+!skills/amd-uprof/tools/fixtures/fixture.exe

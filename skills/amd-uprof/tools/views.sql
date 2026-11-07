@@ -297,7 +297,7 @@ SELECT CASE
            CAST(worst_cpu AS VARCHAR))
 END AS message,
 CAST(tag_values AS BIGINT) AS tag_values,
-end_ns, expected_ns, max_cpu_samples, system_wide
+start_ns, end_ns, expected_ns, max_cpu_samples, system_wide
 FROM measured;
 
 -- Symbol artifact: one combined Parquet with a module_name column, else an empty typed view.
@@ -336,7 +336,7 @@ SELECT * FROM query(CASE WHEN getvariable('uprof_aliases') <> ''
 -- needs no identifier splicing.
 CREATE OR REPLACE TEMP VIEW v_scoped AS
 SELECT * FROM query(CASE WHEN getvariable('has_dump') THEN $dump$
-SELECT w.delta_tick, w.cpu, w.pid, w.rva, w.module_name, w.weight,
+SELECT w.delta_tick, w.cpu, w.tid, w.pid, w.rva, w.module_name, w.weight,
        CAST(1 AS BIGINT) AS samples, w.tag_cycles,
        COALESCE(p.name, '<unknown process>') AS process,
        rf.function_id
@@ -355,6 +355,7 @@ WHERE (getvariable('uprof_pid') = '' OR w.pid = CAST(getvariable('uprof_pid') AS
 ELSE $pmc$
 SELECT CAST(NULL AS BIGINT) AS delta_tick,
        CAST(NULL AS INTEGER) AS cpu,
+       CAST(NULL AS INTEGER) AS tid,
        CAST(s.processId AS INTEGER) AS pid,
        CAST(s.moduleRVA AS BIGINT) AS rva,
        module_key(m.path) AS module_name,
@@ -378,12 +379,14 @@ WHERE (getvariable('uprof_pid') = '' OR s.processId = CAST(getvariable('uprof_pi
 -- verdict here.
 CREATE OR REPLACE TEMP VIEW v_scope_sanity AS
 WITH span AS (
-  SELECT end_ns, expected_ns, max_cpu_samples, system_wide,
+  SELECT start_ns, end_ns, expected_ns, system_wide,
          (getvariable('uprof_image') <> '%' OR getvariable('uprof_pid') <> ''
           OR getvariable('time_start') > 0
           OR getvariable('time_end') < 9223372036854775807) AS filtered,
          -- The scope window is the recorded span clipped to the profile time filter. A start-only
          -- filter leaves the end at the recorded span end instead of the unbounded default.
+         GREATEST(COALESCE(start_ns, getvariable('time_start')),
+                  getvariable('time_start')) AS scope_start_ns,
          CASE WHEN getvariable('time_end') < 9223372036854775807
               THEN LEAST(COALESCE(end_ns, getvariable('time_end')),
                          getvariable('time_end'))
@@ -401,19 +404,27 @@ WITH span AS (
            AS scope_label
   FROM v_dump_sanity
 ), scoped AS (
-  SELECT max(delta_tick) AS last_ns, count(*) AS scoped_samples
-  FROM v_scoped
+  -- A sampling context is one thread of one process. The cadence estimate is the window width
+  -- divided by the busiest in-scope context's sample count, the same span/count form as the
+  -- dump-wide check but measured on the scope's own population.
+  SELECT max(last_tick) AS last_ns, sum(context_samples) AS scoped_samples,
+         max(context_samples) AS max_context_samples
+  FROM (
+    SELECT pid, tid, max(delta_tick) AS last_tick, count(*) AS context_samples
+    FROM v_scoped
+    GROUP BY pid, tid
+  )
 ), judged AS (
-  SELECT span.*, scoped.last_ns, scoped.scoped_samples,
+  SELECT span.*, scoped.last_ns, scoped.scoped_samples, scoped.max_context_samples,
          greatest(span.scope_end_ns - scoped.last_ns, 0) AS end_gap_ns,
-         span.expected_ns / greatest(CAST(span.max_cpu_samples AS DOUBLE), 1) AS cadence_ns
+         (span.scope_end_ns - span.scope_start_ns) / scoped.max_context_samples AS cadence_ns
   FROM span CROSS JOIN scoped
 )
 SELECT CASE
   WHEN NOT filtered THEN NULL
   WHEN system_wide = 'false' THEN NULL
   WHEN expected_ns IS NULL OR expected_ns = 0 THEN NULL
-  WHEN scoped_samples = 0 THEN NULL
+  WHEN COALESCE(scoped_samples, 0) = 0 THEN NULL
   WHEN end_gap_ns > cadence_ns THEN
     printf('scoped coverage (%s): WARN: the last sample in scope is %.3f s before the scope window end at %.3f s, longer than one sampling cadence, so late time in the scope is uncovered',
            scope_label, end_gap_ns / 1e9, scope_end_ns / 1e9)

@@ -89,19 +89,29 @@ class OsRequestParsingTest(unittest.TestCase):
         return uprof_session.derive_sampler(self.session)
 
     def test_pmc_os_true_is_recorded(self):
-        self.assertTrue(self.derive(pmc_meta(True)).os_requested)
+        sampler = self.derive(pmc_meta(True))
+        self.assertTrue(sampler.os_requested)
+        self.assertEqual(sampler.os_mode, "os")
 
     def test_pmc_os_false_is_recorded(self):
-        self.assertFalse(self.derive(pmc_meta(False)).os_requested)
+        sampler = self.derive(pmc_meta(False))
+        self.assertFalse(sampler.os_requested)
+        self.assertIsNone(sampler.os_mode)
 
     def test_ibs_op_os_mode_is_recorded(self):
-        self.assertTrue(self.derive(ibs_meta(op=True, opOs=True)).os_requested)
+        sampler = self.derive(ibs_meta(op=True, opOs=True))
+        self.assertTrue(sampler.os_requested)
+        self.assertEqual(sampler.os_mode, "opOs")
 
     def test_ibs_fetch_os_mode_is_recorded(self):
-        self.assertTrue(self.derive(ibs_meta(fetch=True, fetchOs=True)).os_requested)
+        sampler = self.derive(ibs_meta(fetch=True, fetchOs=True))
+        self.assertTrue(sampler.os_requested)
+        self.assertEqual(sampler.os_mode, "fetchOs")
 
     def test_ibs_user_only_is_not_os_requested(self):
-        self.assertFalse(self.derive(ibs_meta(op=True, opOs=False)).os_requested)
+        sampler = self.derive(ibs_meta(op=True, opOs=False))
+        self.assertFalse(sampler.os_requested)
+        self.assertIsNone(sampler.os_mode)
 
 
 class KernelCoverageWarningTest(unittest.TestCase):
@@ -109,10 +119,28 @@ class KernelCoverageWarningTest(unittest.TestCase):
 
     def test_os_requested_without_kernel_samples_warns(self):
         warning = uprof_session.kernel_coverage_warning(
-            uprof_session.Sampler(os_requested=True), 0)
+            uprof_session.Sampler(os_requested=True, os_mode="os"), 0, 100)
         self.assertIsNotNone(warning)
         self.assertIn("kernel-mode", warning)
+        self.assertIn("(os)", warning)
+        self.assertNotIn("os=1", warning)
         self.assertIn("elevat", warning.lower())
+
+    def test_warning_names_the_sampler_bit(self):
+        warning = uprof_session.kernel_coverage_warning(
+            uprof_session.Sampler(os_requested=True, os_mode="opOs"), 0, 100)
+        self.assertIn("(opOs)", warning)
+
+    def test_empty_capture_is_reported_without_an_elevation_remedy(self):
+        warning = uprof_session.kernel_coverage_warning(
+            uprof_session.Sampler(os_requested=True, os_mode="fetchOs"), 0, 0)
+        self.assertIn("no samples in the capture", warning)
+        self.assertNotIn("elevat", warning.lower())
+
+    def test_unknown_capture_total_keeps_the_missing_kernel_wording(self):
+        warning = uprof_session.kernel_coverage_warning(
+            uprof_session.Sampler(os_requested=True, os_mode="os"), 0)
+        self.assertIn("no kernel-image samples", warning)
 
     def test_os_requested_with_kernel_samples_does_not_warn(self):
         self.assertIsNone(uprof_session.kernel_coverage_warning(

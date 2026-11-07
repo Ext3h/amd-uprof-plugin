@@ -97,9 +97,12 @@ def _json_value(value: object) -> object:
 
 
 def json_document(fields: Sequence[tuple[str, str]], columns: Sequence[str],
-                  rows: Sequence[Sequence[object]]) -> str:
-    """One object with the header fields and a rows array keyed by the table's column names."""
+                  rows: Sequence[Sequence[object]],
+                  legend: dict[str, object] | None = None) -> str:
+    """One object with the header fields, the legend and a rows array keyed by column names."""
     payload: dict[str, object] = {name: text for name, text in fields}
+    if legend is not None:
+        payload["legend"] = legend
     payload["rows"] = [{column: _json_value(value) for column, value in zip(columns, row)}
                        for row in rows]
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"

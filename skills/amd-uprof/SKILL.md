@@ -81,46 +81,50 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 
 | `--by` | Row key | Columns | Symbolization |
 |---|---|---|---|
-| `process` | process | process, pid, samples, pct_samples, pct_time*, pct_cycles* | no |
-| `function` | Function.id | function, module, attribution, samples, pct_samples, pct_time*, pct_cycles* | no |
-| `line` | file:line | file, line, function, module, attribution, samples, pct_samples, pct_time*, pct_cycles* | every module in scope |
-| `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, pct_samples, pct_time*, pct_cycles* | every module in scope |
+| `process` | process | process, pid, samples, sample_share, time_share*, tag_to_retire_share* | no |
+| `function` | Function.id | function, module, attribution, samples, sample_share, time_share*, tag_to_retire_share* | no |
+| `line` | file:line | file, line, function, module, attribution, samples, sample_share, time_share*, tag_to_retire_share* | every module in scope |
+| `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, sample_share, time_share*, tag_to_retire_share* | every module in scope |
 
-`*` is present only when the capture mode supplies it (next table).
+`*` is present only when the capture mode supplies it (next table). Every share is a fraction 0.0-1.0; `samples` stays a raw count.
 
 ## What a share measures
 
-| Capture or dump | Status | A sample is | `pct_samples` is | `pct_time` | `pct_cycles` |
+| Capture or dump | Status | A sample is | `sample_share` is | `time_share` | `tag_to_retire_share` |
 |---|---|---|---|---|---|
-| PMCx076 `CYCLES_NOT_IN_HALT` | verified | fixed cycles | time share (busy CPU time) | absent: no per-sample timestamps | absent |
-| IBS OP, tagged, op-count interval (default) | verified | fixed retired ops | instruction share — **not time** | exact DeltaTick-gap time | present: clipped at 131070, never time |
-| IBS OP, tagged, cycle-controlled | no capture available | fixed cycles | time share | exact DeltaTick-gap time | present: clipped at 131070, never time |
-| IBS OP, tagless (either control) | op-count verified; cycle-controlled unverified | as the control says | instruction share (op-count) or time share (cycle-controlled) | exact DeltaTick-gap time | absent: the dump has no `IbsTagToRetCtr` |
-| IBS fetch dump | unverified (dump only) | fetch events | fetch-sample share — not time | exact DeltaTick-gap time | absent: an IBS fetch dump has no tag-to-retire basis |
+| PMC, supported cycle event (`CYCLES_NOT_IN_HALT`, hwId 118, sampling) | verified | fixed cycle count | busy core-cycle share (halted excluded) | absent: this export aggregates PMC samples per window | absent: this export has no tag-to-retire counter |
+| PMC, any other event (not the supported cycle event, or not sampling) | not established | one event-column count | not established | absent: this export aggregates PMC samples per window | absent: this export has no tag-to-retire counter |
+| IBS OP, tagged, op-count interval (default) | verified | selected op (op-count interval) | dispatched-op frequency share (fixed dispatched ops per sample), not a per-op cost | time share estimated from gaps | present: total tag-to-retire cycles summed over sampled ops (dispatch tag to retirement, queue/stalls included), a total, not per-op latency, clipped at 131070 |
+| IBS OP, tagged, cycle-controlled | verified on an external cycle-controlled capture | selected op (cycle-controlled interval) | core-cycle share (fixed cycles per sample), not wall time, not a per-op cost | time share estimated from gaps | present: total tag-to-retire cycles summed over sampled ops (dispatch tag to retirement, queue/stalls included), a total, not per-op latency, clipped at 131070 |
+| IBS OP, tagless (either control) | op-count verified; cycle-controlled external capture | selected op (per control) | dispatched-op frequency share or core-cycle share per control (fixed work per sample), not a per-op cost | time share estimated from gaps | absent: the dump has no `IbsTagToRetCtr` |
+| IBS fetch dump | unverified (dump only) | selected fetch event | fetch-sample frequency share (fixed fetch events per sample) | time share estimated from gaps | absent: this export has no tag-to-retire counter |
 
-"Tagged" means the dump carries `IbsTagToRetCtr`, detected per dump rather than from the capture metadata. "Verified" means exercised on a capture; "no capture available" means the code path exists but no capture was made. A PMC capture never falls back to a dump or a fabricated time share. The row views emit `samples`, then `pct_samples`, then `pct_time` and `pct_cycles` only when the capture supplies them. For an IBS OP dump, a present column with no non-null value (including a junk-only column) omits `pct_cycles` like a tagless dump, with its own disclosure: `PCT_CYCLES` says `IbsTagToRetCtr has no non-null values`.
+"Tagged" means the dump carries `IbsTagToRetCtr`, detected per dump rather than from the capture metadata. "Verified" means exercised on a capture; the cycle-controlled row cites an external cycle-controlled capture. A PMC capture never falls back to a dump or a fabricated time share. The row views emit `samples`, then `sample_share`, then `time_share` and `tag_to_retire_share` only when the capture supplies them. For an IBS OP dump, a present column with no non-null value (including a junk-only column) omits `tag_to_retire_share` like a tagless dump, with its own disclosure: `TAG_TO_RETIRE_SHARE` says `IbsTagToRetCtr has no non-null values`.
 
-- The `METRIC:` line states the captured mode and what a sample represents; read it before quoting a share. An instruction share is never presented as time.
-- `pct_time` is exact DeltaTick-gap weighting from the IBS ASCII dump: a gap is charged whole to the later sample, so idle/halted time accrues to the next sample; totals are core time summed over CPUs. The per-CPU lag and the rule that `--time-filter` applies before it are in `references/reference.md`.
-- `pct_cycles` is the share of sampled op latency (tag-to-retire), clipped at 131070; it is never elapsed time. A NULL or non-numeric cell is excluded from the denominator, not charged the maximum.
-- `pct_samples` for a dump is the raw dump-row share; for PMC it is the `UnifiedSampleSeries` event-column count share (one cpu.db row may carry several samples). Each emitted share column sums to 100 within floating-point precision when it has at least one non-null value; a single-sample window can leave `pct_time` `NULL`.
+- The `METRIC:` line states the captured mode and what a sample represents; read it before quoting a share. For op-count and fetch shares, `sample_share` counts selected operations or fetch events, so the cheap-often/expensive-rarely caveat applies; a cycle-controlled share counts fixed cycles per sample and does not carry that caveat.
+- `time_share` is a time share estimated from the gaps in the IBS ASCII dump: a gap is charged whole to the later sample, so idle/wait time accrues to the sample that ends it; the first sample per CPU is ignored (no gap before it) and a `NULL` sorts last. Do not read it as unqualified impact. The per-CPU lag and the rule that `--time-filter` applies before it are in `references/reference.md`.
+- `tag_to_retire_share` is the share of AMD tag-to-retire cycles summed over sampled ops: the tag at dispatch to retirement, including scheduler/queue occupancy and stalls, clipped at 131070. It is a total, not per-op latency. Only an unsigned decimal integer cell is a value; NULL, negative, fractional and exponent cells are excluded from the denominator, not charged the maximum.
+- `sample_share` for a dump is the raw dump-row share; for PMC it is the `UnifiedSampleSeries` event-column count share (one cpu.db row may carry several samples). For the supported cycle event, each sample is a fixed cycle count, so the share is the busy core-cycle share (halted excluded); any other PMC event leaves it not established. Every emitted share column sums to 1.0 within floating-point precision when it has at least one non-null value; a single-sample window can leave `time_share` `NULL`, and an all-zero `IbsTagToRetCtr` leaves every `tag_to_retire_share` `NULL` rather than summing to 1.0.
 
 ## Header lines
 
 | Field | Meaning |
 |---|---|
 | `METRIC` | sampler, event column, interval/control and what a sample represents |
+| `COLUMNS` | the unit stated once (share columns are fractions 0.0-1.0), `samples` as raw count, each emitted share column by name, the `attribution` definition when the scope emits it, and each absent column with its reason; definitions stay in the header lines |
+| `READ` | which column ranks where time went, that `sample_share` is not a per-op cost, that `tag_to_retire_share` is total tag-to-retire cycles (higher = more wait), and that the `<other ...>` row is last, not ranked |
+| `NEXT` | full runnable calls joined by `&&`, each keeping `--session`, the `--pid`/`--image` and time-filter scope and a non-default `--top`, derived from the current `--by`; the last call adds `--json` to `--by instruction` |
 | `DUMP` | dump path, size and provenance (`found beside the session`, cache reused/generated, or `none` for PMC) |
 | `DB` | only when the dump is outside the session: which dump is valid, and that `cpu.db` must come from the original session |
-| `PCT_TIME` | estimator and the window it is relative to: the whole capture or the `profile --time-filter` |
-| `PCT_CYCLES` | tag-to-retire basis and the 131070 clip, the missing-column or empty-column disclosure, or `not applicable` for PMC/fetch |
+| `TIME_SHARE` | estimator and the window it is relative to: the whole capture or the `profile --time-filter`; few samples make the share coarse, so it says to check `sample_share` |
+| `TAG_TO_RETIRE_SHARE` | tag-to-retire basis and the 131070 clip, that a higher share means more total cycles rather than a higher per-op cost, the missing-column or empty-column disclosure, or `not applicable` for PMC/fetch |
 | `WEIGHTS` | the aggregation key of the chosen `--by` and the weight basis |
 | `SANITY` | provenance check. Dump-wide across all processes: covered core time against the recorded span (`translate --time-filter` window when recorded, else `collection.schedule.elapsed`) × dump CPUs, plus the boundary gaps; errors only when core time exceeds that capacity or a sample lies outside the span; `OK (attached; dump-wide)` for attached captures; a `WARN (dump-wide across all processes)` means no usable duration or uncovered late time. When `--image`/`--pid` or `--time-filter` narrows a system-wide report, a `scoped coverage (<scope>)` verdict follows: the scope's last sample against the end of the scope window (the time-filter window, with its end clipped to the recorded span), `WARN` when that gap exceeds the scope's own sampling cadence; attached captures (including a missing `systemWide`) keep only the attached verdict |
 | `ACHIEVED` | whole-capture samples, window, CPUs and delivered samples/s per CPU against the requested interval, then the busiest sampling context's cadence and the number of active contexts (at least 10% of the busiest one's samples); the per-CPU figure divides by every CPU, so it is not the delivered cadence; warns only when the busiest context is below 10% of the requested rate, never because idle CPUs dilute the average; `translate --ascii` prints the same line counted from its dump |
 | `KERNEL_COVERAGE` | only when the applied sampler requested OS-mode samples (PMC event `os: true`; an enabled IBS sampler's `opOs`/`fetchOs`) and the **whole capture, before `--image`/`--pid`/`--time-filter`**, has no sample in a kernel image; it reports the sampler's OS-mode bit and the absence of a kernel-image sample, names elevation only conditionally, and reports an empty capture as such without an elevation remedy; a kernel image is a module whose `ModuleInstance.loadAddress` is in the kernel address range, else a basename match (`.sys`/`.ko`, `ntoskrnl.exe`/`ntkrnlmp.exe`/`ntkrnlpa.exe`/`ntkrpamp.exe`, `hal.dll`, `vmlinux`/`vmlinuz`/`[kernel.kallsyms]`); suppressed when `session.uprof` records a `translate --time-filter`, because the resolved dump may hold only that window; a user-only scope can neither create nor hide it, and it never refers to elevated user processes; `collect` prints the same limitation before the capture runs |
 | `AGREEMENT` | `line`/`instruction` only: frame rule, sample-weighted mismatch rate, address counts (the `compared` predicate is both names non-empty), `<no symbol>` sample weight |
 
-`SANITY` validates the entire dump against the **translate** span (the `translate --time-filter` window when recorded, else `collection.schedule.elapsed`); `PCT_TIME` and `WEIGHTS` describe the **profile** `--time-filter` window. The two windows may legitimately differ. The scoped coverage verdict uses the **profile** `--time-filter` end when one is given, else the translate span; it, not the dump-wide verdict, answers whether the profiled population was covered.
+`SANITY` validates the entire dump against the **translate** span (the `translate --time-filter` window when recorded, else `collection.schedule.elapsed`); `TIME_SHARE` and `WEIGHTS` describe the **profile** `--time-filter` window. The two windows may legitimately differ. The scoped coverage verdict uses the **profile** `--time-filter` end when one is given, else the translate span; it, not the dump-wide verdict, answers whether the profiled population was covered.
 
 ## Frame rule and sentinels
 
@@ -139,14 +143,14 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 | Condition | Behaviour | Exit |
 |---|---|---|
 | dump core time exceeds the `session.uprof` span × dump CPUs, or a sample lies outside that span's bounds | error naming the dump and the arithmetic or the outside samples, with the remedy: delete the dump or its cache directory and re-run `profile` so it is regenerated on a copy | 2 |
-| `session.uprof` missing | error before any query; `pct_time` needs it for the sampler and the span check | 2 |
+| `session.uprof` missing | error before any query; `time_share` needs it for the sampler and the span check | 2 |
 | `cpu.db` missing | error naming the file and the `translate --session ... --out-dir ...` step | 2 |
 | translate `--out-dir` is an existing non-directory or equals `--session`; a copy fails (permission, read-only parent); a profile dump cache or symbol-artifact temp path cannot be created or written | `error:` with the offending path or rule and a permissions/free-space remedy; no traceback | 2 |
 | translate `--out-dir` already holds `cpu.db`, `callstack.db` or an ASCII dump and `--force` was not given | error naming the files and the remedy: choose another `--out-dir` or pass `--force`; `--force` replaces the generated files and copied session inputs, never unrelated files | 2 |
 | no matching PDB, missing binary, no image GUID, or `llvm-readobj` missing/failed | warning; addresses become `<no symbol>`; `AGREEMENT` reports the weight | 0 |
 | required tool missing (uProf CLI, DuckDB 2.x, llvm-symbolizer) | `tools` prints paths and versions and `error: MISSING ...`; a symbolized profile fails at symbolization | 2 |
 | `--sample-interval` is a time in IBS op-count mode, a bare integer in a cycle mode, or a non-positive work count | error naming the required form and the mode | 2 |
-| `--time-filter` on a PMC capture | error: PMC samples carry no per-sample timestamps | 2 |
+| `--time-filter` on a PMC capture | error: this export aggregates PMC samples per window and carries no per-sample timestamps | 2 |
 | IBS OP capture where AMDuProfCLI reports IBS counters unavailable | explicit one-line `SAMPLER: falling back to cycle sampling ...`, then a cycle capture; any other IBS failure is an error | 0 on the fallback, 2 otherwise |
 | capture export missing tables/columns or a bad event column | schema guard names every missing item and exits before querying | 2 |
 | `--out-file` equals `cpu.db`, `session.uprof` or the dump; directory missing; path is a directory | error; the input is never overwritten | 2 |
@@ -168,7 +172,7 @@ Run `uprof.py tools` first; install only when a required path prints `MISSING`. 
 ## Output
 
 - Default: a Markdown pipe table; numeric columns are right-aligned (`---:`), text columns `---`. Header fields are plain lines above it.
-- `--json`: one object with the same header fields in order, then `"rows"`, an array keyed by the table's column names. Values are identical modulo display escaping; only Markdown escaping differs.
+- `--json`: one object with the same header fields in order, then `"legend"` — the machine-readable `share_unit`, `share_scale`, `denominators`, `columns`, `absent`, `impact`, `remainder_last` and `next` — then `"rows"`, an array keyed by the table's column names. `columns` gives each column's measure, `absent` gives the omitted columns and their reasons, `impact` gives the ordering estimate, and `next` gives the drill-down calls. Values are identical modulo display escaping; only Markdown escaping differs.
 - Cells: `NULL` (JSON `null`); `&`, `<`, `>` entity-escaped; backslashes doubled; `|` escaped. Full precision, no rounding. CR, LF, TAB, NUL, other C0 controls and DEL are shown as `\n`, `\r`, `\t` or two-digit uppercase `\xNN` in table cells and header values (a header value containing controls also doubles backslashes); JSON keeps the true characters.
 - `--out-file` writes UTF-8 without a BOM and LF newlines, exactly the stdout bytes, through `<path>.tmp` and rename; stdout stays empty. `schema` keeps `--out-file` but has no `--json`: `--json` is scoped to `profile`, so the asymmetry is intentional.
 - The same capture and arguments produce byte-identical output; rows rank by weight, then samples, and the per-granularity tie order is in `references/reference.md`. The denominator is the whole scoped capture, so unresolved addresses keep their sample weight.
@@ -184,4 +188,4 @@ Run `uprof.py tools` first; install only when a required path prints `MISSING`. 
 
 ## References
 
-`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, the 15 SQL views, the `pct_cycles` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).
+`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, the 15 SQL views, the `tag_to_retire_share` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).

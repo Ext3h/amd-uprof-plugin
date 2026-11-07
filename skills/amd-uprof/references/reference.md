@@ -19,7 +19,7 @@ UTF-8 JSON (a BOM is tolerated). The keys the tools read:
 | `collectCommand` | printed; fallback event name when the event list records none |
 
 - **Event-column mapping.** `auxiliary.eventColumnIds` maps registered names to `event#0x<encodedId>`. The PMC sample column is the `CYCLES_NOT_IN_HALT` mapping; the hwId 118 `pmcEventList` entry's `encodedEventId` must equal it, or `derive_sampler` errors as inconsistent metadata. Without a mapping, the entry's `encodedEventId` is used. IBS names: `IBS_ALL_OPS` → `event#0x100000000f100`, `IBS_FETCH` → `event#0x100000000f000`.
-- **PMC versus IBS.** IBS when `auxiliary.ibsOpSampling` is true, or `ibsEvents.op`/`fetch` is set; otherwise a non-empty `pmcEventList` is a PMC capture. `opCycleCount` true means cycle-controlled (time-like sample share); false means op-count (instruction share).
+- **PMC versus IBS.** IBS when `auxiliary.ibsOpSampling` is true, or `ibsEvents.op`/`fetch` is set; otherwise a non-empty `pmcEventList` is a PMC capture. `opCycleCount` true means a cycle-controlled interval and false an op-count interval; a sample is the operation the hardware selected, so `sample_share` is a core-cycle share for cycle-controlled, a dispatched-op frequency share for op-count, and a fetch-sample frequency share for fetch, never a per-op cost (`time_share` is the estimate from gaps; `tag_to_retire_share` is total tag-to-retire cycles, not per-op latency).
 - **Dump kinds.** `ibsop-event-dump` → `IbsOpDump.csv`; `ibsfetch-event-dump` → `IbsFetchDump.csv`. `collect` does not capture IBS fetch; a fetch dump must be produced elsewhere and is supported but unverified.
 - **Verified by `collect`:** PMC `hwId` 118, the converted `interval`, `isSampling` true, `auxiliary.ibsOpSampling` false; IBS `ibsEvents.op`, `ibsOpSampling`, `opInterval`, `opCycleCount` against `--ibs-count-control`; `collection.target.systemWide` against the mode, and every requested PID in `attachedProcesses`. A mismatch exits 2.
 
@@ -31,16 +31,17 @@ Per Hofer, JKU PhD thesis, section 3.2.4:
 
 1. Partition by `CPU_Number`.
 2. Order each partition by `DeltaTick`.
-3. Weight each sample by `DeltaTick - lag(DeltaTick)`; the first sample per CPU has no preceding interval and no weight.
+3. Weight each sample by `DeltaTick - lag(DeltaTick)`; the first sample per CPU is ignored, having no gap before it.
 4. A group's share is `sum(weight in the group) / sum(weight in scope)`.
 
 Rules that follow:
 
-- `--time-filter T1:T2` selects `DeltaTick ∈ [T1, T2)` **before** the lag, so the first sample per CPU inside the window is weightless; filtering never re-translates. The first-per-CPU sample still counts in `pct_samples`.
+- `--time-filter T1:T2` selects `DeltaTick ∈ [T1, T2)` **before** the lag, so the first sample per CPU inside the window is ignored, having no gap before it; filtering never re-translates. The first-per-CPU sample still counts in `sample_share`.
 - A gap spans all work on that CPU since the previous sample, so halted/idle time is charged to the later sample: `system idle process` and `system` carry share. A process total is core time summed over CPUs (10 s on 16 CPUs is about 160 s of weight).
 - `(ModuleName, Offset)` maps to `Function.id` through the `UnifiedSampleSeries` rows that carry both; `Offset` is module-relative, and `ModuleName` matches `Module.path` after `module_key` (lowercase, `/` separators). The scope filter runs after weighting, so a gap is charged whole to the sample that ends it.
 - `samples` for a dump is the row count (one per dump row); for PMC it is `sum(event column)`, not `count(*)`.
-- `pct_cycles = 100 × Σ LEAST(tag, 131070)` for the group divided by the same sum over the scope. The field is a 17-bit counter clipped at 131070; a NULL or non-numeric cell stays NULL and is excluded from both numerator and denominator (never charged the maximum). The projection emits the column only for an IBS OP dump whose `IbsTagToRetCtr` exists and has at least one non-null value.
+- `share(part, whole) = part / NULLIF(whole, 0)`: every share is a fraction 0.0-1.0, printed at full precision. The SQL denominator is the same sum over the scope, so each emitted share sums to 1.0 when it has at least one non-null value. An all-zero `IbsTagToRetCtr` is non-null but sums to 0, so every `tag_to_retire_share` is NULL and the column does not sum to 1.0.
+- `tag_to_retire_share = Σ LEAST(tag, 131070)` for the group divided by the same sum over the scope. The field is a counter clipped at 131070 as this version applies it; it counts cycles from the op's dispatch tag to retirement, so it includes scheduler/queue occupancy and stalls. The value is a total of tag-to-retire cycles, not per-op latency. Only an unsigned decimal integer cell counts; NULL, negative, fractional and exponent spellings stay NULL and are excluded from both numerator and denominator (never charged the maximum). The projection emits the column only for an IBS OP dump whose `IbsTagToRetCtr` exists and has at least one non-null value.
 
 ### Anchoring a workload's clock
 
@@ -235,14 +236,14 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_ibs_dump` | absolute dump path; empty for PMC |
 | `uprof_event_column` | PMC sample column in `UnifiedSampleSeries`; empty for a dump capture |
 | `uprof_session_meta` | `session.uprof` path when it exists, else empty |
-| `uprof_tag_available` | `true` only for an IBS OP dump whose `IbsTagToRetCtr` exists and has a non-null value, so a fetch dump cannot enable `pct_cycles` even with the column; Python derives it from the sampler kind and `v_dump_sanity` and rebinds it before the projection |
+| `uprof_tag_available` | `true` only for an IBS OP dump whose `IbsTagToRetCtr` exists and has a non-null value, so a fetch dump cannot enable `tag_to_retire_share` even with the column; Python derives it from the sampler kind and `v_dump_sanity` and rebinds it before the projection |
 | `uprof_symbols` | combined `symbols.parquet`; empty when absent |
 | `uprof_aliases` | combined `symbols.publics.csv`; empty when absent |
 
 | Macro | Definition |
 |---|---|
 | `module_key(p)` | `replace(lower(p), chr(92), '/')` — the module-path match key |
-| `pct(part, whole)` | `100.0 * part / NULLIF(whole, 0)` |
+| `share(part, whole)` | `part / NULLIF(whole, 0)` — a fraction 0.0-1.0, the unit stated once in the output |
 
 | Mode flag / guard | Purpose |
 |---|---|
@@ -274,7 +275,7 @@ The 15 views:
 | `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; `<other lines>` |
 | `v_instruction_rows` | one row per module + RVA with innermost annotation; `<other instructions>` |
 
-- **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-function.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `pct()` macros and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `agreement.sql` computes the metric, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
+- **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-function.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `agreement.sql` computes the metric, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
 - **Load order.** Bind all inputs, load `views.sql`, then (for `line`/`instruction`) run `profile-rvas.sql` on the same connection, symbolize, rebind `uprof_symbols`/`uprof_aliases`, and run the projection. `query(CASE ...)` re-binds per query, so the symbol inputs may be bound after the views are created. A hand run writes a UTF-8 `SET VARIABLE` file, `.read`s `views.sql`, then the projection, and always uses the original session's `cpu.db`.
 - **Guard order.** The schema and dump guards run while `views.sql` loads, before any query, so an incomplete export or dump fails once with the missing item names. The schema guards read the bound path strings (empty means absent) so no identifier is spliced; the dump guard checks that the dump exists. A conditional `query(CASE ...)` avoids binder-eager branch evaluation.
 
@@ -289,7 +290,14 @@ The same capture and arguments produce byte-identical output on every run. Each 
 | `line` | `weight DESC NULLS LAST, samples DESC, file, line, function, module` |
 | `instruction` | `weight DESC NULLS LAST, samples DESC, module, rva NULLS LAST, function` |
 
-For PMC every weight is NULL, so ranking falls through to `samples`; the share-sum caveats are in `SKILL.md`, What a share measures.
+For PMC every weight is NULL, so ranking falls through to `samples`; for the supported cycle event a
+PMC sample is a fixed cycle count, so that order ranks where cycles were spent, and any other PMC
+event has no established ordering claim. Every IBS mode ranks by `time_share`. The JSON
+`legend.impact` (`order_by`, `gap_weighted`, `estimate`) and the `READ` line state this ordering,
+with `gap_weighted` false when the capture records no DeltaTick gaps. For IBS, `sample_share` is
+the raw sample share: a core-cycle share, a dispatched-op frequency share or a fetch-sample
+frequency share as the mode states, never a per-op cost; `tag_to_retire_share`, where the dump
+supplies it, is total tag-to-retire cycles, not per-op latency.
 
 **Display escaping.** Table cells and header values escape controls as described in `SKILL.md`, Output; JSON carries the true characters, so table/JSON parity is modulo that display escaping. `--out-file` receives the same bytes as stdout.
 
@@ -297,7 +305,7 @@ For PMC every weight is NULL, so ranking falls through to `samples`; the share-s
 
 - **Unelevated captures have no kernel coverage.** The OS-mode request is applied and encoded, but an unelevated uProf capture contains no kernel-mode samples; elevate the capture. `collect` notes this before the capture runs and `profile` prints `KERNEL_COVERAGE` when the whole capture confirms no kernel-image sample (see Kernel coverage).
 - **Inline overloads.** The display rule is in `SKILL.md`, Frame rule and sentinels; a true overload set (two or more out-of-line signatures) shows `<multiple>` on a shared source line.
-- **Empty or junk tag column.** `has_tag` tests column presence; `uprof_tag_available` requires an IBS OP dump and at least one non-null value. An all-NULL or non-numeric `IbsTagToRetCtr` hides `pct_cycles` and prints the empty-column disclosure; a non-numeric cell is NULL, never the clipped maximum.
+- **Empty or junk tag column.** `has_tag` tests column presence; `uprof_tag_available` requires an IBS OP dump and at least one non-null value. An all-NULL or junk-only `IbsTagToRetCtr` hides `tag_to_retire_share` and prints the empty-column disclosure; only an unsigned decimal integer cell counts, so a negative, fractional or exponent cell is NULL, never the clipped maximum. An all-zero column is present with every share NULL, not 1.0.
 - **Module paths are lowercased.** `module_key` lowercases and replaces `\` with `/`; the module column shows that normalized spelling, and two paths differing only in case or separator collide.
 - **Fold detection is Windows/PDB only.** Resolved Linux DWARF symbols are all `unique` (unverified here); unresolved rows still exist. Without `llvm-pdbutil` the cache is skipped and a note is printed.
 - **Duplicate module copies.** Two copies of one DLL (for example two driverstore paths) are

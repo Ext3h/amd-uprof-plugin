@@ -22,7 +22,8 @@
 
 -- Macros are TEMP because cpu.db is opened read-only.
 CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/');
-CREATE OR REPLACE TEMP MACRO pct(part, whole) AS 100.0 * part / NULLIF(whole, 0);
+-- A share is a fraction of the scoped total (0.0-1.0); the unit is stated once in the output.
+CREATE OR REPLACE TEMP MACRO share(part, whole) AS part / NULLIF(whole, 0);
 -- A kernel image is loaded in the kernel half of the x64 address space, or, when the catalog has
 -- no instance to ask, has a basename only the kernel uses. 0xFFFF800000000000 starts that half;
 -- the Windows kernel and HAL carry no .sys suffix, and Linux core images carry no suffix at all.
@@ -35,12 +36,13 @@ CREATE OR REPLACE TEMP MACRO is_kernel_image(p, load_address) AS
     OR regexp_matches(kernel_basename(p), '^(ntoskrnl|ntkrnlmp|ntkrnlpa|ntkrpamp)\.exe$')
     OR kernel_basename(p) = 'hal.dll'
     OR regexp_matches(kernel_basename(p), '\.(sys|ko)$');
--- Columns hidden from every projection: internal weights and totals, pct_time unless the dump
--- exists, and pct_cycles unless this sampler's tag column supplied values.
+-- Columns hidden from every projection: internal gap weights and totals, time_share unless the
+-- dump exists, and tag_to_retire_share unless this sampler's tag column supplied values.
 CREATE OR REPLACE TEMP MACRO projected(c) AS
-    c NOT IN ('weight', 'cycles', 'total_samples', 'total_weight', 'total_cycles', 'sort_key', 'rn')
-    AND (getvariable('has_dump') OR c <> 'pct_time')
-    AND (getvariable('uprof_tag_available') = 'true' OR c <> 'pct_cycles');
+    c NOT IN ('weight', 'tag_cycles', 'total_samples', 'total_weight', 'total_tag_cycles',
+              'sort_key', 'rn')
+    AND (getvariable('has_dump') OR c <> 'time_share')
+    AND (getvariable('uprof_tag_available') = 'true' OR c <> 'tag_to_retire_share');
 
 SET VARIABLE has_dump = (getvariable('uprof_ibs_dump') <> '');
 
@@ -130,8 +132,8 @@ SET VARIABLE dump_columns_guard = (
     ELSE 'SELECT NULL::VARCHAR AS missing_name WHERE false' END)
 );
 
--- Only IBS OP dumps carry op latency; when the column is absent pct_cycles is omitted rather than
--- filled with zeroes.
+-- Only IBS OP dumps carry a tag-to-retire counter; when the column is absent
+-- tag_to_retire_share is omitted rather than filled with zeroes.
 SET VARIABLE has_tag = (
   SELECT has_tag FROM query(CASE WHEN getvariable('has_dump')
     THEN $tag$SELECT count(*) > 0 AS has_tag
@@ -153,10 +155,12 @@ SET VARIABLE time_end = CAST(COALESCE(NULLIF(getvariable('uprof_time_end'), ''),
 -- DeltaTick is a cumulative, start-relative nanosecond timestamp; all columns are read as text so
 -- uProf's empty or non-numeric cells cannot force a column type. tid identifies the thread in an
 -- attached capture: the achieved-cadence check uses it as the context there and cpu for a
--- system-wide capture. tag_cycles is the per-op latency clipped at the field's maximum; a NULL or
--- non-numeric cell stays NULL and is excluded from the pct_cycles denominator rather than being
--- charged the maximum. The empty branch gives a PMC capture a typed, empty relation so the
--- downstream views bind without touching a dump.
+-- system-wide capture. tag_cycles is the tag-to-retire cycle count of one sampled op (AMD: tagged
+-- at dispatch, retired later; queue/stalls included), clipped at 131070. Only an unsigned decimal
+-- integer cell counts; NULL, negative, fractional, exponent and nan/inf spellings stay NULL and
+-- are excluded from the tag_to_retire_share denominator rather than being charged the maximum.
+-- The empty branch gives a PMC capture a typed, empty relation so the downstream views bind
+-- without touching a dump.
 CREATE OR REPLACE TEMP VIEW v_dump AS
 SELECT * FROM query(CASE
   WHEN NOT getvariable('has_dump') THEN $empty$
@@ -194,7 +198,8 @@ SELECT * FROM query(CASE
 END);
 
 -- The query window is applied before the lag, so the first sample per CPU inside the window has no
--- preceding in-window interval and carries no weight. A gap is charged whole to the later sample.
+-- preceding in-window interval and carries no weight. weight is that DeltaTick gap in nanoseconds;
+-- a gap is charged whole to the later sample, so idle/wait time accrues to the sample that ends it.
 CREATE OR REPLACE TEMP VIEW v_dump_weighted AS
 SELECT *, delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick) AS weight
 FROM v_dump
@@ -508,31 +513,32 @@ ELSE $pmc$
 
 -- Process shares. samples is the per-row sample count summed over the group (one per dump row, the
 -- event-column count per PMC row). When --top truncates, one <other processes> row carries the
--- rest so each emitted column still sums to 100.
+-- rest so each emitted share still sums to 1.0; a share with a zero denominator is NULL, as an
+-- all-zero tag column leaves tag_to_retire_share.
 CREATE OR REPLACE TEMP VIEW v_process_rows AS
 WITH agg AS (
   SELECT pid, process,
          CAST(sum(samples) AS BIGINT) AS samples,
          sum(weight) AS weight,
-         sum(tag_cycles) AS cycles
+         sum(tag_cycles) AS tag_cycles
   FROM v_scoped
   GROUP BY pid, process
 ), ranked AS (
   SELECT *,
          CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
          sum(weight) OVER () AS total_weight,
-         sum(cycles) OVER () AS total_cycles,
+         sum(tag_cycles) OVER () AS total_tag_cycles,
          row_number() OVER (
            ORDER BY weight DESC NULLS LAST, samples DESC, pid, process) AS rn
   FROM agg
 )
-SELECT process, pid, samples, weight, cycles,
-       total_samples, total_weight, total_cycles, 0 AS sort_key, rn
+SELECT process, pid, samples, weight, tag_cycles,
+       total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
 FROM ranked
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
-SELECT '<other processes>', NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(cycles),
-       max(total_samples), max(total_weight), max(total_cycles), 1, NULL
+SELECT '<other processes>', NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
 FROM ranked
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
@@ -550,7 +556,7 @@ WITH agg AS (
          CASE WHEN w.function_id IS NULL THEN 'unresolved' ELSE 'unique' END AS attribution,
          CAST(sum(w.samples) AS BIGINT) AS samples,
          sum(w.weight) AS weight,
-         sum(w.tag_cycles) AS cycles
+         sum(w.tag_cycles) AS tag_cycles
   FROM v_scoped w
   LEFT JOIN Function f ON f.id = w.function_id
   GROUP BY w.function_id
@@ -558,18 +564,18 @@ WITH agg AS (
   SELECT *,
          CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
          sum(weight) OVER () AS total_weight,
-         sum(cycles) OVER () AS total_cycles,
+         sum(tag_cycles) OVER () AS total_tag_cycles,
          row_number() OVER (
            ORDER BY weight DESC NULLS LAST, samples DESC, function_id NULLS LAST) AS rn
   FROM agg
 )
-SELECT function_name AS "function", module_name AS module, attribution, samples, weight, cycles,
-       total_samples, total_weight, total_cycles, 0 AS sort_key, rn
+SELECT function_name AS "function", module_name AS module, attribution, samples, weight, tag_cycles,
+       total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
 FROM ranked
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
-SELECT '<other functions>', NULL, NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(cycles),
-       max(total_samples), max(total_weight), max(total_cycles), 1, NULL
+SELECT '<other functions>', NULL, NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
 FROM ranked
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
@@ -651,7 +657,7 @@ WITH placed AS (
               ELSE 'unique' END AS attribution,
          CAST(sum(samples) AS BIGINT) AS samples,
          sum(weight) AS weight,
-         sum(tag_cycles) AS cycles
+         sum(tag_cycles) AS tag_cycles
   FROM labelled
   GROUP BY CASE WHEN file_name = '<no symbol>' THEN 'symbol:' || module_label
                 WHEN file_name = '<no source line>' THEN 'source:' || module_label || chr(1) || function_key
@@ -660,21 +666,21 @@ WITH placed AS (
   SELECT *,
          CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
          sum(weight) OVER () AS total_weight,
-         sum(cycles) OVER () AS total_cycles,
+         sum(tag_cycles) OVER () AS total_tag_cycles,
          row_number() OVER (
            ORDER BY weight DESC NULLS LAST, samples DESC,
                     file_name, line_number, function_name, module_name) AS rn
   FROM agg
 )
 SELECT file_name AS "file", line_number AS line, function_name AS "function",
-       module_name AS module, attribution, samples, weight, cycles,
-       total_samples, total_weight, total_cycles, 0 AS sort_key, rn
+       module_name AS module, attribution, samples, weight, tag_cycles,
+       total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
 FROM ranked
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other lines>', NULL, NULL, NULL, NULL,
-       CAST(sum(samples) AS BIGINT), sum(weight), sum(cycles),
-       max(total_samples), max(total_weight), max(total_cycles), 1, NULL
+       CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
 FROM ranked
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
@@ -712,14 +718,14 @@ WITH placed AS (
   SELECT module_name, rva, function_name, file_name, line_number, attribution,
          CAST(sum(samples) AS BIGINT) AS samples,
          sum(weight) AS weight,
-         sum(tag_cycles) AS cycles
+         sum(tag_cycles) AS tag_cycles
   FROM normalized
   GROUP BY module_name, rva, function_name, file_name, line_number, attribution
 ), ranked AS (
   SELECT *,
          CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
          sum(weight) OVER () AS total_weight,
-         sum(cycles) OVER () AS total_cycles,
+         sum(tag_cycles) OVER () AS total_tag_cycles,
          row_number() OVER (
            ORDER BY weight DESC NULLS LAST, samples DESC,
                     module_name, rva NULLS LAST, function_name) AS rn
@@ -728,14 +734,14 @@ WITH placed AS (
 SELECT module_name AS module,
        CASE WHEN rva IS NULL THEN NULL ELSE printf('0x%X', rva) END AS rva,
        function_name AS "function", file_name AS "file", line_number AS line,
-       attribution, samples, weight, cycles,
-       total_samples, total_weight, total_cycles, 0 AS sort_key, rn
+       attribution, samples, weight, tag_cycles,
+       total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
 FROM ranked
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other instructions>', NULL, NULL, NULL, NULL, NULL,
-       CAST(sum(samples) AS BIGINT), sum(weight), sum(cycles),
-       max(total_samples), max(total_weight), max(total_cycles), 1, NULL
+       CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
 FROM ranked
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;

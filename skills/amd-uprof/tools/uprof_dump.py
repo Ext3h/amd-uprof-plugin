@@ -1,4 +1,4 @@
-"""Resolve the IBS ASCII dump pct_time reads.
+"""Resolve the IBS ASCII dump time_share reads.
 
 Preference: one beside the session, a current cached dump, then a dump generated on a copy of the
 raw session under the temp directory. The source session is never translated in place. A dump-only
@@ -160,11 +160,11 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
     meta_path = Path(session_dir) / "session.uprof"
     if not meta_path.is_file():
         raise UprofError(
-            f"session.uprof is missing from {session_dir}; pct_time needs it to identify the "
+            f"session.uprof is missing from {session_dir}; time_share needs it to identify the "
             "sampler and check the dump against the capture span")
     if not sampler.ibs_dump_kind:
         raise UprofError(
-            "pct_time needs the IBS ASCII sample dump, and session.uprof records no IBS OP or IBS "
+            "time_share needs the IBS ASCII sample dump, and session.uprof records no IBS OP or IBS "
             "fetch event: this capture has no per-sample timestamps. Profile a capture made with "
             "--event ibs-op, or use schema/tools for a PMC cycle capture")
     dump_name = DUMP_FILENAMES[sampler.ibs_dump_kind]

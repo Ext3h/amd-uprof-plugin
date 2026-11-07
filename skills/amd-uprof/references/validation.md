@@ -7,7 +7,7 @@ the current `profile` surface can reproduce.
 ## Estimator (defined in reference.md)
 
 The estimator, its window-before-lag rule and gap charging are in `reference.md`, "Estimator: exact
-DeltaTick gaps" (Hofer, JKU PhD thesis, section 3.2.4); `pct_samples` is the raw dump sample share,
+DeltaTick gaps" (Hofer, JKU PhD thesis, section 3.2.4); `sample_share` is the raw dump sample share,
 never a `windowId` count.
 
 ## Capture
@@ -30,20 +30,20 @@ matching process** (system DLLs, drivers, JIT code), not only the process's base
 
 | Command scope | Quantity | Value | Denominator |
 |---|---|---:|---|
-| `--by function --image '%strata.exe'` | `ExpertPool::worker` `pct_time` | 45.98452886467337 | process image, whole capture: 1,496,649 samples / 465,548,774,278 ns |
-| same | `ExpertPool::worker` `pct_samples` | 29.659726495657967 | same |
-| same | `ExpertPool::worker` `pct_cycles` | 7.919207413573721 | same |
-| `--by function --image '%strata.exe' --time-filter 0:10` | `ExpertPool::worker` `pct_time` | 47.746537148319796 | process image, 0:10: 280,047 samples / 83,408,222,088 ns |
-| same | `ExpertPool::worker` `pct_samples` | 29.000132120679744 | same |
-| same | `ExpertPool::worker` `pct_cycles` | 7.63744218348601 | same |
-| `--by function` | `ExpertPool::worker` `pct_time` | 22.318753474451373 | whole capture: 1,595,914 samples / 959,195,193,101 ns |
-| `--by process` | `strata.exe` (pid 5932) `pct_time` | 48.53535314047172 | whole capture: 1,595,914 samples / 959,195,193,101 ns |
-| same | `strata.exe` `pct_samples` / `pct_cycles` | 93.78005331114333 / 90.92966743904525 | same |
-| `--by process --time-filter 0:10` | `strata.exe` `pct_time` | 52.26572213110555 | 0:10 window: 296,917 samples, 16 first-in-window |
+| `--by function --image '%strata.exe'` | `ExpertPool::worker` `time_share` | 0.4598452886467337 | process image, whole capture: 1,496,649 samples / 465,548,774,278 ns |
+| same | `ExpertPool::worker` `sample_share` | 0.29659726495657967 | same |
+| same | `ExpertPool::worker` `tag_to_retire_share` | 0.07919207413573721 | same |
+| `--by function --image '%strata.exe' --time-filter 0:10` | `ExpertPool::worker` `time_share` | 0.47746537148319796 | process image, 0:10: 280,047 samples / 83,408,222,088 ns |
+| same | `ExpertPool::worker` `sample_share` | 0.29000132120679744 | same |
+| same | `ExpertPool::worker` `tag_to_retire_share` | 0.0763744218348601 | same |
+| `--by function` | `ExpertPool::worker` `time_share` | 0.22318753474451373 | whole capture: 1,595,914 samples / 959,195,193,101 ns |
+| `--by process` | `strata.exe` (pid 5932) `time_share` | 0.4853535314047172 | whole capture: 1,595,914 samples / 959,195,193,101 ns |
+| same | `strata.exe` `sample_share` / `tag_to_retire_share` | 0.9378005331114333 / 0.9092966743904525 | same |
+| `--by process --time-filter 0:10` | `strata.exe` `time_share` | 0.5226572213110555 | 0:10 window: 296,917 samples, 16 first-in-window |
 
-Every granularity on the whole capture sums to 100: process, function and instruction
-`pct_samples`, `pct_time` and `pct_cycles` are 100.0; line `pct_cycles` is 99.99999999999999
-(floating-point sum). Denominators read from `v_scoped` with the same inputs: whole capture
+Every granularity on the whole capture sums to 1.0: process, function and instruction
+`sample_share`, `time_share` and `tag_to_retire_share` are 1.0; line `tag_to_retire_share` is
+0.9999999999999999 (floating-point sum). Denominators read from `v_scoped` with the same inputs: whole capture
 1,595,914 samples / 959,195,193,101 ns over 233 modules; process image 1,496,649 /
 465,548,774,278 ns over 53 modules; 0:10 process image 280,047 / 83,408,222,088 ns over 42
 modules. The process-scope worker share is lower than the historical module-scope figure because
@@ -65,34 +65,34 @@ instances are not counted as mismatches.
 `... --by line` (whole capture, default `--top 20`). This is the post-fix baseline. Row 21 is the
 `<other lines>` remainder.
 
-| # | file | line | function | module | attribution | samples | pct_samples | pct_time |
+| # | file | line | function | module | attribution | samples | sample_share | time_share |
 |---:|---|---:|---|---|---|---:|---:|---:|
-| 1 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1000 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130376 | 8.169362509508657 | 6.570961379115599 |
-| 2 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1013 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130425 | 8.172432850391688 | 6.5628702354611885 |
-| 3 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1001 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130746 | 8.192546716176436 | 6.55713460277707 |
-| 4 | `...\include\atomic` | 917 | `std::_Atomic_storage<unsigned int, 4>::load(enum std::memory_order) const` | strata.exe | unique | 52512 | 3.2904028663198646 | 2.6435205718686334 |
-| 5 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1014 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 52007 | 3.2587595572192485 | 2.6100453829488544 |
-| 6 | `...\include\atomic` | 706 | `std::_Atomic_storage<bool, 1>::load(enum std::memory_order) const` | strata.exe | unique | 51935 | 3.254248035921735 | 2.599295713565436 |
-| 7 | `<no symbol>` | 0 | `<no symbol>` | claude.exe | unresolved | 2370 | 0.1485042427098202 | 2.34032598989852 |
-| 8 | `<no symbol>` | 0 | `<no symbol>` | amdhip64_7.dll | unresolved | 8780 | 0.550154958224566 | 1.4193052446381997 |
-| 9 | `...\include\atomic` | 916 | `std::_Atomic_storage<unsigned int, 4>::load(enum std::memory_order) const` | strata.exe | unique | 26367 | 1.6521566951602655 | 1.3299343380525852 |
-| 10 | `...\include\atomic` | 708 | `std::_Atomic_storage<bool, 1>::load(enum std::memory_order) const` | strata.exe | unique | 26072 | 1.6336719898440644 | 1.3163138942743349 |
-| 11 | `...\include\atomic` | 705 | `std::_Atomic_storage<bool, 1>::load(enum std::memory_order) const` | strata.exe | unique | 26158 | 1.6390607513938722 | 1.3036231511518157 |
-| 12 | `<no source line>` | 0 | `KiBoundFault` | ntoskrnl.exe | unique | 1463 | 0.091671606364754 | 1.270615271079312 |
-| 13 | `<no symbol>` | 0 | `<no symbol>` | libcef.dll | unresolved | 363 | 0.02274558654163069 | 1.2375362787863855 |
-| 14 | `<no source line>` | 0 | `MiValidFault` | ntoskrnl.exe | unique | 855 | 0.05357431540797311 | 0.8623283101804544 |
-| 15 | `<no source line>` | 0 | `KiScheduleThreadToRescheduleContext` | ntoskrnl.exe | unique | 487 | 0.030515428776237315 | 0.7706825836044 |
-| 16 | `<no source line>` | 0 | `MiFlushTbList` | ntoskrnl.exe | unique | 1333 | 0.08352580402202124 | 0.7351824060128985 |
-| 17 | `<no source line>` | 0 | `MiGetPage` | ntoskrnl.exe | unique | 443 | 0.027758387983312385 | 0.6995113864476481 |
-| 18 | `<no source line>` | 0 | `CmpDoParseKey` | ntoskrnl.exe | unique | 1549 | 0.09706036791456181 | 0.6086308646028924 |
-| 19 | `<no source line>` | 0 | `MiInsertPagesInList` | ntoskrnl.exe | unique | 9995 | 0.6262868801201067 | 0.5999875979772568 |
-| 20 | `...\amd\memcpy_repmovs_amd.asm` | 21 | `memcpy_repmovs_amd` | vcruntime140.dll | unique | 3341 | 0.20934712020823176 | 0.5911077587523921 |
-| 21 | `<other lines>` | NULL | NULL | NULL | NULL | 938337 | 58.79621332979095 | 57.37108703880413 |
+| 1 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1000 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130376 | 0.08169362509508657 | 0.06570961379115599 |
+| 2 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1013 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130425 | 0.08172432850391688 | 0.065628702354611885 |
+| 3 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1001 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130746 | 0.08192546716176436 | 0.0655713460277707 |
+| 4 | `...\include\atomic` | 917 | `std::_Atomic_storage<unsigned int, 4>::load(enum std::memory_order) const` | strata.exe | unique | 52512 | 0.032904028663198646 | 0.026435205718686334 |
+| 5 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1014 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 52007 | 0.032587595572192485 | 0.026100453829488544 |
+| 6 | `...\include\atomic` | 706 | `std::_Atomic_storage<bool, 1>::load(enum std::memory_order) const` | strata.exe | unique | 51935 | 0.03254248035921735 | 0.02599295713565436 |
+| 7 | `<no symbol>` | 0 | `<no symbol>` | claude.exe | unresolved | 2370 | 0.001485042427098202 | 0.0234032598989852 |
+| 8 | `<no symbol>` | 0 | `<no symbol>` | amdhip64_7.dll | unresolved | 8780 | 0.00550154958224566 | 0.014193052446381997 |
+| 9 | `...\include\atomic` | 916 | `std::_Atomic_storage<unsigned int, 4>::load(enum std::memory_order) const` | strata.exe | unique | 26367 | 0.016521566951602655 | 0.013299343380525852 |
+| 10 | `...\include\atomic` | 708 | `std::_Atomic_storage<bool, 1>::load(enum std::memory_order) const` | strata.exe | unique | 26072 | 0.016336719898440644 | 0.013163138942743349 |
+| 11 | `...\include\atomic` | 705 | `std::_Atomic_storage<bool, 1>::load(enum std::memory_order) const` | strata.exe | unique | 26158 | 0.016390607513938722 | 0.013036231511518157 |
+| 12 | `<no source line>` | 0 | `KiBoundFault` | ntoskrnl.exe | unique | 1463 | 0.00091671606364754 | 0.01270615271079312 |
+| 13 | `<no symbol>` | 0 | `<no symbol>` | libcef.dll | unresolved | 363 | 0.0002274558654163069 | 0.012375362787863855 |
+| 14 | `<no source line>` | 0 | `MiValidFault` | ntoskrnl.exe | unique | 855 | 0.0005357431540797311 | 0.008623283101804544 |
+| 15 | `<no source line>` | 0 | `KiScheduleThreadToRescheduleContext` | ntoskrnl.exe | unique | 487 | 0.00030515428776237315 | 0.007706825836044 |
+| 16 | `<no source line>` | 0 | `MiFlushTbList` | ntoskrnl.exe | unique | 1333 | 0.0008352580402202124 | 0.007351824060128985 |
+| 17 | `<no source line>` | 0 | `MiGetPage` | ntoskrnl.exe | unique | 443 | 0.00027758387983312385 | 0.006995113864476481 |
+| 18 | `<no source line>` | 0 | `CmpDoParseKey` | ntoskrnl.exe | unique | 1549 | 0.0009706036791456181 | 0.006086308646028924 |
+| 19 | `<no source line>` | 0 | `MiInsertPagesInList` | ntoskrnl.exe | unique | 9995 | 0.006262868801201067 | 0.005999875979772568 |
+| 20 | `...\amd\memcpy_repmovs_amd.asm` | 21 | `memcpy_repmovs_amd` | vcruntime140.dll | unique | 3341 | 0.0020934712020823176 | 0.005911077587523921 |
+| 21 | `<other lines>` | NULL | NULL | NULL | NULL | 938337 | 0.5879621332979095 | 0.5737108703880413 |
 
 Module names are the short forms the output prints; `...\` abbreviates the MSVC 14.51 include path
 and the vcruntime amd64 asm path. The full paths are in the `file` column on the left.
 
-The pre-fix `iq_avx512.cpp:174` row (111,806 samples, `pct_time` 1.4741379847085119) is absent.
+The pre-fix `iq_avx512.cpp:174` row (111,806 samples, `time_share` 0.014741379847085119) is absent.
 Line 174 is the `Fmt<T>::decode` call site inside the `row_dot<T>` body: for hot
 `row_dot<21,2>` addresses, `Symbol[0]` is `Fmt<21>::decode` at `iq_avx512.cpp:135/148` and
 `Symbol[last]` is `row_dot<21,2>` at line 174, so those samples move to the inlinee's executed
@@ -107,12 +107,12 @@ are the uncapped views.
 
 | Fixture | Path | Capture | Rows (process/function/line/instruction) | Shares | Column set |
 |---|---|---|---:|---|
-| `icf-session` | `%TEMP%\uprof-fixture\icf-session` | IBS OP, no tag column | 1/8/9/13 | `pct_samples`, `pct_time` 100 | samples, pct_samples, pct_time; `PCT_CYCLES` names the missing `IbsTagToRetCtr` |
-| `pmc-session` | `%TEMP%\uprof-fixture\pmc-session` | PMC `CYCLES_NOT_IN_HALT` | 1/6/12/27 | `pct_samples` 100 | samples, pct_samples only; PCT_TIME/PCT_CYCLES "not applicable" |
-| `ibs-session` | `%TEMP%\uprof-fixture\ibs-session` | IBS OP, tagged | 57/4249/1606/6915 | all three shares 100 | adds `pct_cycles` |
-| `fetch-session` | `%TEMP%\t1-round3\fetch-session` | IBS fetch | 1/8/9/13 | `pct_samples`, `pct_time` 100 | no `pct_cycles`; `PCT_CYCLES` says IBS fetch has no tag counter |
-| `t1-fold-session` | `%TEMP%\t1-fold-session` | IBS OP, no tag | 1/1/1/1 | `pct_samples`, `pct_time` 100 | line row `shared: fold_alpha \| fold_beta`, attribution `shared` |
-| `t1-nopdb-session` | `%TEMP%\t1-nopdb-session` | IBS OP, no tag, no PDB | 1/1/1/1 | `pct_samples`, `pct_time` 100 | `<no symbol>` rows, attribution `unresolved`; AGREEMENT `unresolved=1 addresses, 3 samples (100.0% of 3 scoped)` |
+| `icf-session` | `%TEMP%\uprof-fixture\icf-session` | IBS OP, no tag column | 1/8/9/13 | `sample_share`, `time_share` 1.0 | samples, sample_share, time_share; `TAG_TO_RETIRE_SHARE` names the missing `IbsTagToRetCtr` |
+| `pmc-session` | `%TEMP%\uprof-fixture\pmc-session` | PMC `CYCLES_NOT_IN_HALT` | 1/6/12/27 | `sample_share` 1.0 | samples, sample_share only; TIME_SHARE/TAG_TO_RETIRE_SHARE "not applicable" |
+| `ibs-session` | `%TEMP%\uprof-fixture\ibs-session` | IBS OP, tagged | 57/4249/1606/6915 | all three shares 1.0 | adds `tag_to_retire_share` |
+| `fetch-session` | `%TEMP%\t1-round3\fetch-session` | IBS fetch | 1/8/9/13 | `sample_share`, `time_share` 1.0 | no `tag_to_retire_share`; `TAG_TO_RETIRE_SHARE` says this export has no tag-to-retire counter |
+| `t1-fold-session` | `%TEMP%\t1-fold-session` | IBS OP, no tag | 1/1/1/1 | `sample_share`, `time_share` 1.0 | line row `shared: fold_alpha \| fold_beta`, attribution `shared` |
+| `t1-nopdb-session` | `%TEMP%\t1-nopdb-session` | IBS OP, no tag, no PDB | 1/1/1/1 | `sample_share`, `time_share` 1.0 | `<no symbol>` rows, attribution `unresolved`; AGREEMENT `unresolved=1 addresses, 3 samples (100.0% of 3 scoped)` |
 
 `icf-session` line detail: `mixed.cpp:8` and `:9` are shared-fold rows
 (`shared: fold_alpha \| fold_beta`, 2 samples each); `mixed.cpp:20` is the standalone
@@ -123,27 +123,30 @@ are the uncapped views.
 `mismatch_rate=16.666666666666668% (4/24); name_mismatches=2 addresses of 13 compared; unresolved=0`.
 `edge.cpp:1` and `overload.cpp:5` line rows carry `<multiple>` for the overload set.
 
-### Tagged IBS and `pct_cycles`
+### Tagged IBS and `tag_to_retire_share`
 
 `ibs-session` has 59,243 samples on 16 CPUs. The default (top 20) run returns 20 rows plus one
 `<other processes|functions|lines|instructions>` remainder whose identifying columns are NULL;
-the three shares still sum to 100 at every granularity. `pct_cycles` is the share of
-`min(IbsTagToRetCtr, 131070)`; NULL and non-integer cells are excluded from its denominator.
+the three shares still sum to 1.0 at every granularity. `tag_to_retire_share` is the share of
+`min(IbsTagToRetCtr, 131070)`; only an unsigned decimal integer cell counts, so NULL, negative,
+fractional and exponent cells are excluded from its denominator.
 
 - Clip: a copy of `ibs-session` with one `IbsTagToRetCtr` forced to 200000 gives PID 5932
-  `pct_cycles=91.524932128492`; independent CSV arithmetic with `min(tag, 131070)` gives the same
-  value, while the unclipped alternative would be 91.692033796397.
+  `tag_to_retire_share=0.91524932128492`; independent CSV arithmetic with `min(tag, 131070)` gives
+  the same value, while the unclipped alternative would be 0.91692033796397.
+- All-zero column: a column of zeros is non-null, so `tag_to_retire_share` is present but every
+  share is NULL; the column does not sum to 1.0 because no tag cycles were counted.
 - NULL tag: appending an all-blank `IbsTagToRetCtr` to `icf-session` keeps exit 0, omits
-  `pct_cycles`, and prints `IbsTagToRetCtr has no non-null values`. Appending mixed junk and
-  numeric cells emits `pct_cycles`; instruction `0x1170` is 0.0030511060259344014, whose
-  denominator 262,200 = 5 + 7 + 131070 + 131070 + 16 × 3, so `abc`, `1.5`, `-4` and `1e5` are
-  excluded rather than charged the maximum.
+  `tag_to_retire_share`, and prints `IbsTagToRetCtr has no non-null values`. Appending mixed junk
+  and numeric cells emits `tag_to_retire_share`; instruction `0x1170` is 0.000030511060259344014,
+  whose denominator 262,200 = 5 + 7 + 131070 + 131070 + 16 × 3, so `abc`, `1.5`, `-4` and `1e5`
+  are excluded rather than charged the maximum.
 
 ### PMC behavior
 
-`pmc-session` has 15,323 samples: the four granularities above print `samples` and `pct_samples`
-only, totals 100, `PCT_TIME` / `PCT_CYCLES` say "not applicable", and `--time-filter` exits 2
-with `--time-filter cannot be applied to a PMC capture`.
+`pmc-session` has 15,323 samples: the four granularities above print `samples` and `sample_share`
+only, totals 1.0, `TIME_SHARE` / `TAG_TO_RETIRE_SHARE` say "not applicable", and `--time-filter`
+exits 2 with `--time-filter cannot be applied to a PMC capture`.
 
 Live unelevated path, reproduced 2026-11-07 on `fold_busy.exe`:
 

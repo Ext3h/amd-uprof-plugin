@@ -28,12 +28,15 @@ class Sampler:
     cpu.db rather than a dump; event_column names its sample column in UnifiedSampleSeries.
     os_requested is the applied event's OS-mode bit; an unelevated capture that requests it has no
     kernel-image samples, which kernel_coverage_warning checks. os_mode names the bit that carried
-    the request (os, opOs or fetchOs) for the warning text.
+    the request (os, opOs or fetchOs) for the warning text. pmc_cycle_shares is true only for a
+    PMC event that is hwId 118 with isSampling, whose fixed cycles make sample_share a busy
+    core-cycle share; any other PMC event leaves the share's meaning not established.
     """
 
     ibs_dump_kind: str | None = None
     metric: str = "METRIC: session.uprof not found -- metric basis not established"
     pmc: bool = False
+    pmc_cycle_shares: bool = False
     event_column: str | None = None
     interval: int | None = None
     interval_units: str | None = None  # 'cycles' (time-convertible), 'ops' or 'fetch' (not)
@@ -131,19 +134,24 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
             interval = ibs.get("opInterval")
             if bool(ibs.get("opCycleCount")):
                 metric = (f"METRIC: IBS OP (IBS_ALL_OPS {event}, cycle-controlled interval {interval}) "
-                          "-- sample shares: time (cycle-controlled samples; busy CPU time, "
-                          "frequency-dependent; system-wide it is summed over cores)")
+                          "-- sample shares: core-cycle share (fixed cycles per sample), not "
+                          "wall time, not a per-op cost; tag-to-retire: share of tag-to-retire "
+                          "cycles summed over sampled ops (dispatch tag to retirement, "
+                          "queue/stalls included), clipped at 131070")
             else:
                 metric = (f"METRIC: IBS OP (IBS_ALL_OPS {event}, op-count interval {interval}) "
-                          "-- sample shares: instruction share (op counts) -- not time; "
-                          "cycle attribution: per-op latency, clipped at 131070")
+                          "-- sample shares: dispatched-op frequency share (fixed dispatched "
+                          "ops per sample), not a per-op cost; tag-to-retire: share of "
+                          "tag-to-retire cycles summed over sampled ops (dispatch tag to "
+                          "retirement, queue/stalls included), clipped at 131070")
             return Sampler(ibs_dump_kind="ibsop-event-dump", metric=metric, interval=interval,
                            interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops",
                            os_requested=os_mode is not None, os_mode=os_mode)
         if ibs and ibs.get("fetch"):
             event = columns.get("IBS_FETCH", IBS_FETCH_EVENT)
             metric = (f"METRIC: IBS fetch (IBS_FETCH {event}, interval {ibs.get('fetchInterval')}) "
-                      "-- sample shares: fetch-sample share, not time")
+                      "-- sample shares: fetch-sample frequency share (fixed fetch events per "
+                      "sample); fetch path unverified")
             return Sampler(ibs_dump_kind="ibsfetch-event-dump", metric=metric,
                            interval=ibs.get("fetchInterval"), interval_units="fetch",
                            os_requested=os_mode is not None, os_mode=os_mode)
@@ -176,17 +184,18 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
             name = from_command
         else:
             name = f"hwId {event.get('hwId')}"
-        if event.get("hwId") == 118 and event.get("isSampling"):
+        cycle_shares = event.get("hwId") == 118 and bool(event.get("isSampling"))
+        if cycle_shares:
             metric = (f"METRIC: {name} ({column}, hwId {event.get('hwId')}, "
-                      f"interval {event.get('interval')}) -- sample shares: time (cycle samples; "
-                      "busy CPU time, frequency-dependent; system-wide it is summed over cores)")
+                      f"interval {event.get('interval')}) -- sample shares: busy core-cycle "
+                      "share (fixed cycles per sample; halted excluded)")
         else:
             metric = (f"METRIC: {name} (hwId {event.get('hwId')}, interval {event.get('interval')}, "
                       f"isSampling={event.get('isSampling')}) -- sample shares: not established; "
-                      "do not read the shares as time")
-        return Sampler(metric=metric, pmc=True, event_column=column,
-                       interval=event.get("interval"), interval_units="cycles",
-                       os_requested=bool(event.get("os")),
+                      "this PMC event is not the supported cycle event")
+        return Sampler(metric=metric, pmc=True, pmc_cycle_shares=cycle_shares,
+                       event_column=column, interval=event.get("interval"),
+                       interval_units="cycles", os_requested=bool(event.get("os")),
                        os_mode="os" if event.get("os") else None)
 
     if from_command:

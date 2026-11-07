@@ -204,5 +204,34 @@ class IbsScopeTest(unittest.TestCase):
         self.assertEqual(self.samples(), 3)
 
 
+class ModuleRowTest(unittest.TestCase):
+    """Path and checksum must come from the same Module row."""
+
+    def setUp(self):
+        try:
+            import duckdb
+        except ImportError:
+            self.skipTest("DuckDB is required for the Module query")
+        self.connection = duckdb.connect()
+        self.addCleanup(self.connection.close)
+        self.connection.execute(
+            "CREATE OR REPLACE TEMP MACRO module_key(p) "
+            "AS replace(lower(p), chr(92), '/')")
+        self.connection.execute("CREATE TABLE Module(path VARCHAR, checksum BIGINT)")
+        self.connection.execute(
+            "INSERT INTO Module VALUES ('C:\\app\\fixture.exe', 11), "
+            "('C:/app/fixture.exe', 22)")
+
+    def test_the_checksum_belongs_to_the_choice_of_path(self):
+        row = uprof_context._module_row(self.connection, "c:/app/fixture.exe", True)
+
+        self.assertEqual(row, ("C:\\app\\fixture.exe", 11))
+
+    def test_a_missing_checksum_column_yields_no_checksum(self):
+        row = uprof_context._module_row(self.connection, "c:/app/fixture.exe", False)
+
+        self.assertEqual(row, ("C:\\app\\fixture.exe", None))
+
+
 if __name__ == "__main__":
     unittest.main()

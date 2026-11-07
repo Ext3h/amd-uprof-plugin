@@ -34,7 +34,8 @@ class Sampler:
     line printed before query results. pmc marks a PMC cycle capture, whose samples come from
     cpu.db rather than a dump; event_column names its sample column in UnifiedSampleSeries.
     os_requested is the applied event's OS-mode bit; an unelevated capture that requests it has no
-    kernel-image samples, which kernel_coverage_warning checks.
+    kernel-image samples, which kernel_coverage_warning checks. os_mode names the bit that carried
+    the request (os, opOs or fetchOs) for the warning text.
     """
 
     ibs_dump_kind: str | None = None
@@ -44,6 +45,7 @@ class Sampler:
     interval: int | None = None
     interval_units: str | None = None  # 'cycles' (time-convertible), 'ops' or 'fetch' (not)
     os_requested: bool = False
+    os_mode: str | None = None
 
 
 @dataclass
@@ -131,18 +133,22 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
                           "cycle attribution: per-op latency, clipped at 131070")
             return Sampler(ibs_dump_kind="ibsop-event-dump", metric=metric, interval=interval,
                            interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops",
-                           os_requested=bool(ibs.get("opOs")))
+                           os_requested=bool(ibs.get("opOs")),
+                           os_mode="opOs" if ibs.get("opOs") else None)
         if ibs and ibs.get("fetch"):
             event = columns.get("IBS_FETCH", IBS_FETCH_EVENT)
             metric = (f"METRIC: IBS fetch (IBS_FETCH {event}, interval {ibs.get('fetchInterval')}) "
                       "-- sample shares: fetch-sample share, not time")
             return Sampler(ibs_dump_kind="ibsfetch-event-dump", metric=metric,
                            interval=ibs.get("fetchInterval"), interval_units="fetch",
-                           os_requested=bool(ibs.get("fetchOs")))
+                           os_requested=bool(ibs.get("fetchOs")),
+                           os_mode="fetchOs" if ibs.get("fetchOs") else None)
         return Sampler(metric=(
             "METRIC: IBS capture (details not recorded in session.uprof) -- sample shares: "
             "not established; do not read them as time"),
-            os_requested=bool(ibs and (ibs.get("opOs") or ibs.get("fetchOs"))))
+            os_requested=bool(ibs and (ibs.get("opOs") or ibs.get("fetchOs"))),
+            os_mode=("opOs" if ibs and ibs.get("opOs") else
+                     "fetchOs" if ibs and ibs.get("fetchOs") else None))
 
     pmc = [event for event in
            ((meta.get("collection") or {}).get("events", {}).get("pmcEvents") or {}).get("pmcEventList") or []
@@ -178,7 +184,8 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
                       "do not read the shares as time")
         return Sampler(metric=metric, pmc=True, event_column=column,
                        interval=event.get("interval"), interval_units="cycles",
-                       os_requested=bool(event.get("os")))
+                       os_requested=bool(event.get("os")),
+                       os_mode="os" if event.get("os") else None)
 
     if from_command:
         metric = (f"METRIC: {from_command} (from collectCommand; session.uprof records no PMC or IBS "
@@ -199,18 +206,26 @@ def is_kernel_image(module_path: str) -> bool:
     return name.endswith(KERNEL_IMAGE_SUFFIXES) or name in KERNEL_IMAGE_BASENAMES
 
 
-def kernel_coverage_warning(sampler: Sampler, kernel_samples: int) -> str | None:
-    """The warning when the applied sampler requested OS mode but the capture has no kernel sample.
+def kernel_coverage_warning(sampler: Sampler, kernel_samples: int,
+                            captured_samples: int | None = None) -> str | None:
+    """The warning when the applied sampler requested OS mode but no sample is in a kernel image.
 
-    kernel_samples counts the whole capture, before any process or time filter: an OS-mode request
-    is supposed to fill the kernel ring, and elevation is what makes it do so. None means no
-    warning; a user-mode-only request is expected to have no kernel samples.
+    kernel_samples counts the whole capture, before any process or time filter; a user-mode-only
+    request is expected to have none, so only an OS-mode request can warn. captured_samples is the
+    whole capture's sample count: zero is an empty capture, a different observable from a
+    populated capture that never sampled the kernel. None means no warning.
     """
     if not sampler.os_requested or kernel_samples > 0:
         return None
-    return ("no kernel-mode samples: the applied sampler requested OS mode (os=1), but the whole "
-            "capture has no sample in any kernel image, so kernel time is missing. An unelevated "
-            "capture omits it; capture elevated to include kernel-mode samples")
+    bit = sampler.os_mode or "OS mode"
+    if captured_samples == 0:
+        return (f"no samples in the capture: the applied sampler requested OS mode ({bit}), but "
+                "the capture holds no sample of any kind, so kernel coverage cannot be assessed. "
+                "An attached process that exits before the first sample produces this; re-run "
+                "the capture if it was expected to have samples")
+    return (f"no kernel-image samples: the applied sampler requested OS mode ({bit}), but the "
+            "whole capture has no sample in any kernel image, so kernel-mode samples are absent. "
+            "If the capture was not elevated, only an elevated capture includes them")
 
 
 def verify_collect(session_dir: Path | str, event: str, interval: int, count_control: str,

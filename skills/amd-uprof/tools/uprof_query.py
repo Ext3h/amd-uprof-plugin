@@ -206,8 +206,12 @@ def _dump_contexts(connection: object, key: str, gap_limit_ns: float | None
 
 def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace,
                     sampler: uprof_session.Sampler,
-                    dump: uprof_dump.DumpInfo | None) -> tuple[str, str]:
-    """The achieved sampling rate over the whole capture, independent of the scope filter."""
+                    dump: uprof_dump.DumpInfo | None) -> tuple[tuple[str, str], int]:
+    """The achieved sampling rate over the whole capture, independent of the scope filter.
+
+    The returned sample count is the same whole-capture total, reused by the kernel-coverage
+    check so that check need not scan the capture again.
+    """
     meta = uprof_session.read_meta(args.session) or {}
     schedule = (meta.get("collection") or {}).get("schedule") or {}
     elapsed_ms = schedule.get("elapsed")
@@ -246,8 +250,9 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
             window_s = int(elapsed_ms) / 1000.0
         except (TypeError, ValueError):
             window_s = None
-    return ("ACHIEVED", uprof_session.achieved_summary(samples, window_s, cpus, sampler,
-                                                       contexts, label))
+    field = ("ACHIEVED", uprof_session.achieved_summary(samples, window_s, cpus, sampler,
+                                                        contexts, label))
+    return field, samples
 
 
 def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: str) -> bool:
@@ -283,13 +288,15 @@ def _dump_sanity(connection: object, has_dump: bool, scope_filtered: bool,
 
 
 def _kernel_coverage_field(connection: object, sampler: uprof_session.Sampler,
-                           windowed: bool = False) -> list[tuple[str, str]]:
+                           windowed: bool = False,
+                           captured_samples: int | None = None) -> list[tuple[str, str]]:
     """Whole-capture kernel coverage, checked only when the applied sampler requested OS mode.
 
     v_capture_modules carries every module with its sample count, before any scope filter. The
     kernel predicate is a basename match, so the paths are classified here rather than in SQL.
     windowed suppresses the field: the resolved dump may have been produced by the session's
-    recorded translate --time-filter, so it need not hold the whole capture.
+    recorded translate --time-filter, so it need not hold the whole capture. captured_samples is
+    the capture total the ACHIEVED check already counted.
     """
     if not sampler.os_requested or windowed:
         return []
@@ -298,7 +305,7 @@ def _kernel_coverage_field(connection: object, sampler: uprof_session.Sampler,
         "FROM v_capture_modules GROUP BY module_name").fetchall()
     kernel_samples = sum(int(samples or 0) for name, samples in rows
                          if uprof_session.is_kernel_image(str(name or "")))
-    warning = uprof_session.kernel_coverage_warning(sampler, kernel_samples)
+    warning = uprof_session.kernel_coverage_warning(sampler, kernel_samples, captured_samples)
     return [] if warning is None else [("KERNEL_COVERAGE", warning)]
 
 
@@ -398,10 +405,12 @@ def run_query_command(args: argparse.Namespace) -> None:
             fields = _header_fields(args, sampler, dump, has_tag, tag_available)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
-            achieved = _achieved_field(connection, dump is not None, args, sampler, dump)
+            achieved, captured_samples = _achieved_field(
+                connection, dump is not None, args, sampler, dump)
             if achieved:
                 fields.append(achieved)
-            fields.extend(_kernel_coverage_field(connection, sampler, dump_windowed))
+            fields.extend(_kernel_coverage_field(
+                connection, sampler, dump_windowed, captured_samples))
             fields.extend(_scope_warning(connection))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(connection)

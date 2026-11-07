@@ -32,6 +32,15 @@ _SECTION_VIRTUAL_ADDRESS = re.compile(r"^\s*VirtualAddress:\s*(0x[0-9A-Fa-f]+)\s
 _SECTION_RAW_SIZE = re.compile(r"^\s*RawDataSize:\s*(0x[0-9A-Fa-f]+)\s*$")
 _OBJDUMP_LINE = re.compile(r"^\s*([0-9A-Fa-f]+):\s+(.*)$")
 _RAW_BYTES = re.compile(r"^(?:[0-9A-Fa-f]{2}\s+)+")
+_IMPORT_BLOCK = re.compile(r"^\s*Import\s*\{\s*$")
+_DELAY_IMPORT_BLOCK = re.compile(r"^\s*DelayImport\s*\{\s*$")
+_IMPORT_END = re.compile(r"^\s*\}\s*$")
+_IMPORT_DLL = re.compile(r"^\s*Name:\s*(\S+)\s*$")
+_IMPORT_IAT_RVA = re.compile(r"^\s*ImportAddressTableRVA:\s*(0x[0-9A-Fa-f]+)\s*$")
+_IMPORT_SYMBOL = re.compile(r"^\s*Symbol:\s*(\S+)(?:\s+\([^)]*\))?\s*$")
+_RIP_OPERAND = re.compile(r"^\*(?:(-?0x[0-9A-Fa-f]+))?\(%rip\)$")
+_ABSOLUTE_OPERAND = re.compile(r"^\*(-?0x[0-9A-Fa-f]+)$")
+_CALL_MNEMONICS: Final = frozenset({"call", "callq", "calll", "callw"})
 
 
 class ContextOmission(Exception):
@@ -114,6 +123,15 @@ class DecodedInstruction:
     rva: int
     text: str
     next_rva: int | None = None
+
+
+@dataclass(frozen=True)
+class ImportSlot:
+    """One IAT entry: the slot's RVA, its DLL and the imported symbol name."""
+
+    slot_rva: int
+    dll: str
+    name: str
 
 
 def _as_int(value: object) -> int | None:
@@ -231,6 +249,87 @@ def verify_build(build: BuildIdentity, capture_checksum: object) -> VerifiedBuil
             f"capture checksum 0x{recorded:X} differs from the on-disk module checksum "
             f"0x{build.checksum:X}")
     return VerifiedBuild(identity=build, capture_checksum=recorded)
+
+
+# ------------------------------------------------------------------ imports
+
+def parse_imports(text: str, build: BuildIdentity) -> dict[int, ImportSlot]:
+    """Map IAT slot RVAs to imported names from `llvm-readobj --coff-imports` text.
+
+    Each block's ImportAddressTableRVA is authoritative; symbols are laid out from it in slot
+    order at the image's PE32+/PE32 slot width. Delay imports are not IAT slots.
+    """
+    imports: dict[int, ImportSlot] = {}
+    dll: str | None = None
+    iat_rva: int | None = None
+    index = 0
+    in_import = False
+    for line in text.splitlines():
+        if _DELAY_IMPORT_BLOCK.match(line):
+            in_import = False
+            continue
+        if _IMPORT_BLOCK.match(line):
+            in_import = True
+            dll = None
+            iat_rva = None
+            index = 0
+            continue
+        if not in_import:
+            continue
+        if _IMPORT_END.match(line):
+            in_import = False
+            continue
+        if dll is None and (match := _IMPORT_DLL.match(line)):
+            dll = match.group(1)
+        elif iat_rva is None and (match := _IMPORT_IAT_RVA.match(line)):
+            iat_rva = int(match.group(1), 16)
+        elif (match := _IMPORT_SYMBOL.match(line)) and dll and iat_rva is not None:
+            slot_rva = iat_rva + index * build.slot_width
+            imports[slot_rva] = ImportSlot(slot_rva, dll, match.group(1))
+            index += 1
+    return imports
+
+
+def resolve_iat_call(instruction: DecodedInstruction, image_base: int,
+                     imports: dict[int, ImportSlot]) -> ImportSlot | None:
+    """The imported slot an indirect call targets, or None when the target is not a slot.
+
+    A call through a register or to an address outside the import table stays unresolved; only
+    the RIP-relative and absolute memory operands name an IAT slot.
+    """
+    parts = instruction.text.split(None, 1)
+    if len(parts) != 2 or parts[0] not in _CALL_MNEMONICS:
+        return None
+    operand = parts[1].strip()
+    if match := _RIP_OPERAND.match(operand):
+        if instruction.next_rva is None:
+            return None
+        displacement = int(match.group(1), 0) if match.group(1) else 0
+        return imports.get(instruction.next_rva + displacement)
+    if match := _ABSOLUTE_OPERAND.match(operand):
+        return imports.get(int(match.group(1), 0) - image_base)
+    return None
+
+
+def find_readobj(symbolizer: object | None = None) -> str | None:
+    """llvm-readobj beside llvm-symbolizer, else on PATH; None when unavailable."""
+    found = find_sibling(symbolizer if symbolizer else find_symbolizer(), "llvm-readobj")
+    return str(found) if found else None
+
+
+def load_imports(module_path: str, build: BuildIdentity,
+                 readobj: str | None = None) -> dict[int, ImportSlot]:
+    """Read the module's IAT slots; a readobj failure is an omission, not an empty table."""
+    tool = readobj or find_readobj()
+    if not tool:
+        raise ContextOmission("readobj_missing",
+                              "llvm-readobj not found beside llvm-symbolizer or on PATH")
+    completed = run([tool, "--coff-imports", module_path])
+    if completed.returncode != 0:
+        raise ContextOmission("imports_failed",
+                              tail_lines((completed.stdout or "") + "\n" +
+                                         (completed.stderr or "")))
+    return parse_imports(completed.stdout or "", build)
 
 
 # ------------------------------------------------------------------ disassembly window

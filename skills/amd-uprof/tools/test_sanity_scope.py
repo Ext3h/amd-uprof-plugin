@@ -15,6 +15,8 @@ from pathlib import Path
 
 import duckdb
 
+import uprof_db
+
 TOOLS_DIR = Path(__file__).resolve().parent
 ELAPSED_MS = 10_000
 # 100 samples on the late CPU, so the dump-wide cadence estimate is 0.1 s.
@@ -162,6 +164,44 @@ class SanityScopeTest(unittest.TestCase):
         self.assertIn("WARN (dump-wide across all processes): session.uprof has no usable duration",
                       line)
         self.assertIn("scoped coverage (--pid 100 --time-filter 0.000:10.000 s): WARN", line)
+
+    def test_pmc_scope_has_no_verdict_without_timestamps(self):
+        # A hand run can read v_scope_sanity for a PMC capture; its samples carry no DeltaTick,
+        # so a zero gap would claim coverage that was never measured.
+        pmc = Path(self.tmp.name) / "pmc"
+        pmc.mkdir()
+        (pmc / "session.uprof").write_text(json.dumps({
+            "translateCommand": "AMDuProfCLI.exe translate -i session",
+            "collection": {"schedule": {"elapsed": ELAPSED_MS},
+                           "target": {"systemWide": True}},
+        }), encoding="utf-8")
+        connection = duckdb.connect(str(pmc / "cpu.db"))
+        try:
+            connection.execute(
+                'CREATE TABLE UnifiedSampleSeries(moduleId INTEGER, functionId INTEGER, '
+                'moduleRVA BIGINT, processId INTEGER, "event#0x1" BIGINT)')
+            connection.execute("CREATE TABLE Process(id INTEGER, name VARCHAR)")
+            connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR)")
+            connection.execute("CREATE TABLE Function(id INTEGER, name VARCHAR)")
+            connection.execute(r"INSERT INTO Process VALUES (100, 'c:\workload.exe')")
+            connection.execute(r"INSERT INTO Module VALUES (10, 'c:\workload.exe')")
+            connection.execute(
+                'INSERT INTO UnifiedSampleSeries VALUES (10, 1, 4096, 100, 5)')
+        finally:
+            connection.close()
+        variables = {
+            "uprof_image": "%", "uprof_pid": "100", "uprof_top": "20",
+            "uprof_time_start": "0", "uprof_time_end": "9223372036854775807",
+            "uprof_ibs_dump": "", "uprof_event_column": "event#0x1",
+            "uprof_session_meta": str(pmc / "session.uprof"),
+            "uprof_tag_available": "", "uprof_symbols": "", "uprof_aliases": "",
+        }
+
+        with uprof_db.open_query(pmc / "cpu.db", [TOOLS_DIR / "views.sql"],
+                                 variables) as connected:
+            message = connected.sql("SELECT message FROM v_scope_sanity").fetchall()[0][0]
+
+        self.assertIsNone(message)
 
 
 if __name__ == "__main__":

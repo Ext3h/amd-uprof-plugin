@@ -96,16 +96,42 @@ coverage. No usable duration gives a `WARN` and no comparison; an empty dump rai
 
 ### Achieved sample rate
 
-`profile` prints `ACHIEVED: N samples, X s, C CPUs, R/s per CPU (requested ...)` for every
-capture. Samples are counted over the whole capture, not the `--image`/`--pid` scope; CPUs come
-from the dump's `CPU_Number`, or from `UnifiedSampleSeries.coreId` for a PMC capture. The
-collector accepts an interval it does not deliver: on the reference host a 1 ms request yields
-about 14 samples/s per CPU system-wide (busiest CPU ~37/s) and about 92/s in a short attached
-capture. `WARN: achieved sample rate is below 10% of the requested interval` marks a capture too
-sparse for the requested resolution. `collect` cannot print this — it has neither a dump nor a
-`cpu.db`; the rate appears at `profile`, where the samples exist, or in `translate --ascii`, which
-counts the dump it just wrote. For an op-count interval no time rate follows and the line says
-so.
+`profile` and `translate --ascii` print one `ACHIEVED:` line for every capture; the tail is present
+only when per-context statistics are available:
+
+```
+ACHIEVED: 9936 samples, 45.069 s, 16 CPUs, 13.78/s per CPU (requested 4700000 cycles at 4700 MHz
+= 1 ms; ideal 1,000/s per CPU); busiest CPU 1,110/s (median gap 901 us); 12 active CPUs
+```
+
+Samples are counted over the whole capture, not the `--image`/`--pid` scope; CPUs come from the
+dump's `CPU_Number`, or from `UnifiedSampleSeries.coreId` for a PMC capture. The per-CPU figure
+divides every sample by **every** CPU in the capture, so idle CPUs and threads that ran only part
+of it share the denominator: on the reference host a 1 ms system-wide request with 8 busy and 8
+idle CPUs reads about 14/s per CPU although each busy CPU receives the requested cadence. That
+figure is kept for continuity; it is not the delivered cadence.
+
+The busiest context is the one with the most samples: a CPU for a system-wide dump, a `TID` for an
+attached dump, a core for PMC. For a dump the line reports the median `DeltaTick` gap between
+consecutive samples no more than 10x the requested interval apart (a larger gap is time the context
+did not run) and the rate it implies; PMC carries no per-sample timestamps, so the busiest core's
+samples/s is reported instead. "Active" counts contexts holding at least 10% of the busiest
+context's samples.
+
+`WARN: achieved sample rate is below 10% of the requested interval` fires only when the busiest
+context itself is that sparse: its median running gap exceeds 10x the requested interval (or no
+such gap exists) on the dump path, or its samples/s is below 10% of the ideal on the PMC path. An
+average diluted by idle CPUs never warns, and neither does an intermittent attached thread whose
+running gaps are at the requested interval. The two issue captures that motivated this rule: a
+45 s system-wide capture delivered about 1,110/s on its busiest CPU while reading 13.78/s per CPU,
+and an attached capture delivered about 1,070/s in each running burst (gaps near 0.94 ms) while its
+all-gap median of 2.44 ms read 409/s. The collector's acceptance bounds the **request**, not the
+delivery: IBS accepts 50,000 to 134,217,727 cycles and PMC at least 25,000 cycles, with no
+millisecond-scale floor.
+
+`collect` cannot print this — it has neither a dump nor a `cpu.db`; the rate appears at `profile`,
+where the samples exist, or in `translate --ascii`, which counts the dump it just wrote. For an
+op-count interval no time rate follows and the line says so.
 
 ## Symbolization
 

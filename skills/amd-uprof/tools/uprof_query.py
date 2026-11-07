@@ -184,6 +184,26 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
 
 
 
+def _dump_contexts(connection: object, key: str, gap_limit_ns: float | None
+                   ) -> list[uprof_session.ContextCadence]:
+    """Per-context sample counts and median gaps from v_dump.
+
+    key is cpu for a system-wide capture and tid for an attached one. gap_limit_ns drops gaps
+    above it, which are time the context was not running; None keeps every gap.
+    """
+    limit = "" if gap_limit_ns is None else " FILTER (WHERE gap <= ?)"
+    parameters: list[float] = [] if gap_limit_ns is None else [gap_limit_ns]
+    rows = connection.execute(
+        f"WITH gaps AS (SELECT {key} AS context, "
+        f"delta_tick - lag(delta_tick) OVER (PARTITION BY {key} ORDER BY delta_tick) AS gap "
+        "FROM v_dump) "
+        f"SELECT context, count(*), median(gap){limit} FROM gaps GROUP BY context",
+        parameters).fetchall()
+    return [uprof_session.ContextCadence(int(row[1] or 0),
+                                         None if row[2] is None else float(row[2]))
+            for row in rows]
+
+
 def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace,
                     sampler: uprof_session.Sampler,
                     dump: uprof_dump.DumpInfo | None) -> tuple[str, str]:
@@ -191,11 +211,17 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
     meta = uprof_session.read_meta(args.session) or {}
     schedule = (meta.get("collection") or {}).get("schedule") or {}
     elapsed_ms = schedule.get("elapsed")
+    contexts: list[uprof_session.ContextCadence] = []
+    label = "CPU"
     window_s: float | None = None
     if has_dump:
         rows = connection.sql("SELECT count(*), count(DISTINCT cpu) FROM v_dump").fetchall()
         samples = int(rows[0][0] or 0)
         cpus = int(rows[0][1] or 0)
+        wide = uprof_session.system_wide(args.session)
+        label = "CPU" if wide else "thread"
+        contexts = _dump_contexts(connection, "cpu" if wide else "tid",
+                                  uprof_session.run_gap_limit_ns(sampler))
         if dump is not None and dump.time_filter:
             bounds = util.parse_time_filter(dump.time_filter)
             if bounds is not None:
@@ -208,12 +234,20 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
             "FROM UnifiedSampleSeries").fetchall()
         samples = int(rows[0][0] or 0)
         cpus = int(rows[0][1] or 0)
+        # PMC carries no per-sample timestamps, so a core's samples/s is its whole cadence.
+        per_core = connection.sql(
+            "SELECT coreId, CAST(COALESCE(sum(COLUMNS(lambda c: c = "
+            "getvariable('uprof_event_column'))), 0) AS BIGINT) "
+            "FROM UnifiedSampleSeries GROUP BY coreId").fetchall()
+        contexts = [uprof_session.ContextCadence(int(row[1] or 0)) for row in per_core]
+        label = "core"
     if window_s is None and elapsed_ms is not None:
         try:
             window_s = int(elapsed_ms) / 1000.0
         except (TypeError, ValueError):
             window_s = None
-    return ("ACHIEVED", uprof_session.achieved_summary(samples, window_s, cpus, sampler))
+    return ("ACHIEVED", uprof_session.achieved_summary(samples, window_s, cpus, sampler,
+                                                       contexts, label))
 
 
 def _dump_sanity(connection: object, has_dump: bool) -> tuple[str | None, int]:

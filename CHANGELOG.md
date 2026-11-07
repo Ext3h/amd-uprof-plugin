@@ -2,6 +2,25 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.6 — 2026-11-07
+
+### Fixed
+
+- `ACHIEVED` no longer warns on a capture whose per-CPU average is diluted by idle CPUs. It now
+  reports the busiest sampling context's cadence (median running `DeltaTick` gap for a dump,
+  samples/s for PMC) and the number of active contexts, and the below-10% warning is based only
+  on that context. The per-CPU average stays in the line, labeled as the whole-capture figure it
+  is. An intermittent attached thread whose running gaps are at the requested interval no longer
+  warns. `profile` uses `TID` as the context for attached captures and `CPU_Number` for
+  system-wide ones; `v_dump` now exposes `tid`.
+
+### Changed
+
+- Documentation states the corrected picture: the collector delivers about 1,000/s on a busy CPU
+  at a 1 ms request, the old 14/s and 92/s figures were averages over every CPU in the capture,
+  and uProf's interval bounds (IBS 50,000-134,217,727 cycles, PMC at least 25,000 cycles) constrain
+  the request rather than the delivered rate.
+
 ## 1.0.5 — 2026-11-07
 
 ### Fixed

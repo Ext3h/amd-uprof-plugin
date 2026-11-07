@@ -37,6 +37,25 @@ class Sampler:
     interval_units: str | None = None  # 'cycles' (time-convertible), 'ops' or 'fetch' (not)
 
 
+@dataclass
+class ContextCadence:
+    """One sampling context's sample count and delivered cadence.
+
+    A context is a CPU for a system-wide capture, a TID for an attached capture, or a core for a
+    PMC capture. median_gap_ns is the median DeltaTick gap between consecutive samples whose gap
+    is at most ten times the requested interval (a larger gap is the context not running); None
+    when the source has no per-sample timestamps or the context never sampled twice inside that
+    limit.
+    """
+
+    samples: int
+    median_gap_ns: float | None = None
+
+
+# A gap above this multiple of the request is time the context was not sampling continuously.
+_RUN_GAP_FACTOR = 10.0
+
+
 def read_meta(session_dir: Path | str) -> dict[str, Any] | None:
     path = Path(session_dir) / "session.uprof"
     try:
@@ -46,6 +65,12 @@ def read_meta(session_dir: Path | str) -> dict[str, Any] | None:
         return None
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def system_wide(session_dir: Path | str) -> bool:
+    """True when session.uprof records a system-wide target; False for attached or unknown."""
+    meta = read_meta(session_dir) or {}
+    return bool(((meta.get("collection") or {}).get("target") or {}).get("systemWide"))
 
 
 def _registered_columns(meta: dict[str, Any]) -> dict[str, str]:
@@ -209,53 +234,102 @@ def collect_summary(meta: dict[str, Any], event: str) -> str:
             f"systemWide={target.get('systemWide')}")
 
 
-def achieved_summary(samples: int, window_s: float | None, cpus: int,
-                     sampler: Sampler) -> str:
-    """The `ACHIEVED` text: delivered samples, capture window, CPUs and rate per CPU.
+def _format_duration(seconds: float) -> str:
+    return (f"{seconds * 1e3:.3g} ms" if seconds >= 1e-3
+            else f"{seconds * 1e6:.3g} us")
 
-    A capture can accept an interval it cannot deliver: the collector's effective cadence is far
-    below the request in both modes. Samples per second per CPU makes that visible instead of
-    leaving a sparse capture to look authoritative. cpus is 0 only when the capture records no
-    CPU id; the per-CPU rate is then not derivable and the text says so.
+
+def requested_interval(sampler: Sampler, frequency_hz: float | None = None
+                       ) -> tuple[float | None, str, str]:
+    """The requested interval in seconds, the text naming it, and the ideal-rate note.
+
+    interval_s is None for a work/fetch count or a cycle interval with no usable core frequency.
+    frequency_hz reuses a frequency the caller already read; None reads the machine's reported
+    one.
     """
-    if window_s is None or window_s <= 0:
-        return (f"{samples} samples; the capture records no usable duration, so the rate is "
-                "not derivable")
-
-    ideal_per_s: float | None = None
-    ideal_note = ""
-    warn = False
     if sampler.interval is None or sampler.interval_units is None:
-        requested = "the session records no interval"
-    elif sampler.interval_units == "cycles":
+        return None, "the session records no interval", ""
+    if sampler.interval_units == "cycles":
         try:
-            from uprof_collect import _core_frequency
-            hertz, display, _source = _core_frequency()
+            if frequency_hz is None:
+                from uprof_collect import _core_frequency
+                hertz, display, _source = _core_frequency()
+            else:
+                hertz, display = float(frequency_hz), f"{frequency_hz / 1e6:g} MHz"
             interval_s = sampler.interval / hertz
-            shown = (f"{interval_s * 1e3:.3g} ms" if interval_s >= 1e-3
-                     else f"{interval_s * 1e6:.3g} us")
-            requested = f"{sampler.interval} cycles at {display} = {shown}"
-            ideal_per_s = 1.0 / interval_s
-            ideal_note = f"; ideal {ideal_per_s:,.0f}/s per CPU"
-            warn = True
+            requested = (f"{sampler.interval} cycles at {display} = "
+                         f"{_format_duration(interval_s)}")
+            return interval_s, requested, f"; ideal {1.0 / interval_s:,.0f}/s per CPU"
         except Exception:
-            requested = f"{sampler.interval} cycles (core frequency unavailable)"
-    elif sampler.interval_units == "ops":
-        requested = f"{sampler.interval} dispatched ops"
-        ideal_note = "; the interval is a work count, so no time rate follows"
-    else:
-        requested = f"{sampler.interval} fetch events"
+            return None, f"{sampler.interval} cycles (core frequency unavailable)", ""
+    if sampler.interval_units == "ops":
+        return (None, f"{sampler.interval} dispatched ops",
+                "; the interval is a work count, so no time rate follows")
+    return None, f"{sampler.interval} fetch events", ""
 
-    if cpus:
+
+def run_gap_limit_ns(sampler: Sampler, frequency_hz: float | None = None) -> float | None:
+    """The largest gap still counted as continuous sampling, in nanoseconds.
+
+    None when the request carries no time interval; the caller then does not filter gaps.
+    """
+    interval_s, _requested, _ideal = requested_interval(sampler, frequency_hz)
+    return None if interval_s is None else _RUN_GAP_FACTOR * interval_s * 1e9
+
+
+def achieved_summary(samples: int, window_s: float | None, cpus: int, sampler: Sampler,
+                     contexts: list[ContextCadence] | None = None,
+                     context_label: str = "CPU",
+                     frequency_hz: float | None = None) -> str:
+    """The `ACHIEVED` text: whole-capture rate and the busiest sampling context's cadence.
+
+    The per-CPU rate divides every sample by every CPU in the capture, so idle CPUs and
+    intermittent threads make it read below the cadence a running context receives. contexts
+    carries per-context sample counts and median running gaps; the warning is based only on the
+    busiest context. A context is active when it holds at least 10% of the busiest context's
+    samples. contexts is None only for callers with no per-context data, where no warning is
+    possible.
+    """
+    interval_s, requested, ideal_note = requested_interval(sampler, frequency_hz)
+    ideal_per_s = None if interval_s is None else 1.0 / interval_s
+
+    if window_s is None or window_s <= 0:
+        text = (f"{samples} samples; the capture records no usable duration, so the rate is "
+                f"not derivable (requested {requested}{ideal_note})")
+    elif cpus:
         rate = samples / window_s / cpus
-        grade = f"{samples} samples, {window_s:.3f} s, {cpus} CPUs, {rate:,.2f}/s per CPU"
-        below = warn and rate < 0.1 * ideal_per_s
+        text = (f"{samples} samples, {window_s:.3f} s, {cpus} CPUs, {rate:,.2f}/s per CPU "
+                f"(requested {requested}{ideal_note})")
     else:
         rate = samples / window_s
-        grade = f"{samples} samples, {window_s:.3f} s, {rate:,.2f}/s over the capture"
-        ideal_note += "; the capture records no CPU id, so the per-CPU rate is not derivable"
-        below = False
-    text = f"{grade} (requested {requested}{ideal_note})"
+        text = (f"{samples} samples, {window_s:.3f} s, {rate:,.2f}/s over the capture "
+                f"(requested {requested}{ideal_note}; the capture records no CPU id, so the "
+                "per-CPU rate is not derivable)")
+
+    below = False
+    if contexts:
+        busiest = max(contexts, key=lambda context: context.samples)
+        if busiest.samples > 0:
+            active = sum(1 for context in contexts
+                         if context.samples >= 0.1 * busiest.samples)
+            if busiest.median_gap_ns is not None and busiest.median_gap_ns > 0:
+                delivered = 1e9 / busiest.median_gap_ns
+                gap_s = busiest.median_gap_ns / 1e9
+                text += (f"; busiest {context_label} {delivered:,.0f}/s "
+                         f"(median gap {_format_duration(gap_s)})")
+                below = (ideal_per_s is not None
+                         and busiest.median_gap_ns > _RUN_GAP_FACTOR * interval_s * 1e9)
+            elif sampler.ibs_dump_kind is not None:
+                # The dump has timestamps, so no gap inside the limit means the context never
+                # sampled continuously: exactly the condition the warning exists for.
+                text += (f"; busiest {context_label} has no sampling run within "
+                         f"{_RUN_GAP_FACTOR:g}x the requested interval")
+                below = ideal_per_s is not None
+            elif window_s is not None and window_s > 0:
+                delivered = busiest.samples / window_s
+                text += f"; busiest {context_label} {delivered:,.2f}/s"
+                below = ideal_per_s is not None and delivered < 0.1 * ideal_per_s
+            text += f"; {active} active {context_label if active == 1 else context_label + 's'}"
     if below:
         text += "; WARN: achieved sample rate is below 10% of the requested interval"
     return text

@@ -108,7 +108,7 @@ SET VARIABLE dump_columns_guard = (
               ELSE 1 END
   FROM query(CASE WHEN getvariable('has_dump')
     THEN $cols$SELECT required.name AS missing_name
-               FROM (VALUES ('DeltaTick'), ('CPU_Number'), ('PID'), ('Offset'), ('ModuleName'))
+               FROM (VALUES ('DeltaTick'), ('CPU_Number'), ('TID'), ('PID'), ('Offset'), ('ModuleName'))
                     AS required(name)
                WHERE NOT EXISTS (
                  SELECT 1
@@ -134,15 +134,18 @@ SET VARIABLE time_start = CAST(COALESCE(NULLIF(getvariable('uprof_time_start'), 
 SET VARIABLE time_end = CAST(COALESCE(NULLIF(getvariable('uprof_time_end'), ''), '9223372036854775807') AS BIGINT);
 
 -- DeltaTick is a cumulative, start-relative nanosecond timestamp; all columns are read as text so
--- uProf's empty or non-numeric cells cannot force a column type. tag_cycles is the per-op latency
--- clipped at the field's maximum; a NULL or non-numeric cell stays NULL and is excluded from the
--- pct_cycles denominator rather than being charged the maximum. The empty branch gives a PMC
--- capture a typed, empty relation so the downstream views bind without touching a dump.
+-- uProf's empty or non-numeric cells cannot force a column type. tid identifies the thread in an
+-- attached capture: the achieved-cadence check uses it as the context there and cpu for a
+-- system-wide capture. tag_cycles is the per-op latency clipped at the field's maximum; a NULL or
+-- non-numeric cell stays NULL and is excluded from the pct_cycles denominator rather than being
+-- charged the maximum. The empty branch gives a PMC capture a typed, empty relation so the
+-- downstream views bind without touching a dump.
 CREATE OR REPLACE TEMP VIEW v_dump AS
 SELECT * FROM query(CASE
   WHEN NOT getvariable('has_dump') THEN $empty$
     SELECT CAST(NULL AS BIGINT) AS delta_tick,
            CAST(NULL AS INTEGER) AS cpu,
+           CAST(NULL AS INTEGER) AS tid,
            CAST(NULL AS INTEGER) AS pid,
            CAST(NULL AS BIGINT) AS rva,
            CAST(NULL AS VARCHAR) AS module_name,
@@ -151,6 +154,7 @@ SELECT * FROM query(CASE
   WHEN getvariable('has_tag') THEN $tagged$
     SELECT CAST(DeltaTick AS BIGINT) AS delta_tick,
            CAST(CPU_Number AS INTEGER) AS cpu,
+           CAST(TID AS INTEGER) AS tid,
            CAST(PID AS INTEGER) AS pid,
            CAST("Offset" AS BIGINT) AS rva,
            module_key(ModuleName) AS module_name,
@@ -164,6 +168,7 @@ SELECT * FROM query(CASE
   ELSE $untagged$
     SELECT CAST(DeltaTick AS BIGINT) AS delta_tick,
            CAST(CPU_Number AS INTEGER) AS cpu,
+           CAST(TID AS INTEGER) AS tid,
            CAST(PID AS INTEGER) AS pid,
            CAST("Offset" AS BIGINT) AS rva,
            module_key(ModuleName) AS module_name,

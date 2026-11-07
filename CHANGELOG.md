@@ -2,6 +2,12 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.2 — 2026-11-07
+
+### Added
+
+- MIT `LICENSE` (root) and the `license` field in the plugin manifest.
+
 ## 1.0.1 — 2026-11-07
 
 ### Changed

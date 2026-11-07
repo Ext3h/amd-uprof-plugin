@@ -3,11 +3,16 @@
 Run from this directory: python -m unittest test_kernel_coverage -v
 """
 
+import contextlib
+import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import uprof_collect
 import uprof_dump
 import uprof_query
 import uprof_session
@@ -181,6 +186,65 @@ class KernelCoverageFieldTest(unittest.TestCase):
         self.assertEqual(self.fields(uprof_session.Sampler(os_requested=True), [
             ("/lib/modules/6.8.0/updates/amdgpu.ko", 4),
         ]), [])
+
+
+class CollectOsModeTest(unittest.TestCase):
+    """collect warns about kernel coverage for every event it can request."""
+
+    def test_every_collect_event_requests_os_mode(self):
+        for event in ("cycles", "ibs-op"):
+            with self.subTest(event=event):
+                self.assertTrue(uprof_collect._requests_os_mode(event))
+
+    def test_unelevated_warning_names_kernel_samples_only_for_an_os_mode_request(self):
+        self.assertIn("kernel-mode", uprof_collect._unelevated_warning(True))
+        self.assertNotIn("kernel-mode", uprof_collect._unelevated_warning(False))
+
+    def run_collect_after_ibs_fallback(self, elevated):
+        """Run collect on an unelevated IBS request that falls back to a cycle capture."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = Path(tmp.name) / "out"
+        calls = []
+
+        def fake_run_cli(_uprof, spec, _target_args, _options):
+            calls.append(spec)
+            if len(calls) == 1:
+                return subprocess.CompletedProcess(spec, 1, "", "ibs counters are not available")
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "session.uprof").write_text(json.dumps({
+                "collection": {
+                    "events": {"pmcEvents": {"pmcEventList": [{
+                        "hwId": 118, "interval": 4_700_000, "isSampling": True}]}},
+                    "target": {"systemWide": True}},
+                "auxiliary": {},
+            }), encoding="utf-8")
+            return subprocess.CompletedProcess(spec, 0, "", "")
+
+        options = uprof_collect.CollectOptions(
+            out_dir=str(out), seconds=1, event="ibs-op")
+        stderr = io.StringIO()
+        with mock.patch.object(uprof_collect, "is_admin", return_value=elevated), \
+                mock.patch.object(uprof_collect, "find_uprof", return_value="AMDuProfCLI"), \
+                mock.patch.object(uprof_collect, "require_uprof", return_value="AMDuProfCLI"), \
+                mock.patch.object(uprof_collect, "ibs_unavailable_reason", return_value="test"), \
+                mock.patch.object(uprof_collect, "_run_cli", side_effect=fake_run_cli), \
+                mock.patch.object(uprof_collect, "_core_frequency",
+                                  return_value=(4_700_000_000, "4700 MHz", "test")), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(stderr):
+            uprof_collect.collect(options)
+        return stderr.getvalue()
+
+    def test_unelevated_ibs_capture_warns_before_the_fallback(self):
+        stderr = self.run_collect_after_ibs_fallback(elevated=False)
+        self.assertIn(uprof_collect._KERNEL_COVERAGE_NOTE, stderr)
+        self.assertIn(uprof_collect._FALLBACK_KERNEL_WARNING, stderr)
+
+    def test_elevated_ibs_capture_does_not_warn(self):
+        stderr = self.run_collect_after_ibs_fallback(elevated=True)
+        self.assertNotIn(uprof_collect._KERNEL_COVERAGE_NOTE, stderr)
+        self.assertNotIn(uprof_collect._FALLBACK_KERNEL_WARNING, stderr)
 
 
 class WindowedDumpTest(unittest.TestCase):

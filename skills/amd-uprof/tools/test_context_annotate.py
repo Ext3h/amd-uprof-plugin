@@ -4,7 +4,9 @@ Run from this directory: python -m unittest test_context_annotate -v
 """
 
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import uprof_context
@@ -138,6 +140,68 @@ class IbsTest(unittest.TestCase):
 
         self.assertEqual(uprof_context.ibs_rows(connection, "fixture.exe", [0x1010]), {})
         connection.execute.assert_called_once()
+
+
+DUMP = """\
+DeltaTick,CPU_Number,TID,PID,Offset,ModuleName,DataSrc
+100,0,1,4524,256,mod.dll,0
+100,0,2,7132,256,mod.dll,0
+100,0,3,7132,256,mod.dll,0
+100,0,4,7132,256,mod.dll,0
+5000,0,1,4524,256,mod.dll,0
+"""
+
+
+class IbsScopeTest(unittest.TestCase):
+    """The per-RVA IBS aggregate must count the same rows as v_scoped."""
+
+    def setUp(self):
+        try:
+            import duckdb
+        except ImportError:
+            self.skipTest("DuckDB is required for the scope query")
+        self.directory = tempfile.TemporaryDirectory(prefix="uprof-ibs-scope-")
+        self.addCleanup(self.directory.cleanup)
+        self.dump = Path(self.directory.name) / "IbsOpDump.csv"
+        self.dump.write_text(DUMP, encoding="utf-8", newline="\n")
+        self.connection = duckdb.connect()
+        self.addCleanup(self.connection.close)
+        self.connection.execute(
+            "CREATE OR REPLACE TEMP MACRO module_key(p) "
+            "AS replace(lower(p), chr(92), '/')")
+        self.connection.execute("CREATE TABLE Process(id INTEGER, name VARCHAR)")
+        self.connection.execute(
+            "INSERT INTO Process VALUES (4524, 'a.exe'), (7132, 'b.exe')")
+        self.connection.execute("SET VARIABLE uprof_ibs_dump = ?", [str(self.dump)])
+        self.set_scope(time_start=0, time_end=1000, pid="", image="%")
+
+    def set_scope(self, time_start, time_end, pid, image):
+        self.connection.execute(f"SET VARIABLE time_start = {int(time_start)}")
+        self.connection.execute(f"SET VARIABLE time_end = {int(time_end)}")
+        self.connection.execute("SET VARIABLE uprof_pid = ?", [pid])
+        self.connection.execute("SET VARIABLE uprof_image = ?", [image])
+
+    def samples(self):
+        return uprof_context.ibs_rows(self.connection, "mod.dll", [0x100])[0x100]["samples"]
+
+    def test_time_filter_selects_the_window(self):
+        self.assertEqual(self.samples(), 4)
+        self.set_scope(time_start=1000, time_end=6000, pid="", image="%")
+        self.assertEqual(self.samples(), 1)
+
+    def test_pid_filter_selects_one_process(self):
+        self.set_scope(time_start=0, time_end=6000, pid="4524", image="%")
+        self.assertEqual(self.samples(), 2)
+        self.set_scope(time_start=0, time_end=6000, pid="7132", image="%")
+        self.assertEqual(self.samples(), 3)
+
+    def test_image_filter_matches_the_process_row(self):
+        self.set_scope(time_start=0, time_end=6000, pid="", image="a.exe")
+        self.assertEqual(self.samples(), 2)
+
+    def test_filters_combine(self):
+        self.set_scope(time_start=0, time_end=1000, pid="7132", image="b.exe")
+        self.assertEqual(self.samples(), 3)
 
 
 if __name__ == "__main__":

@@ -476,12 +476,20 @@ def ibs_rows(connection: object, module_name: str,
     if not fields:
         return {}
     expressions = [expression for field in fields for expression in ibs_expression(field)]
-    sql = ('SELECT CAST("Offset" AS BIGINT) AS rva, count(*) AS samples, '
+    # The rows counted here must be the ones v_scoped kept: same PID, image and time window.
+    sql = ('SELECT CAST(d."Offset" AS BIGINT) AS rva, count(*) AS samples, '
            + ", ".join(expressions)
-           + " FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)"
-             " WHERE module_key(ModuleName) = CAST(? AS VARCHAR)"
-             ' AND TRY_CAST("Offset" AS BIGINT) IN (SELECT * FROM unnest(?))'
-             " GROUP BY rva")
+           + ' FROM read_csv(getvariable(\'uprof_ibs_dump\'), header = true, all_varchar = true)'
+             ' AS d LEFT JOIN Process AS p ON p.id = TRY_CAST(d."PID" AS INTEGER)'
+             ' WHERE module_key(d."ModuleName") = CAST(? AS VARCHAR)'
+             ' AND TRY_CAST(d."Offset" AS BIGINT) IN (SELECT * FROM unnest(?))'
+             ' AND TRY_CAST(d."DeltaTick" AS BIGINT) >= getvariable(\'time_start\')'
+             ' AND TRY_CAST(d."DeltaTick" AS BIGINT) < getvariable(\'time_end\')'
+             ' AND (getvariable(\'uprof_pid\') = \'\''
+             '      OR TRY_CAST(d."PID" AS INTEGER)'
+             '         = CAST(getvariable(\'uprof_pid\') AS INTEGER))'
+             ' AND COALESCE(p.name, \'\') ILIKE getvariable(\'uprof_image\')'
+             ' GROUP BY rva')
     rows = connection.execute(sql, [module_name, addresses]).fetchall()
     names = [str(column[0]) for column in connection.description]
     return {int(row[0]): ibs_summary(dict(zip(names, row)), fields) for row in rows}

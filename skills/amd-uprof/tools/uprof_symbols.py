@@ -317,12 +317,10 @@ def _aggregate_publics(pairs_path: Path, out_path: Path) -> tuple[int, int]:
             connection.execute("""
                 COPY (
                   SELECT rva, count(*) AS name_count,
-                         CASE WHEN count(*) > 1 THEN
-                           CASE WHEN count(*) > 4 THEN
-                             array_to_string(list_slice(list_sort(list(name)), 1, 4), ' | ') ||
-                             ' | ... (+' || CAST(count(*) - 4 AS VARCHAR) || ' more)'
-                           ELSE array_to_string(list_sort(list(name)), ' | ') END
-                         ELSE NULL END AS names
+                         CASE WHEN count(*) > 4 THEN
+                           array_to_string(list_slice(list_sort(list(name)), 1, 4), ' | ') ||
+                           ' | ... (+' || CAST(count(*) - 4 AS VARCHAR) || ' more)'
+                         ELSE array_to_string(list_sort(list(name)), ' | ') END AS names
                   FROM pairs GROUP BY rva ORDER BY rva
                 ) TO ? (FORMAT csv, HEADER)
             """, [str(out_path)])

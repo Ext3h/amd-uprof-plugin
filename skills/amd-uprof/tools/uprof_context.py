@@ -35,6 +35,7 @@ _IBS_TAG_INT: Final = r"""regexp_full_match("IbsTagToRetCtr", '\s*[0-9]+\s*')"""
 
 _IMAGE_BASE = re.compile(r"^\s*ImageBase:\s*(0x[0-9A-Fa-f]+)\s*$")
 _CHECKSUM = re.compile(r"^\s*CheckSum:\s*(0x[0-9A-Fa-f]+)\s*$")
+_SIZE_OF_IMAGE = re.compile(r"^\s*SizeOfImage:\s*(\d+)\s*$")
 _MAGIC = re.compile(r"^\s*Magic:\s*(0x[0-9A-Fa-f]+)\s*$")
 _DATE_STAMP = re.compile(r"^\s*TimeDateStamp:.*\((0x[0-9A-Fa-f]+)\)\s*$")
 _SECTION_NAME = re.compile(r"^\s*Name:\s*(\S+)(?:\s+\(([0-9A-Fa-f ]+)\))?\s*$")
@@ -84,12 +85,16 @@ class PeSection:
 
 @dataclass(frozen=True)
 class BuildIdentity:
-    """PE header identity used to confirm the module matches the capture's build."""
+    """PE header identity used to confirm the module matches the capture's build.
+
+    size_of_image is 0 when the headers did not carry a parseable SizeOfImage.
+    """
 
     image_base: int
     time_date_stamp: int
     checksum: int
     magic: int
+    size_of_image: int = 0
 
     @property
     def slot_width(self) -> int:
@@ -99,23 +104,35 @@ class BuildIdentity:
 
 @dataclass(frozen=True)
 class VerifiedBuild:
-    """A PE identity that matches the checksum recorded in the capture."""
+    """The capture's build evidence and the strongest on-disk identity that supports it.
 
-    identity: BuildIdentity
+    identity is "checksum", "size" or "unverified"; only the first two set verified. An
+    unverified block is still emitted, with warning explaining which evidence was missing or
+    disagreed.
+    """
+
+    pe: BuildIdentity
     capture_checksum: int
     verified: bool = True
+    identity: str = "checksum"
+    capture_size: int | None = None
+    warning: str | None = None
 
     @property
     def checksum(self) -> int:
-        return self.identity.checksum
+        return self.pe.checksum
 
     @property
     def image_base(self) -> int:
-        return self.identity.image_base
+        return self.pe.image_base
 
     @property
     def time_date_stamp(self) -> int:
-        return self.identity.time_date_stamp
+        return self.pe.time_date_stamp
+
+    @property
+    def size_of_image(self) -> int:
+        return self.pe.size_of_image
 
 
 @dataclass(frozen=True)
@@ -162,13 +179,19 @@ def _as_int(value: object) -> int | None:
 
 
 def parse_file_headers(text: str) -> BuildIdentity:
-    """Read ImageBase, TimeDateStamp, CheckSum and the optional-header magic from readobj."""
-    image_base = checksum = magic = date_stamp = None
+    """Read ImageBase, TimeDateStamp, CheckSum, SizeOfImage and the optional-header magic.
+
+    SizeOfImage is the decimal number readobj prints when the header carries it; 0 means the
+    output did not include it.
+    """
+    image_base = checksum = magic = date_stamp = size_of_image = None
     for line in text.splitlines():
         if image_base is None and (match := _IMAGE_BASE.match(line)):
             image_base = int(match.group(1), 16)
         elif checksum is None and (match := _CHECKSUM.match(line)):
             checksum = int(match.group(1), 16)
+        elif size_of_image is None and (match := _SIZE_OF_IMAGE.match(line)):
+            size_of_image = int(match.group(1), 10)
         elif magic is None and (match := _MAGIC.match(line)):
             magic = int(match.group(1), 16)
         elif date_stamp is None and (match := _DATE_STAMP.match(line)):
@@ -180,7 +203,8 @@ def parse_file_headers(text: str) -> BuildIdentity:
         raise ContextOmission("metadata_incomplete",
                               f"llvm-readobj file headers lack {', '.join(missing)}")
     return BuildIdentity(image_base=image_base, time_date_stamp=date_stamp,
-                         checksum=checksum, magic=magic)
+                         checksum=checksum, magic=magic,
+                         size_of_image=size_of_image or 0)
 
 
 def parse_sections(text: str) -> list[PeSection]:
@@ -263,18 +287,34 @@ def is_instruction_start(decoded_starts: list[int], hot_rva: int) -> bool:
     return hot_rva in decoded_starts
 
 
-def verify_build(build: BuildIdentity, capture_checksum: object) -> VerifiedBuild:
-    """Accept the module only when its PE checksum matches the capture's recorded checksum."""
+def verify_build(build: BuildIdentity, capture_checksum: object,
+                 capture_size: object = None) -> VerifiedBuild:
+    """Compare the on-disk build with the checksum and SizeOfImage the capture recorded.
+
+    A nonzero checksum pair that disagrees is evidence of a different build and omits. When a
+    checksum is unavailable, an equal recorded SizeOfImage verifies the build. Without any
+    matching evidence the block is still emitted, marked unverified, so ordinary MSVC modules
+    with PE CheckSum 0 keep their context; the warning names what was missing or disagreed.
+    """
     recorded = _as_int(capture_checksum)
-    if not recorded or not build.checksum:
-        raise ContextOmission("build_unverified",
-                              "the capture records no usable module checksum")
-    if recorded != build.checksum:
-        raise ContextOmission(
-            "build_mismatch",
-            f"capture checksum 0x{recorded:X} differs from the on-disk module checksum "
-            f"0x{build.checksum:X}")
-    return VerifiedBuild(identity=build, capture_checksum=recorded)
+    recorded_size = _as_int(capture_size)
+    if recorded and build.checksum:
+        if recorded != build.checksum:
+            raise ContextOmission(
+                "build_mismatch",
+                f"capture checksum 0x{recorded:X} differs from the on-disk module checksum "
+                f"0x{build.checksum:X}")
+        return VerifiedBuild(pe=build, capture_checksum=recorded, identity="checksum",
+                             capture_size=recorded_size)
+    warning = "no usable checksum or SizeOfImage evidence; build identity is unverified"
+    if recorded_size and build.size_of_image:
+        if recorded_size == build.size_of_image:
+            return VerifiedBuild(pe=build, capture_checksum=recorded or 0, identity="size",
+                                 capture_size=recorded_size)
+        warning = (f"capture SizeOfImage 0x{recorded_size:X} differs from the on-disk "
+                   f"SizeOfImage 0x{build.size_of_image:X}; build identity is unverified")
+    return VerifiedBuild(pe=build, capture_checksum=recorded or 0, verified=False,
+                         identity="unverified", capture_size=recorded_size, warning=warning)
 
 
 # ------------------------------------------------------------------ imports
@@ -623,11 +663,18 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
     anchor_json["distance"] = hot_rva - anchor.rva
     build_json = {
         "verified": bool(build.verified),
+        "identity": build.identity,
         "image_base": _hex(build.image_base),
         "time_date_stamp": _hex(build.time_date_stamp),
         "checksum": _hex(build.checksum),
         "capture_checksum": _hex(build.capture_checksum),
     }
+    if build.size_of_image:
+        build_json["size_of_image"] = _hex(build.size_of_image)
+    if build.capture_size is not None:
+        build_json["capture_size"] = _hex(build.capture_size)
+    if build.warning is not None:
+        build_json["warning"] = build.warning
     entries: list[dict[str, object]] = []
     for instruction in sorted(instructions, key=lambda item: item.rva):
         count = int(samples.get(instruction.rva, 0))
@@ -675,11 +722,12 @@ class _ModuleState:
     ibs_attempted: set[int] = field(default_factory=set)
 
 
-def _module_row(connection: object, module_name: str,
-                checksum_column: bool) -> tuple[object, object] | None:
-    """The capture's path and checksum, both read from the same Module row."""
+def _module_row(connection: object, module_name: str, checksum_column: bool,
+                size_column: bool = False) -> tuple[object, object, object] | None:
+    """The capture's path, checksum and SizeOfImage, all read from the same Module row."""
     return connection.execute(
-        f"SELECT path, {'checksum' if checksum_column else 'NULL'} "
+        f"SELECT path, {'checksum' if checksum_column else 'NULL'}, "
+        f"{'size' if size_column else 'NULL'} "
         "FROM Module WHERE module_key(path) = CAST(? AS VARCHAR) "
         "ORDER BY path DESC NULLS LAST LIMIT 1",
         [module_name]).fetchone()
@@ -706,13 +754,14 @@ class _ContextBuilder:
         return state
 
     def _load_module(self, module_name: str) -> _ModuleState:
-        checksum_column = self.connection.execute(
-            "SELECT count(*) FROM duckdb_columns() "
-            "WHERE lower(table_name) = 'module' AND lower(column_name) = 'checksum'"
-        ).fetchone()[0]
-        row = _module_row(self.connection, module_name, bool(checksum_column))
+        columns = {str(name).lower() for name, in self.connection.execute(
+            "SELECT lower(column_name) FROM duckdb_columns() "
+            "WHERE lower(table_name) = 'module'").fetchall()}
+        row = _module_row(self.connection, module_name, "checksum" in columns,
+                          "size" in columns)
         path = row[0] if row else None
         capture_checksum = row[1] if row else None
+        capture_size = row[2] if row else None
         if not path:
             raise ContextOmission("module_missing",
                                   f"the capture records no path for {module_name!r}")
@@ -732,7 +781,7 @@ class _ContextBuilder:
         text = completed.stdout or ""
         build = parse_file_headers(text)
         sections = parse_sections(text)
-        verified = verify_build(build, capture_checksum)
+        verified = verify_build(build, capture_checksum, capture_size)
         try:
             imports = load_imports(module_path, build, readobj)
         except ContextOmission:

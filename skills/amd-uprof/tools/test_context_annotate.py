@@ -217,20 +217,21 @@ class ModuleRowTest(unittest.TestCase):
         self.connection.execute(
             "CREATE OR REPLACE TEMP MACRO module_key(p) "
             "AS replace(lower(p), chr(92), '/')")
-        self.connection.execute("CREATE TABLE Module(path VARCHAR, checksum BIGINT)")
         self.connection.execute(
-            "INSERT INTO Module VALUES ('C:\\app\\fixture.exe', 11), "
-            "('C:/app/fixture.exe', 22)")
+            "CREATE TABLE Module(path VARCHAR, checksum BIGINT, size UBIGINT)")
+        self.connection.execute(
+            "INSERT INTO Module VALUES ('C:\\app\\fixture.exe', 11, 8192), "
+            "('C:/app/fixture.exe', 22, 16384)")
 
-    def test_the_checksum_belongs_to_the_choice_of_path(self):
-        row = uprof_context._module_row(self.connection, "c:/app/fixture.exe", True)
+    def test_the_checksum_and_size_belong_to_the_choice_of_path(self):
+        row = uprof_context._module_row(self.connection, "c:/app/fixture.exe", True, True)
 
-        self.assertEqual(row, ("C:\\app\\fixture.exe", 11))
+        self.assertEqual(row, ("C:\\app\\fixture.exe", 11, 8192))
 
-    def test_a_missing_checksum_column_yields_no_checksum(self):
-        row = uprof_context._module_row(self.connection, "c:/app/fixture.exe", False)
+    def test_missing_identity_columns_yield_nulls(self):
+        row = uprof_context._module_row(self.connection, "c:/app/fixture.exe", False, False)
 
-        self.assertEqual(row, ("C:\\app\\fixture.exe", None))
+        self.assertEqual(row, ("C:\\app\\fixture.exe", None, None))
 
 
 if __name__ == "__main__":

@@ -143,14 +143,15 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 - **Share.** Each instruction's `samples` are raw samples at that RVA and `pct_samples` is the raw sample share against `v_scope_totals.total_samples`; it is never the gap-weighted time share.
 - **Annotations.** `symbol` is `llvm-symbolizer` frame 0 (`function`, `file`, `line`) and never an objdump nearest-symbol label; it uses the PDB that symbolization accepted for the module. `import` names a `callq *IAT` target from `llvm-readobj --coff-imports`; unresolved or non-IAT targets stay raw, and an ordinal-only import is named `#N`. `ibs` aggregates the dump's whitelisted IBS OP fields per RVA over the same PID, image and time window as the row's samples; it is absent for PMC and for dumps without whitelisted columns, and `{"samples": n}` alone is a valid summary.
 - **Cost.** Each anchor is decoded once for all rows under it, and samples, symbols and IBS are aggregated once per module.
-- **Build identity.** The PE `ImageBase`, `TimeDateStamp` and `CheckSum` are read from the module and the `CheckSum` must equal the capture's `Module.checksum`; otherwise the context is omitted.
+- **Build identity.** The PE `ImageBase`, `TimeDateStamp`, `CheckSum` and `SizeOfImage` are read from the module. A nonzero on-disk `CheckSum` equal to the capture's `Module.checksum` verifies the build (`identity: "checksum"`); a nonzero mismatch omits it (`build_mismatch`). Without a usable checksum, an equal `SizeOfImage` verifies it (`identity: "size"`). Without matching evidence the block is emitted with `verified: false`, `identity: "unverified"` and a `warning` naming what was missing or disagreed — it never claims verification it cannot show.
 
 ```json
 {
   "anchor": {"kind": "export", "rva": "0x1010", "name": "hot", "distance": 11},
-  "build": {"verified": true, "image_base": "0x140000000",
+  "build": {"verified": true, "identity": "checksum", "image_base": "0x140000000",
             "time_date_stamp": "0x6AEF5E36", "checksum": "0x1234ABCD",
-            "capture_checksum": "0x1234ABCD"},
+            "capture_checksum": "0x1234ABCD", "size_of_image": "0x4000",
+            "capture_size": "0x4000"},
   "instructions": [
     {"rva": "0x1010", "instruction": "addl\t$0x3, %eax", "samples": 3,
      "pct_samples": 5.0, "symbol": {"function": "main", "file": "main.cpp", "line": 12},
@@ -170,8 +171,7 @@ Omission: `{"omitted": true, "reason": "<code>", "detail": "<text>"}`. `detail` 
 | `anchor_too_far` | the nearest safe start is beyond the 1 MiB cap |
 | `hot_rva_not_instruction_start` | decoding from the anchor never reaches the hot RVA on a boundary |
 | `objdump_missing`, `objdump_failed` | `llvm-objdump` absent, or it produced no instructions |
-| `build_unverified` | the capture or the module records no usable PE checksum |
-| `build_mismatch` | the on-disk module checksum differs from the capture's |
+| `build_mismatch` | a nonzero on-disk `CheckSum` differs from the capture's `Module.checksum` |
 | `context_failed` | an LLVM tool timed out or a scoped query failed while building this block |
 | `row_cap` | this row is past the 20-row context cap |
 

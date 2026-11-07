@@ -156,7 +156,8 @@ the UTC start is reported with its precision.
 - **Anchor and window.** The anchor is the nearest public export at or below the hot RVA, or the containing code-section start within the distance cap; there is no backward decode and no symmetric window. The window is at most 32 decoded instructions before the hot RVA and at most 32 after it. The hot RVA must decode as an instruction start.
 - **Raw share rule.** The per-instruction share is the raw sample share at that RVA, never gap-weighted time and never presented as time.
 - **Row cap.** At most 20 rows carry a context; later rows carry the `row_cap` omission. The `<other instructions>` row carries none.
-- **Omission.** Any condition that prevents a correct block (missing module, no safe anchor, hot RVA not on a boundary, unverified or mismatched build, unavailable LLVM tool) omits the block with a stable machine-readable reason and never guesses. A missing symbolizer name or unresolved IAT target leaves that optional field absent; it does not omit the block.
+- **Build identity.** A matching nonzero PE `CheckSum` verifies the build; without a usable checksum a matching recorded `SizeOfImage` does. With no matching evidence the block is emitted with `identity: "unverified"` and a warning, never omitted as unverified; a nonzero checksum mismatch omits it.
+- **Omission.** Any condition that prevents a correct block (missing module, no safe anchor, hot RVA not on a boundary, mismatched build, unavailable LLVM tool) omits the block with a stable machine-readable reason and never guesses. A missing symbolizer name or unresolved IAT target leaves that optional field absent; it does not omit the block.
 - **Portability.** The block is built from PE/COFF headers and import tables, so it is produced for Windows modules only.
 
 ## 4. Columns and capture modes

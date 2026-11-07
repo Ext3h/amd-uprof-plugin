@@ -20,6 +20,7 @@ ImageFileHeader {
 ImageOptionalHeader {
   Magic: 0x20B
   ImageBase: 0x140000000
+  SizeOfImage: 8192
   CheckSum: 0x1234ABCD
 }
 """
@@ -149,12 +150,17 @@ class BuildIdentityTest(unittest.TestCase):
     def setUp(self):
         self.build = uprof_context.parse_file_headers(FILE_HEADERS)
 
+    def test_size_of_image_is_read_from_the_headers(self):
+        self.assertEqual(self.build.size_of_image, 8192)
+
     def test_matching_capture_checksum_is_verified(self):
         identity = uprof_context.verify_build(self.build, 0x1234ABCD)
 
         self.assertTrue(identity.verified)
+        self.assertEqual(identity.identity, "checksum")
         self.assertEqual(identity.checksum, 0x1234ABCD)
         self.assertEqual(identity.capture_checksum, 0x1234ABCD)
+        self.assertIsNone(identity.warning)
 
     def test_mismatched_checksum_is_omitted(self):
         with self.assertRaises(uprof_context.ContextOmission) as caught:
@@ -162,21 +168,38 @@ class BuildIdentityTest(unittest.TestCase):
 
         self.assertEqual(caught.exception.reason, "build_mismatch")
 
-    def test_capture_without_a_checksum_is_unverified_and_omitted(self):
-        for capture_checksum in (None, 0):
-            with self.subTest(checksum=capture_checksum):
-                with self.assertRaises(uprof_context.ContextOmission) as caught:
-                    uprof_context.verify_build(self.build, capture_checksum)
+    def test_zero_capture_checksum_with_matching_size_is_size_verified(self):
+        identity = uprof_context.verify_build(self.build, 0, capture_size=8192)
 
-                self.assertEqual(caught.exception.reason, "build_unverified")
+        self.assertTrue(identity.verified)
+        self.assertEqual(identity.identity, "size")
+        self.assertEqual(identity.capture_size, 8192)
 
-    def test_module_without_a_checksum_is_unverified(self):
+    def test_zero_capture_checksum_with_different_size_is_unverified(self):
+        identity = uprof_context.verify_build(self.build, 0, capture_size=8193)
+
+        self.assertFalse(identity.verified)
+        self.assertEqual(identity.identity, "unverified")
+        self.assertIn("SizeOfImage", identity.warning)
+        self.assertEqual(identity.capture_size, 8193)
+
+    def test_zero_module_checksum_with_capture_checksum_is_unverified(self):
         build = uprof_context.parse_file_headers(FILE_HEADERS.replace("0x1234ABCD", "0x0"))
 
-        with self.assertRaises(uprof_context.ContextOmission) as caught:
-            uprof_context.verify_build(build, 0x0)
+        identity = uprof_context.verify_build(build, 0x1234ABCD, capture_size=None)
 
-        self.assertEqual(caught.exception.reason, "build_unverified")
+        self.assertFalse(identity.verified)
+        self.assertEqual(identity.identity, "unverified")
+        self.assertIn("checksum", identity.warning)
+
+    def test_both_checksums_missing_without_a_size_is_unverified(self):
+        for capture_checksum in (None, 0):
+            with self.subTest(checksum=capture_checksum):
+                identity = uprof_context.verify_build(self.build, capture_checksum)
+
+                self.assertFalse(identity.verified)
+                self.assertEqual(identity.identity, "unverified")
+                self.assertIn("no usable", identity.warning)
 
 
 if __name__ == "__main__":

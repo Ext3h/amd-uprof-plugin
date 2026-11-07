@@ -75,7 +75,8 @@ The cache holds no database: every `.db`/`.duckdb` (and its WAL/SHM) is removed 
 
 ### Sanity check
 
-`v_dump_sanity` runs over the whole dump, unfiltered. It raises an error only on genuine
+`v_dump_sanity` runs over the whole dump, unfiltered, and its coverage verdict is dump-wide
+across all processes. It raises an error only on genuine
 inconsistency: `sum(weight)` greater than the span from `session.uprof` — the
 `translate --time-filter` window when `translateCommand` records one, else
 `collection.schedule.elapsed` (ms), else `profileDuration` (s) — times the dump's distinct CPU
@@ -88,11 +89,22 @@ Normal captures never reach that bound. The weight cannot include each CPU's fir
 after its last sample, so `implied - sum(weight)` equals those boundary gaps exactly: 0.04-0.56 s
 per busy CPU but 1.6-9.9 s per idle one, which made the former 2.0% tolerance fail a load-dependent
 fraction of good captures. The message reports the covered core time, the boundary gaps split
-leading/trailing, the worst CPU, and `OK`; it says `WARN` when the capture window ends more than one
+leading/trailing, the worst CPU, and `OK (dump-wide across all processes)`; it says
+`WARN (dump-wide across all processes)` when the capture window ends more than one
 sampling cadence before the recorded span (no CPU sampled near the end). **Attached captures**
 (`collection.target.systemWide` false) cover only the CPUs the attached threads ran on, so
-`elapsed x CPUs` is an upper bound there and the message says `OK (attached)` without judging
-coverage. No usable duration gives a `WARN` and no comparison; an empty dump raises an error.
+`elapsed x CPUs` is an upper bound there and the message says `OK (attached; dump-wide)` without
+judging coverage. No usable duration gives a `WARN` and no comparison; an empty dump raises an
+error.
+
+When `--image`/`--pid` or `--time-filter` narrows the report, `v_scope_sanity` appends a
+`scoped coverage (<scope>)` verdict to the same field. It takes the last sample of `v_scoped` and
+compares it with the end of the scope window — the profile `--time-filter` end when one is given,
+else the recorded translate span — using the same one-cadence threshold. The verdict says `WARN`
+and names the scope when the scope's late time is uncovered, and `OK` when the scope sampled near
+the end of its window. Attached captures get no scoped verdict: `OK (attached; dump-wide)` already
+states that coverage is where the attached threads ran. An empty scope gets none either; the
+separate no-samples warning covers it.
 
 ### Achieved sample rate
 
@@ -190,16 +202,17 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `has_tag` | the dump header carries `IbsTagToRetCtr`; `v_dump_sanity.tag_values` counts non-null values |
 | `top_n`, `time_start`, `time_end` | typed row cap and window |
 
-The 11 views:
+The 12 views:
 
 | View | Role |
 |---|---|
 | `v_dump` | typed dump rows (`delta_tick`, `cpu`, `pid`, `rva`, `module_name`, `tag_cycles`); tagged/untagged branch; an empty typed relation for PMC |
 | `v_dump_weighted` | applies `[time_start, time_end)` then adds `weight = delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick)` |
-| `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs, error; attached captures report `OK (attached)`; no usable duration or uncovered late time warns; exposes `tag_values` for the empty-tag disclosure |
+| `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs, error; attached captures report `OK (attached; dump-wide)`; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure, and `end_ns`/`expected_ns`/`max_cpu_samples`/`system_wide` for `v_scope_sanity` |
 | `v_symbols` | combined symbolizer artifact: `module_name, rva, function, function_short, containing_function, file, line` |
 | `v_public_starts` | public-symbol fold cache: `module_name, rva, name_count, names` |
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |
+| `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds one sampling cadence |
 | `v_scope_totals` | `total_samples` (0 when empty); feeds the empty-scope warning |
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
 | `v_function_rows` | by `Function.id`; `<unresolved>` row; attribution `unique`/`unresolved`; `<other functions>` |

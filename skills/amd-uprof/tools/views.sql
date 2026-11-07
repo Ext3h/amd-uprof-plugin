@@ -186,7 +186,8 @@ WHERE delta_tick >= getvariable('time_start') AND delta_tick < getvariable('time
 -- Provenance check for the whole dump, printed in the header of every dump-backed run. The weighted
 -- CTE is unfiltered on purpose: the span check compares the dump with session.uprof, independent
 -- of the query's --time-filter. The empty-dump and inconsistency errors surface when the view is
--- read.
+-- read. Its coverage verdict is dump-wide across all processes; v_scope_sanity judges the report's
+-- --image/--pid/time-filter scope separately.
 CREATE OR REPLACE TEMP VIEW v_dump_sanity AS
 WITH weighted_all AS (
   SELECT *, delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick) AS weight
@@ -264,7 +265,7 @@ SELECT CASE
   WHEN expected_ns IS NULL OR expected_ns = 0 THEN
     'dump ' || getvariable('uprof_ibs_dump') || ': ' || CAST(dump_samples AS VARCHAR) ||
     ' samples, ' || CAST(excluded_first AS VARCHAR) ||
-    ' first-per-CPU samples excluded; WARN: session.uprof has no usable duration; total weight was not checked against the capture span'
+    ' first-per-CPU samples excluded; WARN (dump-wide across all processes): session.uprof has no usable duration; total weight was not checked against the capture span'
   WHEN total_weight > expected_core_ns THEN
     error(printf('dump %s disagrees with session.uprof: %.3f s of core time over %d CPUs exceeds %s %.3f s x %d CPUs = %.3f s implied; delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
                  getvariable('uprof_ibs_dump'), total_weight / 1e9, dump_cpus,
@@ -275,27 +276,28 @@ SELECT CASE
                  span_label, start_ns / 1e9, end_ns / 1e9,
                  first_sample_ns / 1e9, max_last_ns / 1e9))
   WHEN system_wide = 'false' THEN
-    printf('dump %s: %d samples, %d first-per-CPU samples excluded; OK (attached): coverage is where the attached threads ran -- %.3f s of core time over %d CPUs against an upper bound of %s %.3f s x %d CPUs = %.3f s; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
+    printf('dump %s: %d samples, %d first-per-CPU samples excluded; OK (attached; dump-wide): coverage is where the attached threads ran -- %.3f s of core time over %d CPUs against an upper bound of %s %.3f s x %d CPUs = %.3f s; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
            total_weight / 1e9, dump_cpus,
            span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9,
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
            CAST(worst_cpu AS VARCHAR))
   WHEN (end_ns - max_last_ns) > (expected_ns / greatest(max_cpu_samples, 1)) THEN
-    printf('dump %s: %d samples, %d first-per-CPU samples excluded; WARN: the capture window ends %.3f s before the recorded span, longer than one sampling cadence, so late time is uncovered; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
+    printf('dump %s: %d samples, %d first-per-CPU samples excluded; WARN (dump-wide across all processes): the capture window ends %.3f s before the recorded span, longer than one sampling cadence, so late time is uncovered; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
            (end_ns - max_last_ns) / 1e9,
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
            CAST(worst_cpu AS VARCHAR))
   ELSE
-    printf('dump %s: %d samples, %d first-per-CPU samples excluded; OK: %.3f s of core time over %d CPUs against %s %.3f s x %d CPUs = %.3f s; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
+    printf('dump %s: %d samples, %d first-per-CPU samples excluded; OK (dump-wide across all processes): %.3f s of core time over %d CPUs against %s %.3f s x %d CPUs = %.3f s; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
            total_weight / 1e9, dump_cpus,
            span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9,
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
            CAST(worst_cpu AS VARCHAR))
 END AS message,
-CAST(tag_values AS BIGINT) AS tag_values
+CAST(tag_values AS BIGINT) AS tag_values,
+end_ns, expected_ns, max_cpu_samples, system_wide
 FROM measured;
 
 -- Symbol artifact: one combined Parquet with a module_name column, else an empty typed view.
@@ -366,6 +368,54 @@ LEFT JOIN Process p ON p.id = s.processId
 LEFT JOIN Module m ON m.id = s.moduleId
 WHERE (getvariable('uprof_pid') = '' OR s.processId = CAST(getvariable('uprof_pid') AS INTEGER))
   AND COALESCE(p.name, '') ILIKE getvariable('uprof_image')$pmc$ END);
+
+-- Late-coverage verdict for the report's scope, appended to SANITY when --image/--pid or
+-- --time-filter narrows the population below the whole dump. The scope window ends at the profile
+-- time filter when one is given, else at the recorded translate span; the scope's last sample is
+-- compared against the same sampling cadence estimate the dump-wide check uses. Attached captures
+-- keep their OK (attached; dump-wide) verdict: their coverage is wherever the attached threads ran.
+-- An empty scope is already reported by the scope warning, so it gets no verdict here.
+CREATE OR REPLACE TEMP VIEW v_scope_sanity AS
+WITH span AS (
+  SELECT end_ns, expected_ns, max_cpu_samples, system_wide,
+         (getvariable('uprof_image') <> '%' OR getvariable('uprof_pid') <> ''
+          OR getvariable('uprof_time_end') <> '9223372036854775807') AS filtered,
+         CASE WHEN getvariable('uprof_time_end') <> '9223372036854775807'
+              THEN CAST(getvariable('uprof_time_end') AS BIGINT)
+              ELSE end_ns END AS scope_end_ns,
+         concat_ws(' ',
+           CASE WHEN getvariable('uprof_pid') <> ''
+                THEN '--pid ' || getvariable('uprof_pid') END,
+           CASE WHEN getvariable('uprof_image') <> '%'
+                THEN '--image ' || getvariable('uprof_image') END,
+           CASE WHEN getvariable('uprof_time_end') <> '9223372036854775807'
+                THEN printf('--time-filter %.3f:%.3f s',
+                            CAST(getvariable('uprof_time_start') AS BIGINT) / 1e9,
+                            CAST(getvariable('uprof_time_end') AS BIGINT) / 1e9) END)
+           AS scope_label
+  FROM v_dump_sanity
+), scoped AS (
+  SELECT max(delta_tick) AS last_ns, count(*) AS scoped_samples
+  FROM v_scoped
+), judged AS (
+  SELECT span.*, scoped.last_ns, scoped.scoped_samples,
+         greatest(span.scope_end_ns - scoped.last_ns, 0) AS end_gap_ns,
+         span.expected_ns / greatest(CAST(span.max_cpu_samples AS DOUBLE), 1) AS cadence_ns
+  FROM span CROSS JOIN scoped
+)
+SELECT CASE
+  WHEN NOT filtered THEN NULL
+  WHEN system_wide = 'false' THEN NULL
+  WHEN expected_ns IS NULL OR expected_ns = 0 THEN NULL
+  WHEN scoped_samples = 0 THEN NULL
+  WHEN end_gap_ns > cadence_ns THEN
+    printf('scoped coverage (%s): WARN: the last sample in scope is %.3f s before the scope window end at %.3f s, longer than one sampling cadence, so late time in the scope is uncovered',
+           scope_label, end_gap_ns / 1e9, scope_end_ns / 1e9)
+  ELSE
+    printf('scoped coverage (%s): OK: the last sample in scope is %.3f s before the scope window end at %.3f s',
+           scope_label, end_gap_ns / 1e9, scope_end_ns / 1e9)
+END AS message
+FROM judged;
 
 -- total_samples is 0 for an empty scope so the caller can tell an empty filter from a failed one;
 -- the profile row views compute their own window totals.

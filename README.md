@@ -20,7 +20,9 @@ where the cycles go — with shares by process, function, source line or instruc
 - Anchors a workload's QueryPerformanceCounter reading to capture-relative seconds; a negative
   value is attach latency, not the workload's own start.
 - Prints `SANITY` and `ACHIEVED` before the shares: the dump's provenance against the capture
-  span, and the rate actually delivered against the requested interval.
+  span, and the rate actually delivered against the requested interval. When `--image`/`--pid`
+  or `--time-filter` scopes the report, `SANITY` also states whether that scope sampled near the
+  end of its own window, separately from the dump-wide verdict.
 
 ## What it is good for
 

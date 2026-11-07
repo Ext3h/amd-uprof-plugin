@@ -2,6 +2,29 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.8 — 2026-11-07
+
+### Fixed
+
+- `SANITY` no longer lets a dump-wide late-coverage verdict stand in for the report's scope. The
+  dump-wide check compares the capture end against the last sample of every process, so an
+  `--image`/`--pid` report whose own population stopped early still printed `OK` when an
+  unrelated process sampled late (a 75 s capture with a `--pid` scope that ended at 60 s, for
+  example). When `--image`/`--pid` or `--time-filter` narrows the report, `SANITY` now appends a
+  `scoped coverage (<scope>)` verdict: the scope's last sample against the end of its window
+  (the profile time-filter end, else the recorded span), `WARN` when the gap exceeds one sampling
+  cadence. The dump-wide verdict is labeled `dump-wide across all processes` and the scoped one
+  names its scope, so neither can be read as the other. Attached captures keep
+  `OK (attached; dump-wide)` and get no scoped verdict; the empty-scope warning is unchanged.
+
+### Added
+
+- `test_sanity_scope.py` builds a synthetic two-process capture whose scoped process stops at
+  1.9 s while the dump continues to 10 s. Before the fix `--pid 100` printed
+  `OK: 11.890 s of core time ...`; after it prints the dump-wide `OK` followed by
+  `scoped coverage (--pid 100): WARN: the last sample in scope is 8.100 s before the scope window
+  end at 10.000 s`.
+
 ## 1.0.7 — 2026-11-07
 
 ### Fixed

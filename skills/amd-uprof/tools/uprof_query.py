@@ -250,7 +250,14 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
                                                        contexts, label))
 
 
-def _dump_sanity(connection: object, has_dump: bool) -> tuple[str | None, int]:
+def _scope_filter_active(args: argparse.Namespace) -> bool:
+    """True when the report's population is narrower than the whole dump."""
+    return ((args.image is not None and args.image != "%")
+            or args.pid is not None or args.time_filter is not None)
+
+
+def _dump_sanity(connection: object, has_dump: bool,
+                 scope_filtered: bool) -> tuple[str | None, int]:
     """The sanity message and the dump's non-null IbsTagToRetCtr value count."""
     if not has_dump:
         return None, 0
@@ -259,6 +266,10 @@ def _dump_sanity(connection: object, has_dump: bool) -> tuple[str | None, int]:
         return None, 0
     message = rows[0][0] or None
     tag_values = int(rows[0][1] or 0)
+    if scope_filtered:
+        scoped = connection.sql("SELECT message FROM v_scope_sanity").fetchall()
+        if scoped and scoped[0][0]:
+            message = f"{message}; {scoped[0][0]}" if message else scoped[0][0]
     return message, tag_values
 
 
@@ -342,7 +353,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 variables.update(symbols)
                 uprof_db.set_variables(connection, symbols)
 
-            sanity_message, tag_values = _dump_sanity(connection, dump is not None)
+            sanity_message, tag_values = _dump_sanity(
+                connection, dump is not None, _scope_filter_active(args))
             tag_rows = connection.sql("SELECT getvariable('has_tag')").fetchall()
             has_tag = bool(tag_rows and tag_rows[0][0])
             tag_available = (sampler.ibs_dump_kind == "ibsop-event-dump" and has_tag

@@ -25,6 +25,7 @@ ImageFileHeader {
 ImageOptionalHeader {
   Magic: 0x20B
   ImageBase: 0x140000000
+  SizeOfImage: 8192
   CheckSum: 0x1234ABCD
 }
 """
@@ -74,21 +75,23 @@ ROW = ("fixture.exe", "0x101B", "main", "src\\main.cpp", 12, "unique", 3, 5.0, 2
 
 
 class FakeConnection:
-    def __init__(self, module_path, checksum=0x1234ABCD, total=60, publics=(), pdb=None):
+    def __init__(self, module_path, checksum=0x1234ABCD, total=60, publics=(), pdb=None,
+                 size=0):
         self.module_path = module_path
         self.checksum = checksum
         self.total = total
         self.publics = publics
         self.pdb = pdb
+        self.size = size
         self.queries = []
 
     def execute(self, sql, parameters=None):
         text = " ".join(sql.split())
         self.queries.append(text)
         if "duckdb_columns" in text:
-            return FakeResult([(1,)])
+            return FakeResult([("checksum",), ("size",)])
         if "FROM Module" in text:
-            return FakeResult([(self.module_path, self.checksum)])
+            return FakeResult([(self.module_path, self.checksum, self.size)])
         if "FROM v_public_starts" in text:
             return FakeResult(list(self.publics))
         if "FROM v_pdbs" in text:
@@ -279,6 +282,25 @@ class InstructionContextsTest(unittest.TestCase):
         self.assertEqual(contexts[1], {"omitted": True, "reason": "row_cap"})
         self.assertEqual(contexts[2], {"omitted": True, "reason": "row_cap"})
 
+    def test_a_zero_capture_checksum_still_emits_an_unverified_block(self):
+        connection = FakeConnection(module_path=__file__, checksum=0, size=0)
+
+        context = self.contexts_with(connection, fake_run)[0]
+
+        self.assertNotIn("omitted", context)
+        self.assertFalse(context["build"]["verified"])
+        self.assertEqual(context["build"]["identity"], "unverified")
+        self.assertIn("warning", context["build"])
+
+    def test_a_matching_size_verifies_a_zero_checksum_capture(self):
+        connection = FakeConnection(module_path=__file__, checksum=0, size=8192)
+
+        context = self.contexts_with(connection, fake_run)[0]
+
+        self.assertTrue(context["build"]["verified"])
+        self.assertEqual(context["build"]["identity"], "size")
+        self.assertNotIn("warning", context["build"])
+
     def test_an_aggregate_row_has_no_context(self):
         row = ("<other instructions>", None, None, None, None, None, 1, 1.0, 1.0, 1.0)
 
@@ -396,10 +418,10 @@ class InstructionContextsTest(unittest.TestCase):
 
 class OmissionJsonTest(unittest.TestCase):
     def test_omission_carries_reason_and_detail(self):
-        omission = uprof_context.ContextOmission("build_unverified", "no checksum")
+        omission = uprof_context.ContextOmission("build_mismatch", "no checksum")
 
         self.assertEqual(omission.as_json(),
-                         {"omitted": True, "reason": "build_unverified",
+                         {"omitted": True, "reason": "build_mismatch",
                           "detail": "no checksum"})
 
 

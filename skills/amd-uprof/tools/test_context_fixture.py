@@ -41,9 +41,9 @@ class FakeConnection:
     def execute(self, sql, parameters=None):
         text = " ".join(sql.split())
         if "duckdb_columns" in text:
-            return FakeResult([(1,)])
+            return FakeResult([("checksum",), ("size",)])
         if "FROM Module" in text:
-            return FakeResult([(self.module_path, self.checksum)])
+            return FakeResult([(self.module_path, self.checksum, 0)])
         if "FROM v_public_starts" in text:
             return FakeResult(list(self.publics))
         if "FROM v_pdbs" in text:
@@ -81,19 +81,43 @@ class FixtureTest(unittest.TestCase):
         self.assertEqual(self.build.magic, 0x20B)
         self.assertNotEqual(self.build.checksum, 0)
         self.assertNotEqual(self.build.time_date_stamp, 0)
+        self.assertGreater(self.build.size_of_image, 0)
         self.assertEqual(self.build.slot_width, 8)
         section = uprof_context.find_code_section(self.sections, HOT_RVA)
         self.assertIsNotNone(section)
         self.assertEqual(section.start, TEXT_RVA)
 
-    def test_build_verification_accepts_only_the_recorded_checksum(self):
-        self.assertTrue(uprof_context.verify_build(self.build, self.build.checksum).verified)
+    def test_matching_checksum_is_verified(self):
+        identity = uprof_context.verify_build(self.build, self.build.checksum)
+
+        self.assertTrue(identity.verified)
+        self.assertEqual(identity.identity, "checksum")
         with self.assertRaises(uprof_context.ContextOmission) as mismatch:
             uprof_context.verify_build(self.build, self.build.checksum + 1)
         self.assertEqual(mismatch.exception.reason, "build_mismatch")
-        with self.assertRaises(uprof_context.ContextOmission) as missing:
-            uprof_context.verify_build(self.build, 0)
-        self.assertEqual(missing.exception.reason, "build_unverified")
+
+    def test_a_zero_checksum_without_size_evidence_is_unverified(self):
+        identity = uprof_context.verify_build(self.build, 0)
+
+        self.assertFalse(identity.verified)
+        self.assertEqual(identity.identity, "unverified")
+        self.assertIn("checksum", identity.warning)
+
+    def test_a_zero_checksum_with_the_recorded_size_is_verified(self):
+        identity = uprof_context.verify_build(self.build, 0,
+                                              capture_size=self.build.size_of_image)
+
+        self.assertTrue(identity.verified)
+        self.assertEqual(identity.identity, "size")
+        self.assertEqual(identity.capture_size, self.build.size_of_image)
+
+    def test_a_zero_checksum_with_another_size_is_unverified(self):
+        identity = uprof_context.verify_build(self.build, 0,
+                                              capture_size=self.build.size_of_image + 1)
+
+        self.assertFalse(identity.verified)
+        self.assertEqual(identity.identity, "unverified")
+        self.assertIn("SizeOfImage", identity.warning)
 
     def test_anchor_prefers_the_export_and_falls_back_to_the_section(self):
         export = uprof_context.select_anchor(

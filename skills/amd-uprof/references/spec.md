@@ -150,6 +150,15 @@ the UTC start is reported with its precision.
 - No CSV mode and no table-rendering dependency on the database library.
 - Shares are fractions 0.0-1.0 at full precision; no rounding or multiplication is applied.
 
+**Instruction context.** JSON output for `--by instruction` adds a `context` object to instruction rows and nothing else changes. Markdown bytes are identical to the output without the block. The block is JSON-only because it is a nested, variable-length structure, not a table.
+
+- **Content.** The context names the anchor it decoded from, the build identity it verified, and the decoded instruction window with the raw sample count and raw sample share per instruction, plus optional `llvm-symbolizer` frame-0 location, `llvm-readobj` IAT import name and aggregated IBS OP fields.
+- **Anchor and window.** The anchor is the nearest public export at or below the hot RVA, or the containing code-section start within the distance cap; there is no backward decode and no symmetric window. The window is at most 32 decoded instructions before the hot RVA and at most 32 after it. The hot RVA must decode as an instruction start.
+- **Raw share rule.** The per-instruction share is the raw sample share at that RVA, never gap-weighted time and never presented as time.
+- **Row cap.** At most 20 rows carry a context; later rows carry the `row_cap` omission. The `<other instructions>` row carries none.
+- **Omission.** Any condition that prevents a correct block (missing module, no safe anchor, hot RVA not on a boundary, unverified or mismatched build, unavailable LLVM tool) omits the block with a stable machine-readable reason and never guesses. A missing symbolizer name or unresolved IAT target leaves that optional field absent; it does not omit the block.
+- **Portability.** The block is built from PE/COFF headers and import tables, so it is produced for Windows modules only.
+
 ## 4. Columns and capture modes
 
 | column | meaning | mode-dependent |

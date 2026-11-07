@@ -134,6 +134,47 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 - Sentinels: `<no symbol>` (no function name; groups per module), `<no source line>` (function but no file/line; groups per module + function), `<multiple>` (a line group whose function or module annotations disagree). A frame with a file/line but no function stays under `<no symbol>`, and its weight is disclosed in `AGREEMENT`.
 - `attribution` per row: `unique`, `shared` (folded address) or `unresolved`; function rows are only `unique` or `unresolved`; remainder rows carry `NULL`.
 
+## Instruction context (JSON only)
+
+`profile --by instruction --json` adds a `context` object to the first 20 instruction rows. Markdown output is unchanged. The block is built only from LLVM answers and the capture; when no safe answer exists the row carries an omission object instead of guessed data.
+
+- **Anchor.** Decode forward from the nearest `v_public_starts` entry at or below the hot RVA inside its executable PE section; otherwise from the section start. The distance cap is 1 MiB. The hot RVA must appear as an instruction start; there is no backward decode.
+- **Window.** Up to 32 decoded instructions before the hot RVA and up to 32 after it, plus the hot instruction.
+- **Share.** Each instruction's `samples` are raw samples at that RVA and `pct_samples` is the raw sample share against `v_scope_totals.total_samples`; it is never the gap-weighted time share.
+- **Annotations.** `symbol` is `llvm-symbolizer` frame 0 (`function`, `file`, `line`) and never an objdump nearest-symbol label. `import` names a `callq *IAT` target from `llvm-readobj --coff-imports`; unresolved or non-IAT targets stay raw. `ibs` aggregates the dump's whitelisted IBS OP fields per RVA and is absent for PMC and for columns the dump lacks.
+- **Build identity.** The PE `ImageBase`, `TimeDateStamp` and `CheckSum` are read from the module and the `CheckSum` must equal the capture's `Module.checksum`; otherwise the context is omitted.
+
+```json
+{
+  "anchor": {"kind": "export", "rva": "0x1010", "name": "hot", "distance": 11},
+  "build": {"verified": true, "image_base": "0x140000000",
+            "time_date_stamp": "0x6AEF5E36", "checksum": "0x1234ABCD",
+            "capture_checksum": "0x1234ABCD"},
+  "instructions": [
+    {"rva": "0x1010", "instruction": "addl\t$0x3, %eax", "samples": 3,
+     "pct_samples": 5.0, "symbol": {"function": "main", "file": "main.cpp", "line": 12},
+     "ibs": {"samples": 3, "DataSrc": {"0x3": 3}, "IbsDcMiss": {"set": 0, "of": 3}}}
+  ]
+}
+```
+
+Omission: `{"omitted": true, "reason": "<code>", "detail": "<text>"}`. `detail` is present only when it adds information; reason codes are stable.
+
+| Reason | Meaning |
+|---|---|
+| `module_missing` | the capture records no path, or the module file is absent on this host |
+| `readobj_missing`, `readobj_failed` | `llvm-readobj` absent, or header/section output unavailable |
+| `metadata_incomplete` | the PE headers lack `ImageBase`, `TimeDateStamp`, `CheckSum` or `Magic` (for example an ELF module) |
+| `no_code_section` | the hot RVA is not inside an executable PE section |
+| `anchor_too_far` | the nearest safe start is beyond the 1 MiB cap |
+| `hot_rva_not_instruction_start` | decoding from the anchor never reaches the hot RVA on a boundary |
+| `objdump_missing`, `objdump_failed` | `llvm-objdump` absent, or it produced no instructions |
+| `build_unverified` | the capture or the module records no usable PE checksum |
+| `build_mismatch` | the on-disk module checksum differs from the capture's |
+| `row_cap` | this row is past the 20-row context cap |
+
+The aggregate `<other instructions>` row carries no `context`.
+
 ## Shared addresses
 
 `/OPT:ICF` folds identical bodies, so one RVA can carry several public names. When `llvm-pdbutil` is available on Windows, symbolization builds a per-module public-symbol cache and labels each folded start `shared: nameA | nameB` with `attribution = shared`, at `line` and `instruction` granularity only. Report that share as shared, not under one name. Without `llvm-pdbutil` the cache is absent (`FOLDS: skipped`) and every resolved row is `unique`; unresolved rows still exist. Resolved Linux DWARF symbols are all `unique` (unverified here).

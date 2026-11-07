@@ -17,6 +17,7 @@ from types import MappingProxyType
 from typing import Any, Final, TextIO
 
 import uprof_db
+import uprof_context
 import uprof_dump
 import uprof_session
 import uprof_symbols
@@ -679,8 +680,15 @@ def run_query_command(args: argparse.Namespace) -> None:
                 agreement = _agreement_text(connection)
                 if agreement:
                     fields.append(("AGREEMENT", agreement))
-            uprof_db.output(connection, TOOLS_DIR / f"profile-{args.by}.sql", fields,
-                            args.json, out_path, legend)
+            if args.json and args.by == "instruction":
+                columns, types, rows = uprof_db.fetch_typed(
+                    connection, TOOLS_DIR / "profile-instruction.sql")
+                contexts = uprof_context.instruction_contexts(connection, columns, rows)
+                uprof_db.output_rows(columns, types, rows, fields, args.json, out_path,
+                                     legend, contexts)
+            else:
+                uprof_db.output(connection, TOOLS_DIR / f"profile-{args.by}.sql", fields,
+                                args.json, out_path, legend)
         success = True
     finally:
         if artifacts is not None:

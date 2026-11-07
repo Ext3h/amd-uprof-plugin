@@ -248,6 +248,44 @@ loss is in capture, not translation. The numbers are recorded in `references/val
 
 Samples weight each distinct address (one per dump row, the event count per PMC row). A row with an empty uProf `Function.name` is not compared and is not counted as a mismatch. Names are compared as exact strings; spelling differences between demanglers are normal. `unresolved` is the signal that no symbols were found.
 
+## Instruction context — `--by instruction --json`
+
+`uprof_query` calls `uprof_context.instruction_contexts()` before rendering JSON for instruction scope; Markdown never builds or receives the block. The block answers "what instructions surround this hot address" without replacing the row's own numbers.
+
+**Anchor.** The hot RVA must lie in an executable PE section (`IMAGE_SCN_CNT_CODE` or `IMAGE_SCN_MEM_EXECUTE`). The anchor is the highest `v_public_starts` RVA in the same section at or below the hot RVA, when it is within 1 MiB; otherwise the section start, if it is within 1 MiB; otherwise `anchor_too_far`. The anchor is where decoding begins — x86 has no backward decode, so an anchor after the hot RVA cannot help.
+
+**Window.** `llvm-objdump -d --start-address=image_base+anchor --stop-address=... --no-show-raw-insn --no-symbolize-operands` decodes forward; the stop address reserves 32 instructions after the hot RVA. The window is the last up to 32 decoded instructions before the hot RVA and up to 32 after it, plus the hot instruction, sorted by RVA in the JSON. A hot RVA that never appears as a decoded boundary is `hot_rva_not_instruction_start`; it is never snapped to the preceding boundary. Objdump's nearest-symbol label is discarded — only address and instruction text survive.
+
+**Per-instruction fields.**
+
+| Field | Definition |
+|---|---|
+| `rva` | module-relative address, `0x` hex |
+| `instruction` | mnemonic and operands as `llvm-objdump` prints them, raw bytes and trailing comments removed |
+| `samples` | raw scoped samples at this exact RVA |
+| `pct_samples` | `100 * samples / v_scope_totals.total_samples`; raw sample share, never gap-weighted time, `null` when the scope is empty |
+| `symbol` | optional `{function, file, line}` from `llvm-symbolizer` frame 0 (`Symbol[0]`); `line` omitted when 0; an empty or errored record leaves the field absent |
+| `import` | optional `{dll, name, slot_rva}` when the instruction is a `call`/`callq` whose operand is a `*disp(%rip)` or absolute IAT slot; register and indirect non-IAT targets stay raw |
+| `ibs` | optional aggregated IBS OP labels, present only when the dump supplies at least one of the whitelisted fields |
+
+**IAT resolution.** `llvm-readobj --coff-imports` is parsed as text — its JSON style is not valid JSON. Each `Import` block's `ImportAddressTableRVA` plus `symbol index * slot width` (8 bytes for PE32+, 4 for PE32) gives the slot RVA; symbols keep the block's order and the parenthesized hint/ordinal is not part of the name. A `callq *disp(%rip)` slot is `next_rva + disp`, using the following decoded instruction for the RIP value; an absolute operand is used as is. `DelayImport` blocks are not IAT slots. Import failure is not fatal: imports stay absent.
+
+**IBS labels.** Only fields present as dump columns are emitted, in this order: `DataSrc`, `CacheHitSt`, `IbsDcMiss`, `IbsOpBrnMisp`, `IbsDcLockedOp`, `IbsOpMemWidth`, `IbsTagToRetCtr`. The labels are the hardware field names, not semantic classes.
+
+| Field | Aggregate |
+|---|---|
+| `DataSrc`, `CacheHitSt`, `IbsOpMemWidth` | `{code: sample count}`, keys sorted numerically as printed by the dump |
+| `IbsDcMiss`, `IbsOpBrnMisp`, `IbsDcLockedOp` | `{"set": n, "of": samples}` — count of nonzero values |
+| `IbsTagToRetCtr` | `{"samples", "sum", "max"}` over non-null values, clipped at 131070; omitted when every value is null |
+
+`ibs.samples` is the dump-row count at the RVA. For a PMC capture, or an IBS dump without these columns, no `ibs` field is emitted.
+
+**Build identity.** `build` carries `verified`, `image_base`, `time_date_stamp`, `checksum` and `capture_checksum`, all hex. The capture's `Module.checksum` must be nonzero and equal the on-disk PE `CheckSum`; otherwise the block is omitted (`build_unverified` or `build_mismatch`). This prevents decoding a different build than the one captured.
+
+**Omission shape.** `{"omitted": true, "reason": "<code>", "detail": "<text>"}`; `detail` is present only when non-empty. Reasons: `module_missing`, `readobj_missing`, `readobj_failed`, `metadata_incomplete` (headers lack `ImageBase`/`TimeDateStamp`/`CheckSum`/`Magic`, e.g. ELF), `no_code_section`, `anchor_too_far`, `hot_rva_not_instruction_start`, `objdump_missing`, `objdump_failed`, `build_unverified`, `build_mismatch`, `row_cap`. Symbolizer and import failures do not omit the block. The `<other instructions>` row (`rva` null) has no context.
+
+**Limits and caching.** At most 20 rows carry a block; later rows carry `row_cap`. Module metadata, imports, public starts, PDB choice, symbols and IBS rows are cached per module across rows. Each external call has a five-minute timeout. The feature is PE/COFF-only; ELF modules omit with `metadata_incomplete`.
+
 ## SQL schema — `tools/views.sql`
 
 One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds eleven inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection.
@@ -346,6 +384,9 @@ supplies it, is total tag-to-retire cycles, not per-op latency.
 - **Nearest-export mapping is not valid for a symbol-less DLL with a sparse export table.**
   Joining a hot RVA to the nearest preceding export names an unrelated small function; treat that
   as no attribution and use RVA-level samples plus disassembly.
+- **Instruction context is PE/COFF-only and JSON-only.** It reads PE headers, sections and the COFF
+  import table; an ELF module omits with `metadata_incomplete`. Markdown output never carries it,
+  and only the first 20 instruction rows are expanded.
 - **`--json --out-file` writes no file when the query fails** (including the dump sanity error);
   the reason is on stderr and the exit code is 2, so check the exit code before reading the file.
 - **`<multiple>` is coarse.** A source line carrying several overload signatures is reported as one ambiguous annotation, not split per signature.

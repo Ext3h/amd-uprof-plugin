@@ -111,6 +111,36 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
     return candidates
 
 
+def find_pdb(exe: str, symbolizer: Path | None = None) -> Path | None:
+    """The PDB whose GUID/age matches the image's debug directory, or None.
+
+    A symbolizer failure or a module without a debug directory yields None; the caller then
+    symbolizes without a PDB rather than failing the run.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        symbolizer_path = symbolizer or require_symbolizer()
+    except UprofError:
+        return None
+    readobj = find_sibling(symbolizer_path, "llvm-readobj")
+    pdbutil = find_sibling(symbolizer_path, "llvm-pdbutil")
+    try:
+        pdb_name, module_guid, module_age = _readobj_info(exe, readobj)
+    except (UprofError, OSError):
+        return None
+    if module_guid is None:
+        return None
+    exe_path = Path(exe)
+    if not pdbutil:
+        beside = exe_path.parent / pdb_name
+        return beside if beside.is_file() else None
+    for path in _candidate_pdbs(exe_path, pdb_name, module_guid, module_age):
+        if path.is_file() and _pdb_matches(pdbutil, path, module_guid, module_age):
+            return path
+    return None
+
+
 def _write_error_records(out_file: Path, rva_file: Path, exe: str, pdb_name: str) -> None:
     records = []
     for line in read_text(rva_file).splitlines():

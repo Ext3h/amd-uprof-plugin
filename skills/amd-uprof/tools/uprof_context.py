@@ -12,18 +12,20 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
 from uprof_native import find_sibling, find_symbolizer, run
+from uprof_symbols import find_pdb
 from uprof_util import tail_lines
 
 ANCHOR_DISTANCE_CAP: Final = 1 << 20
 WINDOW_BEFORE: Final = 32
 WINDOW_AFTER: Final = 32
 CONTEXT_ROW_CAP: Final = 20
+CONTEXT_TOOL_TIMEOUT: Final = 5 * 60
 IBS_FIELDS: Final = ("DataSrc", "CacheHitSt", "IbsDcMiss", "IbsOpBrnMisp",
                      "IbsDcLockedOp", "IbsOpMemWidth", "IbsTagToRetCtr")
 IBS_DISTRIBUTIONS: Final = frozenset({"DataSrc", "CacheHitSt", "IbsOpMemWidth"})
@@ -343,7 +345,7 @@ def load_imports(module_path: str, build: BuildIdentity,
     if not tool:
         raise ContextOmission("readobj_missing",
                               "llvm-readobj not found beside llvm-symbolizer or on PATH")
-    completed = run([tool, "--coff-imports", module_path])
+    completed = run([tool, "--coff-imports", module_path], timeout=CONTEXT_TOOL_TIMEOUT)
     if completed.returncode != 0:
         raise ContextOmission("imports_failed",
                               tail_lines((completed.stdout or "") + "\n" +
@@ -395,7 +397,7 @@ def symbolize_rvas(module_path: str, rvas: list[int], pdb: str | Path | None = N
     command += ["--relative-address", "--functions=linkage", "--inlines",
                 "--output-style=JSON"]
     input_text = "\n".join(f"0x{rva:X}" for rva in addresses) + "\n"
-    completed = run(command, input_text=input_text)
+    completed = run(command, input_text=input_text, timeout=CONTEXT_TOOL_TIMEOUT)
     if completed.returncode != 0 and not (completed.stdout or "").strip():
         raise ContextOmission("symbolizer_failed",
                               tail_lines((completed.stdout or "") + "\n" +
@@ -560,7 +562,7 @@ def decode_window(module_path: str, build: BuildIdentity, anchor: Anchor, hot_rv
     command = [tool, "-d", f"--start-address=0x{start_vma:X}",
                f"--stop-address=0x{stop_vma:X}", "--no-show-raw-insn",
                "--no-symbolize-operands", module_path]
-    completed = run(command)
+    completed = run(command, timeout=CONTEXT_TOOL_TIMEOUT)
     if completed.returncode != 0 and not (completed.stdout or "").strip():
         raise ContextOmission("objdump_failed",
                               tail_lines((completed.stdout or "") + "\n" +
@@ -570,4 +572,208 @@ def decode_window(module_path: str, build: BuildIdentity, anchor: Anchor, hot_rv
         raise ContextOmission("objdump_failed",
                               f"llvm-objdump produced no instructions for 0x{anchor.rva:X}")
     return select_window(decoded, hot_rva)
+
+
+# ------------------------------------------------------------------ JSON context block
+
+def _hex(value: int) -> str:
+    return f"0x{value:X}"
+
+
+def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
+                  instructions: list[DecodedInstruction], samples: dict[int, int],
+                  total_samples: int, symbols: dict[int, SymbolInfo],
+                  imports: dict[int, ImportSlot],
+                  ibs: dict[int, dict[str, object]]) -> dict[str, object]:
+    """The JSON block for one instruction row; instructions are ordered by RVA."""
+    anchor_json: dict[str, object] = {"kind": anchor.kind, "rva": _hex(anchor.rva)}
+    if anchor.name is not None:
+        anchor_json["name"] = anchor.name
+    anchor_json["distance"] = hot_rva - anchor.rva
+    build_json = {
+        "verified": bool(build.verified),
+        "image_base": _hex(build.image_base),
+        "time_date_stamp": _hex(build.time_date_stamp),
+        "checksum": _hex(build.checksum),
+        "capture_checksum": _hex(build.capture_checksum),
+    }
+    entries: list[dict[str, object]] = []
+    for instruction in sorted(instructions, key=lambda item: item.rva):
+        count = int(samples.get(instruction.rva, 0))
+        entry: dict[str, object] = {
+            "rva": _hex(instruction.rva),
+            "instruction": instruction.text,
+            "samples": count,
+            "pct_samples": instruction_share(count, total_samples),
+        }
+        symbol = symbols.get(instruction.rva)
+        if symbol is not None:
+            symbol_json: dict[str, object] = {}
+            if symbol.function is not None:
+                symbol_json["function"] = symbol.function
+            if symbol.file is not None:
+                symbol_json["file"] = symbol.file
+            if symbol.line is not None:
+                symbol_json["line"] = symbol.line
+            if symbol_json:
+                entry["symbol"] = symbol_json
+        slot = resolve_iat_call(instruction, build.image_base, imports)
+        if slot is not None:
+            entry["import"] = {"dll": slot.dll, "name": slot.name,
+                               "slot_rva": _hex(slot.slot_rva)}
+        ibs_labels = ibs.get(instruction.rva)
+        if ibs_labels and len(ibs_labels) > 1:
+            entry["ibs"] = ibs_labels
+        entries.append(entry)
+    return {"anchor": anchor_json, "build": build_json, "instructions": entries}
+
+
+@dataclass
+class _ModuleState:
+    """Per-module work reused by every row that names the same module."""
+
+    path: str
+    build: VerifiedBuild
+    sections: list[PeSection]
+    imports: dict[int, ImportSlot]
+    public_starts: list[tuple[int, str | None]]
+    pdb: str | None
+    symbols: dict[int, SymbolInfo] = field(default_factory=dict)
+    symbol_attempted: set[int] = field(default_factory=set)
+    ibs: dict[int, dict[str, object]] = field(default_factory=dict)
+    ibs_attempted: set[int] = field(default_factory=set)
+
+
+class _ContextBuilder:
+    def __init__(self, connection: object, total_samples: int) -> None:
+        self.connection = connection
+        self.total_samples = total_samples
+        self.modules: dict[str, _ModuleState | ContextOmission] = {}
+
+    def context(self, module_name: str, hot_rva: int) -> dict[str, object]:
+        state = self._module(module_name)
+        anchor = select_anchor(hot_rva, state.sections, state.public_starts)
+        window = decode_window(state.path, state.build, anchor, hot_rva)
+        rvas = [instruction.rva for instruction in window]
+        return build_context(
+            anchor, state.build, hot_rva, window, self._samples(module_name, rvas),
+            self.total_samples, self._symbols(state, rvas),
+            state.imports, self._ibs(state, module_name, rvas))
+
+    def _module(self, module_name: str) -> _ModuleState:
+        cached = self.modules.get(module_name)
+        if isinstance(cached, ContextOmission):
+            raise ContextOmission(cached.reason, cached.detail)
+        if cached is not None:
+            return cached
+        try:
+            state = self._load_module(module_name)
+        except ContextOmission as exc:
+            self.modules[module_name] = exc
+            raise
+        self.modules[module_name] = state
+        return state
+
+    def _load_module(self, module_name: str) -> _ModuleState:
+        checksum_column = self.connection.execute(
+            "SELECT count(*) FROM duckdb_columns() "
+            "WHERE lower(table_name) = 'module' AND lower(column_name) = 'checksum'"
+        ).fetchone()[0]
+        row = self.connection.execute(
+            f"SELECT max(path), {'max(checksum)' if checksum_column else 'NULL'} "
+            "FROM Module WHERE module_key(path) = CAST(? AS VARCHAR)",
+            [module_name]).fetchone()
+        path = row[0] if row else None
+        capture_checksum = row[1] if row else None
+        if not path:
+            raise ContextOmission("module_missing",
+                                  f"the capture records no path for {module_name!r}")
+        module_path = str(path)
+        if not Path(module_path).is_file():
+            raise ContextOmission("module_missing", f"{module_path} is not on this host")
+        readobj = find_readobj()
+        if not readobj:
+            raise ContextOmission("readobj_missing",
+                                  "llvm-readobj not found beside llvm-symbolizer or on PATH")
+        completed = run([readobj, "--file-headers", "--sections", module_path],
+                        timeout=CONTEXT_TOOL_TIMEOUT)
+        if completed.returncode != 0:
+            raise ContextOmission("readobj_failed",
+                                  tail_lines((completed.stdout or "") + "\n" +
+                                             (completed.stderr or "")))
+        text = completed.stdout or ""
+        build = parse_file_headers(text)
+        sections = parse_sections(text)
+        verified = verify_build(build, capture_checksum)
+        try:
+            imports = load_imports(module_path, build, readobj)
+        except ContextOmission:
+            imports = {}
+        public_starts = [
+            (int(rva), names) for rva, names in self.connection.execute(
+                "SELECT rva, names FROM v_public_starts "
+                "WHERE module_name = CAST(? AS VARCHAR)", [module_name]).fetchall()]
+        pdb = find_pdb(module_path)
+        return _ModuleState(module_path, verified, sections, imports, public_starts,
+                            str(pdb) if pdb else None)
+
+    def _samples(self, module_name: str, rvas: list[int]) -> dict[int, int]:
+        if not rvas:
+            return {}
+        rows = self.connection.execute(
+            "SELECT rva, CAST(sum(samples) AS BIGINT) FROM v_scoped "
+            "WHERE module_name = CAST(? AS VARCHAR) "
+            "AND rva IN (SELECT * FROM unnest(?)) GROUP BY rva",
+            [module_name, sorted({int(rva) for rva in rvas})]).fetchall()
+        return {int(rva): int(count or 0) for rva, count in rows}
+
+    def _symbols(self, state: _ModuleState, rvas: list[int]) -> dict[int, SymbolInfo]:
+        missing = [rva for rva in rvas if rva not in state.symbol_attempted]
+        if missing:
+            state.symbol_attempted.update(missing)
+            try:
+                state.symbols.update(symbolize_rvas(state.path, missing, pdb=state.pdb))
+            except ContextOmission:
+                pass
+        return state.symbols
+
+    def _ibs(self, state: _ModuleState, module_name: str,
+             rvas: list[int]) -> dict[int, dict[str, object]]:
+        missing = [rva for rva in rvas if rva not in state.ibs_attempted]
+        if missing:
+            state.ibs_attempted.update(missing)
+            state.ibs.update(ibs_rows(self.connection, module_name, missing))
+        return state.ibs
+
+
+def instruction_contexts(connection: object, columns: Sequence[str],
+                         rows: Sequence[Sequence[object]],
+                         cap: int = CONTEXT_ROW_CAP) -> list[object | None]:
+    """One context (or omission) per instruction row, in row order.
+
+    Rows without a module and RVA (the aggregate row) carry no context. Rows past cap carry
+    reason row_cap instead of doing more work.
+    """
+    indices = {name: index for index, name in enumerate(columns)}
+    if "module" not in indices or "rva" not in indices:
+        return [None] * len(rows)
+    total_rows = connection.execute("SELECT total_samples FROM v_scope_totals").fetchall()
+    total_samples = int(total_rows[0][0] or 0) if total_rows else 0
+    builder = _ContextBuilder(connection, total_samples)
+    module_at, rva_at = indices["module"], indices["rva"]
+    contexts: list[object | None] = []
+    built = 0
+    for row in rows:
+        module, rva_text = row[module_at], row[rva_at]
+        if module is None or rva_text is None:
+            contexts.append(None)
+        elif built >= cap:
+            contexts.append({"omitted": True, "reason": "row_cap"})
+        else:
+            built += 1
+            try:
+                contexts.append(builder.context(str(module), int(str(rva_text), 0)))
+            except ContextOmission as exc:
+                contexts.append(exc.as_json())
+    return contexts
 

@@ -467,36 +467,43 @@ CREATE OR REPLACE TEMP VIEW v_scope_totals AS
 SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT) AS total_samples
 FROM v_scoped;
 
--- One row per module path with its highest load address, or an empty relation when the export has
--- no ModuleInstance table. v_capture_modules asks it whether a module sits in kernel space.
+-- One row per module path with its highest load address and whether that address is kernel-space,
+-- or an empty relation when the export has no ModuleInstance table. v_capture_modules asks it
+-- whether a module sits in kernel space, so the classification runs per module, not per sample.
 CREATE OR REPLACE TEMP VIEW v_module_catalog AS
 SELECT * FROM query(CASE WHEN getvariable('has_module_instances') THEN $instances$
-  SELECT module_key(m.path) AS module_name, max(i.loadAddress) AS load_address
+  SELECT module_key(m.path) AS module_name,
+         max(i.loadAddress) AS load_address,
+         max(is_kernel_image(module_key(m.path), i.loadAddress)) AS kernel_image
   FROM Module m
   JOIN ModuleInstance i ON i.moduleId = m.id
   GROUP BY module_key(m.path)$instances$
 ELSE $absent$
-  SELECT CAST(NULL AS VARCHAR) AS module_name, CAST(NULL AS UBIGINT) AS load_address
+  SELECT CAST(NULL AS VARCHAR) AS module_name, CAST(NULL AS UBIGINT) AS load_address,
+         CAST(NULL AS BOOLEAN) AS kernel_image
   WHERE false$absent$ END);
 
--- Whole-capture module list for kernel-coverage detection: the module path and its sample count,
--- before the process and time filters. One dump row is one sample; a PMC row carries its event
--- count. kernel_image comes from the module catalog's load address, or from the basename when the
--- catalog has no instance for the module.
+-- One row per whole-capture sample, before the process and time filters, with the module it landed
+-- in, the context that produced it (CPU for a dump, coreId for PMC) and whether that module is a
+-- kernel image. One dump row is one sample; a PMC row carries its event count. The ACHIEVED check
+-- and the kernel-coverage check share this view, so both come from one scan: the kernel flag is
+-- pruned when only the sample and context totals are asked for.
 CREATE OR REPLACE TEMP VIEW v_capture_modules AS
 SELECT * FROM query(CASE WHEN getvariable('has_dump') THEN $dump$
   SELECT d.module_name,
-         CAST(count(*) AS BIGINT) AS samples,
-         max(is_kernel_image(d.module_name, c.load_address)) AS kernel_image
+         CAST(d.cpu AS INTEGER) AS context,
+         CAST(1 AS BIGINT) AS samples,
+         COALESCE(c.kernel_image, is_kernel_image(d.module_name, NULL)) AS kernel_image
   FROM v_dump d
-  LEFT JOIN v_module_catalog c ON c.module_name = d.module_name
-  GROUP BY d.module_name$dump$
+  LEFT JOIN v_module_catalog c ON c.module_name = d.module_name$dump$
 ELSE $pmc$
   SELECT module_key(m.path) AS module_name,
-         CAST(COLUMNS(lambda c: c = getvariable('uprof_event_column')) AS BIGINT) AS samples,
-         is_kernel_image(module_key(m.path), c.load_address) AS kernel_image
+         CAST(s.coreId AS INTEGER) AS context,
+         CAST(COLUMNS(lambda col: col = getvariable('uprof_event_column')) AS BIGINT) AS samples,
+         COALESCE(c.kernel_image,
+                  is_kernel_image(module_key(m.path), NULL)) AS kernel_image
   FROM UnifiedSampleSeries s
-  JOIN Module m ON m.id = s.moduleId
+  LEFT JOIN Module m ON m.id = s.moduleId
   LEFT JOIN v_module_catalog c ON c.module_name = module_key(m.path)$pmc$ END);
 
 -- Process shares. samples is the per-row sample count summed over the group (one per dump row, the

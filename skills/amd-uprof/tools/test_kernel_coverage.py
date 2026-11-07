@@ -102,9 +102,11 @@ def write_capture(root, *, dump_modules=None, modules=(), instances=None, series
     return cpu_db, meta_path, dump
 
 
-def kernel_field(capture, *, event_column="", sampler=None, windowed=False,
-                 captured_samples=None):
-    """Run the kernel-coverage check against a capture through the real views."""
+def run_capture_scan(capture, *, event_column=""):
+    """Run the whole-capture scan against a capture through the real views.
+
+    Returns (samples, contexts, kernel_covered), the same tuple the ACHIEVED check consumes.
+    """
     cpu_db, meta_path, dump = capture
     variables = {
         "uprof_image": "%", "uprof_pid": "", "uprof_top": "20",
@@ -116,12 +118,9 @@ def kernel_field(capture, *, event_column="", sampler=None, windowed=False,
         "uprof_symbols": "",
         "uprof_aliases": "",
     }
-    if sampler is None:
-        sampler = uprof_session.Sampler(os_requested=True, os_mode="opOs")
     with uprof_db.open_query(cpu_db, [uprof_query.TOOLS_DIR / "views.sql"],
                              variables) as connection:
-        return uprof_query._kernel_coverage_field(
-            connection, sampler, windowed, captured_samples)
+        return uprof_query._capture_scan(connection, True)
 
 
 class KernelImageTest(unittest.TestCase):
@@ -136,13 +135,16 @@ class KernelImageTest(unittest.TestCase):
         return write_capture(tempfile.mkdtemp(dir=self.root), **fields)
 
     def assert_covered(self, capture, **options):
-        self.assertEqual(kernel_field(capture, **options), [])
+        self.assertTrue(run_capture_scan(capture, **options)[2])
 
     def assert_warned(self, capture, **options):
-        fields = kernel_field(capture, **options)
-        self.assertEqual(len(fields), 1)
-        self.assertEqual(fields[0][0], "KERNEL_COVERAGE")
-        self.assertIn("elevat", fields[0][1].lower())
+        self.assertFalse(run_capture_scan(capture, **options)[2])
+
+    def test_scan_counts_samples_and_contexts(self):
+        samples, contexts, _ = run_capture_scan(self.capture(
+            dump_modules=["a.dll", "a.dll", "b.dll"]))
+        self.assertEqual(samples, 3)
+        self.assertEqual(contexts, 1)
 
     def test_kernel_dll_is_recognized_by_its_load_address(self):
         self.assert_covered(self.capture(
@@ -256,7 +258,7 @@ class KernelCoverageWarningTest(unittest.TestCase):
 
     def test_os_requested_without_kernel_samples_warns(self):
         warning = uprof_session.kernel_coverage_warning(
-            uprof_session.Sampler(os_requested=True, os_mode="os"), 0, 100)
+            uprof_session.Sampler(os_requested=True, os_mode="os"), False, 100)
         self.assertIsNotNone(warning)
         self.assertIn("kernel-mode", warning)
         self.assertIn("(os)", warning)
@@ -265,47 +267,58 @@ class KernelCoverageWarningTest(unittest.TestCase):
 
     def test_warning_names_the_sampler_bit(self):
         warning = uprof_session.kernel_coverage_warning(
-            uprof_session.Sampler(os_requested=True, os_mode="opOs"), 0, 100)
+            uprof_session.Sampler(os_requested=True, os_mode="opOs"), False, 100)
         self.assertIn("(opOs)", warning)
 
     def test_empty_capture_is_reported_without_an_elevation_remedy(self):
         warning = uprof_session.kernel_coverage_warning(
-            uprof_session.Sampler(os_requested=True, os_mode="fetchOs"), 0, 0)
+            uprof_session.Sampler(os_requested=True, os_mode="fetchOs"), False, 0)
         self.assertIn("no samples in the capture", warning)
         self.assertNotIn("elevat", warning.lower())
 
     def test_unknown_capture_total_keeps_the_missing_kernel_wording(self):
         warning = uprof_session.kernel_coverage_warning(
-            uprof_session.Sampler(os_requested=True, os_mode="os"), 0)
+            uprof_session.Sampler(os_requested=True, os_mode="os"), False)
         self.assertIn("no kernel-image samples", warning)
 
     def test_os_requested_with_kernel_samples_does_not_warn(self):
         self.assertIsNone(uprof_session.kernel_coverage_warning(
-            uprof_session.Sampler(os_requested=True), 12))
+            uprof_session.Sampler(os_requested=True), True))
 
     def test_user_only_request_without_kernel_samples_does_not_warn(self):
         self.assertIsNone(uprof_session.kernel_coverage_warning(
-            uprof_session.Sampler(os_requested=False), 0))
+            uprof_session.Sampler(os_requested=False), False))
 
     def test_user_only_request_with_kernel_samples_does_not_warn(self):
         self.assertIsNone(uprof_session.kernel_coverage_warning(
-            uprof_session.Sampler(os_requested=False), 12))
+            uprof_session.Sampler(os_requested=False), True))
 
 
 class KernelFieldGuardTest(unittest.TestCase):
-    """A request that cannot be missing OS samples must not scan the capture at all."""
+    """The field is emitted only when the scan determined that no kernel sample exists."""
 
-    def test_user_only_request_does_not_query_or_warn(self):
-        connection = mock.Mock()
+    def test_user_only_request_emits_nothing(self):
         self.assertEqual(uprof_query._kernel_coverage_field(
-            connection, uprof_session.Sampler(os_requested=False)), [])
-        connection.sql.assert_not_called()
+            uprof_session.Sampler(os_requested=False), False), [])
 
-    def test_windowed_dump_does_not_query_or_warn(self):
-        connection = mock.Mock()
+    def test_windowed_dump_emits_nothing(self):
         self.assertEqual(uprof_query._kernel_coverage_field(
-            connection, uprof_session.Sampler(os_requested=True), windowed=True), [])
-        connection.sql.assert_not_called()
+            uprof_session.Sampler(os_requested=True), False, windowed=True), [])
+
+    def test_undetermined_coverage_emits_nothing(self):
+        self.assertEqual(uprof_query._kernel_coverage_field(
+            uprof_session.Sampler(os_requested=True), None), [])
+
+    def test_os_request_without_kernel_samples_emits_the_field(self):
+        fields = uprof_query._kernel_coverage_field(
+            uprof_session.Sampler(os_requested=True, os_mode="opOs"), False, False, 100)
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(fields[0][0], "KERNEL_COVERAGE")
+        self.assertIn("(opOs)", fields[0][1])
+
+    def test_os_request_with_kernel_samples_emits_nothing(self):
+        self.assertEqual(uprof_query._kernel_coverage_field(
+            uprof_session.Sampler(os_requested=True), True), [])
 
 
 class CollectOsModeTest(unittest.TestCase):

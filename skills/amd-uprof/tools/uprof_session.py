@@ -197,16 +197,16 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
     return Sampler(metric=metric)
 
 
-def kernel_coverage_warning(sampler: Sampler, kernel_samples: int,
+def kernel_coverage_warning(sampler: Sampler, has_kernel_samples: bool,
                             captured_samples: int | None = None) -> str | None:
     """The warning when the applied sampler requested OS mode but no sample is in a kernel image.
 
-    kernel_samples counts the whole capture, before any process or time filter; a user-mode-only
+    has_kernel_samples covers the whole capture, before any process or time filter; a user-mode-only
     request is expected to have none, so only an OS-mode request can warn. captured_samples is the
     whole capture's sample count: zero is an empty capture, a different observable from a
-    populated capture that never sampled the kernel. None means no warning.
+    populated capture that never sampled the kernel. None means the count is unknown.
     """
-    if not sampler.os_requested or kernel_samples > 0:
+    if not sampler.os_requested or has_kernel_samples:
         return None
     bit = sampler.os_mode or "OS mode"
     if captured_samples == 0:

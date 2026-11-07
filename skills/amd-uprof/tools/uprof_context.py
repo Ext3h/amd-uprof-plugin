@@ -670,6 +670,16 @@ class _ModuleState:
     ibs_attempted: set[int] = field(default_factory=set)
 
 
+def _module_row(connection: object, module_name: str,
+                checksum_column: bool) -> tuple[object, object] | None:
+    """The capture's path and checksum, both read from the same Module row."""
+    return connection.execute(
+        f"SELECT path, {'checksum' if checksum_column else 'NULL'} "
+        "FROM Module WHERE module_key(path) = CAST(? AS VARCHAR) "
+        "ORDER BY path DESC NULLS LAST LIMIT 1",
+        [module_name]).fetchone()
+
+
 class _ContextBuilder:
     def __init__(self, connection: object, total_samples: int) -> None:
         self.connection = connection
@@ -706,10 +716,7 @@ class _ContextBuilder:
             "SELECT count(*) FROM duckdb_columns() "
             "WHERE lower(table_name) = 'module' AND lower(column_name) = 'checksum'"
         ).fetchone()[0]
-        row = self.connection.execute(
-            f"SELECT max(path), {'max(checksum)' if checksum_column else 'NULL'} "
-            "FROM Module WHERE module_key(path) = CAST(? AS VARCHAR)",
-            [module_name]).fetchone()
+        row = _module_row(self.connection, module_name, bool(checksum_column))
         path = row[0] if row else None
         capture_checksum = row[1] if row else None
         if not path:

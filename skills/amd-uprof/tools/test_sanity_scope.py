@@ -16,6 +16,7 @@ from pathlib import Path
 import duckdb
 
 import uprof_db
+import uprof_query
 
 TOOLS_DIR = Path(__file__).resolve().parent
 ELAPSED_MS = 10_000
@@ -213,6 +214,44 @@ class SanityScopeTest(unittest.TestCase):
             message = connected.sql("SELECT message FROM v_scope_sanity").fetchall()[0][0]
 
         self.assertIsNone(message)
+
+
+class ScopedQueryTest(unittest.TestCase):
+    """The scoped view is only queried when the view can answer for this capture."""
+
+    class _Rows:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
+    class _Connection:
+        def __init__(self, scoped_message):
+            self.queries = []
+            self.scoped_message = scoped_message
+
+        def sql(self, text):
+            self.queries.append(text)
+            if "v_scope_sanity" in text:
+                return ScopedQueryTest._Rows([(self.scoped_message,)])
+            return ScopedQueryTest._Rows([("dump-wide", 7)])
+
+    def test_attached_capture_does_not_read_the_scoped_view(self):
+        connection = self._Connection("scoped")
+
+        message, tag_values = uprof_query._dump_sanity(connection, True, True, False)
+
+        self.assertEqual(message, "dump-wide")
+        self.assertEqual(tag_values, 7)
+        self.assertFalse(any("v_scope_sanity" in query for query in connection.queries))
+
+    def test_system_wide_capture_appends_the_scoped_verdict(self):
+        connection = self._Connection("scoped coverage: OK")
+
+        message, _ = uprof_query._dump_sanity(connection, True, True, True)
+
+        self.assertEqual(message, "dump-wide; scoped coverage: OK")
 
 
 if __name__ == "__main__":

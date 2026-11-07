@@ -2,6 +2,15 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.4 — 2026-11-07
+
+### Changed
+
+- The plugin icon is redrawn as a heat-mapped flame graph: each block's colour is sampled from
+  its exclusive share of the block width, from faint yellow through orange to crimson, and the
+  micro sign takes a colour just above mid-heat. The vector master ships as `icon.svg` alongside
+  the `icon.png` raster.
+
 ## 1.0.3 — 2026-11-07
 
 ### Added

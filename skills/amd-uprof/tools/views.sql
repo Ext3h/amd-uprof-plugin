@@ -450,6 +450,20 @@ CREATE OR REPLACE TEMP VIEW v_scope_totals AS
 SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT) AS total_samples
 FROM v_scoped;
 
+-- Whole-capture module list for kernel-coverage detection: the module path and its sample count,
+-- before the process and time filters. One dump row is one sample; a PMC row carries its event
+-- count. Python classifies the paths because the kernel predicate is a basename match.
+CREATE OR REPLACE TEMP VIEW v_capture_modules AS
+SELECT * FROM query(CASE WHEN getvariable('has_dump') THEN $dump$
+  SELECT module_name, CAST(count(*) AS BIGINT) AS samples
+  FROM v_dump
+  GROUP BY module_name$dump$
+ELSE $pmc$
+  SELECT module_key(m.path) AS module_name,
+         CAST(COLUMNS(lambda c: c = getvariable('uprof_event_column')) AS BIGINT) AS samples
+  FROM UnifiedSampleSeries s
+  JOIN Module m ON m.id = s.moduleId$pmc$ END);
+
 -- Process shares. samples is the per-row sample count summed over the group (one per dump row, the
 -- event-column count per PMC row). When --top truncates, one <other processes> row carries the
 -- rest so each emitted column still sums to 100.

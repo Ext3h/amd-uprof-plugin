@@ -2,6 +2,34 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.9 — 2026-11-07
+
+### Fixed
+
+- An unelevated capture that requests OS-mode samples (`user=1,os=1`) no longer omits every
+  kernel-mode sample silently. `profile` prints a `KERNEL_COVERAGE` header line when the applied
+  sampler requested OS mode and the whole capture has no sample in a kernel image, naming the
+  missing kernel time and the elevation remedy; `collect` appends `kernel-mode (OS) samples are
+  omitted without elevation` to its unelevated warning, separately from the warning about missing
+  elevated processes. Kernel images are matched by basename (`.sys`/`.ko`, or `ntoskrnl.exe`,
+  `ntkrnlmp.exe`, `ntkrnlpa.exe`, `ntkrpamp.exe`, `hal.dll`): `Module.isSystemModule` is true for
+  user-mode `ntdll.dll`, and a suffix test for `hal.dll` also matches user-mode `marshal.dll`. The
+  check covers the whole capture, so a user-only scope cannot trigger it. Evidence: the unelevated
+  capture had 21,489 samples and none in a kernel image, while the elevated capture of the same
+  event had 45,489 kernel samples in 67 images; translating that raw capture unelevated preserved
+  them, so the loss is at capture time.
+
+### Changed
+
+- Documentation states the kernel-coverage limitation explicitly in `SKILL.md`,
+  `references/spec.md` and `references/reference.md`: `os=1` is applied and encoded but an
+  unelevated capture contains no kernel-mode samples, and kernel coverage requires an elevated
+  capture. It explains that `KERNEL_COVERAGE` is a whole-capture check computed before
+  `--image`/`--pid`/`--time-filter`, that it never refers to elevated user processes, and that the
+  capture-time note and the profile-time field report the same limitation.
+  `references/reference.md` records that the raw metadata has no elevation or kernel-mode toggle
+  and that the check is content-based, not privilege-based.
+
 ## 1.0.8 — 2026-11-07
 
 ### Fixed

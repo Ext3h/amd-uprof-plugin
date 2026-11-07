@@ -56,6 +56,11 @@ cover it (measured -0.15 s system-wide and -0.70 s attached on the reference hos
 (local time, one-second precision) gives the UTC start where a wall-clock comparison is needed;
 `--time-filter` takes the same capture-relative seconds.
 
+The session records no QPC frequency — only the core MHz used for the collect interval conversion
+— so `--freq` defaults to 10,000,000 Hz (the Windows QPC frequency) unless it is given. Pass it
+when the workload's clock differs. `HZ_SOURCE=argument` means `--freq` supplied the value;
+`HZ_SOURCE=default` names the 10 MHz default.
+
 ### Rejected: window weighting
 
 The former `D × count / Σ count over windowId` estimator was removed; do not reintroduce it. The measured deltas that motivated the removal are in `references/validation.md`, "Window weighting (rejected)".
@@ -74,8 +79,10 @@ The cache holds no database: every `.db`/`.duckdb` (and its WAL/SHM) is removed 
 inconsistency: `sum(weight)` greater than the span from `session.uprof` — the
 `translate --time-filter` window when `translateCommand` records one, else
 `collection.schedule.elapsed` (ms), else `profileDuration` (s) — times the dump's distinct CPU
-count, or any sample whose `DeltaTick` lies beyond that span (a dump that does not belong to this
-session).
+count, or any sample whose `DeltaTick` lies outside that span's bounds. A recorded translate
+window is compared as `[T1, T2)`, not as the width `T2 - T1` alone: `DeltaTick` stays
+capture-start-relative in a windowed dump. Either condition is a dump that does not belong to
+this session.
 
 Normal captures never reach that bound. The weight cannot include each CPU's first gap or the time
 after its last sample, so `implied - sum(weight)` equals those boundary gaps exactly: 0.04-0.56 s
@@ -89,13 +96,16 @@ coverage. No usable duration gives a `WARN` and no comparison; an empty dump rai
 
 ### Achieved sample rate
 
-`profile` prints `ACHIEVED: N samples, X s, C CPUs, R/s per CPU (requested ...)`. The collector
-accepts an interval it does not deliver: on the reference host a 1 ms request yields about 14
-samples/s per CPU system-wide (busiest CPU ~37/s) and about 92/s in a short attached capture.
-`WARN: achieved sample rate is below 10% of the requested interval` marks a capture too sparse for
-the requested resolution. `collect` cannot print this — it has neither a dump nor a `cpu.db`; the
-rate appears at `profile`, where the samples exist. For an op-count interval no time rate follows
-and the line says so.
+`profile` prints `ACHIEVED: N samples, X s, C CPUs, R/s per CPU (requested ...)` for every
+capture. Samples are counted over the whole capture, not the `--image`/`--pid` scope; CPUs come
+from the dump's `CPU_Number`, or from `UnifiedSampleSeries.coreId` for a PMC capture. The
+collector accepts an interval it does not deliver: on the reference host a 1 ms request yields
+about 14 samples/s per CPU system-wide (busiest CPU ~37/s) and about 92/s in a short attached
+capture. `WARN: achieved sample rate is below 10% of the requested interval` marks a capture too
+sparse for the requested resolution. `collect` cannot print this — it has neither a dump nor a
+`cpu.db`; the rate appears at `profile`, where the samples exist, or in `translate --ascii`, which
+counts the dump it just wrote. For an op-count interval no time rate follows and the line says
+so.
 
 ## Symbolization
 
@@ -160,7 +170,7 @@ The 11 views:
 |---|---|
 | `v_dump` | typed dump rows (`delta_tick`, `cpu`, `pid`, `rva`, `module_name`, `tag_cycles`); tagged/untagged branch; an empty typed relation for PMC |
 | `v_dump_weighted` | applies `[time_start, time_end)` then adds `weight = delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick)` |
-| `v_dump_sanity` | whole-dump provenance check against the `session.uprof` span × CPUs; errors above 2%, warns without a duration; exposes `tag_values` for the empty-tag disclosure |
+| `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs, error; attached captures report `OK (attached)`; no usable duration or uncovered late time warns; exposes `tag_values` for the empty-tag disclosure |
 | `v_symbols` | combined symbolizer artifact: `module_name, rva, function, function_short, containing_function, file, line` |
 | `v_public_starts` | public-symbol fold cache: `module_name, rva, name_count, names` |
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |

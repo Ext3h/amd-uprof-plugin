@@ -2,6 +2,29 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.5 — 2026-11-07
+
+### Fixed
+
+- Dump sanity: samples outside the recorded span raise their own error naming those samples,
+  instead of claiming core time exceeds a bound it does not; a recorded `translate --time-filter`
+  is checked against its `[T1, T2)` window, so a window that starts after capture start no longer
+  reports a false inconsistency.
+- `ACHIEVED` on PMC captures counts `UnifiedSampleSeries` event-column samples over the whole
+  capture, not the `--image`/`--pid` scope, and takes the CPU count from `coreId`, so it reports
+  the per-CPU rate and the below-10% warning instead of zero samples and a claim that no rate is
+  derivable.
+- `translate --ascii` prints `ACHIEVED` counted from the dump it wrote, and says the rate is
+  reported at profile time when it writes no dump.
+
+### Changed
+
+- Documentation matches the shipped checks: the `SANITY`/`ACHIEVED` header fields and failure
+  modes in `SKILL.md`, the sanity, achieved-rate, anchoring and view descriptions in
+  `references/reference.md`, and the validation record, including the attached capture's 39.682 s
+  elapsed and the PMC and translate evidence. `anchor` states that `--freq` defaults to 10 MHz
+  because `session.uprof` records no QPC frequency.
+
 ## 1.0.4 — 2026-11-07
 
 ### Changed

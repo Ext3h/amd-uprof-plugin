@@ -15,7 +15,8 @@ never a `windowId` count.
 `D:\Projects\strata-res\ibs-roleplay-3-fresh\AMDuProf-SWP-IBS_Oct-24-2026_18-50-45`:
 60 s, 16 CPUs, system-wide, `--config ibs`, op interval 1,000,000 ops. The full ASCII dump has
 1,595,914 rows, 16 first-per-CPU; total weight 959.195 s of core time against 961.056 s implied by
-`session.uprof` (-0.19%, tolerance 2.0%). The 0:10 window has 296,917 rows, 16 first-in-window.
+`session.uprof`. The 1.861 s deficit is the per-CPU boundary gaps, so the current check reports
+OK without a tolerance. The 0:10 window has 296,917 rows, 16 first-in-window.
 Environment: Windows 11, Ryzen 7 9800X3D, Python 3.14.6, DuckDB 2.0.0, uProf CLI 5.3.521.0,
 LLVM (llvm-symbolizer/llvm-pdbutil/llvm-readobj) from `C:\Program Files\LLVM\bin`.
 
@@ -209,14 +210,22 @@ on the reference host with the rebuilt `v_dump_sanity`:
 | `loop-16mib-swwide` | system-wide 45 s | 5784 | 704.696 / 720.944 s | OK, boundary 16.2 s |
 | `loop-16mib-swwide2` | system-wide 75 s | 7947 | 1150.309 / 1200.464 s | OK, boundary 50.2 s |
 | `loop-2mib-nohash` | system-wide 45 s | 3373 | 683.356 / 720.304 s | OK, boundary 36.9 s |
-| `loop-2mib-ibs` | attached 45 s | 954 | 454.203 vs upper bound 634.912 s | OK (attached) |
+| `loop-2mib-ibs` | attached 39.682 s | 954 | 454.203 vs upper bound 634.912 s | OK (attached) |
 
 Previously these five verdicts were −1.25% (pass), −2.25%, −4.18%, −5.13% and −28.46% (four
-rejected). A session whose recorded span is 1 s against the same 45 s dump still raises the error;
-a 90 s span against a 45 s dump prints the late-window WARN. Each verdict was reproduced through
-`uprof_db.open_query` with a synthetic `session.uprof`, and the 45 s system-wide capture's profile
-rows are byte-identical before and after the change apart from the SANITY text and the new
-ACHIEVED line.
+rejected). Each verdict was reproduced through `uprof_db.open_query` with a synthetic
+`session.uprof`.
+
+Synthetic DuckDB fixtures cover the branches directly: a dump whose weight stays below the
+capacity bound but whose samples run outside the recorded elapsed (0.010-1.600 s against 1.000 s)
+errors with `1 CPU(s) hold samples outside the recorded elapsed [0.000, 1.000) s`; 45 s of samples
+against a 90 s span prints the late-window `WARN`; a session with no duration warns; an empty dump
+errors; and a recorded `--time-filter 10:12` on a 60 s capture is judged against `[10, 12) s`, not
+the 2 s width, reporting `OK` with leading 0.300 s and trailing 1.200 s gaps.
+
+The `--by function --time-filter 1:39.5 --image '%storage_test%' --top 25` rows on
+`loop-2mib-swwide` are byte-identical to the pre-change baseline (`baseline-loop2-function.txt`);
+only the SANITY and ACHIEVED header lines differ.
 
 Anchoring, verified with `uprof.py anchor`: attached BEGIN −0.700 s, system-wide BEGIN −0.151 s,
 system-wide END +40.182 s (the capture starts during the warm-up pass, so the loop's BEGIN precedes
@@ -224,3 +233,42 @@ it by the attach latency).
 
 Achieved rate on the same captures: 13.78, 8.02, 6.62, 4.68 and 1.50 samples/s per CPU against a
 requested 1 ms interval (ideal 1000/s), so every capture prints the below-10% WARN.
+
+## Achieved-rate and command-surface evidence (2026-11-07)
+
+The five `profile --by process --top 1` runs above used the translated `-x` copies of the capture
+directories, which hold `cpu.db`; the raw directories hold none. Each printed an ACHIEVED line with
+the rates listed above.
+
+PMC, `knee-2mib-x`, `profile --by process --top 1`:
+
+`ACHIEVED: 181982 samples, 30.058 s, 16 CPUs, 378.40/s per CPU (requested 4700000 cycles at 4700 MHz = 1 ms; ideal 1,000/s per CPU)`
+
+`UnifiedSampleSeries` holds 175,260 rows over 16 `coreId` values; the event column sums to 181,982
+samples. The same line appears with `--image '%fold_busy%'`, whose scope matches nothing (the
+separate `WARNING: no samples in the selected scope` remains), because the count is capture-level.
+378.40/s is above 10% of the 1,000/s ideal, so this capture does not print the below-10% warning.
+
+Translate, on `loop-2mib-ibs` to a new temporary copy:
+
+`translate --session <loop-2mib-ibs> --out-dir <new copy> --ascii ibsop-event-dump` ends with
+`ACHIEVED: 954 samples, 39.682 s, 16 CPUs, 1.50/s per CPU (requested 4700000 cycles at 4700 MHz = 1 ms; ideal 1,000/s per CPU); WARN: achieved sample rate is below 10% of the requested interval`.
+Without `--ascii` it prints `ACHIEVED: reported at profile time (translate wrote no dump without
+--ascii)`.
+
+Command surface, recorded 2026-11-07:
+
+- `tools`: `UPROF=...AMDuProfCLI.EXE; version=AMDuProfCLI.exe Version 5.3.521.0`;
+  `DUCKDB=duckdb 2.0.0 (python); version=2.0.0`; symbolizer, pdbutil and readobj
+  `LLVM version 23.1.4`.
+- `collect --dry-run --out-dir <new path>`: `SAMPLE_INTERVAL=1ms -> 4700000 cycles at 4700 MHz
+  (source: Windows registry HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\~MHz)`;
+  `EVENT=event=CYCLES_NOT_IN_HALT,interval=4700000,user=1,os=1`; `COMMAND=...`; `Elevated=False`;
+  `DRYRUN=1`. No capture ran.
+- `schema --session <loop-2mib-swwide-x>`: exit 0, a 151-row live table/column listing over the
+  expected tables (`Function`, `Module`, `Process`, `UnifiedSampleSeries`, ...).
+
+Anchor exact values: `loop-2mib-ibs --qpc 42140285053 --freq 10000000` printed
+`RELATIVE_S=-0.699788599`; `loop-2mib-swwide --qpc 43099238262 --freq 10000000` printed
+`RELATIVE_S=-0.150568799`. Without `--freq`, `HZ_SOURCE=default (10 MHz; the session records no QPC
+frequency)`.

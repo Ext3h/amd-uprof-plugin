@@ -20,7 +20,7 @@ python <SKILL_DIR>/tools/uprof.py <command> ...
 | `collect` | capture PMCx076 cycle or IBS OP samples, system-wide or attached to PIDs; never IBS fetch |
 | `translate` | copy the session, resolve symbols, optionally write the IBS ASCII dump |
 | `profile` | samples and time shares by process, function, source line or instruction; prints SANITY and ACHIEVED |
-| `anchor` | map a workload's QPC reading onto capture-relative seconds (negative = attach latency) |
+| `anchor` | map a workload's QPC reading onto capture-relative seconds (negative = attach latency; `--freq` defaults to 10 MHz) |
 | `schema` | live table/column/type listing for drift checking |
 | `tools` | print every resolved tool path and version; fails only when a required tool is missing |
 
@@ -115,7 +115,8 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 | `PCT_TIME` | estimator and the window it is relative to: the whole capture or the `profile --time-filter` |
 | `PCT_CYCLES` | tag-to-retire basis and the 131070 clip, the missing-column or empty-column disclosure, or `not applicable` for PMC/fetch |
 | `WEIGHTS` | the aggregation key of the chosen `--by` and the weight basis |
-| `SANITY` | whole-dump provenance check: dump core time against the `session.uprof` span × dump CPUs, 2% tolerance; a `WARN` means no usable duration |
+| `SANITY` | whole-dump provenance check: covered core time against the recorded span (`translate --time-filter` window when recorded, else `collection.schedule.elapsed`) × dump CPUs, plus the boundary gaps; errors only when core time exceeds that capacity or a sample lies outside the span; `OK (attached)` for attached captures; a `WARN` means no usable duration or uncovered late time |
+| `ACHIEVED` | whole-capture samples, window, CPUs and delivered samples/s per CPU against the requested interval; warns below 10% of the ideal; `translate --ascii` prints the same line counted from its dump |
 | `AGREEMENT` | `line`/`instruction` only: frame rule, sample-weighted mismatch rate, address counts (the `compared` predicate is both names non-empty), `<no symbol>` sample weight |
 
 `SANITY` validates the entire dump against the **translate** span (the `translate --time-filter` window when recorded, else `collection.schedule.elapsed`); `PCT_TIME` and `WEIGHTS` describe the **profile** `--time-filter` window. The two windows may legitimately differ.
@@ -136,7 +137,7 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 
 | Condition | Behaviour | Exit |
 |---|---|---|
-| dump total core time more than 2% from the `session.uprof` span × dump CPUs | error naming the dump and the arithmetic, with the remedy: delete the dump or its cache directory and re-run `profile` so it is regenerated on a copy | 2 |
+| dump core time exceeds the `session.uprof` span × dump CPUs, or a sample lies outside that span's bounds | error naming the dump and the arithmetic or the outside samples, with the remedy: delete the dump or its cache directory and re-run `profile` so it is regenerated on a copy | 2 |
 | `session.uprof` missing | error before any query; `pct_time` needs it for the sampler and the span check | 2 |
 | `cpu.db` missing | error naming the file and the `translate --session ... --out-dir ...` step | 2 |
 | translate `--out-dir` is an existing non-directory or equals `--session`; a copy fails (permission, read-only parent); a profile dump cache or symbol-artifact temp path cannot be created or written | `error:` with the offending path or rule and a permissions/free-space remedy; no traceback | 2 |

@@ -10,7 +10,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import TextIO
+from typing import Final, TextIO
 
 from uprof_native import find_sibling, require_symbolizer, run
 from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
@@ -27,6 +27,8 @@ _SECTION_HEADER = re.compile(r"SECTION HEADER #(\d+)")
 _SECTION_ADDRESS = re.compile(r"^\s*([0-9A-Fa-f]+) virtual address\s*$")
 _PUBLIC_NAME = re.compile(r"S_PUB32 \[[^\]]*\] `([^`]*)`\s*$")
 _PUBLIC_ADDRESS = re.compile(r"flags\s*=\s*([^,]*),\s*addr\s*=\s*(\d+):(\d+)")
+
+PDB_PROBE_TIMEOUT: Final = 5 * 60
 
 
 def _normalize_guid(value: str) -> str:
@@ -45,7 +47,8 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
     guid = age = None
     if not readobj:
         return pdb_name, guid, age
-    completed = run([str(readobj), "--coff-debug-directory", exe])
+    completed = run([str(readobj), "--coff-debug-directory", exe],
+                    timeout=PDB_PROBE_TIMEOUT)
     if completed.returncode != 0:
         raise UprofError(f"llvm-readobj exited {completed.returncode}: "
                          f"{tail_lines(completed.stderr)}")
@@ -67,7 +70,8 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
 def _pdb_signature(pdbutil: Path | None, path: Path) -> tuple[str | None, str | None] | None:
     if not pdbutil:
         return None
-    completed = run([str(pdbutil), "dump", "--summary", str(path)])
+    completed = run([str(pdbutil), "dump", "--summary", str(path)],
+                    timeout=PDB_PROBE_TIMEOUT)
     guid = age = None
     for line in (completed.stdout or "").splitlines():
         if match := _GUID.match(line):
@@ -106,8 +110,12 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
         cache_dir = Path(parts[1]) / pdb_name
         if module_guid and age is not None:
             candidates.append(cache_dir / f"{module_guid}{age:X}" / pdb_name)
-        for path in cache_dir.rglob(pdb_name):
-            candidates.append(path)
+        try:
+            discovered = list(cache_dir.rglob(pdb_name))
+        except OSError:
+            # An unreachable or unreadable cache path contributes nothing.
+            continue
+        candidates.extend(discovered)
     return candidates
 
 
@@ -136,7 +144,12 @@ def find_pdb(exe: str, symbolizer: Path | None = None) -> Path | None:
         beside = exe_path.parent / pdb_name
         return beside if beside.is_file() else None
     for path in _candidate_pdbs(exe_path, pdb_name, module_guid, module_age):
-        if path.is_file() and _pdb_matches(pdbutil, path, module_guid, module_age):
+        try:
+            matched = path.is_file() and _pdb_matches(pdbutil, path, module_guid, module_age)
+        except (UprofError, OSError):
+            # A probe timeout or an unreadable cache entry rejects this candidate only.
+            continue
+        if matched:
             return path
     return None
 

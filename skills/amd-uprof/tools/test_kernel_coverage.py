@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import uprof_dump
 import uprof_query
 import uprof_session
 
@@ -180,6 +181,34 @@ class KernelCoverageFieldTest(unittest.TestCase):
         self.assertEqual(self.fields(uprof_session.Sampler(os_requested=True), [
             ("/lib/modules/6.8.0/updates/amdgpu.ko", 4),
         ]), [])
+
+
+class WindowedDumpTest(unittest.TestCase):
+    """A dump resolved through a recorded translate window cannot testify about the capture."""
+
+    def session(self, translate_command):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        session = Path(tmp.name)
+        (session / "session.uprof").write_text(
+            json.dumps({"translateCommand": translate_command}), encoding="utf-8")
+        return session
+
+    def test_recorded_translate_filter_is_reported(self):
+        session = self.session(
+            "AMDuProfCLI.exe translate -i sess --ascii ibsop-event-dump --time-filter 10:12")
+        self.assertEqual(uprof_dump.recorded_time_filter(session), "10:12")
+
+    def test_no_recorded_translate_filter_is_none(self):
+        self.assertIsNone(uprof_dump.recorded_time_filter(
+            self.session("AMDuProfCLI.exe translate -i sess --ascii ibsop-event-dump")))
+
+    def test_windowed_dump_suppresses_the_field_without_a_query(self):
+        connection = _Connection([("c:/windows/system32/ntdll.dll", 100)])
+        fields = uprof_query._kernel_coverage_field(
+            connection, uprof_session.Sampler(os_requested=True), windowed=True)
+        self.assertEqual(fields, [])
+        self.assertEqual(connection.queries, [])
 
 
 if __name__ == "__main__":

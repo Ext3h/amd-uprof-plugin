@@ -282,14 +282,16 @@ def _dump_sanity(connection: object, has_dump: bool, scope_filtered: bool,
     return message, tag_values
 
 
-def _kernel_coverage_field(connection: object,
-                           sampler: uprof_session.Sampler) -> list[tuple[str, str]]:
+def _kernel_coverage_field(connection: object, sampler: uprof_session.Sampler,
+                           windowed: bool = False) -> list[tuple[str, str]]:
     """Whole-capture kernel coverage, checked only when the applied sampler requested OS mode.
 
     v_capture_modules carries every module with its sample count, before any scope filter. The
     kernel predicate is a basename match, so the paths are classified here rather than in SQL.
+    windowed suppresses the field: the resolved dump may have been produced by the session's
+    recorded translate --time-filter, so it need not hold the whole capture.
     """
-    if not sampler.os_requested:
+    if not sampler.os_requested or windowed:
         return []
     rows = connection.sql(
         "SELECT module_name, CAST(COALESCE(sum(samples), 0) AS BIGINT) "
@@ -361,6 +363,9 @@ def run_query_command(args: argparse.Namespace) -> None:
             and os.path.normcase(os.fspath(dump.path)) == os.path.normcase(
                 os.fspath(out_path))):
         raise util.UprofError(f"--out-file would overwrite the IBS dump {dump.path}")
+    # The resolved dump may have been produced by the recorded translate window, so the
+    # whole-capture claim cannot be made from it.
+    dump_windowed = dump is not None and uprof_dump.recorded_time_filter(session) is not None
 
     stream = sys.stderr
     variables = _variables(args, dump, top, time_start, time_end, sampler.event_column)
@@ -396,7 +401,7 @@ def run_query_command(args: argparse.Namespace) -> None:
             achieved = _achieved_field(connection, dump is not None, args, sampler, dump)
             if achieved:
                 fields.append(achieved)
-            fields.extend(_kernel_coverage_field(connection, sampler))
+            fields.extend(_kernel_coverage_field(connection, sampler, dump_windowed))
             fields.extend(_scope_warning(connection))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(connection)

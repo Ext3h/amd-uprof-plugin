@@ -34,12 +34,13 @@ class SanityScopeTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def write_session(self, *, system_wide):
+    def write_session(self, *, system_wide, schedule=None):
         meta = {
             "translateCommand": ("AMDuProfCLI.exe translate -i session "
                                  "--ascii ibsop-event-dump"),
             "collection": {
-                "schedule": {"elapsed": ELAPSED_MS, "profileDuration": 10},
+                "schedule": ({"elapsed": ELAPSED_MS, "profileDuration": 10}
+                             if schedule is None else schedule),
                 "target": {"systemWide": system_wide},
                 "events": {"ibsEvents": {
                     "op": {"interval": 4_700_000},
@@ -151,6 +152,16 @@ class SanityScopeTest(unittest.TestCase):
         self.assertIn("scoped coverage (--pid 100 --time-filter 0.000:10.000 s): OK", line)
         self.assertIn("0.500 s before the scope window end at 10.000 s", line)
         self.assertNotIn("WARN", line)
+
+    def test_time_filter_judges_the_scope_without_a_recorded_duration(self):
+        # The time filter fixes the scope window even when session.uprof records no span.
+        self.write_session(system_wide=True, schedule={})
+
+        line = self.sanity_line("--pid", "100", "--time-filter", "0:10")
+
+        self.assertIn("WARN (dump-wide across all processes): session.uprof has no usable duration",
+                      line)
+        self.assertIn("scoped coverage (--pid 100 --time-filter 0.000:10.000 s): WARN", line)
 
 
 if __name__ == "__main__":

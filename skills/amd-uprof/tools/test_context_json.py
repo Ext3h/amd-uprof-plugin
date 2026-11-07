@@ -302,7 +302,7 @@ class InstructionContextsTest(unittest.TestCase):
         self.assertEqual(hot["import"]["name"], "ExitProcess")
         self.assertEqual(hot["symbol"]["function"], "main")
 
-    def contexts_with(self, connection, run_side_effect):
+    def contexts_with(self, connection, run_side_effect, rows=None):
         with mock.patch.object(uprof_context, "run", side_effect=run_side_effect):
             with mock.patch.object(uprof_context, "find_readobj",
                                    return_value="llvm-readobj.exe"):
@@ -312,7 +312,27 @@ class InstructionContextsTest(unittest.TestCase):
                                            return_value="llvm-symbolizer.exe"):
                         with mock.patch.object(uprof_context, "find_pdb", return_value=None):
                             return uprof_context.instruction_contexts(
-                                connection, COLUMNS, [ROW])
+                                connection, COLUMNS, [ROW] if rows is None else rows)
+
+    def two_rows(self):
+        other = ("fixture.exe", "0x1015", "main", "src\\main.cpp", 12, "unique",
+                 2, 3.0, 1.0, 0.5)
+        return [ROW, other]
+
+    def test_rows_under_one_anchor_share_one_decode(self):
+        connection = FakeConnection(module_path=__file__, total=60,
+                                    publics=[(0x1000, "fixture_entry")])
+        calls = []
+
+        def counting_run(command, **kwargs):
+            calls.append(command)
+            return fake_run(command, **kwargs)
+
+        self.contexts_with(connection, counting_run, rows=self.two_rows())
+
+        objdump = [command for command in calls if command[0] == "llvm-objdump.exe"]
+        self.assertEqual(len(objdump), 1)
+        self.assertIn("--stop-address=0x14000123B", objdump[0])
 
     def test_a_tool_timeout_is_a_machine_readable_omission(self):
         def timeout(command, **kwargs):

@@ -14,6 +14,9 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
+from uprof_native import find_sibling, find_symbolizer, run
+from uprof_util import tail_lines
+
 ANCHOR_DISTANCE_CAP: Final = 1 << 20
 WINDOW_BEFORE: Final = 32
 WINDOW_AFTER: Final = 32
@@ -27,6 +30,8 @@ _SECTION_NAME = re.compile(r"^\s*Name:\s*(\S+)(?:\s+\(([0-9A-Fa-f ]+)\))?\s*$")
 _SECTION_VIRTUAL_SIZE = re.compile(r"^\s*VirtualSize:\s*(0x[0-9A-Fa-f]+)\s*$")
 _SECTION_VIRTUAL_ADDRESS = re.compile(r"^\s*VirtualAddress:\s*(0x[0-9A-Fa-f]+)\s*$")
 _SECTION_RAW_SIZE = re.compile(r"^\s*RawDataSize:\s*(0x[0-9A-Fa-f]+)\s*$")
+_OBJDUMP_LINE = re.compile(r"^\s*([0-9A-Fa-f]+):\s+(.*)$")
+_RAW_BYTES = re.compile(r"^(?:[0-9A-Fa-f]{2}\s+)+")
 
 
 class ContextOmission(Exception):
@@ -100,6 +105,15 @@ class Anchor:
     kind: str          # "export" or "section"
     rva: int
     name: str | None = None
+
+
+@dataclass
+class DecodedInstruction:
+    """One instruction from llvm-objdump; rva is module-relative and text is mnemonic+operands."""
+
+    rva: int
+    text: str
+    next_rva: int | None = None
 
 
 def _as_int(value: object) -> int | None:
@@ -217,3 +231,91 @@ def verify_build(build: BuildIdentity, capture_checksum: object) -> VerifiedBuil
             f"capture checksum 0x{recorded:X} differs from the on-disk module checksum "
             f"0x{build.checksum:X}")
     return VerifiedBuild(identity=build, capture_checksum=recorded)
+
+
+# ------------------------------------------------------------------ disassembly window
+
+def find_objdump(symbolizer: object | None = None) -> str | None:
+    """llvm-objdump beside llvm-symbolizer, else on PATH; None when unavailable."""
+    found = find_sibling(symbolizer if symbolizer else find_symbolizer(), "llvm-objdump")
+    return str(found) if found else None
+
+
+def parse_objdump(text: str, image_base: int) -> list[DecodedInstruction]:
+    """Parse `llvm-objdump --no-show-raw-insn --no-symbolize-operands` output into RVAs.
+
+    The nearest-symbol labels objdump prints are never read: only the address and the instruction
+    text after it are used, and a trailing comment is discarded. next_rva is the following decoded
+    address, which is what RIP-relative arithmetic needs.
+    """
+    decoded: list[DecodedInstruction] = []
+    for line in text.splitlines():
+        match = _OBJDUMP_LINE.match(line)
+        if not match:
+            continue
+        address = int(match.group(1), 16)
+        remainder = match.group(2)
+        if address < image_base:
+            continue
+        instruction = remainder.split("#", 1)[0]
+        instruction = _RAW_BYTES.sub("", instruction).strip()
+        if not instruction:
+            continue
+        decoded.append(DecodedInstruction(address - image_base, instruction))
+    for current, following in zip(decoded, decoded[1:]):
+        current.next_rva = following.rva
+    return decoded
+
+
+def select_window(decoded: list[DecodedInstruction], hot_rva: int,
+                  before: int = WINDOW_BEFORE, after: int = WINDOW_AFTER
+                  ) -> list[DecodedInstruction]:
+    """The last <=before instructions and <=after instructions around hot_rva.
+
+    A hot RVA that is not an instruction start in the decoded stream has no safe window; it is
+    rejected rather than snapped to the preceding boundary.
+    """
+    for index, instruction in enumerate(decoded):
+        if instruction.rva == hot_rva:
+            return decoded[max(0, index - before):index + after + 1]
+    raise ContextOmission(
+        "hot_rva_not_instruction_start",
+        f"0x{hot_rva:X} was not reached as an instruction boundary")
+
+
+def instruction_share(samples: int, total_samples: int) -> float | None:
+    """Raw sample share, the same denominator as the instruction row's pct_samples."""
+    if not total_samples:
+        return None
+    return 100.0 * samples / total_samples
+
+
+def decode_window(module_path: str, build: BuildIdentity, anchor: Anchor, hot_rva: int,
+                  objdump: str | None = None) -> list[DecodedInstruction]:
+    """Decode forward from anchor and return the window around hot_rva.
+
+    The stop address leaves enough room for 32 instructions after the hot RVA plus one more, so
+    the last window instruction still has a known length for RIP-relative call resolution.
+    """
+    tool = objdump or find_objdump()
+    if not tool:
+        raise ContextOmission("objdump_missing",
+                              "llvm-objdump not found beside llvm-symbolizer or on PATH")
+    start_vma = build.image_base + anchor.rva
+    stop_vma = build.image_base + hot_rva + (WINDOW_AFTER + 2) * 16
+    if stop_vma <= start_vma:
+        stop_vma = start_vma + 16
+    command = [tool, "-d", f"--start-address=0x{start_vma:X}",
+               f"--stop-address=0x{stop_vma:X}", "--no-show-raw-insn",
+               "--no-symbolize-operands", module_path]
+    completed = run(command)
+    if completed.returncode != 0 and not (completed.stdout or "").strip():
+        raise ContextOmission("objdump_failed",
+                              tail_lines((completed.stdout or "") + "\n" +
+                                         (completed.stderr or "")))
+    decoded = parse_objdump(completed.stdout or "", build.image_base)
+    if not decoded:
+        raise ContextOmission("objdump_failed",
+                              f"llvm-objdump produced no instructions for 0x{anchor.rva:X}")
+    return select_window(decoded, hot_rva)
+

@@ -379,7 +379,7 @@ WHERE (getvariable('uprof_pid') = '' OR s.processId = CAST(getvariable('uprof_pi
 -- verdict here.
 CREATE OR REPLACE TEMP VIEW v_scope_sanity AS
 WITH span AS (
-  SELECT start_ns, end_ns, expected_ns, system_wide,
+  SELECT start_ns, end_ns, system_wide,
          (getvariable('uprof_image') <> '%' OR getvariable('uprof_pid') <> ''
           OR getvariable('time_start') > 0
           OR getvariable('time_end') < 9223372036854775807) AS filtered,
@@ -423,8 +423,9 @@ WITH span AS (
 SELECT CASE
   WHEN NOT filtered THEN NULL
   WHEN system_wide = 'false' THEN NULL
-  WHEN expected_ns IS NULL OR expected_ns = 0 THEN NULL
   WHEN COALESCE(scoped_samples, 0) = 0 THEN NULL
+  WHEN scope_end_ns IS NULL THEN NULL
+  WHEN cadence_ns IS NULL OR cadence_ns <= 0 THEN NULL
   WHEN end_gap_ns > cadence_ns THEN
     printf('scoped coverage (%s): WARN: the last sample in scope is %.3f s before the scope window end at %.3f s, longer than one sampling cadence, so late time in the scope is uncovered',
            scope_label, end_gap_ns / 1e9, scope_end_ns / 1e9)

@@ -72,6 +72,7 @@ class FixtureTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.build, cls.sections = _identity()
+        cls.text_end = uprof_context.find_code_section(cls.sections, HOT_RVA).end
 
     def test_headers_expose_the_identity_and_code_section(self):
         self.assertEqual(self.build.image_base, 0x140000000)
@@ -102,7 +103,8 @@ class FixtureTest(unittest.TestCase):
     def test_window_holds_the_decoded_instructions_around_the_hot_rva(self):
         verified = uprof_context.verify_build(self.build, self.build.checksum)
         window = uprof_context.decode_window(
-            str(FIXTURE), verified, uprof_context.Anchor("export", TEXT_RVA), HOT_RVA)
+            str(FIXTURE), verified, uprof_context.Anchor("export", TEXT_RVA), HOT_RVA,
+            self.text_end)
         by_rva = {instruction.rva: instruction for instruction in window}
 
         self.assertEqual([instruction.rva for instruction in window],
@@ -118,7 +120,8 @@ class FixtureTest(unittest.TestCase):
         verified = uprof_context.verify_build(self.build, self.build.checksum)
         with self.assertRaises(uprof_context.ContextOmission) as omission:
             uprof_context.decode_window(
-                str(FIXTURE), verified, uprof_context.Anchor("export", TEXT_RVA), 0x1002)
+                str(FIXTURE), verified, uprof_context.Anchor("export", TEXT_RVA), 0x1002,
+                self.text_end)
         self.assertEqual(omission.exception.reason, "hot_rva_not_instruction_start")
 
     def test_iat_call_resolves_to_exit_process(self):
@@ -127,7 +130,8 @@ class FixtureTest(unittest.TestCase):
                          uprof_context.ImportSlot(0x2088, "KERNEL32.dll", "ExitProcess"))
         verified = uprof_context.verify_build(self.build, self.build.checksum)
         window = uprof_context.decode_window(
-            str(FIXTURE), verified, uprof_context.Anchor("section", TEXT_RVA), HOT_RVA)
+            str(FIXTURE), verified, uprof_context.Anchor("section", TEXT_RVA), HOT_RVA,
+            self.text_end)
         call = next(item for item in window if item.rva == HOT_RVA)
 
         slot = uprof_context.resolve_iat_call(call, self.build.image_base, imports)

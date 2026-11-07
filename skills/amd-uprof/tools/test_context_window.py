@@ -101,6 +101,8 @@ class ShareTest(unittest.TestCase):
 
 
 class DecodeWindowTest(unittest.TestCase):
+    SECTION_END = 0x2000
+
     def run_objdump(self, output, returncode=0):
         return mock.patch.object(
             uprof_context, "run",
@@ -113,7 +115,7 @@ class DecodeWindowTest(unittest.TestCase):
         with self.run_objdump(OBJDUMP):
             with self.assertRaises(uprof_context.ContextOmission) as caught:
                 uprof_context.decode_window("fixture.exe", build, anchor, 0x1003,
-                                            objdump="llvm-objdump.exe")
+                                            self.SECTION_END, objdump="llvm-objdump.exe")
 
         self.assertEqual(caught.exception.reason, "hot_rva_not_instruction_start")
 
@@ -123,10 +125,20 @@ class DecodeWindowTest(unittest.TestCase):
 
         with self.run_objdump(OBJDUMP):
             window = uprof_context.decode_window("fixture.exe", build, anchor, 0x1015,
-                                                 objdump="llvm-objdump.exe")
+                                                 self.SECTION_END, objdump="llvm-objdump.exe")
 
         self.assertEqual(window[0].rva, 0x1000)
         self.assertEqual(window[-1].rva, 0x1025)
+
+    def test_stop_address_is_clamped_to_the_section_end(self):
+        build = uprof_context.BuildIdentity(0x140000000, 0, 0x100, 0x20B)
+        anchor = uprof_context.Anchor("section", 0x1000)
+
+        with self.run_objdump(OBJDUMP) as invoked:
+            uprof_context.decode_window("fixture.exe", build, anchor, 0x1015, 0x1026,
+                                        objdump="llvm-objdump.exe")
+
+        self.assertIn("--stop-address=0x140001026", invoked.call_args[0][0])
 
     def test_objdump_failure_is_an_omission(self):
         build = uprof_context.BuildIdentity(0x140000000, 0, 0x100, 0x20B)
@@ -135,7 +147,7 @@ class DecodeWindowTest(unittest.TestCase):
         with self.run_objdump("", returncode=1):
             with self.assertRaises(uprof_context.ContextOmission) as caught:
                 uprof_context.decode_window("fixture.exe", build, anchor, 0x1015,
-                                            objdump="llvm-objdump.exe")
+                                            self.SECTION_END, objdump="llvm-objdump.exe")
 
         self.assertEqual(caught.exception.reason, "objdump_failed")
 

@@ -231,14 +231,20 @@ def find_code_section(sections: list[PeSection], rva: int) -> PeSection | None:
     return None
 
 
+def require_code_section(sections: list[PeSection], rva: int) -> PeSection:
+    """The executable section containing rva; omits the context when there is none."""
+    section = find_code_section(sections, rva)
+    if section is None:
+        raise ContextOmission("no_code_section",
+                              f"0x{rva:X} is not inside an executable PE section")
+    return section
+
+
 def select_anchor(hot_rva: int, sections: list[PeSection],
                   public_starts: list[tuple[int, str | None]],
                   cap: int = ANCHOR_DISTANCE_CAP) -> Anchor:
     """Nearest public start at or below hot_rva inside its code section, else the section start."""
-    section = find_code_section(sections, hot_rva)
-    if section is None:
-        raise ContextOmission("no_code_section",
-                              f"0x{hot_rva:X} is not inside an executable PE section")
+    section = require_code_section(sections, hot_rva)
     candidates = [(rva, name) for rva, name in public_starts
                   if section.start <= rva <= hot_rva]
     if candidates:
@@ -563,18 +569,20 @@ def instruction_share(samples: int, total_samples: int) -> float | None:
 
 
 def decode_window(module_path: str, build: BuildIdentity, anchor: Anchor, hot_rva: int,
-                  objdump: str | None = None) -> list[DecodedInstruction]:
+                  section_end: int, objdump: str | None = None) -> list[DecodedInstruction]:
     """Decode forward from anchor and return the window around hot_rva.
 
     The stop address leaves enough room for 32 instructions after the hot RVA plus one more, so
-    the last window instruction still has a known length for RIP-relative call resolution.
+    the last window instruction still has a known length for RIP-relative call resolution. It is
+    clamped to the containing section's end so decoding never runs into an adjacent section.
     """
     tool = objdump or find_objdump()
     if not tool:
         raise ContextOmission("objdump_missing",
                               "llvm-objdump not found beside llvm-symbolizer or on PATH")
     start_vma = build.image_base + anchor.rva
-    stop_vma = build.image_base + hot_rva + (WINDOW_AFTER + 2) * 16
+    stop_rva = min(hot_rva + (WINDOW_AFTER + 2) * 16, section_end)
+    stop_vma = build.image_base + stop_rva
     if stop_vma <= start_vma:
         stop_vma = start_vma + 16
     command = [tool, "-d", f"--start-address=0x{start_vma:X}",
@@ -671,7 +679,8 @@ class _ContextBuilder:
     def context(self, module_name: str, hot_rva: int) -> dict[str, object]:
         state = self._module(module_name)
         anchor = select_anchor(hot_rva, state.sections, state.public_starts)
-        window = decode_window(state.path, state.build, anchor, hot_rva)
+        section = require_code_section(state.sections, hot_rva)
+        window = decode_window(state.path, state.build, anchor, hot_rva, section.end)
         rvas = [instruction.rva for instruction in window]
         return build_context(
             anchor, state.build, hot_rva, window, self._samples(module_name, rvas),

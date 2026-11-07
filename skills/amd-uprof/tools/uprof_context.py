@@ -808,15 +808,21 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
                 contexts[index] = exc.as_json()
     if not windows:
         return
+    rvas = sorted({instruction.rva for _, _, window in windows.values()
+                   for instruction in window})
+    try:
+        samples = builder._samples(module_name, rvas)
+        symbols = builder._symbols(state, rvas)
+        ibs = builder._ibs(state, module_name, rvas)
+    except UprofError as exc:
+        omission = ContextOmission("context_failed", str(exc)).as_json()
+        for index in windows:
+            contexts[index] = omission
+        return
     for index, (hot_rva, anchor, window) in windows.items():
-        rvas = [instruction.rva for instruction in window]
-        try:
-            contexts[index] = build_context(
-                anchor, state.build, hot_rva, window, builder._samples(module_name, rvas),
-                builder.total_samples, builder._symbols(state, rvas),
-                state.imports, builder._ibs(state, module_name, rvas))
-        except UprofError as exc:
-            contexts[index] = ContextOmission("context_failed", str(exc)).as_json()
+        contexts[index] = build_context(
+            anchor, state.build, hot_rva, window, samples, builder.total_samples,
+            symbols, state.imports, ibs)
 
 
 def instruction_contexts(connection: object, columns: Sequence[str],

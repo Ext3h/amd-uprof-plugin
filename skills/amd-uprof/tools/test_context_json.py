@@ -79,9 +79,11 @@ class FakeConnection:
         self.checksum = checksum
         self.total = total
         self.publics = publics
+        self.queries = []
 
     def execute(self, sql, parameters=None):
         text = " ".join(sql.split())
+        self.queries.append(text)
         if "duckdb_columns" in text:
             return FakeResult([(1,)])
         if "FROM Module" in text:
@@ -333,6 +335,22 @@ class InstructionContextsTest(unittest.TestCase):
         objdump = [command for command in calls if command[0] == "llvm-objdump.exe"]
         self.assertEqual(len(objdump), 1)
         self.assertIn("--stop-address=0x14000123B", objdump[0])
+
+    def test_rows_of_one_module_share_the_annotation_queries(self):
+        connection = FakeConnection(module_path=__file__, total=60,
+                                    publics=[(0x1000, "fixture_entry")])
+        calls = []
+
+        def counting_run(command, **kwargs):
+            calls.append(command)
+            return fake_run(command, **kwargs)
+
+        self.contexts_with(connection, counting_run, rows=self.two_rows())
+
+        scoped = [query for query in connection.queries if "FROM v_scoped" in query]
+        symbolizer = [command for command in calls if command[0] == "llvm-symbolizer.exe"]
+        self.assertEqual(len(scoped), 1)
+        self.assertEqual(len(symbolizer), 1)
 
     def test_a_tool_timeout_is_a_machine_readable_omission(self):
         def timeout(command, **kwargs):

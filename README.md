@@ -8,3 +8,6 @@ samples, symbolize them with llvm-symbolizer, and query the capture in DuckDB.
 
 The skill lives in `skills/amd-uprof/`; `SKILL.md` is the entry point and `tools/uprof.py` the
 command-line surface. Validate a change with `claude plugin validate .`.
+
+Drives the AMD uProf CLI; not affiliated with or endorsed by Advanced Micro Devices.
+The icon's micro sign is set in Open Sans (Apache-2.0), the typeface uProf ships.

@@ -1,7 +1,7 @@
 {
   "name": "amd-uprof",
-  "description": "AMD uProf capture and analysis: cycle and IBS OP sampling, symbolization, and DuckDB queries",
-  "version": "1.0.2",
+  "description": "Capture and analysis built on AMD uProf: cycle and IBS OP sampling, symbolization, and DuckDB queries",
+  "version": "1.0.3",
   "keywords": [
     "amd",
     "uprof",

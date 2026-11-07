@@ -2,6 +2,18 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 1.0.3 — 2026-11-07
+
+### Added
+
+- Plugin icon: a flame-graph mark whose layout derives from golden-ratio divisions of the icon,
+  with the micro sign set in Open Sans Regular — the typeface AMD uProf ships and uses for it.
+
+### Changed
+
+- Description now reads "built on AMD uProf"; the README states the plugin is not affiliated
+  with or endorsed by Advanced Micro Devices.
+
 ## 1.0.2 — 2026-11-07
 
 ### Added

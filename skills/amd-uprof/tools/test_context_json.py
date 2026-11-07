@@ -3,6 +3,7 @@
 Run from this directory: python -m unittest test_context_json -v
 """
 
+import argparse
 import subprocess
 import unittest
 from unittest import mock
@@ -10,6 +11,7 @@ from unittest import mock
 import uprof_context
 import uprof_db
 import uprof_output
+import uprof_query
 from uprof_util import UprofError
 
 
@@ -179,6 +181,33 @@ class BuildContextTest(unittest.TestCase):
         self.assertEqual(context["instructions"][0]["ibs"], {"samples": 2})
 
 
+class InstructionProfileTest(unittest.TestCase):
+    def test_the_instruction_select_is_fetched_once(self):
+        columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
+        contexts = [{"anchor": {}}]
+        args = argparse.Namespace(json=True, by="instruction")
+        with mock.patch.object(uprof_query.uprof_db, "fetch_typed",
+                               return_value=(columns, types, rows)) as fetched:
+            with mock.patch.object(uprof_query.uprof_context, "instruction_contexts",
+                                   return_value=contexts) as built:
+                with mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered:
+                    with mock.patch.object(uprof_query.uprof_db, "output") as legacy:
+                        uprof_query._write_profile(None, args, [("METRIC", "x")], None)
+
+        fetched.assert_called_once()
+        built.assert_called_once_with(None, columns, rows)
+        rendered.assert_called_once_with(columns, types, rows, [("METRIC", "x")], True, None,
+                                         contexts)
+        legacy.assert_not_called()
+
+    def test_a_markdown_profile_uses_the_configured_query_file(self):
+        args = argparse.Namespace(json=False, by="instruction")
+        with mock.patch.object(uprof_query.uprof_db, "output") as rendered:
+            uprof_query._write_profile(None, args, [], None)
+
+        self.assertEqual(rendered.call_args[0][1].name, "profile-instruction.sql")
+
+
 class JsonDocumentTest(unittest.TestCase):
     def test_context_is_attached_to_its_row(self):
         contexts = [{"anchor": {"kind": "section"}}, None]
@@ -201,6 +230,16 @@ class JsonDocumentTest(unittest.TestCase):
 
 
 class OutputTest(unittest.TestCase):
+    def test_output_rows_renders_the_given_rows_without_fetching(self):
+        columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
+        with mock.patch.object(uprof_db, "fetch_typed") as fetched:
+            with mock.patch.object(uprof_db, "write_payload") as written:
+                uprof_db.output_rows(columns, types, rows, [("METRIC", "x")], True, None,
+                                     contexts=[{"anchor": {}}])
+
+        fetched.assert_not_called()
+        self.assertIn('"context"', written.call_args[0][0])
+
     def test_markdown_bytes_ignore_contexts(self):
         columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
         with mock.patch.object(uprof_db, "fetch_typed", return_value=(columns, types, rows)):

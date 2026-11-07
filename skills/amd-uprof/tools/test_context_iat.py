@@ -28,6 +28,16 @@ Import {
 }
 """
 
+ORDINAL_IMPORTS = """\
+Import {
+  Name: FOO.dll
+  ImportLookupTableRVA: 0x2030
+  ImportAddressTableRVA: 0x2038
+  Symbol:  (17)
+  Symbol: Named (0)
+}
+"""
+
 
 class ImportParseTest(unittest.TestCase):
     def test_slots_follow_symbol_order_and_the_iat_base(self):
@@ -63,6 +73,21 @@ class ImportParseTest(unittest.TestCase):
         imports = uprof_context.parse_imports(text, build)
 
         self.assertNotIn(0x2088, imports)
+
+    def test_an_ordinal_only_symbol_is_named_by_its_ordinal(self):
+        build = uprof_context.BuildIdentity(0x140000000, 0, 0x100, 0x20B)
+
+        imports = uprof_context.parse_imports(ORDINAL_IMPORTS, build)
+
+        self.assertEqual(imports[0x2038].name, "#17")
+
+    def test_an_ordinal_only_symbol_still_consumes_its_slot(self):
+        build = uprof_context.BuildIdentity(0x140000000, 0, 0x100, 0x20B)
+
+        imports = uprof_context.parse_imports(ORDINAL_IMPORTS, build)
+
+        self.assertEqual(imports[0x2040].name, "Named")
+        self.assertEqual(imports[0x2038].slot_rva, 0x2038)
 
 
 class IatCallTest(unittest.TestCase):

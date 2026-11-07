@@ -49,7 +49,7 @@ _DELAY_IMPORT_BLOCK = re.compile(r"^\s*DelayImport\s*\{\s*$")
 _IMPORT_END = re.compile(r"^\s*\}\s*$")
 _IMPORT_DLL = re.compile(r"^\s*Name:\s*(\S+)\s*$")
 _IMPORT_IAT_RVA = re.compile(r"^\s*ImportAddressTableRVA:\s*(0x[0-9A-Fa-f]+)\s*$")
-_IMPORT_SYMBOL = re.compile(r"^\s*Symbol:\s*(\S+)(?:\s+\([^)]*\))?\s*$")
+_IMPORT_SYMBOL = re.compile(r"^\s*Symbol:\s*(\([^)]*\)|\S+)(?:\s+\([^)]*\))?\s*$")
 _RIP_OPERAND = re.compile(r"^\*(?:(-?0x[0-9A-Fa-f]+))?\(%rip\)$")
 _ABSOLUTE_OPERAND = re.compile(r"^\*(-?0x[0-9A-Fa-f]+)$")
 _CALL_MNEMONICS: Final = frozenset({"call", "callq", "calll", "callw"})
@@ -306,9 +306,19 @@ def parse_imports(text: str, build: BuildIdentity) -> dict[int, ImportSlot]:
             iat_rva = int(match.group(1), 16)
         elif (match := _IMPORT_SYMBOL.match(line)) and dll and iat_rva is not None:
             slot_rva = iat_rva + index * build.slot_width
-            imports[slot_rva] = ImportSlot(slot_rva, dll, match.group(1))
+            imports[slot_rva] = ImportSlot(slot_rva, dll, _import_name(match.group(1)))
             index += 1
     return imports
+
+
+def _import_name(token: str) -> str:
+    """A symbol name; an ordinal-only import (`Symbol: (17)`) becomes `#17`."""
+    if not (token.startswith("(") and token.endswith(")")):
+        return token
+    ordinal = token[1:-1].strip()
+    if ordinal.lower().startswith("ordinal "):
+        ordinal = ordinal[len("ordinal "):].strip()
+    return f"#{ordinal}"
 
 
 def resolve_iat_call(instruction: DecodedInstruction, image_base: int,

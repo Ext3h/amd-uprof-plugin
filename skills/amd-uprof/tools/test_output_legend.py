@@ -32,7 +32,7 @@ TIME_MEANING = ("time share estimated from the gaps between per-sample timestamp
                 "is charged to the ending sample; the first sample per CPU is ignored, no gap "
                 "before it; NULL sorts last)")
 TAG_MEANING = ("share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to "
-               "retirement, queue/stalls included; clipped at 131070); a total, "
+               "retirement, queue/stalls included; 16-bit counter clipped at 65535); a total, "
                "not per-op latency")
 CAVEAT = ("a raw share cannot separate a cheap operation run often from an expensive one run "
           "rarely")
@@ -317,6 +317,45 @@ class OutputLegendTest(unittest.TestCase):
                                                 newline="\n")
         return session
 
+    def _write_tag_clip(self):
+        """Two processes, one sample per CPU: A's tag exceeds the 16-bit field maximum."""
+        session = self.root / "tag-clip"
+        session.mkdir()
+        meta = {
+            "translateCommand": "AMDuProfCLI.exe translate -i session --ascii ibsop-event-dump",
+            "collection": {
+                "schedule": {"elapsed": 5},
+                "events": {"ibsEvents": {"op": True, "fetch": False, "opInterval": 1_000_000,
+                                         "opCycleCount": False}},
+                "target": {"systemWide": True},
+            },
+            "auxiliary": {"ibsOpSampling": True},
+        }
+        (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+        connection = duckdb.connect(str(session / "cpu.db"))
+        try:
+            connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
+            connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
+            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
+                               "name VARCHAR)")
+            connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+                               "functionId UBIGINT, moduleRVA UBIGINT)")
+            connection.execute("INSERT INTO Process VALUES (100, 'a.exe'), (200, 'b.exe'), "
+                               "(300, 'c.exe'), (400, 'd.exe')")
+        finally:
+            connection.close()
+        rows = [
+            "DeltaTick,CPU_Number,TID,PID,Offset,ModuleName,IbsTagToRetCtr",
+            dump_row(4_999_999, 0, 100, "a.exe", tag=200000),
+            dump_row(4_999_999, 1, 200, "b.exe", tag=1000),
+            # Not unsigned decimal integers, so NULL cells excluded from the denominator.
+            dump_row(4_999_999, 2, 300, "c.exe", tag=-4),
+            dump_row(4_999_999, 3, 400, "d.exe", tag="1e5"),
+        ]
+        (session / "IbsOpDump.csv").write_text("\n".join(rows) + "\n", encoding="utf-8",
+                                                newline="\n")
+        return session
+
     def profile(self, session, *extra):
         result = subprocess.run(
             [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile",
@@ -525,6 +564,20 @@ class OutputLegendTest(unittest.TestCase):
         row = next(line for line in output.splitlines()
                    if line.startswith("TIME_SHARE: "))
         self.assertIn("with few samples the share is coarse, so check sample_share", row)
+
+    def test_tag_clip_at_field_maximum(self):
+        session = self._write_tag_clip()
+        document = json.loads(self.profile(session, "--top", "all", "--json"))
+        rows = {row["process"]: row for row in document["rows"]}
+        self.assertAlmostEqual(rows["a.exe"]["tag_to_retire_share"], 65535 / 66535, places=12)
+        self.assertAlmostEqual(rows["b.exe"]["tag_to_retire_share"], 1000 / 66535, places=12)
+        self.assertIsNone(rows["c.exe"]["tag_to_retire_share"])
+        self.assertIsNone(rows["d.exe"]["tag_to_retire_share"])
+        self.assertEqual(document["legend"]["columns"]["tag_to_retire_share"], TAG_MEANING)
+        output = self.profile(session)
+        self.assertIn("clipped at 65535", output)
+        self.assertNotIn("131070", output)
+        self.assertNotIn("131070", json.dumps(document))
 
     def test_all_zero_tag_column_is_null_not_one(self):
         session = self.session("ibs-op-zero-tag")

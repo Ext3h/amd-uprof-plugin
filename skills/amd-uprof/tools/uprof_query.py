@@ -137,7 +137,7 @@ _TIME_SHARE_MEANING: Final = (
     "the ending sample; the first sample per CPU is ignored, no gap before it; NULL sorts last)")
 _TAG_SHARE_MEANING: Final = (
     "share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, "
-    "queue/stalls included; clipped at 131070); a total, not per-op latency")
+    "queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency")
 # Only for frequency shares: those count sampled operations, not fixed work per sample.
 _SAMPLE_CAVEAT: Final = ("a raw share cannot separate a cheap operation run often from an "
                          "expensive one run rarely")
@@ -343,8 +343,8 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
             elif tag_available:
                 fields.append(("TAG_TO_RETIRE_SHARE", "share of tag-to-retire cycles summed "
                                                       "over sampled ops (AMD tag at dispatch to "
-                                                      "retirement, queue/stalls included; "
-                                                      "clipped at 131070); a total, not "
+                                                      "retirement, queue/stalls included; 16-bit "
+                                                      "counter clipped at 65535); a total, not "
                                                       "per-op latency: a higher share means more "
                                                       "total tag-to-retire cycles, not a higher "
                                                       "per-op cost"))

@@ -137,13 +137,13 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
                           "-- sample shares: core-cycle share (fixed cycles per sample), not "
                           "wall time, not a per-op cost; tag-to-retire: share of tag-to-retire "
                           "cycles summed over sampled ops (dispatch tag to retirement, "
-                          "queue/stalls included), clipped at 131070")
+                          "queue/stalls included), clipped at 65535")
             else:
                 metric = (f"METRIC: IBS OP (IBS_ALL_OPS {event}, op-count interval {interval}) "
                           "-- sample shares: dispatched-op frequency share (fixed dispatched "
                           "ops per sample), not a per-op cost; tag-to-retire: share of "
                           "tag-to-retire cycles summed over sampled ops (dispatch tag to "
-                          "retirement, queue/stalls included), clipped at 131070")
+                          "retirement, queue/stalls included), clipped at 65535")
             return Sampler(ibs_dump_kind="ibsop-event-dump", metric=metric, interval=interval,
                            interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops",
                            os_requested=os_mode is not None, os_mode=os_mode)

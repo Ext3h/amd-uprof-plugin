@@ -648,7 +648,7 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
             entry["import"] = {"dll": slot.dll, "name": slot.name,
                                "slot_rva": _hex(slot.slot_rva)}
         ibs_labels = ibs.get(instruction.rva)
-        if ibs_labels and len(ibs_labels) > 1:
+        if ibs_labels:
             entry["ibs"] = ibs_labels
         entries.append(entry)
     return {"anchor": anchor_json, "build": build_json, "instructions": entries}

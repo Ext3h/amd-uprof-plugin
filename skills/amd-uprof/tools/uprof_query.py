@@ -261,9 +261,13 @@ def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: st
             or time_start != "0" or time_end != _ALL_NS)
 
 
-def _dump_sanity(connection: object, has_dump: bool,
-                 scope_filtered: bool) -> tuple[str | None, int]:
-    """The sanity message and the dump's non-null IbsTagToRetCtr value count."""
+def _dump_sanity(connection: object, has_dump: bool, scope_filtered: bool,
+                 system_wide: bool) -> tuple[str | None, int]:
+    """The sanity message and the dump's non-null IbsTagToRetCtr value count.
+
+    v_scope_sanity is only read for a system-wide capture: an attached one yields no scoped
+    verdict, and querying it would scan the dump for nothing.
+    """
     if not has_dump:
         return None, 0
     rows = connection.sql("SELECT message, tag_values FROM v_dump_sanity").fetchall()
@@ -271,7 +275,7 @@ def _dump_sanity(connection: object, has_dump: bool,
         return None, 0
     message = rows[0][0] or None
     tag_values = int(rows[0][1] or 0)
-    if scope_filtered:
+    if scope_filtered and system_wide:
         scoped = connection.sql("SELECT message FROM v_scope_sanity").fetchall()
         if scoped and scoped[0][0]:
             message = f"{message}; {scoped[0][0]}" if message else scoped[0][0]
@@ -325,6 +329,7 @@ def run_query_command(args: argparse.Namespace) -> None:
     top = _top_value(args.top)
     time_start, time_end = _time_range(args)
     sampler = uprof_session.derive_sampler(session)
+    system_wide = uprof_session.system_wide(session)
     if sampler.pmc:
         if args.time_filter:
             raise util.UprofError(
@@ -360,7 +365,7 @@ def run_query_command(args: argparse.Namespace) -> None:
 
             sanity_message, tag_values = _dump_sanity(
                 connection, dump is not None,
-                _scope_filter_active(args, time_start, time_end))
+                _scope_filter_active(args, time_start, time_end), system_wide)
             tag_rows = connection.sql("SELECT getvariable('has_tag')").fetchall()
             has_tag = bool(tag_rows and tag_rows[0][0])
             tag_available = (sampler.ibs_dump_kind == "ibsop-event-dump" and has_tag

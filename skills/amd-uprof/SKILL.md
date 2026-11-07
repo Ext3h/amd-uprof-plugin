@@ -139,9 +139,10 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 `profile --by instruction --json` adds a `context` object to the first 20 instruction rows. Markdown output is unchanged. The block is built only from LLVM answers and the capture; when no safe answer exists the row carries an omission object instead of guessed data.
 
 - **Anchor.** Decode forward from the nearest `v_public_starts` entry at or below the hot RVA inside its executable PE section; otherwise from the section start. The distance cap is 1 MiB. The hot RVA must appear as an instruction start; there is no backward decode.
-- **Window.** Up to 32 decoded instructions before the hot RVA and up to 32 after it, plus the hot instruction.
+- **Window.** Up to 32 decoded instructions before the hot RVA and up to 32 after it, plus the hot instruction. Decoding stops at the containing section's end.
 - **Share.** Each instruction's `samples` are raw samples at that RVA and `pct_samples` is the raw sample share against `v_scope_totals.total_samples`; it is never the gap-weighted time share.
-- **Annotations.** `symbol` is `llvm-symbolizer` frame 0 (`function`, `file`, `line`) and never an objdump nearest-symbol label. `import` names a `callq *IAT` target from `llvm-readobj --coff-imports`; unresolved or non-IAT targets stay raw. `ibs` aggregates the dump's whitelisted IBS OP fields per RVA and is absent for PMC and for columns the dump lacks.
+- **Annotations.** `symbol` is `llvm-symbolizer` frame 0 (`function`, `file`, `line`) and never an objdump nearest-symbol label; it uses the PDB that symbolization accepted for the module. `import` names a `callq *IAT` target from `llvm-readobj --coff-imports`; unresolved or non-IAT targets stay raw, and an ordinal-only import is named `#N`. `ibs` aggregates the dump's whitelisted IBS OP fields per RVA over the same PID, image and time window as the row's samples; it is absent for PMC and for dumps without whitelisted columns, and `{"samples": n}` alone is a valid summary.
+- **Cost.** Each anchor is decoded once for all rows under it, and samples, symbols and IBS are aggregated once per module.
 - **Build identity.** The PE `ImageBase`, `TimeDateStamp` and `CheckSum` are read from the module and the `CheckSum` must equal the capture's `Module.checksum`; otherwise the context is omitted.
 
 ```json
@@ -171,6 +172,7 @@ Omission: `{"omitted": true, "reason": "<code>", "detail": "<text>"}`. `detail` 
 | `objdump_missing`, `objdump_failed` | `llvm-objdump` absent, or it produced no instructions |
 | `build_unverified` | the capture or the module records no usable PE checksum |
 | `build_mismatch` | the on-disk module checksum differs from the capture's |
+| `context_failed` | an LLVM tool timed out or a scoped query failed while building this block |
 | `row_cap` | this row is past the 20-row context cap |
 
 The aggregate `<other instructions>` row carries no `context`.
@@ -229,4 +231,4 @@ Run `uprof.py tools` first; install only when a required path prints `MISSING`. 
 
 ## References
 
-`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, the 15 SQL views, the `tag_to_retire_share` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).
+`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, the 16 SQL views, the `tag_to_retire_share` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).

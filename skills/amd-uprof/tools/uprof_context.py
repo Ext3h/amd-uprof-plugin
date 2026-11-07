@@ -10,8 +10,11 @@ reported as unsupported rather than disassembled with different rules.
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 from uprof_native import find_sibling, find_symbolizer, run
@@ -21,6 +24,13 @@ ANCHOR_DISTANCE_CAP: Final = 1 << 20
 WINDOW_BEFORE: Final = 32
 WINDOW_AFTER: Final = 32
 CONTEXT_ROW_CAP: Final = 20
+IBS_FIELDS: Final = ("DataSrc", "CacheHitSt", "IbsDcMiss", "IbsOpBrnMisp",
+                     "IbsDcLockedOp", "IbsOpMemWidth", "IbsTagToRetCtr")
+IBS_DISTRIBUTIONS: Final = frozenset({"DataSrc", "CacheHitSt", "IbsOpMemWidth"})
+IBS_FLAGS: Final = frozenset({"IbsDcMiss", "IbsOpBrnMisp", "IbsDcLockedOp"})
+IBS_LATENCY: Final = "IbsTagToRetCtr"
+IBS_TAG_MAX: Final = 131070
+_IBS_TAG_INT: Final = r"""regexp_full_match("IbsTagToRetCtr", '\s*[0-9]+\s*')"""
 
 _IMAGE_BASE = re.compile(r"^\s*ImageBase:\s*(0x[0-9A-Fa-f]+)\s*$")
 _CHECKSUM = re.compile(r"^\s*CheckSum:\s*(0x[0-9A-Fa-f]+)\s*$")
@@ -132,6 +142,15 @@ class ImportSlot:
     slot_rva: int
     dll: str
     name: str
+
+
+@dataclass(frozen=True)
+class SymbolInfo:
+    """One address's innermost symbolizer frame; file and line stay None when absent."""
+
+    function: str | None
+    file: str | None
+    line: int | None
 
 
 def _as_int(value: object) -> int | None:
@@ -330,6 +349,140 @@ def load_imports(module_path: str, build: BuildIdentity,
                               tail_lines((completed.stdout or "") + "\n" +
                                          (completed.stderr or "")))
     return parse_imports(completed.stdout or "", build)
+
+
+# ------------------------------------------------------------------ symbolizer names
+
+def parse_symbolizer_json(text: str) -> dict[int, SymbolInfo]:
+    """Innermost executed frame per module-relative address from llvm-symbolizer JSON lines."""
+    symbols: dict[int, SymbolInfo] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        address = _as_int(record.get("Address"))
+        frames = record.get("Symbol")
+        if address is None or not isinstance(frames, list) or not frames:
+            continue
+        frame = frames[0]
+        if not isinstance(frame, dict):
+            continue
+        function = frame.get("FunctionName") or None
+        file = frame.get("FileName") or None
+        line_number = _as_int(frame.get("Line")) or None
+        if function or file or line_number is not None:
+            symbols[address] = SymbolInfo(function, file, line_number)
+    return symbols
+
+
+def symbolize_rvas(module_path: str, rvas: list[int], pdb: str | Path | None = None,
+                   symbolizer: str | None = None) -> dict[int, SymbolInfo]:
+    """Symbolize module-relative addresses; a tool failure is an omission, not a guessed name."""
+    addresses = sorted({int(rva) for rva in rvas})
+    if not addresses:
+        return {}
+    found = symbolizer if symbolizer else find_symbolizer()
+    if not found:
+        raise ContextOmission("symbolizer_missing", "llvm-symbolizer not found")
+    command = [str(found), f"--obj={module_path}"]
+    if pdb:
+        command.append(f"--pdb={pdb}")
+    command += ["--relative-address", "--functions=linkage", "--inlines",
+                "--output-style=JSON"]
+    input_text = "\n".join(f"0x{rva:X}" for rva in addresses) + "\n"
+    completed = run(command, input_text=input_text)
+    if completed.returncode != 0 and not (completed.stdout or "").strip():
+        raise ContextOmission("symbolizer_failed",
+                              tail_lines((completed.stdout or "") + "\n" +
+                                         (completed.stderr or "")))
+    return parse_symbolizer_json(completed.stdout or "")
+
+
+# ------------------------------------------------------------------ IBS hardware labels
+
+def present_ibs_fields(columns: Iterable[str]) -> tuple[str, ...]:
+    """The whitelisted IBS fields the dump carries, in a fixed order."""
+    present = set(columns)
+    return tuple(field for field in IBS_FIELDS if field in present)
+
+
+def ibs_expression(field: str) -> list[str]:
+    """SELECT expressions for one field: a value histogram, a nonzero count or latency stats.
+
+    The field name itself is the label; nothing maps the hardware value to a semantic role.
+    """
+    if field in IBS_DISTRIBUTIONS:
+        return [f'histogram("{field}") AS "{field}"']
+    if field in IBS_FLAGS:
+        return [f'count(*) FILTER (WHERE TRY_CAST("{field}" AS BIGINT) <> 0) AS "{field}"']
+    if field == IBS_LATENCY:
+        clipped = (f'CASE WHEN {_IBS_TAG_INT} '
+                   f'THEN LEAST(TRY_CAST("{field}" AS BIGINT), {IBS_TAG_MAX}) END')
+        return [f'count(*) FILTER (WHERE {_IBS_TAG_INT}) AS "{field}_samples"',
+                f'sum({clipped}) AS "{field}_sum"',
+                f'max({clipped}) AS "{field}_max"']
+    raise ValueError(f"not a whitelisted IBS field: {field}")
+
+
+def _code_key(value: str) -> tuple[int, int, str]:
+    try:
+        return (0, int(value, 0), value)
+    except ValueError:
+        return (1, 0, value)
+
+
+def ibs_summary(record: dict[str, object], fields: tuple[str, ...]) -> dict[str, object]:
+    """Per-RVA IBS labels keyed by field name; fields the capture lacks are omitted."""
+    samples = int(record.get("samples") or 0)
+    summary: dict[str, object] = {"samples": samples}
+    for field in fields:
+        if field in IBS_DISTRIBUTIONS:
+            counts = record.get(field)
+            if isinstance(counts, dict) and counts:
+                summary[field] = {
+                    str(code): int(count) for code, count in
+                    sorted(counts.items(), key=lambda item: _code_key(str(item[0])))}
+        elif field in IBS_FLAGS:
+            summary[field] = {"set": int(record.get(field) or 0), "of": samples}
+        elif field == IBS_LATENCY:
+            observed = int(record.get(f"{field}_samples") or 0)
+            if observed:
+                summary[field] = {"samples": observed,
+                                  "sum": int(record.get(f"{field}_sum") or 0),
+                                  "max": int(record.get(f"{field}_max") or 0)}
+    return summary
+
+
+def ibs_rows(connection: object, module_name: str,
+             rvas: list[int]) -> dict[int, dict[str, object]]:
+    """Aggregate the dump's IBS fields per requested RVA; empty when there is no IBS dump."""
+    addresses = sorted({int(rva) for rva in rvas})
+    if not addresses:
+        return {}
+    dump = connection.execute("SELECT getvariable('uprof_ibs_dump')").fetchone()
+    if not dump or not dump[0]:
+        return {}
+    columns = {str(row[0]) for row in connection.execute(
+        "DESCRIBE SELECT * FROM read_csv(getvariable('uprof_ibs_dump'), "
+        "header = true, all_varchar = true)").fetchall()}
+    fields = present_ibs_fields(columns)
+    if not fields:
+        return {}
+    expressions = [expression for field in fields for expression in ibs_expression(field)]
+    sql = ('SELECT CAST("Offset" AS BIGINT) AS rva, count(*) AS samples, '
+           + ", ".join(expressions)
+           + " FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)"
+             " WHERE module_key(ModuleName) = CAST(? AS VARCHAR)"
+             ' AND TRY_CAST("Offset" AS BIGINT) IN (SELECT * FROM unnest(?))'
+             " GROUP BY rva")
+    rows = connection.execute(sql, [module_name, addresses]).fetchall()
+    names = [str(column[0]) for column in connection.description]
+    return {int(row[0]): ibs_summary(dict(zip(names, row)), fields) for row in rows}
 
 
 # ------------------------------------------------------------------ disassembly window

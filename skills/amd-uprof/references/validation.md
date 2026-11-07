@@ -231,8 +231,24 @@ Anchoring, verified with `uprof.py anchor`: attached BEGIN −0.700 s, system-wi
 system-wide END +40.182 s (the capture starts during the warm-up pass, so the loop's BEGIN precedes
 it by the attach latency).
 
-Achieved rate on the same captures: 13.78, 8.02, 6.62, 4.68 and 1.50 samples/s per CPU against a
-requested 1 ms interval (ideal 1000/s), so every capture prints the below-10% WARN.
+Achieved rate on the same captures, rerun with the busiest-context check. The per-CPU average
+divides by all 16 dump CPUs, so idle CPUs dilute it; the busiest context is a CPU for a
+system-wide capture and a TID for the attached one:
+
+| capture | per-CPU average | busiest context | active contexts |
+|---|---:|---:|---:|
+| `loop-2mib-swwide` | 13.78/s | CPU 1,110/s (median gap 901 us) | 12 |
+| `loop-16mib-swwide` | 8.02/s | CPU 1,067/s (median 937 us) | 10 |
+| `loop-16mib-swwide2` | 6.62/s | CPU 557/s (median 1.8 ms) | 10 |
+| `loop-2mib-nohash` | 4.68/s | CPU 722/s (median 1.39 ms) | 7 |
+| `loop-2mib-ibs` | 1.50/s | thread 409/s (median 2.44 ms) | 1 |
+
+None prints the below-10% `WARN`. Under the previous whole-capture average all five did, although
+every busiest context stayed within 10x of the requested 1 ms interval; the attached capture's
+denominator even included CPUs it never ran on (1 active context, 16 CPUs in the dump). The
+attached thread's running bursts were about 0.9 ms apart (about 1,070/s); the all-gap median of
+2.44 ms includes descheduling gaps below the 10x cut and is therefore a lower bound on delivered
+cadence.
 
 ## Achieved-rate and command-surface evidence (2026-11-07)
 
@@ -242,19 +258,21 @@ the rates listed above.
 
 PMC, `knee-2mib-x`, `profile --by process --top 1`:
 
-`ACHIEVED: 181982 samples, 30.058 s, 16 CPUs, 378.40/s per CPU (requested 4700000 cycles at 4700 MHz = 1 ms; ideal 1,000/s per CPU)`
+`ACHIEVED: 181982 samples, 30.058 s, 16 CPUs, 378.40/s per CPU (requested 4700000 cycles at 4700 MHz = 1 ms; ideal 1,000/s per CPU); busiest core 536.16/s; 16 active cores`
 
 `UnifiedSampleSeries` holds 175,260 rows over 16 `coreId` values; the event column sums to 181,982
 samples. The same line appears with `--image '%fold_busy%'`, whose scope matches nothing (the
 separate `WARNING: no samples in the selected scope` remains), because the count is capture-level.
-378.40/s is above 10% of the 1,000/s ideal, so this capture does not print the below-10% warning.
+PMC has no per-sample timestamps, so the busiest core's 536.16/s is the delivered cadence: the
+busiest context's samples divided by the capture window.
 
 Translate, on `loop-2mib-ibs` to a new temporary copy:
 
 `translate --session <loop-2mib-ibs> --out-dir <new copy> --ascii ibsop-event-dump` ends with
-`ACHIEVED: 954 samples, 39.682 s, 16 CPUs, 1.50/s per CPU (requested 4700000 cycles at 4700 MHz = 1 ms; ideal 1,000/s per CPU); WARN: achieved sample rate is below 10% of the requested interval`.
+`ACHIEVED: 954 samples, 39.682 s, 16 CPUs, 1.50/s per CPU (requested 4700000 cycles at 4700 MHz = 1 ms; ideal 1,000/s per CPU); busiest thread 409/s (median gap 2.44 ms); 1 active thread`.
 Without `--ascii` it prints `ACHIEVED: reported at profile time (translate wrote no dump without
---ascii)`.
+--ascii)`. The line is computed by the same `dump_cadence`/`achieved_summary` functions the
+`profile` run above used on the identical 954-sample dump.
 
 Command surface, recorded 2026-11-07:
 

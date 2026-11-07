@@ -11,13 +11,15 @@ import ctypes
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Final
 
-from uprof_session import achieved_summary, derive_sampler, read_meta
+from uprof_session import (ContextCadence, achieved_summary, derive_sampler, read_meta,
+                           run_gap_limit_ns, system_wide)
 from uprof_util import (DUMP_FILENAMES, UprofError, absolute, copy_session, parse_time_filter,
                         tail_lines)
 
@@ -305,26 +307,52 @@ def translate_command(uprof: str | Path, session: str | Path, *,
     return command
 
 
-def dump_shape(path: Path) -> tuple[int, int]:
-    """Sample rows and distinct CPU_Number values in an ASCII dump, streamed without a database."""
+def dump_cadence(path: Path, context_key: str = "CPU_Number",
+                 gap_limit_ns: float | None = None
+                 ) -> tuple[int, int, list[ContextCadence]]:
+    """Sample rows, distinct CPU_Number values and per-context cadence in an ASCII dump.
+
+    context_key is CPU_Number for a system-wide capture and TID for an attached one; a dump
+    without that column falls back to CPU_Number. Per-context DeltaTicks are held to take an
+    exact median, so memory grows with the dump. gap_limit_ns drops gaps above it, which are
+    time the context was not sampling continuously; None keeps every gap.
+    """
     samples = 0
     cpus: set[str] = set()
+    ticks: dict[str, list[int]] = {}
     with open(path, "r", encoding="utf-8", errors="replace", newline="") as handle:
         reader = csv.reader(handle)
         header = next(reader, None)
         if header is None:
-            return 0, 0
+            return 0, 0, []
         try:
             cpu_index = header.index("CPU_Number")
+            delta_index = header.index("DeltaTick")
         except ValueError:
-            return 0, 0
+            return 0, 0, []
+        key_index = header.index(context_key) if context_key in header else cpu_index
         for row in reader:
             if not row:
                 continue
             samples += 1
             if len(row) > cpu_index:
                 cpus.add(row[cpu_index])
-    return samples, len(cpus)
+            try:
+                tick = int(row[delta_index])
+            except (IndexError, ValueError):
+                continue
+            key = row[key_index] if len(row) > key_index else "?"
+            ticks.setdefault(key, []).append(tick)
+    contexts: list[ContextCadence] = []
+    for values in ticks.values():
+        values.sort()
+        gaps = [later - earlier for earlier, later in zip(values, values[1:])]
+        if gap_limit_ns is not None:
+            gaps = [gap for gap in gaps if gap <= gap_limit_ns]
+        contexts.append(ContextCadence(
+            samples=len(values),
+            median_gap_ns=statistics.median(gaps) if gaps else None))
+    return samples, len(cpus), contexts
 
 
 def _dump_window_s(session: Path, time_filter: str | None) -> float | None:
@@ -395,9 +423,12 @@ def translate(session_dir: Path | str, out_dir: Path | str,
             raise UprofError(f"translate --ascii {ascii_kind} did not produce "
                              f"{DUMP_FILENAMES[ascii_kind]} in {out}")
         print(f"ASCII_DUMP={dump}")
-        samples, cpus = dump_shape(dump)
         sampler = derive_sampler(out)
+        wide = system_wide(out)
+        label = "CPU" if wide else "thread"
+        samples, cpus, contexts = dump_cadence(
+            dump, "CPU_Number" if wide else "TID", run_gap_limit_ns(sampler))
         window_s = _dump_window_s(out, time_filter)
-        print(f"ACHIEVED: {achieved_summary(samples, window_s, cpus, sampler)}")
+        print(f"ACHIEVED: {achieved_summary(samples, window_s, cpus, sampler, contexts, label)}")
     else:
         print("ACHIEVED: reported at profile time (translate wrote no dump without --ascii)")

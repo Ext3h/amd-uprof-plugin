@@ -38,6 +38,10 @@ _CHECKSUM = re.compile(r"^\s*CheckSum:\s*(0x[0-9A-Fa-f]+)\s*$")
 _SIZE_OF_IMAGE = re.compile(r"^\s*SizeOfImage:\s*(\d+)\s*$")
 _MAGIC = re.compile(r"^\s*Magic:\s*(0x[0-9A-Fa-f]+)\s*$")
 _DATE_STAMP = re.compile(r"^\s*TimeDateStamp:.*\((0x[0-9A-Fa-f]+)\)\s*$")
+_UNWIND_START = re.compile(r"^\s*StartAddress:\s*\(?(0x[0-9A-Fa-f]+)\)?\s*$")
+_EXPORT_BLOCK = re.compile(r"^\s*Export\s*\{\s*$")
+_EXPORT_RVA = re.compile(r"^\s*RVA:\s*(0x[0-9A-Fa-f]+)\s*$")
+_EXPORT_NAME = re.compile(r"^\s*Name:\s*(.*?)\s*$")
 _SECTION_NAME = re.compile(r"^\s*Name:\s*(\S+)(?:\s+\(([0-9A-Fa-f ]+)\))?\s*$")
 _SECTION_VIRTUAL_SIZE = re.compile(r"^\s*VirtualSize:\s*(0x[0-9A-Fa-f]+)\s*$")
 _SECTION_VIRTUAL_ADDRESS = re.compile(r"^\s*VirtualAddress:\s*(0x[0-9A-Fa-f]+)\s*$")
@@ -139,7 +143,7 @@ class VerifiedBuild:
 class Anchor:
     """The instruction boundary a window is decoded forward from."""
 
-    kind: str          # "export" or "section"
+    kind: str          # "export", "pdb_public", "pdata" or "section"
     rva: int
     name: str | None = None
 
@@ -207,6 +211,49 @@ def parse_file_headers(text: str) -> BuildIdentity:
                          size_of_image=size_of_image or 0)
 
 
+def parse_unwind_starts(text: str, image_base: int) -> list[tuple[int, str | None]]:
+    """Runtime-function starts from `llvm-readobj --unwind`, as module-relative addresses.
+
+    readobj prints StartAddress as a virtual address; chained fragments are starts too, and the
+    result is sorted and deduplicated. pdata rows carry no names.
+    """
+    starts = set()
+    for line in text.splitlines():
+        match = _UNWIND_START.match(line)
+        if match:
+            rva = int(match.group(1), 16) - image_base
+            if rva >= 0:
+                starts.add(rva)
+    return [(rva, None) for rva in sorted(starts)]
+
+
+def parse_exports(text: str) -> list[tuple[int, str | None]]:
+    """Named and ordinal exports from `llvm-readobj --coff-exports` as (RVA, name).
+
+    Exports are listed in ordinal order and the output keeps them that way; an export without a
+    name keeps its RVA with name None.
+    """
+    exports: list[tuple[int, str | None]] = []
+    in_export = False
+    rva: int | None = None
+    name: str | None = None
+    for line in text.splitlines():
+        if _EXPORT_BLOCK.match(line):
+            in_export, rva, name = True, None, None
+            continue
+        if not in_export:
+            continue
+        if re.match(r"^\s*\}\s*$", line):
+            if rva is not None:
+                exports.append((rva, name))
+            in_export = False
+        elif rva is None and (match := _EXPORT_RVA.match(line)):
+            rva = int(match.group(1), 16)
+        elif name is None and (match := _EXPORT_NAME.match(line)):
+            name = match.group(1) or None
+    return exports
+
+
 def parse_sections(text: str) -> list[PeSection]:
     """Read section RVAs and sizes from `llvm-readobj --sections`."""
     sections: list[PeSection] = []
@@ -263,17 +310,36 @@ def require_code_section(sections: list[PeSection], rva: int) -> PeSection:
     return section
 
 
+_ANCHOR_PRIORITY: Final = {"export": 0, "pdb_public": 1, "pdata": 2}
+
+
 def select_anchor(hot_rva: int, sections: list[PeSection],
                   public_starts: list[tuple[int, str | None]],
+                  pdata_starts: Sequence[tuple[int, str | None]] = (),
+                  export_starts: Sequence[tuple[int, str | None]] = (),
                   cap: int = ANCHOR_DISTANCE_CAP) -> Anchor:
-    """Nearest public start at or below hot_rva inside its code section, else the section start."""
+    """Nearest safe start at or below hot_rva inside its code section, else the section start.
+
+    Safe starts come from the PE export table, PDB publics and .pdata runtime functions. The
+    nearest one wins; at the same RVA an export is preferred, then a PDB public, then a .pdata
+    start, so the block reports the most specific name available. The anchor kind names the
+    source that supplied the start.
+    """
     section = require_code_section(sections, hot_rva)
-    candidates = [(rva, name) for rva, name in public_starts
-                  if section.start <= rva <= hot_rva]
-    if candidates:
-        rva, name = max(candidates, key=lambda item: item[0])
+    sources = (("export", export_starts), ("pdb_public", public_starts),
+               ("pdata", pdata_starts))
+    by_rva: dict[int, tuple[int, str, str | None]] = {}
+    for kind, starts in sources:
+        for rva, name in starts:
+            if section.start <= rva <= hot_rva:
+                current = by_rva.get(rva)
+                if current is None or _ANCHOR_PRIORITY[kind] < current[0]:
+                    by_rva[rva] = (_ANCHOR_PRIORITY[kind], kind, name)
+    if by_rva:
+        rva = max(by_rva)
+        _, kind, name = by_rva[rva]
         if hot_rva - rva <= cap:
-            return Anchor("export", rva, name)
+            return Anchor(kind, rva, name)
     if hot_rva - section.start <= cap:
         return Anchor("section", section.start, None)
     raise ContextOmission(
@@ -715,6 +781,8 @@ class _ModuleState:
     sections: list[PeSection]
     imports: dict[int, ImportSlot]
     public_starts: list[tuple[int, str | None]]
+    pdata_starts: list[tuple[int, str | None]]
+    export_starts: list[tuple[int, str | None]]
     pdb: str | None
     symbols: dict[int, SymbolInfo] = field(default_factory=dict)
     symbol_attempted: set[int] = field(default_factory=set)
@@ -772,8 +840,8 @@ class _ContextBuilder:
         if not readobj:
             raise ContextOmission("readobj_missing",
                                   "llvm-readobj not found beside llvm-symbolizer or on PATH")
-        completed = run([readobj, "--file-headers", "--sections", module_path],
-                        timeout=CONTEXT_TOOL_TIMEOUT)
+        completed = run([readobj, "--file-headers", "--sections", "--unwind",
+                         "--coff-exports", module_path], timeout=CONTEXT_TOOL_TIMEOUT)
         if completed.returncode != 0:
             raise ContextOmission("readobj_failed",
                                   tail_lines((completed.stdout or "") + "\n" +
@@ -795,7 +863,8 @@ class _ContextBuilder:
             [module_name]).fetchone()
         pdb = pdb_row[0] if pdb_row else None
         return _ModuleState(module_path, verified, sections, imports, public_starts,
-                            str(pdb) if pdb else None)
+                            parse_unwind_starts(text, build.image_base),
+                            parse_exports(text), str(pdb) if pdb else None)
 
     def _samples(self, module_name: str, rvas: list[int]) -> dict[int, int]:
         if not rvas:
@@ -906,7 +975,8 @@ def instruction_contexts(connection: object, columns: Sequence[str],
         hot_rva = int(str(rva_text), 0)
         try:
             state = builder._module(module_name)
-            anchor = select_anchor(hot_rva, state.sections, state.public_starts)
+            anchor = select_anchor(hot_rva, state.sections, state.public_starts,
+                                   state.pdata_starts, state.export_starts)
             section = require_code_section(state.sections, hot_rva)
         except ContextOmission as exc:
             contexts[index] = exc.as_json()

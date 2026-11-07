@@ -1,4 +1,4 @@
-"""Anchor selection: nearest public start, section fallback, distance cap, boundary check.
+"""Anchor selection: nearest function start from every PE source, section fallback, cap.
 
 Run from this directory: python -m unittest test_context_anchor -v
 """
@@ -22,6 +22,40 @@ ImageOptionalHeader {
   ImageBase: 0x140000000
   SizeOfImage: 8192
   CheckSum: 0x1234ABCD
+}
+"""
+
+UNWIND = """\
+UnwindInformation [
+  RuntimeFunction {
+    StartAddress: (0x140002010)
+    EndAddress: (0x140002036)
+    UnwindInfoAddress: (0x140003000)
+  }
+  RuntimeFunction {
+    StartAddress: (0x140001010)
+    EndAddress: (0x140001036)
+    UnwindInfoAddress: (0x140003040)
+    UnwindInfo {
+      Chained {
+        StartAddress: (0x140001000)
+        EndAddress: (0x140001010)
+      }
+    }
+  }
+]
+"""
+
+EXPORTS = """\
+Export {
+  Ordinal: 1
+  Name: fixture_entry
+  RVA: 0x1000
+}
+Export {
+  Ordinal: 2
+  Name:
+  RVA: 0x2010
 }
 """
 
@@ -86,31 +120,84 @@ class SectionsTest(unittest.TestCase):
         self.assertEqual((code.start, code.end), (0x1000, 0x1200))
 
 
+class WindingAndExportParseTest(unittest.TestCase):
+    def test_unwind_starts_are_module_relative_and_deduplicated(self):
+        starts = uprof_context.parse_unwind_starts(UNWIND, image_base=0x140000000)
+
+        self.assertEqual([rva for rva, _ in starts], [0x1000, 0x1010, 0x2010])
+
+    def test_unwind_without_runtime_functions_is_empty(self):
+        self.assertEqual(
+            uprof_context.parse_unwind_starts("UnwindInformation [\n]\n", 0x140000000), [])
+
+    def test_export_names_and_rvas_are_paired_per_block(self):
+        exports = uprof_context.parse_exports(EXPORTS)
+
+        self.assertEqual(exports, [(0x1000, "fixture_entry"), (0x2010, None)])
+
+    def test_export_without_a_name_keeps_its_rva(self):
+        self.assertEqual(uprof_context.parse_exports(EXPORTS)[1], (0x2010, None))
+
+
 class AnchorSelectionTest(unittest.TestCase):
     def setUp(self):
         self.sections = uprof_context.parse_sections(SECTIONS)
 
-    def test_nearest_public_start_at_or_below_wins(self):
+    def test_nearest_pdb_public_start_at_or_below_wins(self):
         anchor = uprof_context.select_anchor(
             0x1015, self.sections, [(0x1000, "entry"), (0x1010, "hot"), (0x1020, "after")])
 
-        self.assertEqual(anchor.kind, "export")
+        self.assertEqual(anchor.kind, "pdb_public")
         self.assertEqual(anchor.rva, 0x1010)
         self.assertEqual(anchor.name, "hot")
 
-    def test_public_start_above_the_hot_rva_is_ignored(self):
+    def test_pdata_start_is_used_and_labelled_pdata(self):
+        anchor = uprof_context.select_anchor(
+            0x1015, self.sections, [], pdata_starts=[(0x1000, None), (0x1010, None)])
+
+        self.assertEqual(anchor, uprof_context.Anchor("pdata", 0x1010))
+
+    def test_export_start_is_used_and_labelled_export(self):
+        anchor = uprof_context.select_anchor(
+            0x1015, self.sections, [], export_starts=[(0x1000, "entry"), (0x1010, "hot")])
+
+        self.assertEqual(anchor, uprof_context.Anchor("export", 0x1010, "hot"))
+
+    def test_nearest_source_wins_across_sources(self):
+        anchor = uprof_context.select_anchor(
+            0x1015, self.sections, [(0x1005, "public")],
+            pdata_starts=[(0x1010, None)], export_starts=[(0x1000, "export")])
+
+        self.assertEqual(anchor, uprof_context.Anchor("pdata", 0x1010))
+
+    def test_a_tie_prefers_the_named_export(self):
+        anchor = uprof_context.select_anchor(
+            0x1015, self.sections, [(0x1010, "public")],
+            pdata_starts=[(0x1010, None)], export_starts=[(0x1010, "export")])
+
+        self.assertEqual(anchor, uprof_context.Anchor("export", 0x1010, "export"))
+
+    def test_a_tie_without_an_export_prefers_the_pdb_public(self):
+        anchor = uprof_context.select_anchor(
+            0x1015, self.sections, [(0x1010, "public")], pdata_starts=[(0x1010, None)])
+
+        self.assertEqual(anchor, uprof_context.Anchor("pdb_public", 0x1010, "public"))
+
+    def test_start_above_the_hot_rva_is_ignored(self):
         anchor = uprof_context.select_anchor(0x1015, self.sections, [(0x1020, "after")])
 
         self.assertEqual(anchor.kind, "section")
         self.assertEqual(anchor.rva, 0x1000)
 
-    def test_public_start_in_another_section_is_ignored(self):
-        anchor = uprof_context.select_anchor(0x1010, self.sections, [(0x3000, "data")])
+    def test_start_in_another_section_is_ignored(self):
+        anchor = uprof_context.select_anchor(
+            0x1010, self.sections, [(0x3000, "data")],
+            pdata_starts=[(0x3000, None)], export_starts=[(0x3000, "data")])
 
         self.assertEqual(anchor.kind, "section")
         self.assertEqual(anchor.rva, 0x1000)
 
-    def test_no_public_start_falls_back_to_the_code_section_start(self):
+    def test_no_safe_start_falls_back_to_the_code_section_start(self):
         anchor = uprof_context.select_anchor(0x1015, self.sections, [])
 
         self.assertEqual(anchor.kind, "section")
@@ -125,13 +212,14 @@ class AnchorSelectionTest(unittest.TestCase):
 
         self.assertEqual(caught.exception.reason, "anchor_too_far")
 
-    def test_cap_applies_to_a_distant_public_start(self):
+    def test_cap_applies_to_a_distant_start_from_any_source(self):
         sections = [uprof_context.PeSection(0x1000, uprof_context.ANCHOR_DISTANCE_CAP + 0x2000,
                                            True)]
+        hot = 0x1000 + uprof_context.ANCHOR_DISTANCE_CAP + 1
         with self.assertRaises(uprof_context.ContextOmission) as caught:
             uprof_context.select_anchor(
-                0x1000 + uprof_context.ANCHOR_DISTANCE_CAP + 1, sections,
-                [(0x1000, "entry")])
+                hot, sections, [(0x1000, "entry")], pdata_starts=[(0x1000, None)],
+                export_starts=[(0x1000, "entry")])
 
         self.assertEqual(caught.exception.reason, "anchor_too_far")
 

@@ -1,3 +1,5 @@
+<p align="center"><img src=".claude-plugin/icon.svg" width="128" alt="amd-uprof plugin icon"></p>
+
 # amd-uprof plugin
 
 Claude Code plugin packaging of the `amd-uprof` skill: capture AMD uProf cycle or IBS OP

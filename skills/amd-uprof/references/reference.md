@@ -288,7 +288,7 @@ Samples weight each distinct address (one per dump row, the event count per PMC 
 
 ## SQL schema — `tools/views.sql`
 
-One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds eleven inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection.
+One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twelve inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection.
 
 | Bound input | Meaning |
 |---|---|
@@ -302,6 +302,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_tag_available` | `true` only for an IBS OP dump whose `IbsTagToRetCtr` exists and has a non-null value, so a fetch dump cannot enable `tag_to_retire_share` even with the column; Python derives it from the sampler kind and `v_dump_sanity` and rebinds it before the projection |
 | `uprof_symbols` | combined `symbols.parquet`; empty when absent |
 | `uprof_aliases` | combined `symbols.publics.csv`; empty when absent |
+| `uprof_pdbs` | combined `symbols.pdbs.csv`: the PDB symbolization chose per module; empty when absent |
 
 | Macro | Definition |
 |---|---|

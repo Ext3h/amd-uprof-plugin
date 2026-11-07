@@ -9,13 +9,16 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - Instruction context: `profile --by instruction --json` adds a `context` object to instruction
   rows. It decodes forward from the nearest public export (or the code-section start, within a
   1 MiB cap) and reports up to 32 instructions before and after the hot RVA with each
-  instruction's raw sample count and share. Each instruction carries the `llvm-symbolizer`
-  frame-0 location, the `llvm-readobj` IAT import name for `callq *IAT` targets, and the dump's
-  IBS OP fields (`DataSrc`, `CacheHitSt`, `IbsDcMiss`, `IbsOpBrnMisp`, `IbsDcLockedOp`,
-  `IbsOpMemWidth`, `IbsTagToRetCtr`). The block names its anchor and the build identity, and the
-  PE `CheckSum` must match the capture's recorded checksum. A missing module, unsafe anchor,
-  non-boundary hot RVA, unverified build or unavailable LLVM tool omits the block with a stable
-  reason instead of guessing. The first 20 rows are expanded; Markdown output is unchanged.
+  instruction's raw sample count and share; decoding stops at the containing section's end. Each
+  instruction carries the `llvm-symbolizer` frame-0 location from the PDB symbolization already
+  accepted, the `llvm-readobj` IAT import name for `callq *IAT` targets, and the dump's IBS OP
+  fields (`DataSrc`, `CacheHitSt`, `IbsDcMiss`, `IbsOpBrnMisp`, `IbsDcLockedOp`, `IbsOpMemWidth`,
+  `IbsTagToRetCtr`), counted over the same PID, image and time window as the row. The block names
+  its anchor and the build identity, and the PE `CheckSum` must match the capture's recorded
+  checksum. A missing module, unsafe anchor, non-boundary hot RVA, unverified build, unavailable
+  LLVM tool or failing optional query omits the block with a stable reason instead of guessing.
+  The first 20 rows are expanded; each anchor is decoded once for every row under it, and
+  Markdown output is unchanged.
 
 ## 2.0.1 — 2026-11-08
 

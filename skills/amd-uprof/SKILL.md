@@ -1,6 +1,6 @@
 ---
 name: amd-uprof
-description: Profile CPU time on AMD Zen with AMD uProf cycle sampling (PMCx076 / hwId 118, CYCLES_NOT_IN_HALT), IBS OP or IBS fetch dumps; exact DeltaTick-gap time weighting from the IBS ASCII dump; llvm-symbolizer file/line and instruction attribution; per-process, function, source-line and instruction shares in DuckDB SQL. Windows and Linux. Use for cycle-based hot spots, spin versus compute, instruction mix, and processes that cannot be attached.
+description: Profile CPU time on AMD Zen with AMD uProf cycle sampling (PMCx076 / hwId 118, CYCLES_NOT_IN_HALT), IBS OP or IBS fetch dumps; exact DeltaTick-gap time weighting from the IBS ASCII dump; llvm-symbolizer file/line and instruction attribution; per-process, module, function, source-line and instruction shares in DuckDB SQL. Windows and Linux. Use for cycle-based hot spots, spin versus compute, instruction mix, and processes that cannot be attached.
 ---
 
 # AMD uProf profile
@@ -15,7 +15,7 @@ python <SKILL_DIR>/tools/uprof.py <command> ...
 
 ## Quickstart
 
-With an existing capture, run `profile --by process` first: it already prints `METRIC`, `SANITY`, `SYMBOL_COVERAGE` and `KERNEL_COVERAGE`, so no separate discovery pass is needed. The worked example below turns that into the module answer and the stop point.
+With an existing capture, run `profile --by process` first: it already prints `METRIC`, `SANITY`, `SYMBOL_COVERAGE` and `KERNEL_COVERAGE`, so no separate discovery pass is needed. For the CPU-time question the minimum path is `profile --by process`, then `profile --by module`, then `profile --by instruction --json` (top 20 is the default); do not follow every `NEXT` step. `--by module` is the rollup: it carries `Module.isSystemModule`, `tag_to_retire_share` and `cpu_seconds` directly, so no ad-hoc `cpu.db` SQL is needed. The worked example below turns that into the module answer and the stop point.
 
 ## Commands
 
@@ -23,7 +23,7 @@ With an existing capture, run `profile --by process` first: it already prints `M
 |---|---|
 | `collect` | capture PMCx076 cycle or IBS OP samples, system-wide or attached to PIDs; never IBS fetch |
 | `translate` | copy the session, resolve symbols, optionally write the IBS ASCII dump |
-| `profile` | samples and time shares by process, function, source line or instruction; prints SANITY and ACHIEVED |
+| `profile` | samples and time shares by process, module, function, source line or instruction; prints SANITY and ACHIEVED |
 | `anchor` | map a workload's QPC reading onto capture-relative seconds (negative = attach latency; `--freq` defaults to 10 MHz) |
 | `schema` | live table/column/type listing for drift checking |
 | `tools` | print every resolved tool path and version; fails only when a required tool is missing |
@@ -75,7 +75,7 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 | Argument | Meaning |
 |---|---|
 | `--session` | required capture directory holding `session.uprof` and `cpu.db` |
-| `--by process\|function\|line\|instruction` | required grouping key |
+| `--by process\|module\|function\|line\|instruction` | required grouping key |
 | `--pid N` | one process by PID (non-negative); mutually exclusive with `--image` |
 | `--image PATTERN` | case-insensitive ILIKE on the full image path; all PIDs of matching images; `'%'` = every process |
 | `--time-filter T1:T2` | seconds from capture start, `[T1,T2)`; default the whole capture; dump captures only (rejected on PMC) |
@@ -86,11 +86,12 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 | `--by` | Row key | Columns | Symbolization |
 |---|---|---|---|
 | `process` | process | process, pid, samples, sample_share, time_share*, tag_to_retire_share* | no |
+| `module` | module path | module, samples, sample_share, time_share*, tag_to_retire_share*, isSystemModule, cpu_seconds* | no |
 | `function` | Function.id | function, module, attribution, samples, sample_share, time_share*, tag_to_retire_share* | no |
 | `line` | file:line | file, line, function, module, attribution, samples, sample_share, time_share*, tag_to_retire_share* | every module in scope |
 | `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, sample_share, time_share*, tag_to_retire_share* | every module in scope |
 
-`*` is present only when the capture mode supplies it (next table). Every share is a fraction 0.0-1.0; `samples` stays a raw count.
+`*` is present only when the capture mode supplies it (next table). Every share is a fraction 0.0-1.0; `samples` stays a raw count. The module row's `isSystemModule` is `Module.isSystemModule` and is `NULL` when the export has no such column; `cpu_seconds` is seconds of sampled CPU time, not a share, present only when a sample is a fixed cycle count and the core frequency is available.
 
 ## What a share measures
 
@@ -114,37 +115,30 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 
 This path is an **attached, cycle-controlled IBS** capture (`collect --event ibs-op --ibs-count-control cycles --process <PIDs>`). For op-count IBS, IBS fetch or a system-wide capture, use the mode matrix above instead of translating this recipe: the ranking column changes with what a sample represents.
 
-1. **Confirm the mode and scope.** `METRIC:` names the sampler and what a sample is. `VERSION:` is authoritative: it names the producing plugin/skill copy, so do not inspect installations, worktrees or file mtimes to decide which semantics apply. `SANITY:` starting `OK (attached; ...)` states thread coverage and names `sample_share` as the better ranking for a cycle-controlled capture; a `WARN` means the capture is short or late, not that the weights are wrong.
+1. **Confirm the mode and scope.** `METRIC:` names the sampler and what a sample is. `VERSION:` is authoritative: it names the producing plugin/skill copy and its version, so read the semantics in this document rather than re-deriving them. `SANITY:` starting `OK (attached; ...)` states thread coverage and names `sample_share` as the better ranking for a cycle-controlled capture; a `WARN` means the capture is short or late, not that the weights are wrong.
 2. **Rank the processes.** Run `profile --session <SESSION_DIR> --by process` and take the largest `sample_share`. For an attached cycle-controlled IBS capture, rank by `sample_share`, not `time_share`: cycle-controlled samples carry a fixed cycle count, so `sample_share` is the CPU-cycle share, while `time_share` is elapsed thread time, including off-CPU gaps.
-3. **Roll the functions up to modules.** Do not write ad-hoc SQL against `cpu.db`; this documented rollup over the supported JSON is enough:
+3. **Roll the processes up to modules.** Use the module granularity; do not query `cpu.db` or write ad-hoc SQL:
 
    ```text
-   python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by function --top all --json > functions.json
+   python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by module
    ```
 
-   ```sql
-   SELECT r.module, sum(r.samples) AS samples,
-          sum(r.sample_share) AS sample_share, sum(r.time_share) AS time_share
-   FROM (SELECT unnest(rows) AS r FROM read_json_auto('functions.json'))
-   GROUP BY r.module ORDER BY sample_share DESC NULLS LAST;
-   ```
+   Each row is one module path with `samples`, `sample_share`, `time_share`, `tag_to_retire_share`, `isSystemModule` and `cpu_seconds`. `sample_share` names the hottest module. **Third-party** is the rule `Module.isSystemModule = false`; `true` means an OS-shipped module. A driver flagged as a system module can still dominate, so report the strict third-party total and the dominant non-workload dependency separately rather than re-deriving the rule.
+4. **Stop at the symbol boundary.** Read `SYMBOL_COVERAGE:` before drilling down. When a module has no named functions, `--by line` and `--by instruction` cannot attribute below module/RVA, and the line says so. Report the hot module (with its `isSystemModule` classification and `cpu_seconds`) and its hot RVA, then stop. Do **not** write a PE parser, map `.pdata` by hand, convert RVAs to VAs or disassemble to recover function boundaries. Symbolization is the supported path; for the instructions under a resolved hot RVA, `profile --by instruction --json` (top 20) adds the documented `context` block. A third-party module with no symbols is a finding, not a blocker.
 
-   `sample_share` names the hottest module. **Third-party** is the rule `Module.isSystemModule = false`; `true` means an OS-shipped module. A driver flagged as a system module can still dominate, so report the strict third-party total and the dominant non-workload dependency separately rather than re-deriving the rule.
-4. **Stop at the symbol boundary.** Read `SYMBOL_COVERAGE:` before drilling down. When a module has no named functions, `--by line` and `--by instruction` cannot attribute below module/RVA, and the line says so. Report the hot module and its hot RVA, then stop. Do **not** write a PE parser, map `.pdata` by hand, convert RVAs to VAs or disassemble to recover function boundaries. Symbolization is the supported path; for the instructions under a resolved hot RVA, `profile --by instruction --json` adds the documented `context` block. A third-party module with no symbols is a finding, not a blocker.
+**Deliverable and stop.** Stop when you have the module rollup (`isSystemModule`, `cpu_seconds`), `SYMBOL_COVERAGE` and the hot RVA; then write the report. `profile` only reads the capture, so there is nothing further to probe, install or verify, and following every `NEXT` step is not part of this question.
 
-**Deliverable and stop.** Stop when you have the module rollup, `SYMBOL_COVERAGE`, the hot RVA and the `Module.isSystemModule` classification; then write the report. `profile` only reads the capture, so there is nothing further to probe, install or verify.
-
-**Absolute CPU time.** A cycle-controlled sample carries the requested interval in cycles, so CPU seconds on one core are `samples × interval / core_frequency`; `samples` is in the row, and `ACHIEVED:` prints the converted interval and frequency. This is sampled CPU time, not wall time, and an attached thread's samples accumulate across CPU migrations, so do not multiply by the CPU count. The shares answer "where did it go"; the seconds answer "how much".
+**Absolute CPU time.** `--by module` emits `cpu_seconds` = `samples × interval / core_frequency` for a cycle-mode capture; the interval is the requested cycle count converted at this machine's reported core frequency, which `ACHIEVED:` prints. The session records no frequency, so a capture from other hardware is approximate. This is sampled CPU time, not wall time: a system-wide capture sums cores and halted cycles are excluded, and an attached thread's off-CPU time is not sampled, so do not multiply by the CPU count. The shares answer "where did it go"; the seconds answer "how much".
 
 ## Header lines
 
 | Field | Meaning |
 |---|---|
-| `VERSION` | the skill version from the nearest `.claude-plugin/plugin.json` and the skill directory that produced the output; a loose copy reports the built-in version. It is authoritative for which docs apply to the output, so do not stat installations or worktrees to infer it |
+| `VERSION` | the skill version from the nearest `.claude-plugin/plugin.json` and the skill directory that produced the output; a loose copy reports the built-in version. It is authoritative for which docs apply to the output |
 | `METRIC` | sampler, event column, interval/control and what a sample represents |
-| `COLUMNS` | the unit stated once (share columns are fractions 0.0-1.0), `samples` as raw count, each emitted share column by name, the `attribution` definition when the scope emits it, and each absent column with its reason; definitions stay in the header lines |
+| `COLUMNS` | the unit stated once (share columns are fractions 0.0-1.0), `samples` as raw count, each emitted share column by name, the `attribution` definition when the scope emits it, `isSystemModule` and `cpu_seconds` for `--by module`, and each absent column with its reason; definitions stay in the header lines |
 | `READ` | which column ranks where time went — per thread for an attached capture, with `sample_share` named as the CPU-cycle share and the better ranking when it is cycle-controlled — that `sample_share` is not a per-op cost, that `tag_to_retire_share` is total tag-to-retire cycles (higher = more wait), and that the `<other ...>` row is last, not ranked |
-| `NEXT` | full runnable calls joined by `&&`, each keeping `--session`, the `--pid`/`--image` and time-filter scope and a non-default `--top`, derived from the current `--by`; the last call adds `--json` to `--by instruction` |
+| `NEXT` | full runnable calls joined by `&&`, each keeping `--session`, the `--pid`/`--image` and time-filter scope and a non-default `--top`, derived from the current `--by`; the last call adds `--json` to `--by instruction`. The CPU-time path is two calls: from `process` it is `module` then the instruction JSON call, and from `module` it is the instruction JSON call alone |
 | `DUMP` | dump path, size and provenance (`found beside the session`, cache reused/generated, or `none` for PMC) |
 | `DB` | only when the dump is outside the session: which dump is valid, and that `cpu.db` must come from the original session |
 | `TIME_SHARE` | estimator, partition (CPU for system-wide, `(PID, TID)` for attached) and the window it is relative to: the whole capture or the `profile --time-filter`; few samples make the share coarse, so it says to check `sample_share`; for an attached cycle-controlled capture it names `sample_share` as the CPU-cycle share and the better ranking |

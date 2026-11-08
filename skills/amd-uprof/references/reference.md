@@ -256,22 +256,15 @@ Samples weight each distinct address (one per dump row, the event count per PMC 
 
 ### Module rollup
 
-`profile --by function --top all --json` emits the header fields, `legend` and a `rows` array; each row carries `module`, `samples`, `sample_share` and, when the mode supplies it, `time_share`. Roll the functions up without querying `cpu.db`:
+`profile --by module [--json]` is the supported rollup: one row per normalized module path with `samples`, `sample_share`, `time_share` (when the mode supplies it), `tag_to_retire_share` (a dump with a non-null tag column), `isSystemModule` and `cpu_seconds`. Use these fields; do not roll functions up in ad-hoc SQL or query `cpu.db` for them.
 
-```sql
-SELECT r.module, sum(r.samples) AS samples,
-       sum(r.sample_share) AS sample_share, sum(r.time_share) AS time_share
-FROM (SELECT unnest(rows) AS r FROM read_json_auto('functions.json'))
-GROUP BY r.module ORDER BY sample_share DESC NULLS LAST;
-```
+Rank by `sample_share` for a cycle-controlled or PMC cycle capture, where each sample carries fixed cycles; read `time_share` under the mode's meaning otherwise. `--top all` keeps the remainder row out of the total; otherwise `<other modules>` carries the rest and has a NULL `isSystemModule`.
 
-Rank by `sample_share` for a cycle-controlled or PMC cycle capture, where each sample carries fixed cycles; read `time_share` under the mode's meaning otherwise. `--top all` keeps the remainder row out of the total.
-
-**Third-party** is the rule `Module.isSystemModule = false`; `true` means an OS-shipped module. The flag marks user modules such as `ntdll.dll`/`kernelbase.dll` and is not a kernel predicate, so a kernel image (`.sys`/`.ko`, a kernel basename, or a `ModuleInstance.loadAddress` in the kernel half) is also system. The `module` key is the dump's `ModuleName` or, for a PMC capture, the normalized module path. A driver flagged as a system module can still dominate the capture; report the strict third-party total and the dominant non-workload dependency separately rather than inspecting the path or re-deriving the rule by hand.
+**Third-party** is the rule `Module.isSystemModule = false`; `true` means an OS-shipped module. The flag marks user modules such as `ntdll.dll`/`kernelbase.dll` and is not a kernel predicate, so a kernel image (`.sys`/`.ko`, a kernel basename, or a `ModuleInstance.loadAddress` in the kernel half) is also system. The `module` key is the normalized dump `ModuleName` or, for a PMC capture, the normalized module path; `v_module_flags` maps both the full path and its basename, so a dump that carries a short name still classifies. The column is absent from older exports, and the output then says so and leaves `isSystemModule` NULL. A driver flagged as a system module can still dominate the capture; report the strict third-party total and the dominant non-workload dependency separately rather than inspecting the path or re-deriving the rule by hand.
 
 ### Absolute CPU time
 
-A cycle-controlled sample carries the requested interval in cycles; PMC cycle samples carry the same fixed count. CPU seconds on one core are `samples × interval / core_frequency`; the row supplies `samples`, and `collect` prints the converted interval and frequency in `SAMPLE_INTERVAL=`/`EVENT=`, while `ACHIEVED:` repeats them (`requested 4700000 cycles at 4700 MHz = 1 ms`). The result is sampled CPU time on the sampled cores, not wall time. An attached thread's samples accumulate across CPU migrations, so do not multiply by the CPU count. The conversion does not apply to op-count or fetch samples: their interval is work, not time.
+`--by module` emits `cpu_seconds` as `samples × interval / core_frequency`: `samples` is the row count and `interval` is the requested cycle count converted at the machine's reported core frequency. The session records the interval in cycles, not the frequency of the capture machine, so a capture from other hardware gives an approximate figure. This is sampled CPU time, not wall time. A system-wide capture sums CPU time across cores and halted cycles are excluded; an attached thread's samples cover only the time it ran, so its off-CPU intervals are not counted and the total is not multiplied by the CPU count. The conversion does not apply to op-count or fetch samples: their interval is work, not time, and `cpu_seconds` is omitted with that reason.
 
 ## Instruction context — `--by instruction --json`
 
@@ -343,6 +336,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_symbols` | combined `symbols.parquet`; empty when absent |
 | `uprof_aliases` | combined `symbols.publics.csv`; empty when absent |
 | `uprof_pdbs` | combined `symbols.pdbs.csv`: the PDB symbolization chose per module; empty when absent |
+| `uprof_sample_interval_s` | requested cycle interval in seconds, bound only for `--by module`; empty when the interval is a work/fetch count or the core frequency is unavailable, which hides `cpu_seconds` |
 
 | Macro | Definition |
 |---|---|
@@ -357,9 +351,10 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `dump_guard` | the dump exists and `time_start < time_end` |
 | `dump_columns_guard` | one `DESCRIBE`; names missing required dump columns (`DeltaTick`, `CPU_Number`, `PID`, `Offset`, `ModuleName`) |
 | `has_tag` | the dump header carries `IbsTagToRetCtr`; `v_dump_sanity.tag_values` counts non-null values |
+| `has_system_module` | `Module` has an `isSystemModule` column; older exports leave the module classification NULL |
 | `top_n`, `time_start`, `time_end` | typed row cap and window |
 
-The 16 views:
+The 19 views:
 
 | View | Role |
 |---|---|
@@ -375,13 +370,15 @@ The 16 views:
 | `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds the scope's own sampling cadence |
 | `v_scope_totals` | `total_samples` (0 when empty); feeds the empty-scope warning |
 | `v_module_catalog` | one row per module path with its highest `ModuleInstance.loadAddress` and kernel-image flag; empty when the export has no `ModuleInstance` |
+| `v_module_flags` | `Module.isSystemModule` keyed by the full normalized path and its basename, so a short dump `ModuleName` still classifies; empty when the export has no such column |
 | `v_capture_modules` | one row per whole-capture sample: module, context (CPU for a dump, `coreId` for PMC), sample count and kernel-image flag; before scope and time filters; feeds `ACHIEVED` and `KERNEL_COVERAGE` from one scan |
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
+| `v_module_rows` | module path aggregation, ranking, totals, `isSystemModule` and the `<other modules>` remainder |
 | `v_function_rows` | by `Function.id`; `<unresolved>` row; attribution `unique`/`unresolved`; `<other functions>` |
 | `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; `<other lines>` |
 | `v_instruction_rows` | one row per module + RVA with innermost annotation; `<other instructions>` |
 
-- **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-function.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `agreement.sql` computes the metric, `coverage.sql` reports per-module symbol coverage, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
+- **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-module.sql`, `profile-function.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `agreement.sql` computes the metric, `coverage.sql` reports per-module symbol coverage, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
 - **Load order.** Bind all inputs, load `views.sql`, then (for `line`/`instruction`) run `profile-rvas.sql` on the same connection, symbolize, rebind `uprof_symbols`/`uprof_aliases`, and run the projection. `query(CASE ...)` re-binds per query, so the symbol inputs may be bound after the views are created. A hand run writes a UTF-8 `SET VARIABLE` file, `.read`s `views.sql`, then the projection, and always uses the original session's `cpu.db`.
 - **Guard order.** The schema and dump guards run while `views.sql` loads, before any query, so an incomplete export or dump fails once with the missing item names. The schema guards read the bound path strings (empty means absent) so no identifier is spliced; the dump guard checks that the dump exists. A conditional `query(CASE ...)` avoids binder-eager branch evaluation.
 

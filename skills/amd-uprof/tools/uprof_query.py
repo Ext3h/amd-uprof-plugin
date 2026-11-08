@@ -232,7 +232,9 @@ def _sample_share_meaning(sampler: uprof_session.Sampler,
     if dump is None:
         if sampler.pmc_cycle_shares:
             return "busy core-cycle share (fixed cycles per sample; halted excluded)"
-        return "not established (this PMC event is not the supported cycle event)"
+        return ("not established (this PMC event is not the supported cycle event); capture "
+                "--event cycles (CYCLES_NOT_IN_HALT, hwId 118) to make sample_share a "
+                "core-cycle share")
     if sampler.ibs_dump_kind == "ibsfetch-event-dump":
         return "fetch-sample frequency share (fixed fetch events per sample)"
     if sampler.interval_units == "ops":
@@ -328,7 +330,9 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
     denominators: dict[str, str] = {"sample_share": "total_samples"}
     absent: dict[str, str] = {}
     if dump is None:
-        absent["time_share"] = "this export aggregates PMC samples per window"
+        absent["time_share"] = ("this export aggregates PMC samples per window; capture with "
+                                "--event ibs-op (IBS OP with per-sample timestamps) to get "
+                                "time_share")
         absent["tag_to_retire_share"] = "this export has no tag-to-retire counter"
     else:
         if system_wide:
@@ -343,7 +347,10 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         elif sampler.ibs_dump_kind == "ibsop-event-dump" and not has_tag:
             absent["tag_to_retire_share"] = "this dump has no IbsTagToRetCtr column"
         elif sampler.ibs_dump_kind == "ibsop-event-dump":
-            absent["tag_to_retire_share"] = "IbsTagToRetCtr has no non-null values in this dump"
+            absent["tag_to_retire_share"] = (
+                "IbsTagToRetCtr has no nonzero values in this dump, so every share is NULL; "
+                "the tag-to-retire counter comes from an IBS OP capture (--event ibs-op), not "
+                "from PMC or IBS fetch")
         else:
             absent["tag_to_retire_share"] = "this export has no tag-to-retire counter"
     # A PMC sample is a fixed cycle count, so the sample order ranks cycles when the event is the
@@ -468,11 +475,13 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
             share = ("sample_share is the busy core-cycle share (fixed cycles per sample; "
                      "halted excluded)")
         else:
-            share = "sample_share is not established for this PMC event"
+            share = ("sample_share is not established for this PMC event; capture --event cycles "
+                     "(CYCLES_NOT_IN_HALT, hwId 118) to make it a core-cycle share")
         fields.append(("DUMP", "none; this PMC capture has no IBS ASCII dump, so samples are the "
                                f"UnifiedSampleSeries event-column counts; {share}"))
         fields.append(("TIME_SHARE", "not applicable; this export aggregates PMC samples per "
-                                     "window, so time_share is omitted"))
+                                     "window, so time_share is omitted; capture with --event "
+                                     "ibs-op (IBS OP with per-sample timestamps) to get it"))
         fields.append(("TAG_TO_RETIRE_SHARE", "not applicable; this export has no tag-to-retire "
                                               "counter, so tag_to_retire_share is omitted"))
     else:
@@ -519,8 +528,12 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
                                                       "per-op cost"))
             else:
                 fields.append(("TAG_TO_RETIRE_SHARE", "not available for this dump: IbsTagToRetCtr "
-                                                      "has no non-null values; sample_share and "
-                                                      "time_share are unaffected"))
+                                                      "has no nonzero values, so every "
+                                                      "tag_to_retire_share is NULL; the "
+                                                      "tag-to-retire counter comes from an IBS OP "
+                                                      "capture (--event ibs-op), not from PMC or "
+                                                      "IBS fetch; sample_share and time_share are "
+                                                      "unaffected"))
         else:
             fields.append(("TAG_TO_RETIRE_SHARE", "not applicable; this export has no "
                                                   "tag-to-retire counter, so "
@@ -729,12 +742,35 @@ def _coverage_field(connection: object,
              f"{text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")]
 
 
-def _scope_warning(connection: object) -> list[tuple[str, str]]:
+def _tag_nonzero(connection: object) -> int:
+    """Samples whose tag-to-retire counter is nonzero, over the whole dump.
+
+    The column can be present with every cell zero; then every tag share is NULL rather than
+    zero, so the profile says the counter carried no nonzero value.
+    """
+    rows = connection.sql(
+        "SELECT count(*) FILTER (WHERE tag_cycles > 0) FROM v_dump").fetchall()
+    return int(rows[0][0] or 0) if rows else 0
+
+
+def _scope_warning(connection: object, image_pattern: str | None = None) -> list[tuple[str, str]]:
+    """Say that the scope matched nothing, and for --image name what the filter selects."""
     fields: list[tuple[str, str]] = []
     empty = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
     if empty and empty[0][0] == 0:
-        fields.append(("WARNING", "no samples in the selected scope; the process or time filter "
-                                  "matched nothing"))
+        message = "no samples in the selected scope; the process or time filter matched nothing"
+        if image_pattern not in (None, "%"):
+            message = ("no samples in the selected scope; --image selects process base images "
+                       "(Process.name), not modules or module paths")
+            names = [row[0] for row in connection.execute(
+                "SELECT DISTINCT name FROM Process WHERE COALESCE(name, '') <> '' "
+                "ORDER BY name").fetchall()]
+            if names:
+                shown = ", ".join(names[:10]) + (" ..." if len(names) > 10 else "")
+                message += f"; available images in this capture: {shown}"
+            else:
+                message += "; this capture records no process image names"
+        fields.append(("WARNING", message))
     return fields
 
 
@@ -745,7 +781,7 @@ def _agreement_text(connection: object) -> str | None:
     values = dict(zip(columns, rows[0]))
 
     def percent(key: str) -> str:
-        return "n/a" if values[key] is None else f"{values[key]}%"
+        return "n/a (no denominator)" if values[key] is None else f"{values[key]}%"
 
     return ("line/instruction coordinates are the innermost (executed) frame; symbolizer names are "
             "the containing function (llvm-symbolizer's outermost frame), the name uProf "
@@ -845,7 +881,8 @@ def run_query_command(args: argparse.Namespace) -> None:
             module_rows = connection.sql("SELECT getvariable('has_system_module')").fetchall()
             has_system_module = bool(module_rows and module_rows[0][0])
             tag_available = (sampler.ibs_dump_kind == "ibsop-event-dump" and has_tag
-                             and tag_values > 0)
+                             and tag_values > 0
+                             and _tag_nonzero(connection) > 0)
             uprof_db.set_variables(connection, {
                 "uprof_tag_available": "true" if tag_available else "false"})
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
@@ -863,7 +900,7 @@ def run_query_command(args: argparse.Namespace) -> None:
             fields.extend(_kernel_coverage_field(
                 sampler, kernel_covered, dump_windowed, captured_samples))
             fields.extend(_coverage_field(connection, causes))
-            fields.extend(_scope_warning(connection))
+            fields.extend(_scope_warning(connection, args.image))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(connection)
                 if agreement:

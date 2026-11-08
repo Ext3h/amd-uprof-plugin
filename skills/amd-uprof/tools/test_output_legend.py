@@ -24,7 +24,11 @@ TOOLS_DIR = Path(__file__).resolve().parent
 EVENT_COLUMN = "event#0x3000076"
 
 SAMPLE_PMC = "busy core-cycle share (fixed cycles per sample; halted excluded)"
-SAMPLE_PMC_UNSUPPORTED = ("not established (this PMC event is not the supported cycle event)")
+SAMPLE_PMC_UNSUPPORTED = ("not established (this PMC event is not the supported cycle event); "
+                          "capture --event cycles (CYCLES_NOT_IN_HALT, hwId 118) to make "
+                          "sample_share a core-cycle share")
+TIME_ABSENT_PMC = ("this export aggregates PMC samples per window; capture with --event ibs-op "
+                   "(IBS OP with per-sample timestamps) to get time_share")
 SAMPLE_OP_CYCLES = "core-cycle share (fixed cycles per sample), not wall time"
 SAMPLE_OP_OPS = "dispatched-op frequency share (fixed dispatched ops per sample)"
 SAMPLE_FETCH = "fetch-sample frequency share (fixed fetch events per sample)"
@@ -44,8 +48,11 @@ TAG_ABSENT = {
     "pmc-118-unsampled": "this export has no tag-to-retire counter",
     "ibsfetch": "this export has no tag-to-retire counter",
     "ibs-op-tagless": "this dump has no IbsTagToRetCtr column",
-    "ibs-op-empty-tag": "IbsTagToRetCtr has no non-null values in this dump",
+    "ibs-op-empty-tag": ("IbsTagToRetCtr has no nonzero values in this dump, so every share is "
+                         "NULL; the tag-to-retire counter comes from an IBS OP capture "
+                         "(--event ibs-op), not from PMC or IBS fetch"),
 }
+TAG_ABSENT["ibs-op-zero-tag"] = TAG_ABSENT["ibs-op-empty-tag"]
 
 # What each mode's legend must carry. Keeping it here makes the check an expected-output test:
 # a wrong or missing meaning fails the comparison, not just a substring search.
@@ -127,11 +134,10 @@ MODES = {
     "ibs-op-zero-tag": {
         "sample": SAMPLE_OP_OPS,
         "time": True,
-        "tag": TAG_MEANING,
+        "tag": None,
         "order_by": ["time_share", "samples"],
         "gap_weighted": True,
-        "row_columns": ["process", "pid", "samples", "sample_share", "time_share",
-                        "tag_to_retire_share"],
+        "row_columns": ["process", "pid", "samples", "sample_share", "time_share"],
         "metric": ["dispatched-op frequency share"],
     },
 }
@@ -143,7 +149,7 @@ def expected_columns(mode):
     if spec["time"]:
         parts.append("time_share = time share")
     else:
-        parts.append("time_share absent (this export aggregates PMC samples per window)")
+        parts.append(f"time_share absent ({TIME_ABSENT_PMC})")
     reason = TAG_ABSENT.get(mode)
     if spec["tag"]:
         parts.append("tag_to_retire_share = tag-to-retire cycle share")
@@ -477,7 +483,8 @@ class OutputLegendTest(unittest.TestCase):
 
     def test_tagless_and_empty_tag_absence(self):
         for mode, reason in (("ibs-op-tagless", TAG_ABSENT["ibs-op-tagless"]),
-                             ("ibs-op-empty-tag", TAG_ABSENT["ibs-op-empty-tag"])):
+                             ("ibs-op-empty-tag", TAG_ABSENT["ibs-op-empty-tag"]),
+                             ("ibs-op-zero-tag", TAG_ABSENT["ibs-op-zero-tag"])):
             with self.subTest(mode=mode):
                 output = self.profile(self.session(mode))
                 legend = json.loads(self.profile(self.session(mode), "--json"))["legend"]
@@ -579,16 +586,17 @@ class OutputLegendTest(unittest.TestCase):
         self.assertNotIn("131070", output)
         self.assertNotIn("131070", json.dumps(document))
 
-    def test_all_zero_tag_column_is_null_not_one(self):
+    def test_all_zero_tag_column_is_reported_absent(self):
         session = self.session("ibs-op-zero-tag")
         document = json.loads(self.profile(session, "--top", "all", "--json"))
-        self.assertIn("tag_to_retire_share", document["rows"][0])
-        for row in document["rows"]:
-            self.assertIsNone(row["tag_to_retire_share"])
-        self.assertEqual(document["legend"]["denominators"]["tag_to_retire_share"],
-                         "total_tag_cycles")
+        self.assertNotIn("tag_to_retire_share", document["rows"][0])
+        self.assertNotIn("tag_to_retire_share", document["legend"]["columns"])
+        self.assertEqual(document["legend"]["absent"]["tag_to_retire_share"],
+                         TAG_ABSENT["ibs-op-zero-tag"])
+        self.assertIn("no nonzero values", document["legend"]["absent"]["tag_to_retire_share"])
         output = self.profile(session)
         self.assertIn("TAG_TO_RETIRE_SHARE", output)
+        self.assertIn("no nonzero values", output)
 
     def test_json_legend_is_deterministic(self):
         session = self.session("ibs-op-ops")

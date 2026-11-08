@@ -2,6 +2,30 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## Unreleased
+
+### Added
+
+- `SYMBOL_COVERAGE` header line in `profile` (and JSON): the scoped samples that resolve to a
+  non-empty `Function.name`, each module with unresolved samples and its unresolved share, and
+  whether that module is `partial` or has `no named functions`. When a module has no names the
+  line says the samples cannot be attributed below module/RVA and names the supported path, so a
+  third-party module without a PDB is reported at module/RVA instead of sending the user into a
+  hand-written PE or `.pdata` mapping (issue #27).
+- `VERSION` in `profile`, `collect` and `translate`: the version from the nearest
+  `.claude-plugin/plugin.json` plus the skill directory that produced the output, falling back to
+  a built-in version for a loose skill copy, so output can be matched to the right docs
+  (issue #28).
+
+### Changed
+
+- `SKILL.md` has a worked "where did CPU time go?" example for an attached, cycle-controlled IBS
+  capture: confirm the mode and scope, rank processes by `sample_share`, roll functions up to
+  modules with a documented `GROUP BY` over `--by function --top all --json`, and stop at the
+  symbol boundary when `SYMBOL_COVERAGE` shows no named functions (issues #25, #26, #29). The
+  reference gives the coverage query, the module rollup and third-party rule, and the absolute
+  CPU-time conversion (`samples × interval / core_frequency`).
+
 ## 2.1.0 — 2026-11-08
 
 ### Added

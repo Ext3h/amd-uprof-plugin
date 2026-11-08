@@ -267,7 +267,7 @@ GROUP BY r.module ORDER BY sample_share DESC NULLS LAST;
 
 Rank by `sample_share` for a cycle-controlled or PMC cycle capture, where each sample carries fixed cycles; read `time_share` under the mode's meaning otherwise. `--top all` keeps the remainder row out of the total.
 
-A third-party module is neither the workload image nor a system module. `Module.isSystemModule` marks OS-shipped user modules (`ntdll.dll`, `kernelbase.dll`), so `false` is the usual third-party signal, but it is not a kernel predicate; a kernel image (`.sys`/`.ko`, a kernel basename, or a `ModuleInstance.loadAddress` in the kernel half) is always a system module. The `module` key is the dump's `ModuleName` or, for a PMC capture, the normalized module path, so the path is available when the flag is not.
+**Third-party** is the rule `Module.isSystemModule = false`; `true` means an OS-shipped module. The flag marks user modules such as `ntdll.dll`/`kernelbase.dll` and is not a kernel predicate, so a kernel image (`.sys`/`.ko`, a kernel basename, or a `ModuleInstance.loadAddress` in the kernel half) is also system. The `module` key is the dump's `ModuleName` or, for a PMC capture, the normalized module path. A driver flagged as a system module can still dominate the capture; report the strict third-party total and the dominant non-workload dependency separately rather than inspecting the path or re-deriving the rule by hand.
 
 ### Absolute CPU time
 

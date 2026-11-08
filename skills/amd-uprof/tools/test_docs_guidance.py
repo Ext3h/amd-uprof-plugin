@@ -16,10 +16,17 @@ SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encoding="utf-8")
 
 SKILL_FRAGMENTS = (
+    "## Quickstart",
+    "`profile --by process` first",
     "## Worked example: where did CPU time go?",
     "attached, cycle-controlled IBS",
-    "`sample_share` is the CPU-cycle share",
-    "mode matrix",
+    "`VERSION:` is authoritative",
+    "do not inspect installations, worktrees or file mtimes",
+    "rank by `sample_share`, not `time_share`",
+    "`Module.isSystemModule = false`",
+    "dominant non-workload dependency",
+    "Stop when you have the module rollup",
+    "`Module.isSystemModule` classification",
     "--by function --top all --json",
     "GROUP BY r.module",
     "samples × interval / core_frequency",
@@ -38,8 +45,9 @@ REFERENCE_FRAGMENTS = (
     "### Module rollup",
     "### Absolute CPU time",
     "tools/coverage.sql",
-    "isSystemModule",
+    "isSystemModule = false",
     "kernel image",
+    "dominant non-workload dependency",
     "no named functions",
 )
 

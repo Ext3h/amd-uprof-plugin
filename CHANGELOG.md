@@ -25,6 +25,11 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   symbol boundary when `SYMBOL_COVERAGE` shows no named functions (issues #25, #26, #29). The
   reference gives the coverage query, the module rollup and third-party rule, and the absolute
   CPU-time conversion (`samples × interval / core_frequency`).
+- The worked example now has an explicit deliverable and stop contract (module rollup,
+  `SYMBOL_COVERAGE`, hot RVA, `Module.isSystemModule`), names `VERSION` as authoritative so no
+  installation, worktree or mtime check is needed, defines third-party as
+  `Module.isSystemModule = false` and reports the dominant non-workload dependency separately,
+  and points the quickstart at `profile --by process` first.
 
 ## 2.1.0 — 2026-11-08
 

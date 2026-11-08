@@ -26,12 +26,15 @@ collect captures PMC cycle samples or IBS OP samples; it does not capture IBS fe
 fetch dump produced elsewhere can be translated (--ascii ibsfetch-event-dump) and profiled,
 but no capture of IBS fetch has been validated (unverified).
 
-profile reads the IBS ASCII dump (IbsOpDump.csv or IbsFetchDump.csv). Within each CPU_Number the
-samples are ordered by DeltaTick and weighed by the gap to the previous sample; the first sample
-per CPU is ignored, having no gap before it. --time-filter selects samples by DeltaTick and
-excludes the first sample per CPU inside the window. A missing dump is generated on a cached copy
-of the session, never in place. sample_share is the raw sample share; what a sample represents
-depends on the sampler above. time_share is a time share estimated from those gaps;
+profile reads the IBS ASCII dump (IbsOpDump.csv or IbsFetchDump.csv). Samples are ordered by
+DeltaTick within an execution context and weighed by the gap to the previous sample; the first
+sample per context is ignored, having no gap before it. The context is CPU_Number for a
+system-wide capture and (PID, TID) for an attached one, so a migrating attached thread is counted
+once. --time-filter selects samples by DeltaTick and excludes the first sample per context inside
+the window. A missing dump is generated on a cached copy of the session, never in place.
+sample_share is the raw sample share; what a sample represents depends on the sampler above.
+time_share is a time share estimated from those gaps (an attached thread's gaps include off-CPU
+time; for a cycle-controlled capture sample_share is the CPU-cycle share and the better ranking);
 tag_to_retire_share is the share of tag-to-retire cycles summed over sampled ops, a total, not
 per-op latency. All shares are fractions (0.0-1.0). line and instruction symbolize every
 module in scope and print the uProf-vs-symbolizer agreement summary.

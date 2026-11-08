@@ -135,6 +135,15 @@ def _dump_field(dump: uprof_dump.DumpInfo) -> str:
 _TIME_SHARE_MEANING: Final = (
     "time share estimated from the gaps between per-sample timestamps (idle/wait is charged to "
     "the ending sample; the first sample per CPU is ignored, no gap before it; NULL sorts last)")
+# An attached thread's samples span whichever CPUs it ran on; partitioning by TID keeps its
+# migrating gaps from being counted once per CPU. The gap includes time the thread was off-CPU.
+_TIME_SHARE_MEANING_ATTACHED: Final = (
+    "time share estimated from the gaps between per-sample timestamps within each thread "
+    "(PID, TID), so a thread that migrates between CPUs is counted once; the gap includes "
+    "off-CPU time and is charged to the ending sample, the first sample per thread is ignored "
+    "(no gap before it), and NULL sorts last")
+_CYCLE_BASIS: Final = ("; for a cycle-controlled IBS capture sample_share (fixed cycles per "
+                       "sample) is the CPU-cycle share and the better ranking")
 _TAG_SHARE_MEANING: Final = (
     "share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, "
     "queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency")
@@ -163,6 +172,11 @@ def _sample_share_meaning(sampler: uprof_session.Sampler,
     if sampler.ibs_dump_kind == "ibsop-event-dump":
         return "core-cycle share (fixed cycles per sample), not wall time"
     return "not established (the session records no usable sampler)"
+
+
+def _cycle_controlled(sampler: uprof_session.Sampler) -> bool:
+    """True when IBS OP samples carry a fixed cycle count, so sample_share is a CPU-cycle share."""
+    return sampler.ibs_dump_kind == "ibsop-event-dump" and sampler.interval_units == "cycles"
 
 
 def _quote(text: str) -> str:
@@ -200,12 +214,13 @@ def _next_calls(args: argparse.Namespace) -> list[str]:
 
 def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             has_tag: bool, tag_available: bool,
-            args: argparse.Namespace) -> dict[str, Any]:
+            args: argparse.Namespace, system_wide: bool) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
     unqualified impact; tag_to_retire_share is a summed total, not per-op latency. A PMC capture
-    has no DeltaTick gaps, so its rows fall back to the raw sample count.
+    has no DeltaTick gaps, so its rows fall back to the raw sample count. A system-wide capture
+    partitions gaps by CPU; an attached one by (PID, TID), so a migrating thread is counted once.
     """
     columns: dict[str, str] = {
         "samples": "raw sample count",
@@ -219,7 +234,11 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         absent["time_share"] = "this export aggregates PMC samples per window"
         absent["tag_to_retire_share"] = "this export has no tag-to-retire counter"
     else:
-        columns["time_share"] = _TIME_SHARE_MEANING
+        if system_wide:
+            columns["time_share"] = _TIME_SHARE_MEANING
+        else:
+            columns["time_share"] = (_TIME_SHARE_MEANING_ATTACHED
+                                     + (_CYCLE_BASIS if _cycle_controlled(sampler) else ""))
         denominators["time_share"] = "total_weight"
         if tag_available:
             columns["tag_to_retire_share"] = _TAG_SHARE_MEANING
@@ -244,9 +263,16 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
     else:
         order_by = ["time_share", "samples"]
         gap_weighted = True
-        estimate = ("time_share is a time share estimated from the gaps between per-sample "
-                    "timestamps; idle/wait is charged to the ending sample, the first sample per "
-                    "CPU is ignored (no gap before it), and NULL sorts last")
+        if system_wide:
+            estimate = ("time_share is a time share estimated from the gaps between per-sample "
+                        "timestamps; idle/wait is charged to the ending sample, the first sample "
+                        "per CPU is ignored (no gap before it), and NULL sorts last")
+        else:
+            estimate = ("time_share is a time share estimated from the gaps between per-sample "
+                        "timestamps within each thread (PID, TID), so a migrating thread is "
+                        "counted once; off-CPU time is charged to the ending sample, the first "
+                        "sample per thread is ignored (no gap before it), and NULL sorts last"
+                        + (_CYCLE_BASIS if _cycle_controlled(sampler) else ""))
     return {
         "share_unit": "fraction",
         "share_scale": 1,
@@ -259,11 +285,18 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
     }
 
 
-def _read_text(legend: dict[str, Any]) -> str:
+def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
     """The positive reading rule, plus the ranking and remainder rule."""
     sample = legend["columns"]["sample_share"]
     if legend["impact"]["gap_weighted"]:
-        read = "time_share ranks where time went; sample_share is not a per-op cost"
+        if system_wide:
+            read = "time_share ranks where time went; sample_share is not a per-op cost"
+        else:
+            read = ("time_share ranks where each thread's elapsed time went (PID, TID partition, "
+                    "so a migrating thread is counted once); sample_share is not a per-op cost")
+            if sample.startswith("core-cycle share"):
+                read += ("; with fixed cycles per sample, sample_share is the CPU-cycle share "
+                         "and the better ranking")
         if "tag_to_retire_share" in legend["columns"]:
             read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
@@ -283,14 +316,18 @@ def _next_text(calls: list[str]) -> str:
     return " && ".join(calls)
 
 
-def _legend_fields(legend: dict[str, Any]) -> list[tuple[str, str]]:
+def _legend_fields(legend: dict[str, Any], system_wide: bool) -> list[tuple[str, str]]:
     """The short legend: columns and unit, what to read, and runnable next calls."""
     parts = []
     if "attribution" in legend["columns"]:
         parts.append(f"attribution = {legend['columns']['attribution']}")
     parts += ["samples = raw count", f"sample_share = {legend['columns']['sample_share']}"]
     if "time_share" in legend["columns"]:
-        parts.append("time_share = time share")
+        if system_wide:
+            parts.append("time_share = time share")
+        else:
+            parts.append("time_share = per-thread time share (off-CPU gaps are charged to the "
+                         "ending sample)")
     else:
         parts.append(f"time_share absent ({legend['absent']['time_share']})")
     if "tag_to_retire_share" in legend["columns"]:
@@ -299,13 +336,13 @@ def _legend_fields(legend: dict[str, Any]) -> list[tuple[str, str]]:
         parts.append(f"tag_to_retire_share absent "
                      f"({legend['absent']['tag_to_retire_share']})")
     return [("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
-            ("READ", _read_text(legend)),
+            ("READ", _read_text(legend, system_wide)),
             ("NEXT", _next_text(legend["next"]))]
 
 
 def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
                    dump: uprof_dump.DumpInfo | None, has_tag: bool,
-                   tag_available: bool) -> list[tuple[str, str]]:
+                   tag_available: bool, system_wide: bool) -> list[tuple[str, str]]:
     """Detailed capture fields carried above the table and in the JSON document."""
     fields = [("METRIC", sampler.metric.removeprefix("METRIC: "))]
     if dump is None:
@@ -329,12 +366,26 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
                                  f"the original session ({session_full / 'cpu.db'})"))
         window = ("the whole capture" if args.time_filter is None
                   else f"the time filter {args.time_filter}")
-        fields.append(("TIME_SHARE", "share of time estimated from the per-sample DeltaTick "
-                                     f"gaps within {window}; an estimate: idle/wait is charged "
-                                     "to the ending sample, the first sample per CPU inside the "
-                                     "window is ignored (no gap before it), and NULL sorts last; "
-                                     "with few samples the share is coarse, so check "
-                                     "sample_share"))
+        if system_wide:
+            fields.append(("TIME_SHARE", "share of time estimated from the per-sample DeltaTick "
+                                         f"gaps within {window}; an estimate: idle/wait is "
+                                         "charged to the ending sample, the first sample per CPU "
+                                         "inside the window is ignored (no gap before it), and "
+                                         "NULL sorts last; with few samples the share is coarse, "
+                                         "so check sample_share"))
+        else:
+            cycle_basis = ("; for this cycle-controlled capture sample_share (fixed cycles per "
+                           "sample) is the CPU-cycle share and the better ranking"
+                           if _cycle_controlled(sampler) else "")
+            fields.append(("TIME_SHARE", "share of elapsed thread time estimated from the "
+                                         "per-sample DeltaTick gaps within "
+                                         f"{window}; the partition is (PID, TID), so a thread that "
+                                         "migrates between CPUs is counted once; an estimate: "
+                                         "idle/wait, including off-CPU time, is charged to the "
+                                         "ending sample, the first sample per thread inside the "
+                                         "window is ignored (no gap before it), and NULL sorts "
+                                         "last; with few samples the share is coarse, so check "
+                                         f"sample_share{cycle_basis}"))
         if sampler.ibs_dump_kind == "ibsop-event-dump":
             if not has_tag:
                 fields.append(("TAG_TO_RETIRE_SHARE", "not available for this dump: no "
@@ -364,35 +415,48 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
             weights = ("PMC sample counts from UnifiedSampleSeries; sample_share is not "
                        "established for this event")
     else:
-        window = ("whole capture" if args.time_filter is None
-                  else f"time filter {args.time_filter} (first sample per CPU inside the window "
-                       "excluded)")
-        weights = ("exact DeltaTick-gap weights per CPU_Number (the first sample per CPU is "
-                   "ignored, no gap before it; gap time is charged to the later sample); "
-                   f"{window}; sample_share is the dump's raw sample share and time_share "
-                   "weights the same rows by gap")
+        if system_wide:
+            window = ("whole capture" if args.time_filter is None
+                      else f"time filter {args.time_filter} (first sample per CPU inside the "
+                           "window excluded)")
+            weights = ("exact DeltaTick-gap weights per CPU_Number (the first sample per CPU is "
+                       "ignored, no gap before it; gap time is charged to the later sample); "
+                       f"{window}; sample_share is the dump's raw sample share and time_share "
+                       "weights the same rows by gap")
+        else:
+            window = ("whole capture" if args.time_filter is None
+                      else f"time filter {args.time_filter} (first sample per thread inside the "
+                           "window excluded)")
+            weights = ("exact DeltaTick-gap weights per (PID, TID) (the first sample per thread "
+                       "is ignored, no gap before it; gap time, including off-CPU time, is charged "
+                       "to the later sample); "
+                       f"{window}; sample_share is the dump's raw sample share and time_share "
+                       "weights the same rows by gap")
     fields.append(("WEIGHTS", f"{weights}; --by {args.by}: {GRANULARITY_LABELS[args.by]}"))
     return fields
 
 
 
-def _dump_contexts(connection: object, key: str, gap_limit_ns: float | None
+def _dump_contexts(connection: object, gap_limit_ns: float | None
                    ) -> list[uprof_session.ContextCadence]:
-    """Per-context sample counts and median gaps from v_dump.
+    """Per-context sample counts and median gaps.
 
-    key is cpu for a system-wide capture and tid for an attached one. gap_limit_ns drops gaps
-    above it, which are time the context was not running; None keeps every gap.
+    The context is the weighting context of v_dump_context: a CPU for a system-wide capture and a
+    (pid, tid) thread for an attached one, so same-TID threads of different processes stay apart.
+    gap_limit_ns drops gaps above it, which are time the context was not running; None keeps every
+    gap.
     """
     limit = "" if gap_limit_ns is None else " FILTER (WHERE gap <= ?)"
     parameters: list[float] = [] if gap_limit_ns is None else [gap_limit_ns]
     rows = connection.execute(
-        f"WITH gaps AS (SELECT {key} AS context, "
-        f"delta_tick - lag(delta_tick) OVER (PARTITION BY {key} ORDER BY delta_tick) AS gap "
-        "FROM v_dump) "
-        f"SELECT context, count(*), median(gap){limit} FROM gaps GROUP BY context",
+        "WITH gaps AS (SELECT context_pid, context, "
+        "delta_tick - lag(delta_tick) OVER (PARTITION BY context_pid, context "
+        "ORDER BY delta_tick) AS gap FROM v_dump_context) "
+        f"SELECT context_pid, context, count(*), median(gap){limit} "
+        "FROM gaps GROUP BY context_pid, context",
         parameters).fetchall()
-    return [uprof_session.ContextCadence(int(row[1] or 0),
-                                         None if row[2] is None else float(row[2]))
+    return [uprof_session.ContextCadence(int(row[2] or 0),
+                                         None if row[3] is None else float(row[3]))
             for row in rows]
 
 
@@ -432,8 +496,7 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
     if has_dump:
         wide = uprof_session.system_wide(args.session)
         label = "CPU" if wide else "thread"
-        contexts = _dump_contexts(connection, "cpu" if wide else "tid",
-                                  uprof_session.run_gap_limit_ns(sampler))
+        contexts = _dump_contexts(connection, uprof_session.run_gap_limit_ns(sampler))
         if dump is not None and dump.time_filter:
             bounds = util.parse_time_filter(dump.time_filter)
             if bounds is not None:
@@ -598,10 +661,10 @@ def run_query_command(args: argparse.Namespace) -> None:
                              and tag_values > 0)
             uprof_db.set_variables(connection, {
                 "uprof_tag_available": "true" if tag_available else "false"})
-            legend = _legend(sampler, dump, has_tag, tag_available, args)
-            fields = _header_fields(args, sampler, dump, has_tag, tag_available)
+            legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide)
+            fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             # The legend sits directly below METRIC, before the detailed capture fields.
-            fields[1:1] = _legend_fields(legend)
+            fields[1:1] = _legend_fields(legend, system_wide)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
             check_kernel = sampler.os_requested and not dump_windowed

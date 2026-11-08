@@ -248,6 +248,31 @@ loss is in capture, not translation. The numbers are recorded in `references/val
 
 Samples weight each distinct address (one per dump row, the event count per PMC row). A row with an empty uProf `Function.name` is not compared and is not counted as a mismatch. Names are compared as exact strings; spelling differences between demanglers are normal. `unresolved` is the signal that no symbols were found.
 
+### Symbol coverage
+
+`SYMBOL_COVERAGE` is computed over the same `v_scoped` rows as the table, so `--pid`, `--image` and `--time-filter` narrow it. A sample is named when its `Function.name` is non-empty; a NULL `function_id` (no `UnifiedSampleSeries` address mapping) and a blank name both count as unresolved. `tools/coverage.sql` returns per module the sample count and the named sample count plus the scope totals; the caller reports the aggregate named share and one `module unresolved/samples (percent unresolved, partial|no named functions)` entry for each module with unresolved samples. When anything is unresolved the line ends by naming the boundary: those samples cannot be attributed below module/RVA, so do not write a PE parser, map `.pdata` by hand, convert RVAs to VAs or disassemble. Use the symbolizer and the instruction context's `context` block instead. A module with no names is a finding to report, not a task to work around.
+
+## Module and CPU-time questions
+
+### Module rollup
+
+`profile --by function --top all --json` emits the header fields, `legend` and a `rows` array; each row carries `module`, `samples`, `sample_share` and, when the mode supplies it, `time_share`. Roll the functions up without querying `cpu.db`:
+
+```sql
+SELECT r.module, sum(r.samples) AS samples,
+       sum(r.sample_share) AS sample_share, sum(r.time_share) AS time_share
+FROM (SELECT unnest(rows) AS r FROM read_json_auto('functions.json'))
+GROUP BY r.module ORDER BY sample_share DESC NULLS LAST;
+```
+
+Rank by `sample_share` for a cycle-controlled or PMC cycle capture, where each sample carries fixed cycles; read `time_share` under the mode's meaning otherwise. `--top all` keeps the remainder row out of the total.
+
+A third-party module is neither the workload image nor a system module. `Module.isSystemModule` marks OS-shipped user modules (`ntdll.dll`, `kernelbase.dll`), so `false` is the usual third-party signal, but it is not a kernel predicate; a kernel image (`.sys`/`.ko`, a kernel basename, or a `ModuleInstance.loadAddress` in the kernel half) is always a system module. The `module` key is the dump's `ModuleName` or, for a PMC capture, the normalized module path, so the path is available when the flag is not.
+
+### Absolute CPU time
+
+A cycle-controlled sample carries the requested interval in cycles; PMC cycle samples carry the same fixed count. CPU seconds on one core are `samples × interval / core_frequency`; the row supplies `samples`, and `collect` prints the converted interval and frequency in `SAMPLE_INTERVAL=`/`EVENT=`, while `ACHIEVED:` repeats them (`requested 4700000 cycles at 4700 MHz = 1 ms`). The result is sampled CPU time on the sampled cores, not wall time. An attached thread's samples accumulate across CPU migrations, so do not multiply by the CPU count. The conversion does not apply to op-count or fetch samples: their interval is work, not time.
+
 ## Instruction context — `--by instruction --json`
 
 `uprof_query` calls `uprof_context.instruction_contexts()` before rendering JSON for instruction scope; Markdown never builds or receives the block. The block answers "what instructions surround this hot address" without replacing the row's own numbers.
@@ -356,7 +381,7 @@ The 16 views:
 | `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; `<other lines>` |
 | `v_instruction_rows` | one row per module + RVA with innermost annotation; `<other instructions>` |
 
-- **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-function.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `agreement.sql` computes the metric, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
+- **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-function.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `agreement.sql` computes the metric, `coverage.sql` reports per-module symbol coverage, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
 - **Load order.** Bind all inputs, load `views.sql`, then (for `line`/`instruction`) run `profile-rvas.sql` on the same connection, symbolize, rebind `uprof_symbols`/`uprof_aliases`, and run the projection. `query(CASE ...)` re-binds per query, so the symbol inputs may be bound after the views are created. A hand run writes a UTF-8 `SET VARIABLE` file, `.read`s `views.sql`, then the projection, and always uses the original session's `cpu.db`.
 - **Guard order.** The schema and dump guards run while `views.sql` loads, before any query, so an incomplete export or dump fails once with the missing item names. The schema guards read the bound path strings (empty means absent) so no identifier is spliced; the dump guard checks that the dump exists. A conditional `query(CASE ...)` avoids binder-eager branch evaluation.
 

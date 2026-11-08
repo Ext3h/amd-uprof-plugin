@@ -223,8 +223,11 @@ class FixtureTest(unittest.TestCase):
         context = uprof_context.instruction_contexts(
             connection, ["module", "rva"], [("fixture.exe", "0x101B")])[0]
 
-        self.assertEqual(context["omitted"], True)
+        self.assertTrue(context["omitted"])
         self.assertEqual(context["reason"], "build_mismatch")
+        self.assertFalse(context["build"]["verified"])
+        self.assertEqual(context["build"]["identity"], "unverified")
+        self.assertIn("checksum", context["build"]["warning"])
 
     def test_instruction_contexts_omits_an_off_boundary_hot_rva(self):
         connection = FakeConnection(str(FIXTURE), self.build.checksum)
@@ -234,6 +237,8 @@ class FixtureTest(unittest.TestCase):
 
         self.assertEqual(context["omitted"], True)
         self.assertEqual(context["reason"], "hot_rva_not_instruction_start")
+        self.assertTrue(context["build"]["verified"])
+        self.assertEqual(context["build"]["identity"], "checksum")
 
 
 if __name__ == "__main__":

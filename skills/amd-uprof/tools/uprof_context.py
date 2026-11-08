@@ -62,15 +62,19 @@ _CALL_MNEMONICS: Final = frozenset({"call", "callq", "calll", "callw"})
 class ContextOmission(Exception):
     """A context that cannot be produced safely; reason is a stable machine-readable code."""
 
-    def __init__(self, reason: str, detail: str | None = None) -> None:
+    def __init__(self, reason: str, detail: str | None = None,
+                 build: dict[str, object] | None = None) -> None:
         super().__init__(detail or reason)
         self.reason = reason
         self.detail = detail
+        self.build = build
 
     def as_json(self) -> dict[str, object]:
         payload: dict[str, object] = {"omitted": True, "reason": self.reason}
         if self.detail:
             payload["detail"] = self.detail
+        if self.build is not None:
+            payload["build"] = self.build
         return payload
 
 
@@ -717,6 +721,25 @@ def _hex(value: int) -> str:
     return f"0x{value:X}"
 
 
+def build_json(build: VerifiedBuild) -> dict[str, object]:
+    """The build-identity object shared by an emitted context and a later omission."""
+    payload: dict[str, object] = {
+        "verified": bool(build.verified),
+        "identity": build.identity,
+        "image_base": _hex(build.image_base),
+        "time_date_stamp": _hex(build.time_date_stamp),
+        "checksum": _hex(build.checksum),
+        "capture_checksum": _hex(build.capture_checksum),
+    }
+    if build.size_of_image:
+        payload["size_of_image"] = _hex(build.size_of_image)
+    if build.capture_size is not None:
+        payload["capture_size"] = _hex(build.capture_size)
+    if build.warning is not None:
+        payload["warning"] = build.warning
+    return payload
+
+
 def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
                   instructions: list[DecodedInstruction], samples: dict[int, int],
                   total_samples: int, symbols: dict[int, SymbolInfo],
@@ -727,20 +750,6 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
     if anchor.name is not None:
         anchor_json["name"] = anchor.name
     anchor_json["distance"] = hot_rva - anchor.rva
-    build_json = {
-        "verified": bool(build.verified),
-        "identity": build.identity,
-        "image_base": _hex(build.image_base),
-        "time_date_stamp": _hex(build.time_date_stamp),
-        "checksum": _hex(build.checksum),
-        "capture_checksum": _hex(build.capture_checksum),
-    }
-    if build.size_of_image:
-        build_json["size_of_image"] = _hex(build.size_of_image)
-    if build.capture_size is not None:
-        build_json["capture_size"] = _hex(build.capture_size)
-    if build.warning is not None:
-        build_json["warning"] = build.warning
     entries: list[dict[str, object]] = []
     for instruction in sorted(instructions, key=lambda item: item.rva):
         count = int(samples.get(instruction.rva, 0))
@@ -769,7 +778,7 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
         if ibs_labels:
             entry["ibs"] = ibs_labels
         entries.append(entry)
-    return {"anchor": anchor_json, "build": build_json, "instructions": entries}
+    return {"anchor": anchor_json, "build": build_json(build), "instructions": entries}
 
 
 _CONTEXT_HELP_FIELDS: Final = {
@@ -783,7 +792,9 @@ _CONTEXT_HELP_FIELDS: Final = {
               "are present when known"),
     "instructions": ("the static decoded stream in ascending rva; each entry has rva, instruction "
                      "(assembly), samples (raw count), sample_share (fraction) and optional "
-                     "symbol, import and ibs"),
+                     "symbol, import and ibs; instruction may include llvm-objdump's "
+                     "nearest-symbol <...> decoration, which is not the frame-0 symbol, so use "
+                     "symbol for the real frame"),
     "instructions[].symbol": ("llvm-symbolizer frame 0 for the instruction: function, file and "
                               "line; absent when the tool returned no frame"),
     "instructions[].import": ("the IAT target of a call through a slot: dll, name and slot_rva; "
@@ -794,9 +805,10 @@ _CONTEXT_HELP_FIELDS: Final = {
                            "counts as {set, of}; IbsTagToRetCtr is {samples, sum, max} over "
                            "unsigned decimal integer cells, each clipped at 65535, the 16-bit "
                            "field maximum, with NULL, negative, fractional and exponent cells "
-                           "excluded; fields the dump lacks are omitted"),
-    "omitted": ("an omitted context has omitted=true, reason and optional detail; see "
-                "omission_reasons"),
+                           "excluded; values are AMD-encoded hardware fields (counts or "
+                           "histograms), not decoded meanings; fields the dump lacks are omitted"),
+    "omitted": ("an omitted context has omitted=true, reason, optional detail and, when the "
+                "module was examined, the same build object; see omission_reasons"),
 }
 _CONTEXT_HELP_OMISSIONS: Final = {
     "module_missing": "the capture records no module path, or the file is absent on this host",
@@ -838,9 +850,10 @@ def context_help(legend: dict[str, Any]) -> dict[str, Any]:
         read += (" The row's tag_to_retire_share and the instruction ibs.IbsTagToRetCtr values "
                  "are total tag-to-retire dwell evidence, not per-op latency.")
     return {
-        "scope": ("one context per instruction row; at most 20 eligible rows in the table's row "
-                  "order carry data, and later eligible rows carry omitted with reason row_cap; "
-                  "the <other instructions> row carries no context"),
+        "scope": ("one context per instruction row; the 20-row cap counts row slots in the "
+                  "table's row order, so a row that omits for another reason still consumes a "
+                  "slot; rows past the cap carry omitted with reason row_cap; the <other "
+                  "instructions> row carries no context"),
         "share": ("sample_share is a fraction; legend.share_unit, legend.share_scale and "
                   "legend.denominators.sample_share define its unit and denominator, and "
                   "legend.columns.sample_share gives its meaning for this capture mode"),
@@ -891,7 +904,7 @@ class _ContextBuilder:
     def _module(self, module_name: str) -> _ModuleState:
         cached = self.modules.get(module_name)
         if isinstance(cached, ContextOmission):
-            raise ContextOmission(cached.reason, cached.detail)
+            raise ContextOmission(cached.reason, cached.detail, cached.build)
         if cached is not None:
             return cached
         try:
@@ -930,7 +943,15 @@ class _ContextBuilder:
         text = completed.stdout or ""
         build = parse_file_headers(text)
         sections = parse_sections(text)
-        verified = verify_build(build, capture_checksum, capture_size)
+        try:
+            verified = verify_build(build, capture_checksum, capture_size)
+        except ContextOmission as exc:
+            # The mismatch detail is the evidence; attach the same build shape the emitted
+            # block would carry so the omitted row is not silent about the build.
+            exc.build = build_json(VerifiedBuild(
+                pe=build, capture_checksum=_as_int(capture_checksum) or 0, verified=False,
+                identity="unverified", capture_size=_as_int(capture_size), warning=exc.detail))
+            raise
         try:
             imports = load_imports(module_path, build, readobj)
         except ContextOmission:
@@ -994,11 +1015,13 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
         try:
             stream = decode_stream(state.path, state.build, anchor, last_rva, section_end)
         except ContextOmission as exc:
+            exc.build = build_json(state.build)
             for index, _ in members:
                 contexts[index] = exc.as_json()
             continue
         except UprofError as exc:
-            omission = ContextOmission("context_failed", str(exc)).as_json()
+            omission = ContextOmission("context_failed", str(exc),
+                                       build=build_json(state.build)).as_json()
             for index, _ in members:
                 contexts[index] = omission
             continue
@@ -1006,6 +1029,7 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
             try:
                 windows[index] = (hot_rva, anchor, select_window(stream, hot_rva))
             except ContextOmission as exc:
+                exc.build = build_json(state.build)
                 contexts[index] = exc.as_json()
     if not windows:
         return
@@ -1016,7 +1040,8 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
         symbols = builder._symbols(state, rvas)
         ibs = builder._ibs(state, module_name, rvas)
     except UprofError as exc:
-        omission = ContextOmission("context_failed", str(exc)).as_json()
+        omission = ContextOmission("context_failed", str(exc),
+                                   build=build_json(state.build)).as_json()
         for index in windows:
             contexts[index] = omission
         return
@@ -1054,17 +1079,21 @@ def instruction_contexts(connection: object, columns: Sequence[str],
         built += 1
         module_name = str(module)
         hot_rva = int(str(rva_text), 0)
+        state: _ModuleState | None = None
         try:
             state = builder._module(module_name)
             anchor = select_anchor(hot_rva, state.sections, state.public_starts,
                                    state.pdata_starts, state.export_starts)
             section = require_code_section(state.sections, hot_rva)
         except ContextOmission as exc:
+            if state is not None:
+                exc.build = build_json(state.build)
             contexts[index] = exc.as_json()
             continue
         except UprofError as exc:
             # A tool timeout or a failing scoped query loses one optional block, not the run.
-            contexts[index] = ContextOmission("context_failed", str(exc)).as_json()
+            build = build_json(state.build) if state is not None else None
+            contexts[index] = ContextOmission("context_failed", str(exc), build=build).as_json()
             continue
         planned.setdefault(module_name, []).append((index, hot_rva, anchor, section.end))
     for module_name, items in planned.items():

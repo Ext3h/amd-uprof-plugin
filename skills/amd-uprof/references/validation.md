@@ -185,7 +185,7 @@ Validated 2026-11-08 on Windows 11 with LLVM 23.1.4 on `PATH`, using the in-repo
 the unit suite. No live capture is needed: the block is built from PE headers plus the capture's
 own rows, and the fixture is a real linked image.
 
-`python -m unittest discover -s skills/amd-uprof/tools -p "test_*.py"` → 205 tests, OK.
+`python -m unittest discover -s skills/amd-uprof/tools -p "test_*.py"` → 208 tests, OK.
 `python -m unittest test_context_fixture -v` runs `llvm-readobj`, `llvm-objdump` and
 `llvm-symbolizer` end to end against `tools/fixtures/fixture.exe` (2560 bytes, nonzero `CheckSum`,
 `.text` at 0x1000, `.pdata` at 0x3000, hot boundary 0x101B, IAT slot 0x20A0 for
@@ -200,6 +200,12 @@ own rows, and the fixture is a real linked image.
   mismatch reports `build_mismatch`; a zero checksum without size evidence gives
   `verified: false`, `identity: "unverified"` and a warning; a matching recorded `SizeOfImage`
   gives `identity: "size"`.
+- **Omission build evidence.** An omission raised after the module was examined carries the same
+  `build` object as an emitted block. The fixture's off-boundary row shows `identity: "checksum"`;
+  a synthetic zero-checksum capture with a differing recorded `SizeOfImage` shows
+  `verified: false`, `identity: "unverified"` and the size-mismatch warning on the
+  `hot_rva_not_instruction_start` row. A `build_mismatch` omission carries the same shape and
+  names the checksum in `detail` and `warning`.
 - **Share.** `instruction_share(3, 60)` is `0.05`, and `instruction_share(3, 0)` is `null`; the
   fixture's 0x101B instruction has 4 of 10 scoped samples and reports `sample_share` `0.4`. This
   is the row's fraction and the row's mode-specific meaning, not a percent or a second scale.
@@ -207,12 +213,15 @@ own rows, and the fixture is a real linked image.
   `LEAST(TRY_CAST("IbsTagToRetCtr" AS BIGINT), 65535)` and only a `\s*[0-9]+\s*` cell counts.
   The clip and mixed-junk arithmetic above remains the evidence: 200000 and 1000 give
   0.9849703163748403 and 0.01502968362515969; a mixed column excludes `abc`, `1.5`, `-4` and
-  `1e5` rather than charging 65535.
+  `1e5` rather than charging 65535. IBS values are emitted as AMD-encoded counts or histograms.
 - **`context_help`.** Fixed key order `scope`, `share`, `fields`, `omission_reasons`, `read`,
   `next`; repeated calls serialize identically; the text contains no `pct` name, no percent
   scaling and no doubled 16-bit maximum; `row.attribution` and the tag-to-retire reading appear
   only when the legend carries those columns; every omission reason the code can emit has a
-  meaning.
+  meaning; `scope` says the cap counts row slots and an omitted row still consumes one;
+  `instructions` says the text may keep objdump's nearest-symbol decoration and directs readers
+  to `symbol`; `instructions[].ibs` says the values are AMD-encoded, not decoded. Markdown contains
+  no help text.
 - **Document shape.** Key order is `METRIC`, `legend`, `context_help`, `rows`; `context_help`
   appears exactly once; a document without the feature is unchanged, and Markdown bytes carry no
   context or help.

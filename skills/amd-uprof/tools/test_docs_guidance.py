@@ -1,9 +1,10 @@
 """The worked example and new header fields are documented where a user will read them.
 
 These assertions pin the guidance that removes the second trial's detour: answer the CPU-time
-question from the supported output, roll functions up over --json, and stop at module/RVA when a
-module has no symbols instead of writing a PE parser. They also pin the VERSION and
-SYMBOL_COVERAGE header rows. Wording may change; the load-bearing claims may not.
+question from the supported output, use `--by module` for the rollup and third-party
+classification, and stop at module/RVA when a module has no symbols instead of writing a PE
+parser. They also pin the VERSION and SYMBOL_COVERAGE header rows. Wording may change; the
+load-bearing claims may not.
 
 Run from this directory: python -m unittest test_docs_guidance -v
 """
@@ -18,23 +19,24 @@ REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encodin
 SKILL_FRAGMENTS = (
     "## Quickstart",
     "`profile --by process` first",
+    "profile --by module",
+    "profile --by instruction --json",
     "## Worked example: where did CPU time go?",
     "attached, cycle-controlled IBS",
     "`VERSION:` is authoritative",
-    "do not inspect installations, worktrees or file mtimes",
+    "names the producing plugin/skill copy and its version",
     "rank by `sample_share`, not `time_share`",
     "`Module.isSystemModule = false`",
     "dominant non-workload dependency",
     "Stop when you have the module rollup",
-    "`Module.isSystemModule` classification",
-    "--by function --top all --json",
-    "GROUP BY r.module",
+    "isSystemModule",
+    "cpu_seconds",
+    "do not query `cpu.db` or write ad-hoc SQL",
     "samples × interval / core_frequency",
     "SYMBOL_COVERAGE:",
     "Do **not** write a PE parser",
     "map `.pdata` by hand",
     "convert RVAs to VAs",
-    "Do not write ad-hoc SQL",
     "Third-party",
     "| `VERSION` |",
     "| `SYMBOL_COVERAGE` |",
@@ -45,10 +47,13 @@ REFERENCE_FRAGMENTS = (
     "### Module rollup",
     "### Absolute CPU time",
     "tools/coverage.sql",
+    "profile --by module",
     "isSystemModule = false",
     "kernel image",
     "dominant non-workload dependency",
     "no named functions",
+    "v_module_flags",
+    "cpu_seconds",
 )
 
 

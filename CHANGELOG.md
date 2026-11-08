@@ -6,6 +6,14 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Added
 
+- `profile --by module [--json]`: one row per normalized module path with `samples`,
+  `sample_share`, `time_share` (mode-dependent), `tag_to_retire_share` (dump with a non-null tag
+  column), `Module.isSystemModule` and `cpu_seconds` (`samples × interval / core_frequency` for a
+  cycle interval, omitted with its reason for a work/fetch interval or an unavailable frequency).
+  The classification comes from `Module.isSystemModule` and is `NULL` when the export has no such
+  column; `v_module_flags` matches both the full path and the basename. This makes the module
+  rollup, the third-party rule and absolute CPU time readable from supported output without
+  ad-hoc `cpu.db` SQL (issues #25, #26).
 - `SYMBOL_COVERAGE` header line in `profile` (and JSON): the scoped samples that resolve to a
   non-empty `Function.name`, each module with unresolved samples and its unresolved share, and
   whether that module is `partial` or has `no named functions`. When a module has no names the
@@ -20,16 +28,17 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 ### Changed
 
 - `SKILL.md` has a worked "where did CPU time go?" example for an attached, cycle-controlled IBS
-  capture: confirm the mode and scope, rank processes by `sample_share`, roll functions up to
-  modules with a documented `GROUP BY` over `--by function --top all --json`, and stop at the
-  symbol boundary when `SYMBOL_COVERAGE` shows no named functions (issues #25, #26, #29). The
-  reference gives the coverage query, the module rollup and third-party rule, and the absolute
-  CPU-time conversion (`samples × interval / core_frequency`).
-- The worked example now has an explicit deliverable and stop contract (module rollup,
-  `SYMBOL_COVERAGE`, hot RVA, `Module.isSystemModule`), names `VERSION` as authoritative so no
-  installation, worktree or mtime check is needed, defines third-party as
-  `Module.isSystemModule = false` and reports the dominant non-workload dependency separately,
-  and points the quickstart at `profile --by process` first.
+  capture: confirm the mode and scope, rank processes by `sample_share`, roll modules up with
+  `profile --by module`, then read instructions with `profile --by instruction --json` (top 20)
+  only when the resolved hot RVA needs context, and stop at the symbol boundary when
+  `SYMBOL_COVERAGE` shows no named functions (issues #25, #26, #29). The reference gives the
+  module fields, the third-party rule and the absolute CPU-time conversion.
+- `NEXT` is the minimum path: from `process` it lists `module` and the instruction JSON call, and
+  from `module` only the instruction JSON call, instead of every granularity.
+- The worked example has an explicit deliverable and stop contract (module rollup with
+  `isSystemModule` and `cpu_seconds`, `SYMBOL_COVERAGE`, hot RVA), names `VERSION` as
+  authoritative, defines third-party as `Module.isSystemModule = false` and reports the dominant
+  non-workload dependency separately, and points the quickstart at `profile --by process` first.
 
 ## 2.1.0 — 2026-11-08
 

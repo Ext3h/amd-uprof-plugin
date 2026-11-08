@@ -286,6 +286,22 @@ class ContextHelpTest(unittest.TestCase):
         self.assertIn("65535", fields["instructions[].ibs"])
         self.assertIn("unsigned decimal integer", fields["instructions[].ibs"])
 
+    def test_document_help_qualifies_instruction_text_and_ibs_values(self):
+        fields = uprof_context.context_help(self.LEGEND)["fields"]
+
+        self.assertIn("nearest-symbol <...> decoration", fields["instructions"])
+        self.assertIn("not the frame-0 symbol", fields["instructions"])
+        self.assertIn("use symbol for the real frame", fields["instructions"])
+        self.assertIn("AMD-encoded hardware fields (counts or histograms)",
+                      fields["instructions[].ibs"])
+        self.assertIn("not decoded meanings", fields["instructions[].ibs"])
+
+    def test_document_help_says_the_cap_counts_row_slots(self):
+        scope = uprof_context.context_help(self.LEGEND)["scope"]
+
+        self.assertIn("row slots", scope)
+        self.assertIn("still consumes a slot", scope)
+
     def test_document_help_omits_tag_and_attribution_when_not_emitted(self):
         legend = {"columns": {"sample_share": "not established", "time_share": "time share"}}
         help_text = uprof_context.context_help(legend)
@@ -397,6 +413,17 @@ class InstructionContextsTest(unittest.TestCase):
         self.assertEqual(contexts[0]["reason"], "module_missing")
         self.assertEqual(contexts[1], {"omitted": True, "reason": "row_cap"})
         self.assertEqual(contexts[2], {"omitted": True, "reason": "row_cap"})
+
+    def test_an_omission_after_module_load_carries_the_build_evidence(self):
+        connection = FakeConnection(module_path=__file__, checksum=0, size=4096)
+        row = ("fixture.exe", "0x1002", None, None, None, "unique", 1, 1 / 60, 0.0, None)
+
+        context = self.contexts_with(connection, fake_run, rows=[row])[0]
+
+        self.assertEqual(context["reason"], "hot_rva_not_instruction_start")
+        self.assertFalse(context["build"]["verified"])
+        self.assertEqual(context["build"]["identity"], "unverified")
+        self.assertIn("SizeOfImage", context["build"]["warning"])
 
     def test_a_zero_capture_checksum_still_emits_an_unverified_block(self):
         connection = FakeConnection(module_path=__file__, checksum=0, size=0)
@@ -514,9 +541,9 @@ class InstructionContextsTest(unittest.TestCase):
 
         contexts = self.contexts_with(FakeConnection(module_path=__file__), timeout)
 
-        self.assertEqual(contexts[0],
-                         {"omitted": True, "reason": "context_failed",
-                          "detail": "llvm-objdump timed out after 300s"})
+        self.assertEqual(contexts[0]["reason"], "context_failed")
+        self.assertEqual(contexts[0]["detail"], "llvm-objdump timed out after 300s")
+        self.assertTrue(contexts[0]["build"]["verified"])
 
     def test_a_query_failure_is_a_machine_readable_omission(self):
         class FailingConnection(FakeConnection):
@@ -527,9 +554,9 @@ class InstructionContextsTest(unittest.TestCase):
 
         contexts = self.contexts_with(FailingConnection(module_path=__file__), fake_run)
 
-        self.assertEqual(contexts[0],
-                         {"omitted": True, "reason": "context_failed",
-                          "detail": "cannot read v_scoped"})
+        self.assertEqual(contexts[0]["reason"], "context_failed")
+        self.assertEqual(contexts[0]["detail"], "cannot read v_scoped")
+        self.assertTrue(contexts[0]["build"]["verified"])
 
 
 class OmissionJsonTest(unittest.TestCase):

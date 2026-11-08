@@ -16,13 +16,17 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   names its anchor and build identity: a nonzero PE `CheckSum` matching the capture verifies the
   build, a mismatch omits it, and no matching evidence is emitted as `identity: "unverified"` with
   a warning. A missing module, unsafe anchor, non-boundary hot RVA, unavailable LLVM tool or
-  failing optional query omits the block with a stable reason instead of guessing; the
-  `<other instructions>` row carries none. Each anchor is decoded once for every row under it,
-  and Markdown output is unchanged.
+  failing optional query omits the block with a stable reason instead of guessing; an omission
+  made after the module was examined carries the same `build` object, so an unverified build or
+  size mismatch is visible on the omitted row. The `<other instructions>` row carries none. Each
+  anchor is decoded once for every row under it, and Markdown output is unchanged.
 - `context_help`: a single top-level JSON object, emitted once after `legend` and before `rows`,
   that documents the context's fields, every omission reason, and how to read the sampled
   instruction and the IBS evidence. It defers unit, scale and denominator to the existing
-  `legend` rather than defining a second scale. The `IbsTagToRetCtr` aggregate uses the
+  `legend` rather than defining a second scale. It states that the 20-row cap counts row slots
+  (an omitted row still consumes one), that `instruction` may retain objdump's nearest-symbol
+  decoration while `symbol` is the frame-0 name, and that IBS values are AMD-encoded counts or
+  histograms, not decoded meanings. The `IbsTagToRetCtr` aggregate uses the
   `tag_to_retire_share` policy: unsigned decimal integer cells only, each clipped at 65535, the
   16-bit field's maximum, with NULL, negative, fractional and exponent cells excluded.
 

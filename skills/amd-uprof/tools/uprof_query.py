@@ -26,6 +26,7 @@ import uprof_util as util
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 GRANULARITY_LABELS: Final = MappingProxyType({
     "process": "per Process.id",
+    "module": "per module path",
     "function": "per Function.id",
     "line": "per file:line",
     "instruction": "per module offset",
@@ -87,7 +88,8 @@ def _out_path(args: argparse.Namespace, cpu_db: Path, session: Path) -> Path | N
 
 
 def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: int,
-               time_start: str, time_end: str, event_column: str | None) -> dict[str, str]:
+               time_start: str, time_end: str, event_column: str | None,
+               sample_interval_s: float | None = None) -> dict[str, str]:
     meta_path = util.absolute(args.session) / "session.uprof"
     return {
         "uprof_image": args.image if args.image is not None else "%",
@@ -102,6 +104,7 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
         "uprof_symbols": "",
         "uprof_aliases": "",
         "uprof_pdbs": "",
+        "uprof_sample_interval_s": "" if sample_interval_s is None else repr(sample_interval_s),
     }
 
 
@@ -153,8 +156,21 @@ _TAG_SHARE_MEANING: Final = (
 # Only for frequency shares: those count sampled operations, not fixed work per sample.
 _SAMPLE_CAVEAT: Final = ("a raw share cannot separate a cheap operation run often from an "
                          "expensive one run rarely")
+_SYSTEM_MODULE_MEANING: Final = (
+    "Module.isSystemModule: true = OS-shipped module, false = not OS-shipped")
+# A cycle interval is time only at a frequency; the session records the interval in cycles, not
+# the frequency of the capture machine.
+_CPU_SECONDS_MEANING: Final = (
+    "sampled CPU seconds = samples x the requested cycle interval / this machine's reported core "
+    "frequency (the session records no frequency, so a capture from other hardware is "
+    "approximate); CPU time, not wall-clock elapsed time")
+_CPU_SECONDS_SYSTEM_WIDE: Final = (
+    "; a system-wide capture sums CPU time across cores, and halted cycles are excluded")
+_CPU_SECONDS_ATTACHED: Final = (
+    "; an attached thread's off-CPU time is not sampled, so this is its running CPU time")
 _NEXT_BY: Final = {
-    "process": ("function", "line", "instruction"),
+    "process": ("module",),
+    "module": (),
     "function": ("line", "instruction"),
     "line": ("instruction",),
     "instruction": (),
@@ -186,6 +202,14 @@ def _sample_share_meaning(sampler: uprof_session.Sampler,
 def _cycle_controlled(sampler: uprof_session.Sampler) -> bool:
     """True when IBS OP samples carry a fixed cycle count, so sample_share is a CPU-cycle share."""
     return sampler.ibs_dump_kind == "ibsop-event-dump" and sampler.interval_units == "cycles"
+
+
+def _cpu_seconds_interval(sampler: uprof_session.Sampler) -> float | None:
+    """Seconds per sample, or None when a sample is not a fixed cycle count."""
+    if not (sampler.pmc_cycle_shares or _cycle_controlled(sampler)):
+        return None
+    interval_s, _requested, _ideal = uprof_session.requested_interval(sampler)
+    return interval_s
 
 
 def _quote(text: str) -> str:
@@ -221,9 +245,22 @@ def _next_calls(args: argparse.Namespace) -> list[str]:
     return calls
 
 
+def _cpu_seconds_absent(sampler: uprof_session.Sampler) -> str:
+    """Why cpu_seconds is not emitted for this capture."""
+    if sampler.interval_units == "ops":
+        return "the requested interval is a work count, not time"
+    if sampler.interval_units == "fetch":
+        return "the requested interval is a fetch-event count, not time"
+    if sampler.interval is None or sampler.interval_units is None:
+        return "the session records no cycle interval"
+    return "the core frequency is unavailable on this machine"
+
+
 def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             has_tag: bool, tag_available: bool,
-            args: argparse.Namespace, system_wide: bool) -> dict[str, Any]:
+            args: argparse.Namespace, system_wide: bool,
+            sample_interval_s: float | None = None,
+            has_system_module: bool | None = None) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -235,7 +272,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "samples": "raw sample count",
         "sample_share": _sample_share_meaning(sampler, dump),
     }
-    if args.by != "process":
+    if args.by in ("function", "line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
     denominators: dict[str, str] = {"sample_share": "total_samples"}
     absent: dict[str, str] = {}
@@ -282,6 +319,18 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
                         "counted once; off-CPU time is charged to the ending sample, the first "
                         "sample per thread is ignored (no gap before it), and NULL sorts last"
                         + (_CYCLE_BASIS if _cycle_controlled(sampler) else ""))
+    if args.by == "module":
+        if has_system_module:
+            columns["isSystemModule"] = _SYSTEM_MODULE_MEANING
+        else:
+            absent["isSystemModule"] = ("this export has no Module.isSystemModule column; "
+                                        "third-party cannot be classified")
+        if sample_interval_s is not None:
+            columns["cpu_seconds"] = (_CPU_SECONDS_MEANING
+                                      + (_CPU_SECONDS_SYSTEM_WIDE if system_wide
+                                         else _CPU_SECONDS_ATTACHED))
+        else:
+            absent["cpu_seconds"] = _cpu_seconds_absent(sampler)
     return {
         "share_unit": "fraction",
         "share_scale": 1,
@@ -344,6 +393,14 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool) -> list[tuple[str,
     else:
         parts.append(f"tag_to_retire_share absent "
                      f"({legend['absent']['tag_to_retire_share']})")
+    if "isSystemModule" in legend["columns"]:
+        parts.append(f"isSystemModule = {legend['columns']['isSystemModule']}")
+    elif "isSystemModule" in legend["absent"]:
+        parts.append(f"isSystemModule absent ({legend['absent']['isSystemModule']})")
+    if "cpu_seconds" in legend["columns"]:
+        parts.append(f"cpu_seconds = {legend['columns']['cpu_seconds']}")
+    elif "cpu_seconds" in legend["absent"]:
+        parts.append(f"cpu_seconds absent ({legend['absent']['cpu_seconds']})")
     return [("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
             ("READ", _read_text(legend, system_wide)),
             ("NEXT", _next_text(legend["next"]))]
@@ -695,7 +752,9 @@ def run_query_command(args: argparse.Namespace) -> None:
     dump_windowed = dump is not None and uprof_dump.recorded_time_filter(session) is not None
 
     stream = sys.stderr
-    variables = _variables(args, dump, top, time_start, time_end, sampler.event_column)
+    sample_interval_s = _cpu_seconds_interval(sampler) if args.by == "module" else None
+    variables = _variables(args, dump, top, time_start, time_end, sampler.event_column,
+                           sample_interval_s)
     artifacts: Path | None = None
     success = False
     try:
@@ -718,11 +777,14 @@ def run_query_command(args: argparse.Namespace) -> None:
                 _scope_filter_active(args, time_start, time_end), system_wide)
             tag_rows = connection.sql("SELECT getvariable('has_tag')").fetchall()
             has_tag = bool(tag_rows and tag_rows[0][0])
+            module_rows = connection.sql("SELECT getvariable('has_system_module')").fetchall()
+            has_system_module = bool(module_rows and module_rows[0][0])
             tag_available = (sampler.ibs_dump_kind == "ibsop-event-dump" and has_tag
                              and tag_values > 0)
             uprof_db.set_variables(connection, {
                 "uprof_tag_available": "true" if tag_available else "false"})
-            legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide)
+            legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
+                             sample_interval_s, has_system_module)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             # The legend sits directly below METRIC, after VERSION, before the detailed fields.
             fields[2:2] = _legend_fields(legend, system_wide)

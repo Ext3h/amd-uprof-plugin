@@ -37,7 +37,10 @@ time_share is a time share estimated from those gaps (an attached thread's gaps 
 time; for a cycle-controlled capture sample_share is the CPU-cycle share and the better ranking);
 tag_to_retire_share is the share of tag-to-retire cycles summed over sampled ops, a total, not
 per-op latency. All shares are fractions (0.0-1.0). line and instruction symbolize every
-module in scope and print the uProf-vs-symbolizer agreement summary.
+module in scope and print the uProf-vs-symbolizer agreement summary. module adds
+isSystemModule (Module's OS-shipped flag) and cpu_seconds = samples x the requested cycle
+interval / the reported core frequency; that conversion applies only to a cycle interval, and the
+result is CPU time, not wall time.
 
 Output is a Markdown pipe table with the METRIC, COLUMNS, READ, NEXT, DUMP, TIME_SHARE,
 TAG_TO_RETIRE_SHARE, WEIGHTS and AGREEMENT header lines above it; --json emits those fields, a
@@ -96,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     profile = sub.add_parser("profile", help="samples and time shares at one granularity")
     profile.add_argument("--session", required=True)
     profile.add_argument("--by", required=True,
-                         choices=("process", "function", "line", "instruction"))
+                         choices=("process", "module", "function", "line", "instruction"))
     scope = profile.add_mutually_exclusive_group()
     scope.add_argument("--pid", type=int, metavar="N")
     scope.add_argument("--image", metavar="PATTERN",

@@ -25,19 +25,37 @@ UTF-8 JSON (a BOM is tolerated). The keys the tools read:
 
 ## Estimator: exact DeltaTick gaps
 
-`AMDuProfCLI translate --ascii ibsop-event-dump -i <copy>` writes the dump; `ibsfetch-event-dump` writes the fetch dump. One row is one sample. Used columns: `DeltaTick`, `CPU_Number`, `PID`, `Offset`, `ModuleName`. `DeltaTick` is a cumulative, start-relative nanosecond timestamp (QPC-derived, 100 ns grid).
+`AMDuProfCLI translate --ascii ibsop-event-dump -i <copy>` writes the dump; `ibsfetch-event-dump` writes the fetch dump. One row is one sample. Used columns: `DeltaTick`, `CPU_Number`, `TID`, `PID`, `Offset`, `ModuleName`. `DeltaTick` is a cumulative, start-relative nanosecond timestamp (QPC-derived, 100 ns grid).
 
 Per Hofer, JKU PhD thesis, section 3.2.4:
 
-1. Partition by `CPU_Number`.
+1. Partition by execution context: `CPU_Number` for a system-wide capture, `(PID, TID)` for an
+   attached one. A thread's samples share a partition across every CPU it ran on.
 2. Order each partition by `DeltaTick`.
-3. Weight each sample by `DeltaTick - lag(DeltaTick)`; the first sample per CPU is ignored, having no gap before it.
+3. Weight each sample by `DeltaTick - lag(DeltaTick)`; the first sample per context is ignored,
+   having no gap before it.
 4. A group's share is `sum(weight in the group) / sum(weight in scope)`.
+
+The partition is the difference between the capture modes. A system-wide gap is the shared CPU
+timeline, so per-CPU partitions are disjoint. An attached thread that migrates leaves a gap on
+each CPU it visited, and those per-CPU gaps can cover the same wall-clock interval; partitioning
+by CPU would charge that interval once per CPU and inflate the total past the capture span.
 
 Rules that follow:
 
-- `--time-filter T1:T2` selects `DeltaTick ∈ [T1, T2)` **before** the lag, so the first sample per CPU inside the window is ignored, having no gap before it; filtering never re-translates. The first-per-CPU sample still counts in `sample_share`.
-- A gap spans all work on that CPU since the previous sample, so halted/idle time is charged to the later sample: `system idle process` and `system` carry share. A process total is core time summed over CPUs (10 s on 16 CPUs is about 160 s of weight).
+- `--time-filter T1:T2` selects `DeltaTick ∈ [T1, T2)` **before** the lag, so the first sample per
+  context inside the window is ignored, having no gap before it; filtering never re-translates.
+  The first-per-context sample still counts in `sample_share`.
+- System-wide, a gap spans all work on that CPU since the previous sample, so halted/idle time is
+  charged to the later sample: `system idle process` and `system` carry share. A process total is
+  core time summed over CPUs (10 s on 16 CPUs is about 160 s of weight). That normalization
+  applies only to a system-wide capture.
+- Attached, a gap is the thread's own interval since its previous sample and may cover time it
+  was off-CPU; partitions do not overlap, so a migrating thread is counted once and its total
+  cannot exceed the capture span. A single thread's total is its elapsed lifetime, not pure CPU
+  time. For a cycle-controlled IBS capture every sample carries the same fixed cycle count, so
+  `sample_share` is the CPU-cycle share and the better ranking; for op-count and fetch,
+  neither share is CPU time.
 - `(ModuleName, Offset)` maps to `Function.id` through the `UnifiedSampleSeries` rows that carry both; `Offset` is module-relative, and `ModuleName` matches `Module.path` after `module_key` (lowercase, `/` separators). The scope filter runs after weighting, so a gap is charged whole to the sample that ends it.
 - `samples` for a dump is the row count (one per dump row); for PMC it is `sum(event column)`, not `count(*)`.
 - `share(part, whole) = part / NULLIF(whole, 0)`: every share is a fraction 0.0-1.0, printed at full precision. The SQL denominator is the same sum over the scope, so each emitted share sums to 1.0 when it has at least one non-null value. An all-zero `IbsTagToRetCtr` is non-null but sums to 0, so every `tag_to_retire_share` is NULL and the column does not sum to 1.0.
@@ -93,10 +111,17 @@ fraction of good captures. The message reports the covered core time, the bounda
 leading/trailing, the worst CPU, and `OK (dump-wide across all processes)`; it says
 `WARN (dump-wide across all processes)` when the capture window ends more than one
 sampling cadence before the recorded span (no CPU sampled near the end). **Attached captures**
-(`collection.target.systemWide` false) cover only the CPUs the attached threads ran on, so
-`elapsed x CPUs` is an upper bound there and the message says `OK (attached; dump-wide)` without
-judging coverage. No usable duration gives a `WARN` and no comparison; an empty dump raises an
-error.
+(`collection.target.systemWide` false) partition gaps by `(PID, TID)`, not by CPU, so the verdict
+is thread coverage, never a CPU capacity: `elapsed x CPUs` was meaningless for a single-thread
+process and hid the per-CPU overcount. A thread holding a sample outside the recorded span is an
+error, the same out-of-span error as system-wide; the last-to-first span of an in-span thread
+cannot exceed the capture span by construction. The verdict says `OK (attached; dump-wide)` and
+reports the process count, the TID count, the busiest TID's sample count (`898/954`), the CPUs
+visited, the busiest TID's covered gap time against the span, and the total thread time over all
+TIDs. It also states that `time_share` partitions gaps by `(PID, TID)` so a migrating thread is
+counted once, that a thread's gaps include off-CPU time, and that for a cycle-controlled capture
+`sample_share` (fixed cycles per sample) is the CPU-cycle share and the better ranking. No usable
+duration gives a `WARN` and no comparison; an empty dump raises an error.
 
 When `--image`/`--pid` or `--time-filter` narrows the report, `v_scope_sanity` appends a
 `scoped coverage (<scope>)` verdict to the same field. It takes the last sample of `v_scoped` and
@@ -255,14 +280,15 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `has_tag` | the dump header carries `IbsTagToRetCtr`; `v_dump_sanity.tag_values` counts non-null values |
 | `top_n`, `time_start`, `time_end` | typed row cap and window |
 
-The 15 views:
+The 16 views:
 
 | View | Role |
 |---|---|
 | `v_dump` | typed dump rows (`delta_tick`, `cpu`, `pid`, `rva`, `module_name`, `tag_cycles`); tagged/untagged branch; an empty typed relation for PMC |
-| `v_dump_weighted` | applies `[time_start, time_end)` then adds `weight = delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick)` |
+| `v_dump_context` | `v_dump` plus the weighting context: `context_pid` 0 and `context` = `cpu` for a system-wide capture, `context_pid` = `pid` and `context` = `tid` for an attached one; defined once so weighting and the sanity check cannot disagree |
+| `v_dump_weighted` | applies `[time_start, time_end)` then adds `weight = delta_tick - lag(delta_tick) OVER (PARTITION BY context_pid, context ORDER BY delta_tick)` from `v_dump_context`; the helper columns are excluded |
 | `v_capture_span` | the span recorded in `session.uprof`: the translate `--time-filter` window when recorded, else `collection.schedule.elapsed`, else `profileDuration`; `start_ns`/`end_ns`/`expected_ns`/`span_label`/`system_wide`, shared by the dump-wide and scoped sanity views |
-| `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs, error; attached captures report `OK (attached; dump-wide)`; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure |
+| `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs when system-wide, error; attached captures report `OK (attached; dump-wide)` with processes, TIDs, active TID and CPUs visited, and error only for samples outside the span; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure |
 | `v_symbols` | combined symbolizer artifact: `module_name, rva, function, function_short, containing_function, file, line` |
 | `v_public_starts` | public-symbol fold cache: `module_name, rva, name_count, names` |
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |
@@ -302,6 +328,13 @@ supplies it, is total tag-to-retire cycles, not per-op latency.
 **Display escaping.** Table cells and header values escape controls as described in `SKILL.md`, Output; JSON carries the true characters, so table/JSON parity is modulo that display escaping. `--out-file` receives the same bytes as stdout.
 
 ## Known limitations
+
+- **Attached `time_share` is elapsed thread time, not CPU time.** Gaps are partitioned by
+  `(PID, TID)`, so a migrating thread is counted once and the total cannot exceed the span, but a
+  gap includes time the thread was off-CPU and is charged to the sample that ends it. For a
+  cycle-controlled IBS capture `sample_share` (fixed cycles per sample) is the CPU-cycle share and
+  the better ranking; for op-count and fetch, no emitted share is CPU time. Attached coverage is
+  wherever the attached threads ran, so attached captures get no scoped late-coverage verdict.
 
 - **Unelevated captures have no kernel coverage.** The OS-mode request is applied and encoded, but an unelevated uProf capture contains no kernel-mode samples; elevate the capture. `collect` notes this before the capture runs and `profile` prints `KERNEL_COVERAGE` when the whole capture confirms no kernel-image sample (see Kernel coverage).
 - **Inline overloads.** The display rule is in `SKILL.md`, Frame rule and sentinels; a true overload set (two or more out-of-line signatures) shows `<multiple>` on a shared source line.

@@ -17,8 +17,11 @@ where the cycles go — with shares by process, function, source line or instruc
   `sample_share` states what a sample counts in that capture mode (busy core cycles for the
   supported PMC cycle event, core cycles for cycle-controlled IBS OP, dispatched ops for
   op-count IBS, fetch samples for IBS fetch); `time_share` is a time share estimated from gaps,
-  not unqualified impact; `tag_to_retire_share` is tag-to-retire cycles summed over sampled
-  ops, a total, not per-op latency. The three are never conflated, and a three-line
+  partitioned by CPU for a system-wide capture and by thread (`PID`, `TID`) for an attached one (a
+  migrating thread is counted once; for cycle-controlled IBS the fixed-cycle sample share is the
+  CPU-cycle share and the better ranking), not unqualified impact; `tag_to_retire_share` is
+  tag-to-retire cycles summed
+  over sampled ops, a total, not per-op latency. The three are never conflated, and a three-line
   `COLUMNS`/`READ`/`NEXT` legend says so with every result.
 - Queries the capture in DuckDB, with the schema and views shipped as `tools/views.sql`.
 - Anchors a workload's QueryPerformanceCounter reading to capture-relative seconds; a negative

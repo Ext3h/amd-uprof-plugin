@@ -2,6 +2,33 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
+## 2.0.1 — 2026-11-08
+
+### Fixed
+
+- Attached captures no longer overcount `time_share`: DeltaTick gaps are partitioned by thread
+  (`PID`, `TID`) instead of by `CPU_Number`. A thread that migrates between CPUs leaves a gap on
+  every CPU it visited, and the per-CPU estimator summed those overlapping intervals, so the
+  weighted total could exceed the capture span (454.203 s over a 39.386 s span, 11.5x, on the
+  issue #23 capture) and reverse the ranking. System-wide captures keep the per-CPU partition.
+  `ACHIEVED` counts the same contexts, so same-TID threads of different attached processes no
+  longer merge.
+- The dump-wide `SANITY` check for an attached capture now judges thread coverage, never a
+  capacity of `elapsed x CPUs`, which was meaningless for a single-thread process and hid the
+  overcount. A sample outside the recorded span is an error; `OK (attached; dump-wide)` reports
+  the processes, TIDs, busiest TID's samples and covered gap time, CPUs visited and thread-time
+  total, and still prints when every thread has a single sample.
+- The `COLUMNS`/`READ` legend, the `TIME_SHARE` and `WEIGHTS` headers, and the JSON
+  `legend.columns.time_share` / `legend.impact.estimate` state the `(PID, TID)` partition and that
+  a thread's gaps include off-CPU time, and name `sample_share` as the CPU-cycle share and the
+  better ranking for a cycle-controlled capture.
+
+### Changed
+
+- Docs qualify `time_share` as the impact ordering for system-wide captures and describe the
+  attached partition; `references/reference.md`'s "10 s on 16 CPUs is about 160 s of weight"
+  normalization is marked system-wide only.
+
 ## 2.0.0 — 2026-11-08
 
 ### Breaking

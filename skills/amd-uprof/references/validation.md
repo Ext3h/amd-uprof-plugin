@@ -179,6 +179,44 @@ the table was computed for 0:2. The cache's `timeFilter` comes from the session'
 archive copy this wrote 59,243 samples (11,381,666 bytes) in 67.7 s, and `profile` on it printed
 `SANITY ... matches window 2.000 s`.
 
+## Instruction context and `context_help` (2.1.0)
+
+Validated 2026-11-08 on Windows 11 with LLVM 23.1.4 on `PATH`, using the in-repo PE fixture and
+the unit suite. No live capture is needed: the block is built from PE headers plus the capture's
+own rows, and the fixture is a real linked image.
+
+`python -m unittest discover -s skills/amd-uprof/tools -p "test_*.py"` → 205 tests, OK.
+`python -m unittest test_context_fixture -v` runs `llvm-readobj`, `llvm-objdump` and
+`llvm-symbolizer` end to end against `tools/fixtures/fixture.exe` (2560 bytes, nonzero `CheckSum`,
+`.text` at 0x1000, `.pdata` at 0x3000, hot boundary 0x101B, IAT slot 0x20A0 for
+`KERNEL32.dll!ExitProcess`).
+
+- **Anchor.** The fixture's 0x101B row anchors on export `fixture_entry` at 0x1000 with
+  `distance` 27. A public start names the export when the export table supplies it; a hot RVA
+  under a `.pdata`-only start reports `kind: "pdata"`; no safe start within 1 MiB reports
+  `anchor_too_far`; a mid-instruction RVA (0x1001) reports
+  `hot_rva_not_instruction_start`.
+- **Build identity.** A matching `CheckSum` gives `verified: true`, `identity: "checksum"`; a
+  mismatch reports `build_mismatch`; a zero checksum without size evidence gives
+  `verified: false`, `identity: "unverified"` and a warning; a matching recorded `SizeOfImage`
+  gives `identity: "size"`.
+- **Share.** `instruction_share(3, 60)` is `0.05`, and `instruction_share(3, 0)` is `null`; the
+  fixture's 0x101B instruction has 4 of 10 scoped samples and reports `sample_share` `0.4`. This
+  is the row's fraction and the row's mode-specific meaning, not a percent or a second scale.
+- **IBS tag policy.** The expression is
+  `LEAST(TRY_CAST("IbsTagToRetCtr" AS BIGINT), 65535)` and only a `\s*[0-9]+\s*` cell counts.
+  The clip and mixed-junk arithmetic above remains the evidence: 200000 and 1000 give
+  0.9849703163748403 and 0.01502968362515969; a mixed column excludes `abc`, `1.5`, `-4` and
+  `1e5` rather than charging 65535.
+- **`context_help`.** Fixed key order `scope`, `share`, `fields`, `omission_reasons`, `read`,
+  `next`; repeated calls serialize identically; the text contains no `pct` name, no percent
+  scaling and no doubled 16-bit maximum; `row.attribution` and the tag-to-retire reading appear
+  only when the legend carries those columns; every omission reason the code can emit has a
+  meaning.
+- **Document shape.** Key order is `METRIC`, `legend`, `context_help`, `rows`; `context_help`
+  appears exactly once; a document without the feature is unchanged, and Markdown bytes carry no
+  context or help.
+
 ## Historical module scope (not reachable from the current surface)
 
 The former `interval --module` scope filtered samples by module. Those figures remain exact for

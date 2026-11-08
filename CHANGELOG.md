@@ -2,23 +2,29 @@
 
 All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer.
 
-## Unreleased
+## 2.1.0 — 2026-11-08
 
 ### Added
 
-- Instruction context: `profile --by instruction --json` adds a `context` object to instruction
-  rows. It decodes forward from the nearest public export (or the code-section start, within a
-  1 MiB cap) and reports up to 32 instructions before and after the hot RVA with each
-  instruction's raw sample count and share; decoding stops at the containing section's end. Each
-  instruction carries the `llvm-symbolizer` frame-0 location from the PDB symbolization already
-  accepted, the `llvm-readobj` IAT import name for `callq *IAT` targets, and the dump's IBS OP
-  fields (`DataSrc`, `CacheHitSt`, `IbsDcMiss`, `IbsOpBrnMisp`, `IbsDcLockedOp`, `IbsOpMemWidth`,
-  `IbsTagToRetCtr`), counted over the same PID, image and time window as the row. The block names
-  its anchor and the build identity, and the PE `CheckSum` must match the capture's recorded
-  checksum. A missing module, unsafe anchor, non-boundary hot RVA, unverified build, unavailable
-  LLVM tool or failing optional query omits the block with a stable reason instead of guessing.
-  The first 20 rows are expanded; each anchor is decoded once for every row under it, and
-  Markdown output is unchanged.
+- Instruction context: `profile --by instruction --json` adds a `context` object to the first 20
+  instruction rows in the table's impact order. Each block decodes forward from the nearest safe
+  PE start at or below the hot RVA — an export, a PDB public, a `.pdata` runtime function or the
+  code-section start, within a 1 MiB cap — and reports up to 32 instructions before and after the
+  hot RVA, in ascending RVA, each with its raw sample count, its per-instruction `sample_share`
+  fraction (the row's denominator and mode-specific meaning, not a second scale), and optional
+  `llvm-symbolizer` frame-0 location, IAT import name and aggregated IBS OP fields. The block
+  names its anchor and build identity: a nonzero PE `CheckSum` matching the capture verifies the
+  build, a mismatch omits it, and no matching evidence is emitted as `identity: "unverified"` with
+  a warning. A missing module, unsafe anchor, non-boundary hot RVA, unavailable LLVM tool or
+  failing optional query omits the block with a stable reason instead of guessing; the
+  `<other instructions>` row carries none. Each anchor is decoded once for every row under it,
+  and Markdown output is unchanged.
+- `context_help`: a single top-level JSON object, emitted once after `legend` and before `rows`,
+  that documents the context's fields, every omission reason, and how to read the sampled
+  instruction and the IBS evidence. It defers unit, scale and denominator to the existing
+  `legend` rather than defining a second scale. The `IbsTagToRetCtr` aggregate uses the
+  `tag_to_retire_share` policy: unsigned decimal integer cells only, each clipped at 65535, the
+  16-bit field's maximum, with NULL, negative, fractional and exponent cells excluded.
 
 ## 2.0.1 — 2026-11-08
 

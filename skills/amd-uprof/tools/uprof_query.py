@@ -108,22 +108,65 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
     }
 
 
-def _symbolize_scope(connection: object, artifacts: Path,
-                     stream: TextIO) -> dict[str, str]:
-    """Symbolize every module in scope into artifacts; return the symbol artifact variables."""
+def _module_debug_info(connection: object) -> dict[str, bool]:
+    """Module.foundDebugInfo keyed by the full normalized path and its basename, when present."""
+    columns = {str(row[0]).lower() for row in connection.execute(
+        "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'").fetchall()}
+    if "founddebuginfo" not in columns:
+        return {}
+    rows = connection.execute("""
+        SELECT key, CAST(bool_or(found) AS BOOLEAN)
+        FROM (
+          SELECT module_key(path) AS key, CAST(foundDebugInfo AS BOOLEAN) AS found
+          FROM Module WHERE COALESCE(path, '') <> ''
+          UNION ALL
+          SELECT regexp_extract(module_key(path), '([^/]+)$', 1) AS key,
+                 CAST(foundDebugInfo AS BOOLEAN) AS found
+          FROM Module WHERE COALESCE(path, '') <> ''
+        )
+        WHERE key <> '' GROUP BY key""").fetchall()
+    return {str(key): bool(found) for key, found in rows}
+
+
+def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
+    """One-line per-module cause for SYMBOL_COVERAGE; the stderr evidence line has the detail."""
+    if evidence.outcome == "no_debug_info":
+        return "no debug information is recorded for this module in the capture"
+    if evidence.outcome == "no_pdb":
+        if evidence.symbolizer and evidence.symbolizer.errors:
+            return f"no PDB found; llvm-symbolizer: {evidence.symbolizer.errors[0][1]}"
+        return ("no PDB found beside the module, at the recorded CodeView path or in a local "
+                "srv* cache; _NT_SYMBOL_PATH is not read by llvm-symbolizer")
+    if evidence.outcome == "readobj_failed":
+        return f"llvm-readobj could not read the debug directory: {evidence.note or 'unknown'}"
+    if evidence.outcome == "module_missing":
+        return f"module file not available: {evidence.note or 'no recorded path'}"
+    return f"symbolization failed: {evidence.note or evidence.outcome}"
+
+
+def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
+                     args: argparse.Namespace) -> tuple[dict[str, str], dict[str, str]]:
+    """Symbolize every module in scope; return the artifact variables and per-module causes."""
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-rvas.sql")
     modules: dict[str, list] = {}
     for module_name, module_path, rva in rows:
         if module_name not in modules:
             modules[module_name] = [module_path, []]
         modules[module_name][1].append(rva)
-    symbols, publics, pdbs = uprof_symbols.symbolize_modules(
-        [(name, path, rvas) for name, (path, rvas) in modules.items()], artifacts, stream=stream)
+    symbols, publics, pdbs, evidence = uprof_symbols.symbolize_modules(
+        [(name, path, rvas) for name, (path, rvas) in modules.items()], artifacts,
+        stream=stream, debug_info=_module_debug_info(connection),
+        pdb_file=getattr(args, "pdb_file", None),
+        pdb_dirs=getattr(args, "pdb_dir", None) or (),
+        debug_dirs=getattr(args, "debug_file_dir", None) or (),
+        fallback_paths=getattr(args, "fallback_debug_path", None) or ())
+    causes = {item.module_name: _evidence_cause(item) for item in evidence
+              if item.outcome != "resolved"}
     return {
         "uprof_symbols": str(symbols) if symbols else "",
         "uprof_aliases": str(publics) if publics else "",
         "uprof_pdbs": str(pdbs) if pdbs else "",
-    }
+    }, causes
 
 
 def _dump_field(dump: uprof_dump.DumpInfo) -> str:
@@ -231,6 +274,14 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
         parts += ["--image", _quote(args.image)]
     if args.time_filter:
         parts += ["--time-filter", _quote(args.time_filter)]
+    if getattr(args, "pdb_file", None):
+        parts += ["--pdb-file", _quote(args.pdb_file)]
+    for option, values in (("--pdb-dir", getattr(args, "pdb_dir", None)),
+                           ("--debug-file-dir", getattr(args, "debug_file_dir", None)),
+                           ("--fallback-debug-path",
+                            getattr(args, "fallback_debug_path", None))):
+        for value in values or ():
+            parts += [option, _quote(value)]
     if args.top != "20":
         parts += ["--top", str(args.top)]
     if json_mode:
@@ -634,11 +685,13 @@ def _kernel_coverage_field(sampler: uprof_session.Sampler, kernel_covered: bool 
     return [] if warning is None else [("KERNEL_COVERAGE", warning)]
 
 
-def _coverage_field(connection: object) -> list[tuple[str, str]]:
+def _coverage_field(connection: object,
+                    causes: dict[str, str] | None = None) -> list[tuple[str, str]]:
     """Disclose how many scoped samples resolve to a named function, and per module.
 
     A module whose samples carry no non-empty Function.name cannot be resolved below module/RVA,
     so the line names it before the user starts reconstructing function boundaries (issue #27).
+    causes carries the per-module symbolization outcome so the line also says why.
     """
     columns, rows = uprof_db.fetch(connection, TOOLS_DIR / "coverage.sql")
     if not rows:
@@ -659,14 +712,21 @@ def _coverage_field(connection: object) -> list[tuple[str, str]]:
         named_samples = int(value["named_samples"])
         kind = "partial" if named_samples else "no named functions"
         share = 100.0 * (samples - named_samples) / samples
+        cause = (causes or {}).get(value["module_name"])
+        reason = f"; cause: {cause}" if cause else ""
         parts.append(f"{value['module_name']} {samples - named_samples}/{samples} "
-                     f"({share:.1f}% unresolved, {kind})")
+                     f"({share:.1f}% unresolved, {kind}{reason})")
     # A module with no names at all is the case that provokes a manual PE/.pdata mapping.
     stop = (_NO_NAMED_FUNCTION_STOP
             if any(int(value["named_samples"]) == 0 for value in unresolved)
             else _UNRESOLVED_FUNCTION_STOP)
+    remedy = ("; remedy: pass profile --pdb-file <file> or --pdb-dir <dir> for a PDB, or "
+              "--debug-file-dir/--fallback-debug-path <dir> for DWARF, or place the module's "
+              "debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an "
+              "adjacent PDB, the recorded CodeView path or the skill's local srv* cache scan is "
+              "searched" if causes else "")
     return [("SYMBOL_COVERAGE",
-             f"{text}; unresolved by module: {'; '.join(parts)}; {stop}")]
+             f"{text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")]
 
 
 def _scope_warning(connection: object) -> list[tuple[str, str]]:
@@ -705,7 +765,10 @@ def _write_profile(connection: object, args: argparse.Namespace,
     if args.json and args.by == "instruction":
         columns, types, rows = uprof_db.fetch_typed(
             connection, TOOLS_DIR / "profile-instruction.sql")
-        contexts = uprof_context.instruction_contexts(connection, columns, rows)
+        contexts = uprof_context.instruction_contexts(
+            connection, columns, rows,
+            debug_dirs=getattr(args, "debug_file_dir", None) or (),
+            fallback_paths=getattr(args, "fallback_debug_path", None) or ())
         help_text = uprof_context.context_help(legend or {})
         uprof_db.output_rows(columns, types, rows, fields, args.json, out_path,
                              legend, contexts, help_text)
@@ -768,9 +831,11 @@ def run_query_command(args: argparse.Namespace) -> None:
                         f"{tempfile.gettempdir()}: {exc}; check free space and permissions on "
                         "the temp directory") from exc
                 print(f"ARTIFACTS={artifacts}", file=stream)
-                symbols = _symbolize_scope(connection, artifacts, stream)
+                symbols, causes = _symbolize_scope(connection, artifacts, stream, args)
                 variables.update(symbols)
                 uprof_db.set_variables(connection, symbols)
+            else:
+                causes = {}
 
             sanity_message, tag_values = _dump_sanity(
                 connection, dump is not None,
@@ -797,7 +862,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 fields.append(achieved)
             fields.extend(_kernel_coverage_field(
                 sampler, kernel_covered, dump_windowed, captured_samples))
-            fields.extend(_coverage_field(connection))
+            fields.extend(_coverage_field(connection, causes))
             fields.extend(_scope_warning(connection))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(connection)

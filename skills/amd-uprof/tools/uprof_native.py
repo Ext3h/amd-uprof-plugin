@@ -391,6 +391,37 @@ def _clear_translate_outputs(out: Path) -> None:
                              "--out-dir or fix its permissions") from exc
 
 
+def symbolization_counts(cpu_db: Path | str) -> tuple[int, int | None, int] | None:
+    """Modules, modules recording debug info and Function rows in a translated cpu.db.
+
+    AMDuProfCLI translate exits 0 and prints a generic "Translation finished" even when no
+    module got symbols, so these counts are the only evidence that translation resolved any.
+    Returns None when the database cannot be inspected; the caller reports that, not success.
+    """
+    try:
+        import duckdb
+    except ImportError:
+        return None
+    try:
+        connection = duckdb.connect(str(cpu_db), read_only=True)
+    except Exception:
+        return None
+    try:
+        columns = {str(name).lower() for name, in connection.execute(
+            "SELECT lower(column_name) FROM duckdb_columns() "
+            "WHERE lower(table_name) = 'module'").fetchall()}
+        modules = connection.execute("SELECT count(*) FROM Module").fetchone()[0]
+        with_debug = (connection.execute(
+            "SELECT count(*) FROM Module WHERE foundDebugInfo").fetchone()[0]
+            if "founddebuginfo" in columns else None)
+        functions = connection.execute("SELECT count(*) FROM Function").fetchone()[0]
+        return int(modules), (None if with_debug is None else int(with_debug)), int(functions)
+    except Exception:
+        return None
+    finally:
+        connection.close()
+
+
 def translate(session_dir: Path | str, out_dir: Path | str,
               pdb_dir: Path | str | None = None, symbol_cache: Path | str | None = None,
               symbol_servers: list[str] | None = None, time_filter: str | None = None,
@@ -449,6 +480,20 @@ def translate(session_dir: Path | str, out_dir: Path | str,
         raise UprofError(f"translate did not produce {cpu_db}")
     print(f"SESSION={out}")
     print(f"CPU_DB={cpu_db}")
+    counts = symbolization_counts(cpu_db)
+    if counts is None:
+        print("SYMBOLIZATION: could not inspect cpu.db; check Module.foundDebugInfo and Function "
+              "rows before relying on names")
+    else:
+        modules, with_debug, functions = counts
+        debug_text = ("Module.foundDebugInfo absent" if with_debug is None
+                      else f"{with_debug}/{modules}")
+        print(f"SYMBOLIZATION: {debug_text} modules with debug info, {functions} Function rows")
+        if functions == 0 or with_debug == 0:
+            print("WARNING: translate exited 0 and printed 'Translation finished', but this "
+                  "cpu.db has no symbol evidence; the exit status is not symbolization success. "
+                  "Check the SYMBOL_CACHE and SYMBOL_SERVERS paths above, or pass --symbol-cache, "
+                  "--symbol-server or --pdb-dir and re-run translate into a new --out-dir")
     if ascii_kind:
         dump = out / DUMP_FILENAMES[ascii_kind]
         if not dump.is_file():

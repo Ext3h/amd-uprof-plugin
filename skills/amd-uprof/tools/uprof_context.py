@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -507,9 +508,55 @@ def parse_symbolizer_json(text: str) -> dict[int, SymbolInfo]:
     return symbols
 
 
+def _symbolizer_error(text: str) -> str | None:
+    """The first llvm-symbolizer JSON Error.Message on stdout, if any."""
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        error = record.get("Error")
+        message = error.get("Message") if isinstance(error, dict) else error
+        if isinstance(message, str) and message:
+            return message
+    return None
+
+
+def _empty_symbol_records(text: str) -> tuple[int, int]:
+    """(records with a Symbol result, records whose frames carry no name and line 0)."""
+    records = empty = 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or "Symbol" not in record:
+            continue
+        records += 1
+        frames = record.get("Symbol")
+        if isinstance(frames, list) and all(
+                not (frame.get("FunctionName") or "").strip()
+                and not (frame.get("Line") or 0)
+                for frame in frames if isinstance(frame, dict)):
+            empty += 1
+    return records, empty
+
+
 def symbolize_rvas(module_path: str, rvas: list[int], pdb: str | Path | None = None,
-                   symbolizer: str | None = None) -> dict[int, SymbolInfo]:
-    """Symbolize module-relative addresses; a tool failure is an omission, not a guessed name."""
+                   symbolizer: str | None = None,
+                   debug_dirs: Iterable[str] = (),
+                   fallback_paths: Iterable[str] = ()) -> dict[int, SymbolInfo]:
+    """Symbolize module-relative addresses; a tool failure is an omission, not a guessed name.
+
+    debug_dirs and fallback_paths are passed to llvm-symbolizer as --debug-file-directory and
+    --fallback-debug-path for DWARF/debug files.
+    """
     addresses = sorted({int(rva) for rva in rvas})
     if not addresses:
         return {}
@@ -519,15 +566,30 @@ def symbolize_rvas(module_path: str, rvas: list[int], pdb: str | Path | None = N
     command = [str(found), f"--obj={module_path}"]
     if pdb:
         command.append(f"--pdb={pdb}")
+    command += [f"--debug-file-directory={directory}" for directory in debug_dirs]
+    command += [f"--fallback-debug-path={directory}" for directory in fallback_paths]
     command += ["--relative-address", "--functions=linkage", "--inlines",
                 "--output-style=JSON"]
     input_text = "\n".join(f"0x{rva:X}" for rva in addresses) + "\n"
     completed = run(command, input_text=input_text, timeout=CONTEXT_TOOL_TIMEOUT)
-    if completed.returncode != 0 and not (completed.stdout or "").strip():
-        raise ContextOmission("symbolizer_failed",
-                              tail_lines((completed.stdout or "") + "\n" +
-                                         (completed.stderr or "")))
-    return parse_symbolizer_json(completed.stdout or "")
+    if completed.returncode != 0:
+        # JSON output carries the resolution error on stdout, so it is the primary evidence.
+        detail = _symbolizer_error(completed.stdout or "")
+        if not detail:
+            detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
+        message = f"llvm-symbolizer exited {completed.returncode}: {detail or 'no output'}"
+        print(f"WARNING: {module_path}: {message}; affected instructions carry no symbol",
+              file=sys.stderr)
+        raise ContextOmission("symbolizer_failed", message)
+    symbols = parse_symbolizer_json(completed.stdout or "")
+    records, empty_records = _empty_symbol_records(completed.stdout or "")
+    if pdb and not symbols and records and empty_records == records:
+        # A valid PDB for another build yields exit 0, no Error object and empty Symbol frames.
+        message = (f"llvm-symbolizer resolved no address ({records} empty Symbol entries); "
+                   f"the PDB {Path(pdb).name} is probably for another build")
+        print(f"WARNING: {module_path}: {message}", file=sys.stderr)
+        raise ContextOmission("symbolizer_failed", message)
+    return symbols
 
 
 # ------------------------------------------------------------------ IBS hardware labels
@@ -697,10 +759,13 @@ def decode_stream(module_path: str, build: BuildIdentity, anchor: Anchor, last_r
                f"--stop-address=0x{stop_vma:X}", "--no-show-raw-insn",
                "--no-symbolize-operands", module_path]
     completed = run(command, timeout=CONTEXT_TOOL_TIMEOUT)
-    if completed.returncode != 0 and not (completed.stdout or "").strip():
-        raise ContextOmission("objdump_failed",
-                              tail_lines((completed.stdout or "") + "\n" +
-                                         (completed.stderr or "")))
+    if completed.returncode != 0:
+        detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
+        message = f"llvm-objdump exited {completed.returncode}: {detail or 'no output'}"
+        if not (completed.stdout or "").strip():
+            raise ContextOmission("objdump_failed", message)
+        print(f"WARNING: {module_path}: {message}; using the instructions it printed",
+              file=sys.stderr)
     decoded = parse_objdump(completed.stdout or "", build.image_base)
     if not decoded:
         raise ContextOmission("objdump_failed",
@@ -811,21 +876,45 @@ _CONTEXT_HELP_FIELDS: Final = {
                 "module was examined, the same build object; see omission_reasons"),
 }
 _CONTEXT_HELP_OMISSIONS: Final = {
-    "module_missing": "the capture records no module path, or the file is absent on this host",
-    "readobj_missing": "llvm-readobj is unavailable",
-    "readobj_failed": "llvm-readobj failed to read the PE headers, sections, exports or unwind data",
+    "module_missing": ("the capture records no module path, or the file is absent on this host; "
+                       "remedy: copy the module to the recorded path or capture on this host"),
+    "readobj_missing": ("llvm-readobj is unavailable; remedy: install LLVM so llvm-readobj sits "
+                        "beside llvm-symbolizer or on PATH"),
+    "readobj_failed": ("llvm-readobj failed to read the PE headers, sections, exports or unwind "
+                       "data; remedy: check the module file is readable and the LLVM version "
+                       "supports it"),
     "metadata_incomplete": ("the PE headers lack ImageBase, TimeDateStamp, CheckSum or Magic "
-                            "(for example an ELF module)"),
-    "no_code_section": "the row's rva is not inside an executable PE section",
-    "anchor_too_far": "the nearest safe start is beyond the 1 MiB distance cap",
+                            "(for example an ELF module); remedy: use a PE/COFF module, ELF "
+                            "modules are not supported for this block"),
+    "no_code_section": ("the row's rva is not inside an executable PE section; remedy: use the "
+                        "module/RVA row without a context unless the address is known code"),
+    "anchor_too_far": ("the nearest safe start is beyond the 1 MiB distance cap; remedy: read "
+                       "the module/RVA row without a context"),
     "hot_rva_not_instruction_start": ("decoding from the anchor never reaches the row's rva on "
-                                      "an instruction boundary"),
-    "objdump_missing": "llvm-objdump is unavailable",
-    "objdump_failed": "llvm-objdump failed or produced no instructions",
-    "build_mismatch": ("a nonzero on-disk CheckSum differs from the capture's Module.checksum"),
+                                      "an instruction boundary; remedy: use the module/RVA row; "
+                                      "do not snap the address by hand"),
+    "objdump_missing": ("llvm-objdump is unavailable; remedy: install LLVM so llvm-objdump sits "
+                        "beside llvm-symbolizer or on PATH"),
+    "objdump_failed": ("llvm-objdump failed or produced no instructions; remedy: check the module "
+                       "file and the LLVM installation; the table row remains valid"),
+    "symbolizer_missing": ("llvm-symbolizer is unavailable; remedy: install LLVM so "
+                           "llvm-symbolizer sits beside the other LLVM tools or on PATH"),
+    "symbolizer_failed": ("llvm-symbolizer exited nonzero or resolved no address and the detail "
+                          "names its exit status, JSON Error and any stderr; remedy: pass profile "
+                          "--pdb-file <file> or --pdb-dir <dir> for the PDB, or "
+                          "--debug-file-dir/--fallback-debug-path <dir> for DWARF; llvm-symbolizer "
+                          "ignores _NT_SYMBOL_PATH, so only an adjacent PDB, the recorded CodeView "
+                          "path or the skill's local srv* cache scan is searched"),
+    "imports_failed": ("llvm-readobj could not read the import table; remedy: check the module "
+                       "file is readable; the block is omitted rather than showing calls "
+                       "without IAT targets"),
+    "build_mismatch": ("a nonzero on-disk CheckSum differs from the capture's Module.checksum; "
+                       "remedy: symbolicate against the exact binary recorded in the capture"),
     "context_failed": ("an LLVM tool timed out or a scoped query failed while building this "
-                       "context"),
-    "row_cap": "this row is past the 20-row context cap",
+                       "context; remedy: retry, then check the LLVM tools and the artifact "
+                       "directory"),
+    "row_cap": ("this row is past the 20-row context cap; remedy: inspect it in a separate run "
+                "with a smaller --top"),
 }
 
 
@@ -896,9 +985,13 @@ def _module_row(connection: object, module_name: str, checksum_column: bool,
 
 
 class _ContextBuilder:
-    def __init__(self, connection: object, total_samples: int) -> None:
+    def __init__(self, connection: object, total_samples: int,
+                 debug_dirs: Iterable[str] = (),
+                 fallback_paths: Iterable[str] = ()) -> None:
         self.connection = connection
         self.total_samples = total_samples
+        self.debug_dirs = tuple(debug_dirs)
+        self.fallback_paths = tuple(fallback_paths)
         self.modules: dict[str, _ModuleState | ContextOmission] = {}
 
     def _module(self, module_name: str) -> _ModuleState:
@@ -954,8 +1047,11 @@ class _ContextBuilder:
             raise
         try:
             imports = load_imports(module_path, build, readobj)
-        except ContextOmission:
-            imports = {}
+        except ContextOmission as exc:
+            # The import table is part of the block's evidence; omitting only it would make a
+            # call through an IAT slot look like a call without a destination.
+            exc.build = build_json(verified)
+            raise
         public_starts = [
             (int(rva), names) for rva, names in self.connection.execute(
                 "SELECT rva, names FROM v_public_starts "
@@ -982,10 +1078,9 @@ class _ContextBuilder:
         missing = [rva for rva in rvas if rva not in state.symbol_attempted]
         if missing:
             state.symbol_attempted.update(missing)
-            try:
-                state.symbols.update(symbolize_rvas(state.path, missing, pdb=state.pdb))
-            except ContextOmission:
-                pass
+            state.symbols.update(symbolize_rvas(state.path, missing, pdb=state.pdb,
+                                                debug_dirs=self.debug_dirs,
+                                                fallback_paths=self.fallback_paths))
         return state.symbols
 
     def _ibs(self, state: _ModuleState, module_name: str,
@@ -1039,6 +1134,13 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
         samples = builder._samples(module_name, rvas)
         symbols = builder._symbols(state, rvas)
         ibs = builder._ibs(state, module_name, rvas)
+    except ContextOmission as exc:
+        # A missing symbolizer, a failed symbolizer or an unreadable import table is the
+        # module-level reason for every row of this module, not a silent empty annotation.
+        exc.build = build_json(state.build)
+        for index in windows:
+            contexts[index] = exc.as_json()
+        return
     except UprofError as exc:
         omission = ContextOmission("context_failed", str(exc),
                                    build=build_json(state.build)).as_json()
@@ -1053,18 +1155,22 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
 
 def instruction_contexts(connection: object, columns: Sequence[str],
                          rows: Sequence[Sequence[object]],
-                         cap: int = CONTEXT_ROW_CAP) -> list[object | None]:
+                         cap: int = CONTEXT_ROW_CAP,
+                         debug_dirs: Iterable[str] = (),
+                         fallback_paths: Iterable[str] = ()) -> list[object | None]:
     """One context (or omission) per instruction row, in row order.
 
     Rows without a module and RVA (the aggregate row) carry no context. Rows past cap carry
-    reason row_cap instead of doing more work.
+    reason row_cap instead of doing more work. debug_dirs and fallback_paths are the profile
+    --debug-file-dir and --fallback-debug-path values.
     """
     indices = {name: index for index, name in enumerate(columns)}
     if "module" not in indices or "rva" not in indices:
         return [None] * len(rows)
     total_rows = connection.execute("SELECT total_samples FROM v_scope_totals").fetchall()
     total_samples = int(total_rows[0][0] or 0) if total_rows else 0
-    builder = _ContextBuilder(connection, total_samples)
+    builder = _ContextBuilder(connection, total_samples, debug_dirs=debug_dirs,
+                              fallback_paths=fallback_paths)
     module_at, rva_at = indices["module"], indices["rva"]
     contexts: list[object | None] = [None] * len(rows)
     planned: dict[str, list[tuple[int, int, Anchor, int]]] = {}

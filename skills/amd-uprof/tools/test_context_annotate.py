@@ -3,6 +3,7 @@
 Run from this directory: python -m unittest test_context_annotate -v
 """
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -75,6 +76,57 @@ class SymbolizerTest(unittest.TestCase):
                                              symbolizer="llvm-symbolizer.exe")
 
         self.assertEqual(caught.exception.reason, "symbolizer_failed")
+        self.assertIn("exited 1", caught.exception.detail)
+
+    def test_the_json_error_is_the_symbolizer_omission_detail(self):
+        text = json.dumps({"Address": "0x1010",
+                           "Error": {"Message": "'C:\\x\\fixture.pdb': no such file or "
+                                                "directory"}})
+        completed = subprocess.CompletedProcess(["llvm-symbolizer"], 1, text, "")
+        with mock.patch.object(uprof_context, "run", return_value=completed):
+            with self.assertRaises(uprof_context.ContextOmission) as caught:
+                uprof_context.symbolize_rvas("fixture.exe", [0x1010],
+                                             symbolizer="llvm-symbolizer.exe")
+
+        self.assertEqual(caught.exception.reason, "symbolizer_failed")
+        self.assertIn("exited 1", caught.exception.detail)
+        self.assertIn("no such file or directory", caught.exception.detail)
+
+    def test_debug_file_directories_reach_the_symbolizer(self):
+        completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, SYMBOLS, "")
+        with mock.patch.object(uprof_context, "run", return_value=completed) as invoked:
+            uprof_context.symbolize_rvas("fixture.exe", [0x1010],
+                                         symbolizer="llvm-symbolizer.exe",
+                                         debug_dirs=["C:/debug", "C:/more"])
+
+        command, = invoked.call_args[0]
+        self.assertIn("--debug-file-directory=C:/debug", command)
+        self.assertIn("--debug-file-directory=C:/more", command)
+
+    def test_fallback_debug_paths_reach_the_symbolizer(self):
+        completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, SYMBOLS, "")
+        with mock.patch.object(uprof_context, "run", return_value=completed) as invoked:
+            uprof_context.symbolize_rvas("fixture.exe", [0x1010],
+                                         symbolizer="llvm-symbolizer.exe",
+                                         fallback_paths=["C:/fallback"])
+
+        command, = invoked.call_args[0]
+        self.assertIn("--fallback-debug-path=C:/fallback", command)
+
+    def test_all_empty_symbol_records_are_a_wrong_build_pdb(self):
+        text = "\n".join(json.dumps(
+            {"Address": hex(0x1010 + offset),
+             "Symbol": [{"FunctionName": "", "Line": 0}]}) for offset in range(2)) + "\n"
+        completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, text, "")
+        with mock.patch.object(uprof_context, "run", return_value=completed):
+            with self.assertRaises(uprof_context.ContextOmission) as caught:
+                uprof_context.symbolize_rvas("fixture.exe", [0x1010, 0x1011],
+                                             pdb="C:/cache/fixture.pdb",
+                                             symbolizer="llvm-symbolizer.exe")
+
+        self.assertEqual(caught.exception.reason, "symbolizer_failed")
+        self.assertIn("fixture.pdb", caught.exception.detail)
+        self.assertIn("another build", caught.exception.detail)
 
 
 class IbsTest(unittest.TestCase):

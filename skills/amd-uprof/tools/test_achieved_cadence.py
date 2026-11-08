@@ -3,8 +3,11 @@
 Run from this directory: python -m unittest test_achieved_cadence -v
 """
 
+import tempfile
 import unittest
+from pathlib import Path
 
+import uprof_native
 import uprof_session
 
 
@@ -71,6 +74,24 @@ class AchievedCadenceTest(unittest.TestCase):
     def test_no_contexts_never_warns_on_the_diluted_average(self):
         text = self.achieved([], window_s=8.0, cpus=16)
         self.assertNotIn("WARN", text)
+
+
+class DumpCadenceTest(unittest.TestCase):
+    def test_same_tid_in_different_processes_is_two_contexts(self):
+        # Both rows sit on CPU 0, so only the (PID, TID) key can separate the two timelines.
+        with tempfile.TemporaryDirectory() as tmp:
+            dump = Path(tmp) / "IbsOpDump.csv"
+            dump.write_text(
+                "DeltaTick,CPU_Number,TID,PID,Offset,ModuleName\n"
+                "0,0,4242,100,4096,workload.exe\n"
+                "1000000000,0,4242,100,4096,workload.exe\n"
+                "1500000000,0,4242,200,8192,other.exe\n"
+                "2500000000,0,4242,200,8192,other.exe\n",
+                encoding="utf-8", newline="\n")
+
+            _, _, contexts = uprof_native.dump_cadence(dump, ("PID", "TID"))
+
+        self.assertEqual(sorted(context.samples for context in contexts), [2, 2])
 
 
 if __name__ == "__main__":

@@ -197,16 +197,9 @@ SELECT * FROM query(CASE
     FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)$untagged$
 END);
 
--- The query window is applied before the lag, so the first sample per CPU inside the window has no
--- preceding in-window interval and carries no weight. weight is that DeltaTick gap in nanoseconds;
--- a gap is charged whole to the later sample, so idle/wait time accrues to the sample that ends it.
-CREATE OR REPLACE TEMP VIEW v_dump_weighted AS
-SELECT *, delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick) AS weight
-FROM v_dump
-WHERE delta_tick >= getvariable('time_start') AND delta_tick < getvariable('time_end');
-
 -- The capture span recorded in session.uprof, in capture-relative nanoseconds. Shared by the
--- dump-wide provenance check and the scoped coverage verdict so neither re-reads the metadata.
+-- dump-wide provenance check, the scoped coverage verdict and the weighting mode so none re-reads
+-- the metadata.
 CREATE OR REPLACE TEMP VIEW v_capture_span AS
 WITH meta AS (
   SELECT * FROM query(CASE WHEN getvariable('uprof_session_meta') <> ''
@@ -247,48 +240,93 @@ WITH meta AS (
 SELECT translateCommand, system_wide, span_label, start_ns, end_ns, expected_ns
 FROM recorded;
 
+-- A missing systemWide counts as attached, matching uprof_session.system_wide. An attached capture
+-- is weighed per thread: a thread that migrates leaves a gap on every CPU it visited, and a
+-- per-CPU lag charges those overlapping intervals separately.
+SET VARIABLE attached = (
+  SELECT COALESCE(system_wide, 'false') <> 'true' FROM v_capture_span
+);
+
+-- The weighting context: a CPU for a system-wide capture, one (pid, tid) thread for an attached
+-- one. Exposed once so the lag and the sanity check cannot disagree about the partition. context
+-- is the CPU number or the TID; context_pid is 0 system-wide and the PID attached.
+CREATE OR REPLACE TEMP VIEW v_dump_context AS
+SELECT *, CASE WHEN getvariable('attached') THEN pid ELSE 0 END AS context_pid,
+          CASE WHEN getvariable('attached') THEN tid ELSE cpu END AS context
+FROM v_dump;
+
+-- The query window is applied before the lag, so the first sample per weighting context inside the
+-- window has no preceding in-window interval and carries no weight. weight is that DeltaTick gap in
+-- nanoseconds; a gap is charged whole to the later sample, so idle/wait time accrues to the sample
+-- that ends it.
+CREATE OR REPLACE TEMP VIEW v_dump_weighted AS
+SELECT d.* EXCLUDE (context_pid, context),
+       delta_tick - lag(delta_tick) OVER (
+         PARTITION BY context_pid, context ORDER BY delta_tick) AS weight
+FROM v_dump_context AS d
+WHERE delta_tick >= getvariable('time_start') AND delta_tick < getvariable('time_end');
+
 -- Provenance check for the whole dump, printed in the header of every dump-backed run. The weighted
 -- CTE is unfiltered on purpose: the span check compares the dump with session.uprof, independent
 -- of the query's --time-filter. The empty-dump and inconsistency errors surface when the view is
 -- read. Its coverage verdict is dump-wide across all processes; v_scope_sanity judges the report's
--- --image/--pid/time-filter scope separately.
+-- --image/--pid/time-filter scope separately. A system-wide capture is judged as core time over
+-- CPUs; an attached capture is judged per thread, because the CPUs a migrating thread visited are
+-- a set of overlapping intervals rather than parallel capacity.
 CREATE OR REPLACE TEMP VIEW v_dump_sanity AS
 WITH weighted_all AS (
-  SELECT *, delta_tick - lag(delta_tick) OVER (PARTITION BY cpu ORDER BY delta_tick) AS weight
-  FROM v_dump
+  SELECT *, delta_tick - lag(delta_tick) OVER (
+      PARTITION BY context_pid, context ORDER BY delta_tick) AS weight
+  FROM v_dump_context
 ), totals AS (
   SELECT count(*) AS dump_samples,
          count(DISTINCT cpu) AS dump_cpus,
+         count(DISTINCT CASE WHEN getvariable('attached') THEN pid END) AS dump_pids,
+         count(DISTINCT CASE WHEN getvariable('attached') THEN (pid, tid) END) AS dump_threads,
          count(*) FILTER (WHERE weight IS NULL) AS excluded_first,
          sum(weight) AS total_weight,
          max(delta_tick) AS latest_tick,
          count(tag_cycles) AS tag_values
   FROM weighted_all
-), per_cpu AS (
-  SELECT cpu, min(delta_tick) AS first_ns, max(delta_tick) AS last_ns, count(*) AS n
-  FROM v_dump
-  GROUP BY cpu
+), contexts AS (
+  -- One row per weighting context: a CPU (system-wide) or a (pid, tid) thread (attached).
+  SELECT context_pid, context,
+         min(delta_tick) AS first_ns,
+         max(delta_tick) AS last_ns,
+         count(*) AS n,
+         sum(weight) AS context_weight
+  FROM weighted_all
+  GROUP BY 1, 2
 ), recorded AS (
   SELECT * FROM v_capture_span
 ), boundary AS (
-  SELECT sum(p.first_ns - b.start_ns) AS leading_ns,
-         sum(b.end_ns - p.last_ns) AS trailing_ns,
-         min(p.first_ns) AS first_sample_ns,
-         max(p.last_ns) AS max_last_ns,
-         max(p.n) AS max_cpu_samples,
-         count(*) FILTER (WHERE p.first_ns < b.start_ns OR p.last_ns > b.end_ns) AS beyond_cpus,
-         arg_max(p.cpu, b.start_ns + b.end_ns - p.last_ns + p.first_ns) AS worst_cpu
-  FROM per_cpu AS p CROSS JOIN recorded AS b
+  SELECT max(n) AS max_context_samples,
+         sum(first_ns - b.start_ns) AS leading_ns,
+         sum(b.end_ns - last_ns) AS trailing_ns,
+         min(first_ns) AS first_sample_ns,
+         max(last_ns) AS max_last_ns,
+         count(*) FILTER (WHERE first_ns < b.start_ns OR last_ns > b.end_ns) AS beyond_contexts,
+         arg_max(context, b.start_ns + b.end_ns - last_ns + first_ns) AS worst_context
+  FROM contexts CROSS JOIN recorded AS b
+), busiest AS (
+  -- The context with the most samples, so the coverage it reports belongs to that context.
+  SELECT n, context_weight FROM contexts ORDER BY n DESC, context LIMIT 1
+), activity AS (
+  SELECT count(*) FILTER (WHERE n >= 0.1 * (SELECT n FROM busiest)) AS active_contexts
+  FROM contexts
 ), measured AS (
-  SELECT totals.dump_samples, totals.dump_cpus, totals.excluded_first, totals.total_weight,
-         totals.latest_tick, totals.tag_values,
+  SELECT totals.dump_samples, totals.dump_cpus, totals.dump_pids, totals.dump_threads,
+         totals.excluded_first, totals.total_weight, totals.latest_tick, totals.tag_values,
          recorded.expected_ns, recorded.span_label, recorded.system_wide,
          recorded.start_ns, recorded.end_ns,
          recorded.expected_ns * totals.dump_cpus AS expected_core_ns,
+         boundary.max_context_samples,
          boundary.leading_ns, boundary.trailing_ns, boundary.first_sample_ns,
-         boundary.max_last_ns, boundary.max_cpu_samples, boundary.beyond_cpus,
-         boundary.worst_cpu
-  FROM totals, recorded, boundary
+         boundary.max_last_ns, boundary.beyond_contexts, boundary.worst_context,
+         activity.active_contexts, (SELECT n FROM busiest) AS busiest_samples,
+         (SELECT context_weight FROM busiest) AS busiest_weight,
+         CASE WHEN getvariable('attached') THEN 'TID' ELSE 'CPU' END AS context_label
+  FROM totals, recorded, boundary, activity
 )
 SELECT CASE
   WHEN dump_samples = 0 THEN
@@ -296,36 +334,38 @@ SELECT CASE
   WHEN expected_ns IS NULL OR expected_ns = 0 THEN
     'dump ' || getvariable('uprof_ibs_dump') || ': ' || CAST(dump_samples AS VARCHAR) ||
     ' samples, ' || CAST(excluded_first AS VARCHAR) ||
-    ' first-per-CPU samples excluded; WARN (dump-wide across all processes): session.uprof has no usable duration; total weight was not checked against the capture span'
-  WHEN total_weight > expected_core_ns THEN
+    ' first-per-' || context_label ||
+    ' samples excluded; WARN (dump-wide across all processes): session.uprof has no usable duration; total weight was not checked against the capture span'
+  WHEN NOT getvariable('attached') AND total_weight > expected_core_ns THEN
     error(printf('dump %s disagrees with session.uprof: %.3f s of core time over %d CPUs exceeds %s %.3f s x %d CPUs = %.3f s implied; delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
                  getvariable('uprof_ibs_dump'), total_weight / 1e9, dump_cpus,
                  span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9))
-  WHEN beyond_cpus > 0 THEN
-    error(printf('dump %s disagrees with session.uprof: %d CPU(s) hold samples outside the recorded %s [%.3f, %.3f) s (sample DeltaTick range %.3f..%.3f s); delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
-                 getvariable('uprof_ibs_dump'), beyond_cpus,
+  WHEN beyond_contexts > 0 THEN
+    error(printf('dump %s disagrees with session.uprof: %d %s(s) hold samples outside the recorded %s [%.3f, %.3f) s (sample DeltaTick range %.3f..%.3f s); delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
+                 getvariable('uprof_ibs_dump'), beyond_contexts, context_label,
                  span_label, start_ns / 1e9, end_ns / 1e9,
                  first_sample_ns / 1e9, max_last_ns / 1e9))
-  WHEN system_wide = 'false' THEN
-    printf('dump %s: %d samples, %d first-per-CPU samples excluded; OK (attached; dump-wide): coverage is where the attached threads ran -- %.3f s of core time over %d CPUs against an upper bound of %s %.3f s x %d CPUs = %.3f s; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
-           getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
-           total_weight / 1e9, dump_cpus,
-           span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9,
-           (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
-           CAST(worst_cpu AS VARCHAR))
-  WHEN (end_ns - max_last_ns) > (expected_ns / greatest(max_cpu_samples, 1)) THEN
+  WHEN getvariable('attached') THEN
+    printf('dump %s: %d samples, %d first-per-%s samples excluded; OK (attached; dump-wide): %d process(es), %d TID(s), %d active %s (%d/%d samples in the busiest), %d CPU(s) visited; time_share partitions gaps by (PID, TID), so a migrating thread is counted once; a thread''s gaps include off-CPU time, so for a cycle-controlled capture sample_share (fixed cycles per sample) is the CPU-cycle share and the better ranking; the busiest TID covers %.3f s of the %s %.3f s span (%.3f s of thread time over %d TIDs)',
+           getvariable('uprof_ibs_dump'), dump_samples, excluded_first, context_label,
+           dump_pids, dump_threads, active_contexts,
+           CASE WHEN active_contexts = 1 THEN 'TID' ELSE 'TIDs' END,
+           busiest_samples, dump_samples, dump_cpus,
+           COALESCE(busiest_weight, 0) / 1e9, span_label, expected_ns / 1e9,
+           COALESCE(total_weight, 0) / 1e9, dump_threads)
+  WHEN (end_ns - max_last_ns) > (expected_ns / greatest(max_context_samples, 1)) THEN
     printf('dump %s: %d samples, %d first-per-CPU samples excluded; WARN (dump-wide across all processes): the capture window ends %.3f s before the recorded span, longer than one sampling cadence, so late time is uncovered; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
            (end_ns - max_last_ns) / 1e9,
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
-           CAST(worst_cpu AS VARCHAR))
+           CAST(worst_context AS VARCHAR))
   ELSE
     printf('dump %s: %d samples, %d first-per-CPU samples excluded; OK (dump-wide across all processes): %.3f s of core time over %d CPUs against %s %.3f s x %d CPUs = %.3f s; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
            total_weight / 1e9, dump_cpus,
            span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9,
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
-           CAST(worst_cpu AS VARCHAR))
+           CAST(worst_context AS VARCHAR))
 END AS message,
 CAST(tag_values AS BIGINT) AS tag_values
 FROM measured;

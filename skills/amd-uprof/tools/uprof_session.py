@@ -74,10 +74,19 @@ def read_meta(session_dir: Path | str) -> dict[str, Any] | None:
         return {}
 
 
+def records_true(value: Any) -> bool:
+    """True only for the JSON string true, matching v_capture_span.system_wide in views.sql."""
+    return str(value).lower() == "true"
+
+
 def system_wide(session_dir: Path | str) -> bool:
-    """True when session.uprof records a system-wide target; False for attached or unknown."""
+    """True when session.uprof records a system-wide target; False for attached or unknown.
+
+    Only the string true counts, matching the v_capture_span.system_wide test in views.sql, so a
+    non-boolean value cannot make the Python legend and the SQL weighting disagree.
+    """
     meta = read_meta(session_dir) or {}
-    return bool(((meta.get("collection") or {}).get("target") or {}).get("systemWide"))
+    return records_true(((meta.get("collection") or {}).get("target") or {}).get("systemWide"))
 
 
 def _registered_columns(meta: dict[str, Any]) -> dict[str, str]:
@@ -260,7 +269,7 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
         if bool(ibs.get("opCycleCount")) != (count_control == "cycles"):
             raise UprofError(f"IBS count control is opCycleCount={ibs.get('opCycleCount')}, "
                              f"expected {count_control == 'cycles'} ({count_control})")
-    if bool(target.get("systemWide")) != system_wide:
+    if records_true(target.get("systemWide")) != system_wide:
         raise UprofError(f"capture target mode is systemWide={target.get('systemWide')}, "
                          f"expected {system_wide} (use -a or --process)")
     if not system_wide:

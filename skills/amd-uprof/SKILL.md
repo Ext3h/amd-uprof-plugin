@@ -15,7 +15,7 @@ python <SKILL_DIR>/tools/uprof.py <command> ...
 
 ## Quickstart
 
-With an existing capture, run `profile --by process` first: it already prints `METRIC`, `SANITY`, `SYMBOL_COVERAGE` and `KERNEL_COVERAGE`, so no separate discovery pass is needed. For the CPU-time question the minimum path is `profile --by process`, then `profile --by module`, then `profile --by instruction --json` (top 20 is the default); do not follow every `NEXT` step. `--by module` is the rollup: it carries `Module.isSystemModule`, `tag_to_retire_share` and `cpu_seconds` directly, so no ad-hoc `cpu.db` SQL is needed. The worked example below turns that into the module answer and the stop point.
+With an existing capture, run `profile --by process` first: it already prints `METRIC`, `SANITY`, `SYMBOL_COVERAGE` and `KERNEL_COVERAGE`, so no separate discovery pass is needed. Do not list the skill tree, the session directory or its metadata first, and run `tools` only if a command reports `MISSING`. For the CPU-time question the minimum path is `profile --by process`, then `profile --by module`, then `profile --by instruction --json` (top 20 is the default); do not follow every `NEXT` step. `--by module` is the rollup: it carries `Module.isSystemModule`, `tag_to_retire_share` and `cpu_seconds` directly, so there is no share arithmetic to re-derive. The worked example below turns that into the module answer and the stop point.
 
 ## Commands
 
@@ -93,6 +93,8 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 
 `*` is present only when the capture mode supplies it (next table). Every share is a fraction 0.0-1.0; `samples` stays a raw count. The module row's `isSystemModule` is `Module.isSystemModule` and is `NULL` when the export has no such column; `cpu_seconds` is seconds of sampled CPU time, not a share, present only when a sample is a fixed cycle count and the core frequency is available.
 
+`profile` has no symbol-path flag: `--pdb-dir`, `--symbol-cache` and `--symbol-server` belong to `translate`. For `--by line|instruction`, each module's PDB is searched in `<image dir>\<pdb name>` and `<image dir>\<module stem>.pdb`, then, for each `_NT_SYMBOL_PATH` entry of the form `srv*<cache>*<url>`, in `<cache>\<pdb name>\<GUID><Age>\<pdb name>` and by a recursive find under `<cache>\<pdb name>`. The symbolizer reads the cache root and never contacts the URL; there is no symbol-server client. Put the PDB beside the module or in a local `srv*` cache, or stage a fetched PDB there with `translate` (`--pdb-dir`, `--symbol-cache` or `--symbol-server`) and run `profile` afterwards. On Linux, DWARF is read from the module itself; there is no separate debug-file or build-id search.
+
 ## What a share measures
 
 | Capture or dump | Status | A sample is | `sample_share` is | `time_share` | `tag_to_retire_share` |
@@ -117,18 +119,18 @@ This path is an **attached, cycle-controlled IBS** capture (`collect --event ibs
 
 1. **Confirm the mode and scope.** `METRIC:` names the sampler and what a sample is. `VERSION:` is authoritative: it names the producing plugin/skill copy and its version, so read the semantics in this document rather than re-deriving them. `SANITY:` starting `OK (attached; ...)` states thread coverage and names `sample_share` as the better ranking for a cycle-controlled capture; a `WARN` means the capture is short or late, not that the weights are wrong.
 2. **Rank the processes.** Run `profile --session <SESSION_DIR> --by process` and take the largest `sample_share`. For an attached cycle-controlled IBS capture, rank by `sample_share`, not `time_share`: cycle-controlled samples carry a fixed cycle count, so `sample_share` is the CPU-cycle share, while `time_share` is elapsed thread time, including off-CPU gaps.
-3. **Roll the processes up to modules.** Use the module granularity; do not query `cpu.db` or write ad-hoc SQL:
+3. **Roll the processes up to modules.** Use the module granularity; the rollup, the classification and the CPU seconds are emitted directly, so do not re-derive these shares in SQL instead of reading them:
 
    ```text
    python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by module
    ```
 
-   Each row is one module path with `samples`, `sample_share`, `time_share`, `tag_to_retire_share`, `isSystemModule` and `cpu_seconds`. `sample_share` names the hottest module. **Third-party** is the rule `Module.isSystemModule = false`; `true` means an OS-shipped module. A driver flagged as a system module can still dominate, so report the strict third-party total and the dominant non-workload dependency separately rather than re-deriving the rule.
-4. **Stop at the symbol boundary.** Read `SYMBOL_COVERAGE:` before drilling down. When a module has no named functions, `--by line` and `--by instruction` cannot attribute below module/RVA, and the line says so. Report the hot module (with its `isSystemModule` classification and `cpu_seconds`) and its hot RVA, then stop. Do **not** write a PE parser, map `.pdata` by hand, convert RVAs to VAs or disassemble to recover function boundaries. Symbolization is the supported path; for the instructions under a resolved hot RVA, `profile --by instruction --json` (top 20) adds the documented `context` block. A third-party module with no symbols is a finding, not a blocker.
+   Each row is one module path with `samples`, `sample_share`, `time_share`, `tag_to_retire_share`, `isSystemModule` and `cpu_seconds`. `sample_share` names the hottest module. **Third-party** is the rule `Module.isSystemModule = false`. `true` is uProf's system-module flag; it covers OS components and some vendor drivers (for example `amdvlk64.dll`), so it is neither an OS-shipped predicate nor a kernel predicate. A system-flagged driver can still dominate: report the strict third-party total and the dominant non-workload dependency separately.
+4. **Stop at the symbol boundary.** Read `SYMBOL_COVERAGE:` before drilling down. When a module has no named functions, `--by line` cannot attribute below module/RVA. Use `--by instruction` only to read the hot RVA row (add `--json` when its context block is wanted), then stop. Report the hot module (with its `isSystemModule` classification and `cpu_seconds`) and its hot RVA. Do **not** write a PE parser, map `.pdata` by hand, convert RVAs to VAs or disassemble to recover function boundaries. A third-party module with no symbols is a finding, not a blocker.
 
-**Deliverable and stop.** Stop when you have the module rollup (`isSystemModule`, `cpu_seconds`), `SYMBOL_COVERAGE` and the hot RVA; then write the report. `profile` only reads the capture, so there is nothing further to probe, install or verify, and following every `NEXT` step is not part of this question.
+**Deliverable and stop.** Stop when you have the module rollup (`isSystemModule`, `cpu_seconds`), `SYMBOL_COVERAGE` and the hot RVA; then write the report. `profile` does not modify the capture. If `SYMBOL_COVERAGE` shows unresolved modules, read the symbolization warnings on stderr before writing, and report the missing PDB or absent debug information as part of the finding. If the question asks whether the cost is changeable, name the callee or dependency and stop; following every `NEXT` step is not part of this question.
 
-**Absolute CPU time.** `--by module` emits `cpu_seconds` = `samples × interval / core_frequency` for a cycle-mode capture; the interval is the requested cycle count converted at this machine's reported core frequency, which `ACHIEVED:` prints. The session records no frequency, so a capture from other hardware is approximate. This is sampled CPU time, not wall time: a system-wide capture sums cores and halted cycles are excluded, and an attached thread's off-CPU time is not sampled, so do not multiply by the CPU count. The shares answer "where did it go"; the seconds answer "how much".
+**Absolute CPU time.** `--by module` emits `cpu_seconds` = `samples × interval / core_frequency` for a cycle-mode capture; the interval is the requested cycle count converted at the core frequency `ACHIEVED:` reports, which is the capture's nominal execution clock. The session records no frequency, so a capture from other hardware is approximate, and the result is an estimate at that clock, not a measured cycle count. This is sampled CPU time, not wall time: a system-wide capture sums cores and halted cycles are excluded, and an attached thread's off-CPU time is not sampled, so do not multiply by the CPU count. The shares answer "where did it go"; the seconds answer "how much".
 
 ## Header lines
 
@@ -229,7 +231,7 @@ The aggregate `<other instructions>` row carries no `context`.
 
 ## Tools
 
-Run `uprof.py tools` first; install only when a required path prints `MISSING`. Each row is `<NAME>=<path>; version=<version>`; optional absent tools print `MISSING (not found)`, and a uProf or LLVM version that cannot be read prints `unavailable` or the install-path version.
+Run `uprof.py tools` only when a command reports `MISSING`; each row is `<NAME>=<path>; version=<version>`, optional absent tools print `MISSING (not found)`, and a uProf or LLVM version that cannot be read prints `unavailable` or the install-path version.
 
 | Tool | Windows | Linux |
 |---|---|---|

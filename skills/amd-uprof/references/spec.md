@@ -67,7 +67,7 @@ demand or reused from the cache.
 | argument | meaning |
 |---|---|
 | `--session DIR` | capture directory (required) |
-| `--by process\|function\|line\|instruction` | grouping key (required) |
+| `--by process\|module\|function\|line\|instruction` | grouping key (required) |
 | `--pid N` | one process by PID; mutually exclusive with `--image` |
 | `--image PATTERN` | base-image path/name filter, all PIDs of matching images |
 | `--time-filter T1:T2` | optional, seconds from capture start; default the whole capture; requires a dump capture (per-sample timestamps); PMC captures carry none and the tool rejects the filter |
@@ -80,6 +80,7 @@ demand or reused from the cache.
 | `--by` | row key | columns | symbolization |
 |---|---|---|---|
 | `process` | process | process, pid, samples, sample_share, time_share, tag_to_retire_share | no |
+| `module` | module path | module, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds | no |
 | `function` | function | function, module, attribution, samples, sample_share, time_share, tag_to_retire_share | no |
 | `line` | file:line | file, line, function, module, attribution, samples, sample_share, time_share, tag_to_retire_share | yes |
 | `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, sample_share, time_share, tag_to_retire_share | yes |
@@ -92,11 +93,18 @@ has non-null values, so the column is present, but every `tag_to_retire_share` i
 column does not sum to 1.0 because no tag cycles were counted. A tag cell counts only when it is
 an unsigned decimal integer; negative, fractional and exponent spellings are excluded.
 
-No filter is a prerequisite for any granularity. `line` and `instruction` symbolize every module in
+No filter is a prerequisite for any granularity. The module granularity emits the rollup directly, including `Module.isSystemModule` and `cpu_seconds` = `samples × requested cycle interval / the core frequency`; the seconds are an estimate at the reported nominal clock, not a measured cycle count, and are omitted with a stated reason when a sample is not a fixed cycle count or no frequency is available. `line` and `instruction` symbolize every module in
 scope and print a uProf-vs-symbolizer agreement summary; modules without usable symbols appear as
 `<no symbol>` with the agreement summary stating how much sample weight that covers. The `line`
 table aggregates instructions by source position; `instruction` reports them individually, each
 annotated with its function and source coordinates.
+
+`profile` has no symbol-path flag: `--pdb-dir`, `--symbol-cache` and `--symbol-server` are
+`translate` flags. For symbolization, a PDB is searched beside the module and, for each
+`_NT_SYMBOL_PATH` `srv*<cache>*<url>` entry, in the local cache only; the URL is never contacted,
+and a fetched PDB must be staged into a local cache (the translate path can fetch it) before a
+later `profile`. On Linux, DWARF comes from the module itself with no separate debug-file or
+build-id search.
 
 ### 3.4 Time filter
 

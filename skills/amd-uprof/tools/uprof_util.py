@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -18,9 +19,36 @@ DUMP_FILENAMES: Final = MappingProxyType({
 
 COPY_DIRS: Final = ("cpu", "metadata", ".config", ".log", "sources", "binaries")
 
+# Used when the skill is copied loose and no .claude-plugin/plugin.json sits above it. Keep it in
+# step with the released plugin version.
+_BUILTIN_VERSION: Final = "2.1.0"
+_PLUGIN_MANIFEST: Final = Path(".claude-plugin") / "plugin.json"
+
 
 class UprofError(RuntimeError):
     """A failure the CLI prints as `error: ...` and exits 2 for."""
+
+
+def skill_identity(skill_dir: Path | None = None) -> str:
+    """Name the skill version and the installed copy that produced an output line.
+
+    Two copies can share a version and still differ, so the skill directory is part of the value.
+    The nearest plugin.json above the skill supplies the version; without one (a loose copy) the
+    built-in version is reported.
+    """
+    root = (skill_dir or Path(__file__).resolve().parent.parent).resolve()
+    for candidate in (root, *root.parents):
+        manifest = candidate / _PLUGIN_MANIFEST
+        if not manifest.is_file():
+            continue
+        try:
+            version = json.loads(manifest.read_text(encoding="utf-8"))["version"]
+        except (OSError, ValueError, KeyError, TypeError):
+            break
+        if isinstance(version, str) and version:
+            return f"amd-uprof {version} (plugin.json {manifest}); skill dir {root}"
+        break
+    return f"amd-uprof {_BUILTIN_VERSION} (built-in); skill dir {root}"
 
 
 _TIME_FILTER = re.compile(r"(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)")

@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, TextIO
 
@@ -29,6 +30,68 @@ _PUBLIC_NAME = re.compile(r"S_PUB32 \[[^\]]*\] `([^`]*)`\s*$")
 _PUBLIC_ADDRESS = re.compile(r"flags\s*=\s*([^,]*),\s*addr\s*=\s*(\d+):(\d+)")
 
 PDB_PROBE_TIMEOUT: Final = 5 * 60
+
+
+@dataclass
+class PdbProbe:
+    """One candidate PDB and why it was accepted or rejected; detail is the evidence."""
+
+    path: Path
+    status: str  # accepted, not_found, mismatch, probe_failed
+    pdb_guid: str | None = None
+    pdb_age: str | None = None
+    detail: str = ""
+
+
+@dataclass
+class PdbSearch:
+    """The accepted PDB (or None), every probe, and the srv URLs that were never contacted."""
+
+    pdb: Path | None = None
+    probes: list[PdbProbe] = field(default_factory=list)
+    urls: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SymbolizerRun:
+    """One llvm-symbolizer invocation: exit status, its JSON Error objects and stderr.
+
+    records counts addresses that came back with a Symbol result; empty records is the subset
+    with no usable frame (no FunctionName and line 0). A wrong-build PDB produces the latter
+    with exit status 0 and no Error object, so the pair is the evidence for that case.
+    """
+
+    returncode: int
+    errors: list[tuple[str | None, str]] = field(default_factory=list)
+    stderr: str = ""
+    records: int = 0
+    empty_records: int = 0
+
+
+@dataclass
+class ModuleEvidence:
+    """Per-module evidence for the symbolization outcome, printed when no PDB is accepted."""
+
+    module_name: str
+    module_path: str
+    found_debug_info: bool | None = None
+    image_guid: str | None = None
+    image_age: int | None = None
+    search: PdbSearch | None = None
+    symbolizer: SymbolizerRun | None = None
+    pdb: str | None = None
+    outcome: str = "resolved"  # resolved, no_debug_info, no_pdb, readobj_failed, module_missing, failed
+    note: str | None = None
+
+
+@dataclass
+class SymbolizedModule:
+    """The artifacts one module produced and the evidence behind the PDB choice."""
+
+    parquet: Path | None
+    publics: Path | None
+    pdb: Path | None
+    evidence: ModuleEvidence
 
 
 def _normalize_guid(value: str) -> str:
@@ -67,47 +130,91 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
     return pdb_name, guid, age
 
 
-def _pdb_signature(pdbutil: Path | None, path: Path) -> tuple[str | None, str | None] | None:
+def _pdb_signature(pdbutil: Path | None, path: Path
+                   ) -> tuple[str | None, str | None, str | None]:
+    """(GUID, age, error) for a candidate PDB; the error carries the probe exit and stderr."""
     if not pdbutil:
-        return None
+        return None, None, "llvm-pdbutil not found"
     completed = run([str(pdbutil), "dump", "--summary", str(path)],
                     timeout=PDB_PROBE_TIMEOUT)
+    if completed.returncode != 0:
+        return None, None, (f"llvm-pdbutil exited {completed.returncode}: "
+                            f"{tail_lines(completed.stderr)}")
     guid = age = None
     for line in (completed.stdout or "").splitlines():
         if match := _GUID.match(line):
             guid = _normalize_guid(match.group(1))
         elif match := _AGE.match(line):
             age = match.group(1)
-    return (guid, age) if guid and age else None
+    if not guid or age is None:
+        return guid, age, "llvm-pdbutil reported no GUID/age for this candidate"
+    return guid, age, None
 
 
-def _pdb_matches(pdbutil: Path | None, path: Path, module_guid: str | None,
-                 module_age: int | None) -> bool:
-    # A PDB is accepted only against the image's debug-directory GUID. Without that GUID
-    # (llvm-readobj missing or failed) a same-named PDB cannot be verified, so it is rejected.
-    if not module_guid or not pdbutil:
-        return False
-    signature = _pdb_signature(pdbutil, path)
-    if not signature or signature[0] != module_guid:
-        return False
-    if signature[1] == str(module_age):
-        return True
+def _probe_pdb(pdbutil: Path, path: Path, module_guid: str,
+               module_age: int | None) -> PdbProbe:
+    """Accept only a PDB whose GUID matches and whose age matches the image or its cache key."""
+    probe = PdbProbe(path, "not_found", detail="not found")
+    if not path.is_file():
+        return probe
+    try:
+        guid, age, error = _pdb_signature(pdbutil, path)
+    except (UprofError, OSError) as exc:
+        probe.status, probe.detail = "probe_failed", str(exc)
+        return probe
+    probe.pdb_guid, probe.pdb_age = guid, age
+    if error:
+        probe.status, probe.detail = "probe_failed", error
+        return probe
+    if guid != module_guid:
+        probe.status = "mismatch"
+        probe.detail = (f"PDB GUID {guid} != image GUID {module_guid}; "
+                        f"PDB age {age}, image age {module_age}")
+        return probe
+    if age == str(module_age):
+        probe.status = "accepted"
+        return probe
     # Microsoft's symbol cache stores the file under <GUID><age> taken from the image, while the
     # PDB's own age can differ on this host (measured: ntdll image age 1, cached PDB age 4). The
     # key directory is then the authoritative age check; any other candidate must match exactly.
     key = f"{module_guid}{module_age:X}" if module_age is not None else None
-    return key is not None and path.parent.name.upper() == key.upper()
+    if key is not None and path.parent.name.upper() == key.upper():
+        probe.status = "accepted"
+        return probe
+    probe.status = "mismatch"
+    probe.detail = f"PDB age {age} != image age {module_age} (GUID matches)"
+    return probe
 
 
-def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
-                    age: int | None) -> list[Path]:
-    module_name = exe.stem
-    candidates = [exe.parent / name for name in dict.fromkeys([pdb_name, module_name + ".pdb"])]
+def _symbol_server_entries() -> list[tuple[Path, str]]:
+    """(cache root, URL) for every _NT_SYMBOL_PATH srv entry; only the root is ever read."""
+    entries: list[tuple[Path, str]] = []
     for entry in (os.environ.get("_NT_SYMBOL_PATH") or "").split(";"):
         parts = entry.split("*")
         if len(parts) < 3 or parts[0].strip().lower() != "srv":
             continue
-        cache_dir = Path(parts[1]) / pdb_name
+        entries.append((Path(parts[1]), parts[2].strip()))
+    return entries
+
+
+def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
+                    age: int | None, pdb_dirs: list[str] | tuple[str, ...] = (),
+                    pdb_file: str | Path | None = None) -> list[Path]:
+    module_name = exe.stem
+    names = list(dict.fromkeys([pdb_name, module_name + ".pdb"]))
+    candidates: list[Path] = []
+    # An explicit --pdb-file is the caller's choice, so it is probed first; --pdb-dir roots come
+    # before the module's own directory and its keyed <GUID><age> subdirectory.
+    if pdb_file:
+        candidates.append(Path(pdb_file))
+    for directory in pdb_dirs:
+        root = Path(directory)
+        candidates.extend(root / name for name in names)
+        if module_guid and age is not None:
+            candidates.extend(root / f"{module_guid}{age:X}" / name for name in names)
+    candidates.extend(exe.parent / name for name in names)
+    for cache_root, _url in _symbol_server_entries():
+        cache_dir = cache_root / pdb_name
         if module_guid and age is not None:
             candidates.append(cache_dir / f"{module_guid}{age:X}" / pdb_name)
         try:
@@ -119,56 +226,109 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
     return candidates
 
 
-def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str | None,
-                module_age: int | None) -> Path | None:
-    """The first candidate whose PDB matches the image, skipping unreadable or failed probes."""
-    for path in _candidate_pdbs(exe_path, pdb_name, module_guid, module_age):
-        try:
-            if path.is_file() and _pdb_matches(pdbutil, path, module_guid, module_age):
-                return path
-        except (UprofError, OSError):
-            # A probe timeout or an unreadable cache entry rejects this candidate only.
+def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str,
+                module_age: int | None,
+                pdb_dirs: list[str] | tuple[str, ...] = (),
+                pdb_file: str | Path | None = None) -> PdbSearch:
+    """Probe every candidate once; the search carries each rejection as evidence."""
+    search = PdbSearch(urls=[url for _root, url in _symbol_server_entries()])
+    for path in dict.fromkeys(
+            _candidate_pdbs(exe_path, pdb_name, module_guid, module_age, pdb_dirs, pdb_file)):
+        probe = _probe_pdb(pdbutil, path, module_guid, module_age)
+        search.probes.append(probe)
+        if probe.status == "accepted":
+            search.pdb = path
+            return search
+    return search
+
+
+def _json_errors(text: str) -> list[tuple[str | None, str]]:
+    """(address, message) for every llvm-symbolizer JSON Error object, wherever stdout carries one."""
+    errors: list[tuple[str | None, str]] = []
+    for line in text.splitlines():
+        if not line.strip():
             continue
-    return None
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        error = record.get("Error")
+        message = error.get("Message") if isinstance(error, dict) else error
+        if isinstance(message, str) and message:
+            errors.append((record.get("Address"), message))
+    return errors
 
 
-def _write_error_records(out_file: Path, rva_file: Path, exe: str, pdb_name: str) -> None:
-    records = []
-    for line in read_text(rva_file).splitlines():
-        address = line.strip()
-        if address:
-            records.append(json.dumps({
-                "Address": address,
-                "Error": {"Message": f"PDB {pdb_name} not found or GUID/age mismatch"},
-                "ModuleName": exe,
-            }, separators=(",", ":")))
-    try:
-        with open(out_file, "w", encoding="utf-8", newline="\n") as handle:
-            if records:
-                handle.write("\n".join(records) + "\n")
-    except OSError as exc:
-        raise UprofError(f"cannot write symbol records to {out_file}: {exc}; check free space "
-                         "and permissions on the symbol artifact directory") from exc
+def _symbol_record_stats(text: str) -> tuple[int, int]:
+    """(records with a Symbol result, records whose frames carry no name and line 0)."""
+    records = empty = 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or "Symbol" not in record:
+            continue
+        records += 1
+        frames = record.get("Symbol")
+        if isinstance(frames, list) and all(
+                not (frame.get("FunctionName") or "").strip()
+                and not (frame.get("Line") or 0)
+                for frame in frames if isinstance(frame, dict)):
+            empty += 1
+    return records, empty
 
 
 def _run_symbolizer(symbolizer: Path, exe: str, pdb: Path | None, rva_file: Path,
-                    out_file: Path, functions: str = "linkage") -> None:
+                    out_file: Path, functions: str = "linkage",
+                    warn_failure: bool = True,
+                    debug_dirs: list[str] | tuple[str, ...] = (),
+                    fallback_paths: list[str] | tuple[str, ...] = ()) -> SymbolizerRun:
+    """Run one pass and keep its exit status and JSON Error objects as evidence.
+
+    JSON output carries the resolution error on stdout, not stderr, so an exit 1 with records is
+    a partial result whose Error messages name the missing or mismatched PDB. debug_dirs become
+    llvm-symbolizer --debug-file-directory options and fallback_paths become
+    --fallback-debug-path, which is how a caller supplies a separate DWARF/debug-file location.
+    """
     command = [str(symbolizer), f"--obj={exe}"]
     if pdb:
         command.append(f"--pdb={pdb}")
+    command += [f"--debug-file-directory={directory}" for directory in debug_dirs]
+    command += [f"--fallback-debug-path={directory}" for directory in fallback_paths]
     command += ["--relative-address", f"--functions={functions}", "--inlines",
                 "--output-style=JSON"]
     completed = run(command, input_text=read_text(rva_file), timeout=4 * 60 * 60)
+    records, empty_records = _symbol_record_stats(completed.stdout or "")
+    run_result = SymbolizerRun(completed.returncode,
+                               _json_errors(completed.stdout or ""),
+                               completed.stderr or "", records, empty_records)
+    if (completed.returncode == 0 and pdb is not None and records
+            and empty_records == records and not run_result.errors):
+        run_result.errors.append((None, (
+            f"llvm-symbolizer resolved no address ({records} empty Symbol entries); "
+            f"the PDB {pdb.name} is probably for another build")))
+        if warn_failure:
+            print(f"WARNING: {exe}: {run_result.errors[-1][1]}", file=sys.stderr)
     if completed.returncode != 0 and not (completed.stdout or "").strip():
-        raise UprofError("llvm-symbolizer failed with "
-                         f"{completed.returncode}: {tail_lines(completed.stderr)}")
-    if completed.returncode != 0:
-        print(f"WARNING: llvm-symbolizer exited {completed.returncode} for {exe}; the addresses "
-              "it could not symbolize become '<no symbol>'", file=sys.stderr)
+        detail = (run_result.errors[0][1] if run_result.errors
+                  else tail_lines(run_result.stderr) or "no output")
+        raise UprofError(f"llvm-symbolizer exited {completed.returncode}: {detail}")
+    if completed.returncode != 0 and warn_failure:
+        reason = (run_result.errors[0][1] if run_result.errors
+                  else tail_lines(run_result.stderr))
+        suffix = f": {reason}" if reason else ""
+        print(f"WARNING: llvm-symbolizer exited {completed.returncode} for {exe}{suffix}; the "
+              "addresses it could not symbolize become '<no symbol>'", file=sys.stderr)
+    if completed.returncode == 0 and run_result.stderr.strip() and warn_failure:
+        print(f"WARNING: llvm-symbolizer: {tail_lines(run_result.stderr)}", file=sys.stderr)
     with open(out_file, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(completed.stdout or "")
-    if completed.stderr and completed.stderr.strip():
-        print(f"WARNING: llvm-symbolizer: {tail_lines(completed.stderr)}", file=sys.stderr)
+    return run_result
 
 
 def _write_parquet(out_file: Path, parquet_file: Path,
@@ -362,16 +522,20 @@ def _publics(pdb: Path, out_file: Path, symbolizer: Path, stream: TextIO) -> Pat
 # ---------------------------------------------------------------- symbolization
 
 def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
-                     stream: TextIO = sys.stdout
-                     ) -> tuple[Path | None, Path | None, tuple[str, str | None] | None,
-                                Path | None]:
-    """Symbolize the RVAs into out_dir; return (parquet, publics, guid_failure, pdb).
+                     stream: TextIO = sys.stdout, module_name: str | None = None,
+                     found_debug_info: bool | None = None,
+                     pdb_dirs: list[str] | tuple[str, ...] = (),
+                     pdb_file: str | Path | None = None,
+                     debug_dirs: list[str] | tuple[str, ...] = (),
+                     fallback_paths: list[str] | tuple[str, ...] = ()) -> SymbolizedModule:
+    """Symbolize the RVAs into out_dir; return the artifacts and the PDB-search evidence.
 
-    The PDB is found from the module's debug directory: beside the module or in a
-    _NT_SYMBOL_PATH cache. publics is the RVA -> public-name cache when a PDB was used; pdb is
-    the accepted PDB (None when there is none). guid_failure is None or (reason category, detail)
-    when the image GUID was unavailable, so no PDB was accepted; the caller reports these
-    failures once per run.
+    The PDB is found from the module's debug directory: an explicit --pdb-file, a --pdb-dir, the
+    module's directory or a _NT_SYMBOL_PATH cache, and the chosen file is passed to
+    llvm-symbolizer as --pdb. debug_dirs and fallback_paths go to llvm-symbolizer as
+    --debug-file-directory and --fallback-debug-path for DWARF. When no PDB is accepted the
+    symbolizer still runs once, so its JSON Error object names the missing PDB instead of a
+    synthetic "GUID/age mismatch".
     """
     exe_input = exe  # llvm-symbolizer records this spelling as ModuleName
     exe_path = require_file(exe, "module")
@@ -382,6 +546,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
     parquet_file = out_path / "symbols.parquet"
     publics_file = out_path / "symbols.publics.csv"
     symbolizer_path = require_symbolizer()
+    evidence = ModuleEvidence(module_name or exe, exe, found_debug_info=found_debug_info)
     pdb: Path | None = None
 
     if os.name == "nt":
@@ -394,41 +559,78 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             pdb_name = Path(exe_input).stem + ".pdb"
             module_guid = module_age = None
             readobj_error = str(exc)
-        if module_guid is None:
+        evidence.image_guid, evidence.image_age = module_guid, module_age
+        if module_guid is None and not (pdb_file and Path(pdb_file).is_file()):
             if readobj is None:
-                guid_failure = ("not found", None)
+                evidence.note = "llvm-readobj not found beside llvm-symbolizer or on PATH"
             elif readobj_error:
-                guid_failure = ("failed", readobj_error)
+                evidence.note = readobj_error
             else:
-                guid_failure = ("no GUID", None)
-            _write_error_records(jsonl_file, rva_path, exe_input, pdb_name)
+                evidence.note = "the image's debug directory records no PDB"
+            evidence.outcome = ("no_debug_info" if found_debug_info is False
+                                else "readobj_failed")
+            if pdb_file and not Path(pdb_file).is_file():
+                evidence.note = f"--pdb-file not found: {pdb_file}"
+            evidence.symbolizer = _run_symbolizer(
+                symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
+                debug_dirs=debug_dirs, fallback_paths=fallback_paths)
             print("PDB=none", file=stream)
             parquet = _write_parquet(jsonl_file, parquet_file)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
-            return parquet, None, guid_failure, None
-        if pdbutil:
-            pdb = _choose_pdb(pdbutil, exe_path, pdb_name, module_guid, module_age)
+            return SymbolizedModule(parquet, None, None, evidence)
+        if module_guid is None:
+            # An explicit --pdb-file remains the caller's choice when the image carries no PDB
+            # identity; it is used unverified rather than silently ignored.
+            explicit = Path(pdb_file)
+            probe = PdbProbe(explicit, "accepted",
+                             detail="caller-supplied --pdb-file, not GUID-verified")
+            evidence.search = PdbSearch(pdb=explicit, probes=[probe])
+            pdb = explicit
+            print("WARNING: the image records no PDB identity; using --pdb-file without GUID "
+                  "verification", file=stream)
+        elif pdbutil:
+            evidence.search = _choose_pdb(pdbutil, exe_path, pdb_name, module_guid, module_age,
+                                          pdb_dirs, pdb_file)
+            pdb = evidence.search.pdb
         else:
-            beside = exe_path.parent / pdb_name
-            pdb = beside if beside.is_file() else None
+            probes = [
+                PdbProbe(path, "accepted" if path.is_file() else "not_found",
+                         detail=("caller-supplied --pdb-file, used without GUID verification"
+                                 if pdb_file and path == Path(pdb_file)
+                                 else "used without GUID verification"))
+                for path in dict.fromkeys(_candidate_pdbs(
+                    exe_path, pdb_name, module_guid, module_age, pdb_dirs, pdb_file))]
+            pdb = next((probe.path for probe in probes if probe.status == "accepted"), None)
+            evidence.search = PdbSearch(pdb=pdb, probes=probes)
             if pdb:
-                print("WARNING: llvm-pdbutil not found; using the PDB beside the module "
-                      "without GUID verification", file=stream)
+                print("WARNING: llvm-pdbutil not found; using the PDB without GUID "
+                      "verification", file=stream)
         if not pdb:
-            print(f"WARNING: no PDB matching the module's debug-directory GUID ({pdb_name}); "
-                  "writing '<no symbol>' records", file=stream)
-            _write_error_records(jsonl_file, rva_path, exe_input, pdb_name)
+            evidence.outcome = ("no_debug_info" if found_debug_info is False else "no_pdb")
+            evidence.symbolizer = _run_symbolizer(
+                symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
+                debug_dirs=debug_dirs, fallback_paths=fallback_paths)
             print("PDB=none", file=stream)
             parquet = _write_parquet(jsonl_file, parquet_file)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
-            return parquet, None, None, None
+            return SymbolizedModule(parquet, None, None, evidence)
         print("PDB_MATCH=yes", file=stream)
+        evidence.pdb = str(pdb)
 
-    _run_symbolizer(symbolizer_path, exe_input, pdb, rva_path, jsonl_file)
+    evidence.symbolizer = _run_symbolizer(
+        symbolizer_path, exe_input, pdb, rva_path, jsonl_file, debug_dirs=debug_dirs,
+        fallback_paths=fallback_paths)
+    if (evidence.symbolizer.returncode == 0 and evidence.symbolizer.records
+            and evidence.symbolizer.empty_records == evidence.symbolizer.records
+            and evidence.symbolizer.errors):
+        # A wrong-build PDB is not reported by the exit status; keep its evidence on the outcome.
+        evidence.outcome = "failed"
+        evidence.note = evidence.symbolizer.errors[0][1]
     short_file = out_path / "symbols.short.jsonl"
     try:
         _run_symbolizer(symbolizer_path, exe_input, pdb, rva_path, short_file,
-                        functions="short")
+                        debug_dirs=debug_dirs, fallback_paths=fallback_paths,
+                        functions="short", warn_failure=False)
     except UprofError as exc:
         print(f"WARNING: llvm-symbolizer short-name pass failed; line function identity "
               f"may be less precise ({exc})", file=stream)
@@ -440,7 +642,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
         publics = None
         print("FOLDS: skipped (DWARF symbols; PDB public-symbol fold detection is "
               "Windows-only, unverified)", file=stream)
-    return parquet, publics, None, pdb
+    return SymbolizedModule(parquet, publics, pdb, evidence)
 
 
 # ------------------------------------------------------------- whole-scope symbolization
@@ -485,33 +687,42 @@ def _combine_artifacts(parquet_inputs: list[tuple[str, Path]],
     return symbols_file, (publics_file if public_inputs else None)
 
 
-def _warn_guid_failures(failures: list[tuple[str, str | None]], stream: TextIO) -> None:
-    """Report image-GUID failures once for the run, with module counts and remedies."""
-    counts: dict[str, int] = {}
-    first_detail = None
-    for category, detail in failures:
-        counts[category] = counts.get(category, 0) + 1
-        if category == "failed" and first_detail is None:
-            first_detail = detail
-    reason = ", ".join(f"{category}: {count}" for category, count in sorted(counts.items()))
-    if first_detail:
-        reason += f" (first error: {first_detail})"
-    remedies = []
-    modules = "module" if len(failures) == 1 else "modules"
-    images = "image" if len(failures) == 1 else "images"
-    if "not found" in counts:
-        remedies.append("install LLVM so llvm-readobj sits beside llvm-symbolizer, or set "
-                        "LLVM_SYMBOLIZER to an LLVM bin directory that contains it")
-    if "failed" in counts:
-        remedies.append(f"check that llvm-readobj --coff-debug-directory works on the affected "
-                        f"{images}")
-    if "no GUID" in counts:
-        remedies.append(f"check that the debug directory of the affected {images} records a PDB")
-    pronoun = "it" if len(failures) == 1 else "them"
-    possessive = "its" if len(failures) == 1 else "their"
-    print(f"WARNING: llvm-readobj could not provide an image GUID for {len(failures)} "
-          f"{modules} ({reason}); no PDB was accepted for {pronoun}, so {possessive} addresses "
-          f"become '<no symbol>'; {'; '.join(remedies)}", file=stream)
+def _probe_text(probe: PdbProbe) -> str:
+    return f"{probe.path} [{probe.detail or probe.status}]"
+
+
+def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
+    """One line per module with the image identity, every location searched and the remedy."""
+    if evidence.outcome == "resolved":
+        return
+    facts = [f"image GUID {evidence.image_guid or 'unknown'} "
+             f"age {evidence.image_age if evidence.image_age is not None else 'unknown'}",
+             "debug info recorded: "
+             + ("no" if evidence.found_debug_info is False
+                else "yes" if evidence.found_debug_info else "unknown")]
+    if evidence.note:
+        facts.append(evidence.note)
+    if evidence.symbolizer and evidence.symbolizer.errors:
+        address, message = evidence.symbolizer.errors[0]
+        prefix = f"llvm-symbolizer exited {evidence.symbolizer.returncode}"
+        facts.append(f"{prefix}: {message}" + (f" (address {address})" if address else ""))
+    elif evidence.symbolizer and evidence.symbolizer.returncode != 0:
+        facts.append(f"llvm-symbolizer exited {evidence.symbolizer.returncode}: "
+                     f"{tail_lines(evidence.symbolizer.stderr) or 'no stderr'}")
+    if evidence.search:
+        if evidence.search.probes:
+            facts.append("searched: "
+                         + "; ".join(_probe_text(probe) for probe in evidence.search.probes))
+        if evidence.search.urls:
+            facts.append("symbol-server URLs not consulted: "
+                         + ", ".join(evidence.search.urls))
+    remedy = ("pass profile --pdb-file <file> or --pdb-dir <dir> for the PDB, "
+              "--debug-file-dir/--fallback-debug-path <dir> for DWARF, or place the matching "
+              "PDB beside the module or in a local srv* cache "
+              "(translate --pdb-dir/--symbol-cache/--symbol-server can stage it), then re-run "
+              "profile; a third-party module with no symbols is a finding, not a blocker")
+    print(f"WARNING: no symbols resolved for {evidence.module_name} "
+          f"({evidence.module_path}): {'; '.join(facts)}; {remedy}", file=stream)
 
 
 def _write_pdb_manifest(inputs: list[tuple[str, str]], out_dir: Path) -> Path:
@@ -529,13 +740,22 @@ def _write_pdb_manifest(inputs: list[tuple[str, str]], out_dir: Path) -> Path:
 
 
 def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | Path,
-                      stream: TextIO = sys.stdout) -> tuple[Path | None, Path | None,
-                                                             Path | None]:
+                      stream: TextIO = sys.stdout,
+                      debug_info: dict[str, bool] | None = None,
+                      pdb_dirs: list[str] | tuple[str, ...] = (),
+                      pdb_file: str | Path | None = None,
+                      debug_dirs: list[str] | tuple[str, ...] = (),
+                      fallback_paths: list[str] | tuple[str, ...] = ()
+                      ) -> tuple[Path | None, Path | None, Path | None, list[ModuleEvidence]]:
     """Symbolize every module in scope and combine the artifacts.
 
-    modules holds (module_name, binary_path, [rva hex text]) groups. Returns
-    (symbols.parquet, symbols.publics.csv, symbols.pdbs.csv); the parquet is None when no module
-    could be symbolized, in which case the SQL reports every address as '<no symbol>'.
+    modules holds (module_name, binary_path, [rva hex text]) groups. debug_info maps a module key
+    to Module.foundDebugInfo so the evidence separates "no debug info recorded" from "PDB
+    missing". pdb_file is an explicit PDB path and pdb_dirs are explicit search roots; debug_dirs
+    and fallback_paths go to llvm-symbolizer as --debug-file-directory and --fallback-debug-path.
+    Returns (symbols.parquet, symbols.publics.csv, symbols.pdbs.csv, evidence); the parquet is
+    None when no module could be symbolized, in which case the SQL reports every address as
+    '<no symbol>'.
     """
     out_path = absolute(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -543,15 +763,23 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     parquet_inputs: list[tuple[str, Path]] = []
     public_inputs: list[tuple[str, Path]] = []
     pdb_inputs: list[tuple[str, str]] = []
-    guid_failures: list[tuple[str, str | None]] = []
+    evidence: list[ModuleEvidence] = []
     for index, (module_name, module_path, rvas) in enumerate(modules):
         if not module_path:
-            print(f"WARNING: no module path for {module_name!r}; its addresses become "
-                  "<no symbol>", file=stream)
+            item = ModuleEvidence(module_name, module_path,
+                                  found_debug_info=(debug_info or {}).get(module_name),
+                                  outcome="module_missing",
+                                  note="the capture records no path for this module")
+            evidence.append(item)
+            _evidence_line(item, stream)
             continue
         if not Path(module_path).is_file():
-            print(f"WARNING: module not found on disk: {module_path}; its addresses become "
-                  "<no symbol>", file=stream)
+            item = ModuleEvidence(module_name, module_path,
+                                  found_debug_info=(debug_info or {}).get(module_name),
+                                  outcome="module_missing",
+                                  note=f"{module_path} is not on this host")
+            evidence.append(item)
+            _evidence_line(item, stream)
             continue
         module_dir = out_path / f"module-{index:04d}"
         rva_file = module_dir / "rvas.txt"
@@ -564,25 +792,29 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
                              "check free space and permissions on the artifact directory") from exc
         print(f"MODULE: {module_name}: {len(rvas)} addresses in {module_path}", file=stream)
         try:
-            parquet, publics, guid_failure, pdb = symbolize_module(
-                module_path, rva_file, module_dir, stream=stream)
+            result = symbolize_module(
+                module_path, rva_file, module_dir, stream=stream, module_name=module_name,
+                found_debug_info=(debug_info or {}).get(module_name),
+                pdb_dirs=pdb_dirs, pdb_file=pdb_file, debug_dirs=debug_dirs,
+                fallback_paths=fallback_paths)
         except UprofError as exc:
-            print(f"WARNING: symbolization failed for {module_path}: {exc}; its addresses "
-                  "become '<no symbol>'", file=stream)
+            item = ModuleEvidence(module_name, module_path,
+                                  found_debug_info=(debug_info or {}).get(module_name),
+                                  outcome="failed", note=str(exc))
+            evidence.append(item)
+            _evidence_line(item, stream)
             continue
-        if guid_failure:
-            guid_failures.append(guid_failure)
-        if parquet is None:
+        evidence.append(result.evidence)
+        _evidence_line(result.evidence, stream)
+        if result.parquet is None:
             raise UprofError(f"cannot write the symbol artifact for {module_path} in {module_dir}")
-        parquet_inputs.append((module_name, parquet))
-        if publics:
-            public_inputs.append((module_name, publics))
-        if pdb:
-            pdb_inputs.append((module_name, str(pdb)))
-    if guid_failures:
-        _warn_guid_failures(guid_failures, stream)
+        parquet_inputs.append((module_name, result.parquet))
+        if result.publics:
+            public_inputs.append((module_name, result.publics))
+        if result.pdb:
+            pdb_inputs.append((module_name, str(result.pdb)))
     if not parquet_inputs:
-        return None, None, None
+        return None, None, None, evidence
     symbols_file, publics_file = _combine_artifacts(parquet_inputs, public_inputs, out_path)
     pdbs_file = _write_pdb_manifest(pdb_inputs, out_path) if pdb_inputs else None
-    return symbols_file, publics_file, pdbs_file
+    return symbols_file, publics_file, pdbs_file, evidence

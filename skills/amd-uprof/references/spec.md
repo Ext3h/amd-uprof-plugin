@@ -74,6 +74,10 @@ demand or reused from the cache.
 | `--top N\|all` | rows returned, default 20 |
 | `--json` | machine-readable output instead of the default table |
 | `--out-file PATH` | output destination |
+| `--pdb-file FILE` | explicit PDB for `line`/`instruction`, passed to llvm-symbolizer `--pdb` |
+| `--pdb-dir DIR` | repeatable PDB search root, flat and `<GUID><age>` |
+| `--debug-file-dir DIR` | repeatable, passed to llvm-symbolizer `--debug-file-directory` |
+| `--fallback-debug-path DIR` | repeatable, passed to llvm-symbolizer `--fallback-debug-path` |
 
 ### 3.3 Granularities
 
@@ -99,12 +103,23 @@ scope and print a uProf-vs-symbolizer agreement summary; modules without usable 
 table aggregates instructions by source position; `instruction` reports them individually, each
 annotated with its function and source coordinates.
 
-`profile` has no symbol-path flag: `--pdb-dir`, `--symbol-cache` and `--symbol-server` are
-`translate` flags. For symbolization, a PDB is searched beside the module and, for each
-`_NT_SYMBOL_PATH` `srv*<cache>*<url>` entry, in the local cache only; the URL is never contacted,
-and a fetched PDB must be staged into a local cache (the translate path can fetch it) before a
-later `profile`. On Linux, DWARF comes from the module itself with no separate debug-file or
-build-id search.
+`profile` takes its own symbol paths for `line`/`instruction`: `--pdb-file` is passed to
+llvm-symbolizer as `--pdb`; repeatable `--pdb-dir` adds PDB search roots; repeatable
+`--debug-file-dir` and `--fallback-debug-path` become `--debug-file-directory` and
+`--fallback-debug-path` for DWARF or separate debug files. llvm-symbolizer ignores
+`_NT_SYMBOL_PATH`; its PDB sources are only an adjacent file, the recorded CodeView path and an
+explicit `--pdb`. The skill's own search supplies the rest: beside the module and, for each
+`_NT_SYMBOL_PATH` `srv*<cache>*<url>` entry, the local cache only; the URL is never contacted,
+and a fetched PDB must be staged into a local cache (the translate path can fetch it with AMD
+uProf's bundled DbgHelp/SymSrv, not WinDbg) before a later `profile`. `--obj` selects the image;
+there is no image-search directory. A PDB is accepted when `llvm-pdbutil` confirms its GUID and
+age; without `llvm-pdbutil` a beside-module PDB is used unverified. A valid PDB for another build
+yields exit 0, no `Error` and empty `Symbol` frames, which is reported as a resolution failure
+tied to that PDB name. `translate` prints `SYMBOLIZATION: <withDebugInfo>/<modules> modules with
+debug info, <N> Function rows` and warns when either count is zero, because its exit 0 and
+`Translation finished` do not establish that symbolization happened. On Linux, DWARF comes from
+the module itself, or through `--debug-file-dir`/`--fallback-debug-path`; there is no
+`_NT_SYMBOL_PATH` step.
 
 ### 3.4 Time filter
 
@@ -166,7 +181,7 @@ the UTC start is reported with its precision.
 - **Document help.** JSON output carries one top-level `context_help` object, emitted after `legend` and before `rows`, in a deterministic key order. It describes the `anchor`, `build`, instruction stream, `attribution` when the table emits it, and every omission reason; it points to `legend` for the share unit and denominator instead of restating them; it says the cap counts row slots, that `instruction` may carry objdump's nearest-symbol decoration while `symbol` is the frame, and that IBS values are AMD-encoded; and it states what to read and what to do next, deferring to `legend.next`. It is JSON-only and promises no field the document does not emit.
 - **Row cap.** The cap is 20 row slots in the table's impact (time-weight) order; a row that omits for another reason still consumes a slot, and later rows carry the `row_cap` omission. The `<other instructions>` row carries none.
 - **Build identity.** A matching nonzero PE `CheckSum` verifies the build; without a usable checksum a matching recorded `SizeOfImage` does. With no matching evidence the block is emitted with `identity: "unverified"` and a warning, never omitted as unverified; a nonzero checksum mismatch omits it.
-- **Omission.** Any condition that prevents a correct block (missing module, no safe anchor, hot RVA not on a boundary, mismatched build, unavailable LLVM tool) omits the block with a stable machine-readable reason and never guesses. An omission made after the module was examined carries the same `build` object as an emitted block, so an unverified build or size mismatch remains visible on the omitted row. A missing symbolizer name or unresolved IAT target leaves that optional field absent; it does not omit the block.
+- **Omission.** Any condition that prevents a correct block (missing module, no safe anchor, hot RVA not on a boundary, mismatched build, unavailable LLVM tool) omits the block with a stable machine-readable reason and never guesses. An omission made after the module was examined carries the same `build` object as an emitted block, so an unverified build or size mismatch remains visible on the omitted row. A missing symbolizer name or a symbolizer failure (nonzero exit, JSON `Error`, or a PDB that resolves no address) omits the block with that evidence in `detail`; an unresolved IAT target leaves that optional field absent and does not omit the block.
 - **Portability.** The block is built from PE/COFF headers and import tables, so it is produced for Windows modules only.
 
 ## 4. Columns and capture modes

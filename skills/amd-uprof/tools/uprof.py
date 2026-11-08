@@ -105,6 +105,23 @@ def build_parser() -> argparse.ArgumentParser:
     scope.add_argument("--image", metavar="PATTERN",
                        help="process base-image ILIKE pattern; all PIDs of matching images")
     profile.add_argument("--time-filter", metavar="T1:T2")
+    profile.add_argument(
+        "--pdb-file", metavar="FILE",
+        help="explicit PDB for --by line|instruction, passed to llvm-symbolizer --pdb; used "
+             "before any search and relied on without GUID verification when the image records "
+             "no PDB identity")
+    profile.add_argument(
+        "--pdb-dir", action="append", metavar="DIR",
+        help="extra PDB search directory for --by line|instruction (repeatable); tried before the "
+             "module's directory, flat and in its <GUID><age> subdirectory")
+    profile.add_argument(
+        "--debug-file-dir", action="append", metavar="DIR",
+        help="extra debug-file directory, passed to llvm-symbolizer --debug-file-directory "
+             "(repeatable); for DWARF/separate debug files")
+    profile.add_argument(
+        "--fallback-debug-path", action="append", metavar="DIR",
+        help="extra debug-file path, passed to llvm-symbolizer --fallback-debug-path "
+             "(repeatable); used when the primary debug-file lookup fails")
     profile.add_argument("--top", default="20", metavar="N|all")
     profile.add_argument("--json", action="store_true",
                          help="emit the header fields and rows as JSON")

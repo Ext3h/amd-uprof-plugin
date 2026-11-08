@@ -226,7 +226,7 @@ class InstructionProfileTest(unittest.TestCase):
                         uprof_query._write_profile(None, args, [("METRIC", "x")], None, legend)
 
         fetched.assert_called_once()
-        built.assert_called_once_with(None, columns, rows)
+        built.assert_called_once_with(None, columns, rows, debug_dirs=(), fallback_paths=())
         rendered.assert_called_once()
         call = rendered.call_args.args
         self.assertEqual(call[:6], (columns, types, rows, [("METRIC", "x")], True, None))
@@ -315,7 +315,8 @@ class ContextHelpTest(unittest.TestCase):
         self.assertEqual(set(reasons), {
             "module_missing", "readobj_missing", "readobj_failed", "metadata_incomplete",
             "no_code_section", "anchor_too_far", "hot_rva_not_instruction_start",
-            "objdump_missing", "objdump_failed", "build_mismatch", "context_failed", "row_cap"})
+            "objdump_missing", "objdump_failed", "symbolizer_missing", "symbolizer_failed",
+            "imports_failed", "build_mismatch", "context_failed", "row_cap"})
         self.assertTrue(all(reasons.values()))
 
     def test_document_help_is_deterministic(self):
@@ -326,7 +327,8 @@ class ContextHelpTest(unittest.TestCase):
         self.assertEqual(list(first["omission_reasons"]), [
             "module_missing", "readobj_missing", "readobj_failed", "metadata_incomplete",
             "no_code_section", "anchor_too_far", "hot_rva_not_instruction_start",
-            "objdump_missing", "objdump_failed", "build_mismatch", "context_failed", "row_cap"])
+            "objdump_missing", "objdump_failed", "symbolizer_missing", "symbolizer_failed",
+            "imports_failed", "build_mismatch", "context_failed", "row_cap"])
 
 
 class JsonDocumentTest(unittest.TestCase):

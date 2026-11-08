@@ -224,6 +224,18 @@ _NO_NAMED_FUNCTION_STOP: Final = (
 _UNRESOLVED_FUNCTION_STOP: Final = (
     "unresolved samples cannot be drilled below module/RVA: do not write a PE parser, map .pdata "
     "by hand or disassemble")
+_SYMBOL_PATH_REMEDY: Final = (
+    "; remedy: pass profile --pdb-file <file> or --pdb-dir <dir> for a PDB, or "
+    "--debug-file-dir/--fallback-debug-path <dir> for DWARF, or place the module's debug file "
+    "beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent PDB, the recorded "
+    "CodeView path or the skill's local srv* cache scan is searched")
+# Report order is the resolution order in uprof_symbols._candidate_pdbs.
+_SYMBOL_PATH_FLAGS: Final = (
+    ("pdb_file", "--pdb-file"),
+    ("pdb_dir", "--pdb-dir"),
+    ("debug_file_dir", "--debug-file-dir"),
+    ("fallback_debug_path", "--fallback-debug-path"),
+)
 
 
 def _sample_share_meaning(sampler: uprof_session.Sampler,
@@ -698,27 +710,102 @@ def _kernel_coverage_field(sampler: uprof_session.Sampler, kernel_covered: bool 
     return [] if warning is None else [("KERNEL_COVERAGE", warning)]
 
 
-def _coverage_field(connection: object,
-                    causes: dict[str, str] | None = None) -> list[tuple[str, str]]:
-    """Disclose how many scoped samples resolve to a named function, and per module.
-
-    A module whose samples carry no non-empty Function.name cannot be resolved below module/RVA,
-    so the line names it before the user starts reconstructing function boundaries (issue #27).
-    causes carries the per-module symbolization outcome so the line also says why.
-    """
+def _coverage_values(connection: object) -> dict[str, Any] | None:
+    """The uProf DB channel: aggregate and per-module named sample counts from coverage.sql."""
     columns, rows = uprof_db.fetch(connection, TOOLS_DIR / "coverage.sql")
     if not rows:
-        return []
+        return None
     values = [dict(zip(columns, row)) for row in rows]
     total = int(values[0]["scoped_samples"])
-    named = int(values[0]["named_total"])
     if total == 0:
+        return None
+    return {"rows": values, "total": total, "named": int(values[0]["named_total"])}
+
+
+def _symbol_path_flags(args: argparse.Namespace) -> list[str]:
+    """The explicit symbol-path flags passed to profile, in resolution order and deduplicated."""
+    return [flag for attribute, flag in _SYMBOL_PATH_FLAGS
+            if getattr(args, attribute, None)]
+
+
+def _symbol_coverage_legend(coverage: dict[str, Any],
+                            symbolizer: dict[str, Any] | None,
+                            symbolized: bool,
+                            flags: list[str]) -> dict[str, Any]:
+    """The JSON form of SYMBOL_COVERAGE: each channel separately, its counts and the flags used.
+
+    The profile rows come from the symbolizer channel; the uProf DB channel is the Function.name
+    uProf recorded at translate time and is not affected by profile's symbol-path flags.
+    """
+    entry: dict[str, Any] = {
+        "uprof_db": {
+            "source": "cpu.db Function.name (uProf symbolization at translate)",
+            "named_samples": coverage["named"],
+            "scoped_samples": coverage["total"],
+        },
+        "flags": list(flags),
+        "profile_symbolizer": None,
+        "rows_drillable": None,
+    }
+    if symbolized and symbolizer is not None:
+        scoped = int(symbolizer["scoped_samples"])
+        unresolved = int(symbolizer["unresolved_samples"])
+        resolved = max(scoped - unresolved, 0)
+        entry["profile_symbolizer"] = {
+            "source": "llvm-symbolizer parquet (agreement.sql)",
+            "resolved_samples": resolved,
+            "unresolved_samples": unresolved,
+            "scoped_samples": scoped,
+        }
+        entry["rows_drillable"] = scoped > 0 and resolved == scoped
+    return entry
+
+
+def _coverage_field(connection: object,
+                    causes: dict[str, str] | None = None,
+                    symbolizer: dict[str, Any] | None = None,
+                    symbolized: bool = False,
+                    flags: list[str] | None = None,
+                    coverage: dict[str, Any] | None = None) -> list[tuple[str, str]]:
+    """Disclose how many scoped samples resolve to a named function, and per module.
+
+    Two channels exist. coverage.sql reads cpu.db Function.name, which uProf wrote at translate
+    time and which profile's symbol-path flags do not change. agreement.sql reads the parquet
+    llvm-symbolizer produced for line/instruction rows, counting a sample resolved when the
+    symbolizer named its address. When the rows are symbolized and the channels disagree, or when
+    a symbol path was passed explicitly, both are named so a resolved table is never paired with
+    a "cannot be drilled" stop line. causes carries the per-module symbolization outcome.
+    """
+    coverage = coverage if coverage is not None else _coverage_values(connection)
+    if coverage is None:
         return []
-    text = f"{named}/{total} samples ({100.0 * named / total:.1f}%) resolve to a named function"
+    values = coverage["rows"]
+    total = coverage["total"]
+    named = coverage["named"]
+    db_text = f"{named}/{total} samples ({100.0 * named / total:.1f}%) resolve to a named function"
+    flags = flags or []
+    scoped = int(symbolizer["scoped_samples"]) if symbolized and symbolizer else 0
+    unresolved_samples = int(symbolizer["unresolved_samples"]) if scoped else 0
+    resolved = max(scoped - unresolved_samples, 0)
+    both = scoped > 0 and (bool(flags) or resolved != named)
+    if both:
+        text = (f"uProf DB {db_text}; profile symbolizer {resolved}/{scoped} samples "
+                f"({100.0 * resolved / scoped:.1f}%) resolve below module/RVA"
+                + (f" (flags: {', '.join(flags)})" if flags else ""))
+        if resolved == scoped:
+            return [("SYMBOL_COVERAGE",
+                     f"{text}; every scoped sample is drillable below module/RVA; the uProf DB "
+                     "share reflects only what translate recorded, and profile's symbol paths "
+                     "affect the rows, not that share")]
+        reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
+        if reasons:
+            text += f"; cause by module: {'; '.join(reasons)}"
+        stop = _NO_NAMED_FUNCTION_STOP if resolved == 0 else _UNRESOLVED_FUNCTION_STOP
+        return [("SYMBOL_COVERAGE", f"{text}; {stop}{_SYMBOL_PATH_REMEDY}")]
     unresolved = [value for value in values
                   if int(value["samples"]) > int(value["named_samples"])]
     if not unresolved:
-        return [("SYMBOL_COVERAGE", f"{text}; no module has unresolved samples")]
+        return [("SYMBOL_COVERAGE", f"{db_text}; no module has unresolved samples")]
     parts = []
     for value in unresolved:
         samples = int(value["samples"])
@@ -733,13 +820,9 @@ def _coverage_field(connection: object,
     stop = (_NO_NAMED_FUNCTION_STOP
             if any(int(value["named_samples"]) == 0 for value in unresolved)
             else _UNRESOLVED_FUNCTION_STOP)
-    remedy = ("; remedy: pass profile --pdb-file <file> or --pdb-dir <dir> for a PDB, or "
-              "--debug-file-dir/--fallback-debug-path <dir> for DWARF, or place the module's "
-              "debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an "
-              "adjacent PDB, the recorded CodeView path or the skill's local srv* cache scan is "
-              "searched" if causes else "")
+    remedy = _SYMBOL_PATH_REMEDY if causes else ""
     return [("SYMBOL_COVERAGE",
-             f"{text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")]
+             f"{db_text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")]
 
 
 def _tag_nonzero(connection: object) -> int:
@@ -774,11 +857,16 @@ def _scope_warning(connection: object, image_pattern: str | None = None) -> list
     return fields
 
 
-def _agreement_text(connection: object) -> str | None:
+def _agreement_values(connection: object) -> dict[str, Any] | None:
     columns, rows = uprof_db.fetch(connection, TOOLS_DIR / "agreement.sql")
-    if not rows:
+    return dict(zip(columns, rows[0])) if rows else None
+
+
+def _agreement_text(connection: object,
+                    values: dict[str, Any] | None = None) -> str | None:
+    values = values if values is not None else _agreement_values(connection)
+    if values is None:
         return None
-    values = dict(zip(columns, rows[0]))
 
     def percent(key: str) -> str:
         return "n/a (no denominator)" if values[key] is None else f"{values[key]}%"
@@ -858,6 +946,9 @@ def run_query_command(args: argparse.Namespace) -> None:
     success = False
     try:
         with uprof_db.open_query(cpu_db, [TOOLS_DIR / "views.sql"], variables) as connection:
+            causes: dict[str, str] = {}
+            symbolizer: dict[str, Any] | None = None
+            symbolized = False
             if args.by in SYMBOLIZED:
                 try:
                     artifacts = Path(tempfile.mkdtemp(prefix="uprof-symbols-"))
@@ -870,8 +961,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 symbols, causes = _symbolize_scope(connection, artifacts, stream, args)
                 variables.update(symbols)
                 uprof_db.set_variables(connection, symbols)
-            else:
-                causes = {}
+                symbolized = bool(symbols.get("uprof_symbols"))
+                symbolizer = _agreement_values(connection)
 
             sanity_message, tag_values = _dump_sanity(
                 connection, dump is not None,
@@ -899,10 +990,16 @@ def run_query_command(args: argparse.Namespace) -> None:
                 fields.append(achieved)
             fields.extend(_kernel_coverage_field(
                 sampler, kernel_covered, dump_windowed, captured_samples))
-            fields.extend(_coverage_field(connection, causes))
+            coverage = _coverage_values(connection)
+            flags = _symbol_path_flags(args)
+            fields.extend(_coverage_field(
+                connection, causes, symbolizer, symbolized, flags, coverage))
+            if coverage is not None:
+                legend["symbol_coverage"] = _symbol_coverage_legend(
+                    coverage, symbolizer, symbolized, flags)
             fields.extend(_scope_warning(connection, args.image))
             if args.by in SYMBOLIZED:
-                agreement = _agreement_text(connection)
+                agreement = _agreement_text(connection, symbolizer)
                 if agreement:
                     fields.append(("AGREEMENT", agreement))
             _write_profile(connection, args, fields, out_path, legend)

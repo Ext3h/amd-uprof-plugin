@@ -113,9 +113,12 @@ explicit `--pdb`. The skill's own search supplies the rest: beside the module an
 and a fetched PDB must be staged into a local cache (the translate path can fetch it with AMD
 uProf's bundled DbgHelp/SymSrv, not WinDbg) before a later `profile`. `--obj` selects the image;
 there is no image-search directory. A PDB is accepted when `llvm-pdbutil` confirms its GUID and
-age; without `llvm-pdbutil` a beside-module PDB is used unverified. A valid PDB for another build
-yields exit 0, no `Error` and empty `Symbol` frames, which is reported as a resolution failure
-tied to that PDB name. `translate` prints `SYMBOLIZATION: <withDebugInfo>/<modules> modules with
+age; without `llvm-pdbutil` the first existing candidate (beside the module, an explicit
+`--pdb-dir` entry or the local `srv*` cache) is used unverified with a warning. These flags affect
+the `line`/`instruction` rows and the profile symbolizer share `SYMBOL_COVERAGE` reports; they do
+not change the uProf DB share from `Function.name`, which records what translate symbolized. A
+valid PDB for another build yields exit 0, no `Error` and empty `Symbol` frames, which is reported
+as a resolution failure tied to that PDB name. `translate` prints `SYMBOLIZATION: <withDebugInfo>/<modules> modules with
 debug info, <N> Function rows` and warns when either count is zero, because its exit 0 and
 `Translation finished` do not establish that symbolization happened. On Linux, DWARF comes from
 the module itself, or through `--debug-file-dir`/`--fallback-debug-path`; there is no
@@ -168,8 +171,8 @@ the UTC start is reported with its precision.
   `--json` to `--by instruction`; the JSON `next` array holds the same commands.
 - `--json`: the same rows, header information and legend semantics as structured data; the legend
   is a `legend` object with `share_unit` (`fraction`), `share_scale` (`1`), `denominators`,
-  `columns`, `absent`, `impact` (`order_by`, `gap_weighted`, `estimate`), `remainder_last` and
-  `next`.
+  `columns`, `absent`, `impact` (`order_by`, `gap_weighted`, `estimate`), `remainder_last`,
+  `symbol_coverage` and `next`.
 - No CSV mode and no table-rendering dependency on the database library.
 - Shares are fractions 0.0-1.0 at full precision; no rounding or multiplication is applied.
 

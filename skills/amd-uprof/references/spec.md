@@ -100,9 +100,10 @@ annotated with its function and source coordinates.
 
 ### 3.4 Time filter
 
-Samples are selected by timestamp. The first sample per CPU **inside the window** carries no weight,
-because its gap crosses the boundary — the same rule as the first sample of a capture. Filtering
-never re-translates.
+Samples are selected by timestamp. The first sample per context **inside the window** carries no
+weight, because its gap crosses the boundary — the same rule as the first sample of a capture.
+The context is a CPU for a system-wide capture and a thread (`PID`, `TID`) for an attached one.
+Filtering never re-translates.
 
 ### 3.5 Clock anchoring
 
@@ -118,9 +119,13 @@ the UTC start is reported with its precision.
   `SANITY:`, `ACHIEVED:`, `KERNEL_COVERAGE:`, `AGREEMENT:`) as plain lines above it. `SANITY` validates the dump against
   the capture metadata and states the coverage it is based on; the dump-wide verdict is labeled as
   such, and when `--image`/`--pid` or `--time-filter` restricts a system-wide report, a scoped
-  coverage verdict follows from the scope's last sample against the end of its window; attached
-  captures (or a missing `systemWide`, which counts as attached) keep the attached verdict
-  instead, because their coverage is where the attached threads ran. `ACHIEVED` states the
+  coverage verdict follows from the scope's last sample against the end of its window. The
+  dump-wide capacity is the recorded span × CPUs for a system-wide capture; an attached capture is
+  judged per thread instead (never `elapsed × CPUs`), so its verdict is thread coverage and errors
+  only for samples outside the span; it also reports the processes, TIDs, busiest TID's samples
+  and CPUs visited. Attached captures (or a missing
+  `systemWide`, which counts as attached) keep the attached verdict instead, because their
+  coverage is where the attached threads ran. `ACHIEVED` states the
   samples delivered, the capture window, the per-CPU rate, the requested interval, and the busiest
   sampling context's cadence, and says so when that context delivers far below the request. The
   per-CPU rate divides by every CPU and is not the delivered cadence.
@@ -151,7 +156,7 @@ the UTC start is reported with its precision.
 |---|---|---|
 | `samples` | raw number of samples in the row | no |
 | `sample_share` | fraction of samples; what a sample represents depends on the sampler (below) | **yes** |
-| `time_share` | share of time estimated from per-sample DeltaTick gaps; an estimate, not unqualified impact | absent for PMC captures (the export aggregates PMC samples per window); the estimator still defines its meaning |
+| `time_share` | share of time estimated from per-sample DeltaTick gaps, partitioned by CPU for a system-wide capture and by `(PID, TID)` for an attached one; an estimate, not unqualified impact. An attached gap includes off-CPU time; for a cycle-controlled capture `sample_share` is the CPU-cycle share and the better ranking | absent for PMC captures (the export aggregates PMC samples per window); the estimator still defines its meaning |
 | `tag_to_retire_share` | share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency | present only for an IBS OP dump with a usable `IbsTagToRetCtr` (at least one non-null value) |
 
 | capture | a sample represents | `sample_share` is | status |
@@ -163,15 +168,19 @@ the UTC start is reported with its precision.
 | IBS fetch | fetch event | fetch-sample frequency share (fixed fetch events per sample) | supported, unverified |
 
 Every output states the capture's mode and what each column measures, derived from the capture's
-metadata; for `time_share` it states the estimator and window, or why `time_share` is unavailable.
+metadata; for `time_share` it states the estimator, the partition (CPU or `(PID, TID)`) and the
+window, or why `time_share` is unavailable.
 An instruction or op share must never be presented as CPU time or as a per-operation cost. The
 `COLUMNS` legend restates the `sample_share` reading for the mode. For the supported cycle event,
 fixed cycles make the share the busy core-cycle share and the sample order the ranking; any other
 PMC event leaves it not established. For op-count and fetch, a raw sample counts selected
 operations or events, so the share is a frequency share; for cycle-controlled it is a core-cycle
 share, not wall time. None is a per-op cost, and the cheap-often/expensive-rarely caveat applies
-only to frequency shares. `READ` names `time_share` (estimated from gaps) as the ordering estimate;
-`tag_to_retire_share`, where present, is total tag-to-retire cycles, a total, not per-op latency.
+only to frequency shares. `READ` names `time_share` (estimated from gaps; per `(PID, TID)` for an
+attached capture, where a cycle-controlled `sample_share` is named as the CPU-cycle share and the
+better ranking) as
+the ordering estimate; `tag_to_retire_share`, where present, is total tag-to-retire cycles, a
+total, not per-op latency.
 
 ## 5. Failure behaviour
 

@@ -207,16 +207,21 @@ fractions of good captures: the deficit is exactly the per-CPU boundary gaps (fi
 time after each CPU's last sample), 0.04-0.56 s on busy CPUs but 1.6-9.9 s on idle ones. Re-judged
 on the reference host with the rebuilt `v_dump_sanity`:
 
-| capture | mode | samples | covered vs implied | verdict |
+| capture | mode | samples | coverage | verdict |
 |---|---|---:|---|---|
 | `loop-2mib-swwide` | system-wide 45 s | 9936 | 712.079 / 721.104 s | OK, boundary 9.0 s |
 | `loop-16mib-swwide` | system-wide 45 s | 5784 | 704.696 / 720.944 s | OK, boundary 16.2 s |
 | `loop-16mib-swwide2` | system-wide 75 s | 7947 | 1150.309 / 1200.464 s | OK, boundary 50.2 s |
 | `loop-2mib-nohash` | system-wide 45 s | 3373 | 683.356 / 720.304 s | OK, boundary 36.9 s |
-| `loop-2mib-ibs` | attached 39.682 s | 954 | 454.203 vs upper bound 634.912 s | OK (attached; dump-wide) |
+| `loop-2mib-ibs` | attached 39.682 s | 954 | 40.011 s thread time over 52 TIDs; busiest TID covers 39.386 s | OK (attached; dump-wide) |
 
 Previously these five verdicts were −1.25% (pass), −2.25%, −4.18%, −5.13% and −28.46% (four
-rejected). Each verdict was reproduced through `uprof_db.open_query` with a synthetic
+rejected). The attached −28.46% was the retired per-CPU comparison: 454.203 s of per-CPU weight,
+the overcount this revision fixes, against `elapsed x CPUs` = 634.912 s. It was never a coverage
+reading, and the attached verdict no longer computes a CPU capacity. The attached capture is now
+judged as its 40.011 s thread-time total over 52 TIDs (the first sample per thread carries no
+weight; the sum over threads may exceed the span because independent threads overlap), with no
+implied bound. Each verdict was reproduced through `uprof_db.open_query` with a synthetic
 `session.uprof`.
 
 Synthetic DuckDB fixtures cover the branches directly: a dump whose weight stays below the

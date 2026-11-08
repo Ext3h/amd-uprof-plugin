@@ -120,14 +120,15 @@ def fetch(connection: Any, sql_path: Path) -> tuple[list[str], list[tuple]]:
 def output_rows(columns: Sequence[str], types: Sequence[str], rows: Sequence[tuple],
                 fields: Sequence[tuple[str, str]], json_mode: bool, out_path: Path | None,
                 legend: dict[str, object] | None = None,
-                contexts: Sequence[object | None] | None = None) -> None:
+                contexts: Sequence[object | None] | None = None,
+                context_help: dict[str, object] | None = None) -> None:
     """Render an already fetched result with its header fields and write it.
 
-    contexts adds the per-row context objects to JSON output only; the Markdown bytes are the
-    same with or without them.
+    contexts adds the per-row context objects to JSON output only; context_help is the
+    once-per-document help. The Markdown bytes are the same with or without either.
     """
     if json_mode:
-        text = json_document(fields, columns, rows, legend, contexts)
+        text = json_document(fields, columns, rows, legend, contexts, context_help)
     else:
         text = header_text(fields) + markdown_table(columns, types, rows)
     write_payload(text, out_path)
@@ -136,7 +137,9 @@ def output_rows(columns: Sequence[str], types: Sequence[str], rows: Sequence[tup
 def output(connection: Any, query_file: Path, fields: Sequence[tuple[str, str]],
            json_mode: bool, out_path: Path | None,
            legend: dict[str, object] | None = None,
-           contexts: Sequence[object | None] | None = None) -> None:
+           contexts: Sequence[object | None] | None = None,
+           context_help: dict[str, object] | None = None) -> None:
     """Render the first SELECT of query_file with its header fields and write the result."""
     columns, types, rows = fetch_typed(connection, query_file)
-    output_rows(columns, types, rows, fields, json_mode, out_path, legend, contexts)
+    output_rows(columns, types, rows, fields, json_mode, out_path, legend, contexts,
+                context_help)

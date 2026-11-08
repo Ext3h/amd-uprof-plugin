@@ -4,6 +4,7 @@ Run from this directory: python -m unittest test_context_json -v
 """
 
 import argparse
+import json
 import subprocess
 import unittest
 from unittest import mock
@@ -87,8 +88,8 @@ SYMBOLS = """\
 """
 
 COLUMNS = ["module", "rva", "function", "file", "line", "attribution", "samples",
-           "pct_samples", "pct_time", "pct_cycles"]
-ROW = ("fixture.exe", "0x101B", "main", "src\\main.cpp", 12, "unique", 3, 5.0, 2.0, 1.0)
+           "sample_share", "time_share", "tag_to_retire_share"]
+ROW = ("fixture.exe", "0x101B", "main", "src\\main.cpp", 12, "unique", 3, 0.05, 0.02, 0.01)
 
 
 class FakeConnection:
@@ -169,7 +170,7 @@ class BuildContextTest(unittest.TestCase):
                          ["0x1000", "0x1004", "0x1015", "0x101B", "0x1021", "0x1024"])
         hot = context["instructions"][3]
         self.assertEqual(hot["samples"], 3)
-        self.assertEqual(hot["pct_samples"], 5.0)
+        self.assertAlmostEqual(hot["sample_share"], 3 / 60)
         self.assertEqual(hot["symbol"],
                          {"function": "main", "file": r"src\main.cpp", "line": 12})
         self.assertEqual(hot["import"],
@@ -188,7 +189,7 @@ class BuildContextTest(unittest.TestCase):
 
         entry = context["instructions"][0]
         self.assertEqual(entry["samples"], 0)
-        self.assertIsNone(entry["pct_samples"])
+        self.assertIsNone(entry["sample_share"])
         self.assertNotIn("symbol", entry)
         self.assertNotIn("import", entry)
         self.assertNotIn("ibs", entry)
@@ -211,6 +212,10 @@ class InstructionProfileTest(unittest.TestCase):
     def test_the_instruction_select_is_fetched_once(self):
         columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
         contexts = [{"anchor": {}}]
+        legend = {"share_unit": "fraction", "share_scale": 1,
+                  "denominators": {"sample_share": "total_samples"},
+                  "columns": {"sample_share": "busy core-cycle share"},
+                  "impact": {"order_by": ["samples"]}}
         args = argparse.Namespace(json=True, by="instruction")
         with mock.patch.object(uprof_query.uprof_db, "fetch_typed",
                                return_value=(columns, types, rows)) as fetched:
@@ -218,12 +223,18 @@ class InstructionProfileTest(unittest.TestCase):
                                    return_value=contexts) as built:
                 with mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered:
                     with mock.patch.object(uprof_query.uprof_db, "output") as legacy:
-                        uprof_query._write_profile(None, args, [("METRIC", "x")], None)
+                        uprof_query._write_profile(None, args, [("METRIC", "x")], None, legend)
 
         fetched.assert_called_once()
         built.assert_called_once_with(None, columns, rows)
-        rendered.assert_called_once_with(columns, types, rows, [("METRIC", "x")], True, None,
-                                         contexts)
+        rendered.assert_called_once()
+        call = rendered.call_args.args
+        self.assertEqual(call[:6], (columns, types, rows, [("METRIC", "x")], True, None))
+        self.assertIs(call[6], legend)
+        self.assertIs(call[7], contexts)
+        help_text = call[8]
+        self.assertEqual(list(help_text), ["scope", "share", "fields", "omission_reasons",
+                                           "read", "next"])
         legacy.assert_not_called()
 
     def test_a_markdown_profile_uses_the_configured_query_file(self):
@@ -234,12 +245,81 @@ class InstructionProfileTest(unittest.TestCase):
         self.assertEqual(rendered.call_args[0][1].name, "profile-instruction.sql")
 
 
+class ContextHelpTest(unittest.TestCase):
+    LEGEND = {"share_unit": "fraction", "share_scale": 1,
+              "denominators": {"sample_share": "total_samples",
+                               "time_share": "total_weight",
+                               "tag_to_retire_share": "total_tag_cycles"},
+              "columns": {"samples": "raw sample count",
+                          "sample_share": "dispatched-op frequency share",
+                          "attribution": "unique / shared / unresolved",
+                          "time_share": "time share",
+                          "tag_to_retire_share": "total tag-to-retire cycles"},
+              "impact": {"order_by": ["time_share", "samples"]}}
+
+    def test_document_help_reuses_the_main_legend_unit_and_meaning(self):
+        help_text = uprof_context.context_help(self.LEGEND)
+
+        self.assertEqual(list(help_text), ["scope", "share", "fields", "omission_reasons",
+                                           "read", "next"])
+        self.assertIn("legend.columns.sample_share", help_text["share"])
+        self.assertIn("legend.denominators.sample_share", help_text["share"])
+        self.assertIn("legend.share_unit", help_text["share"])
+        self.assertEqual(help_text["fields"]["row.attribution"],
+                         "unique / shared / unresolved")
+        self.assertIn("legend.impact", help_text["read"])
+        self.assertIn("not a per-op cost", help_text["read"])
+        self.assertIn("tag-to-retire dwell", help_text["read"])
+        self.assertIn("legend.next", help_text["next"])
+        self.assertNotIn("pct", json.dumps(help_text))
+        self.assertNotIn("131070", json.dumps(help_text))
+
+    def test_document_help_names_the_emitted_context_fields(self):
+        fields = uprof_context.context_help(self.LEGEND)["fields"]
+
+        for name in ("anchor", "build", "instructions", "instructions[].symbol",
+                     "instructions[].import", "instructions[].ibs", "omitted"):
+            self.assertIn(name, fields)
+        self.assertIn("kind", fields["anchor"])
+        self.assertIn("verified", fields["build"])
+        self.assertIn("sample_share", fields["instructions"])
+        self.assertIn("65535", fields["instructions[].ibs"])
+        self.assertIn("unsigned decimal integer", fields["instructions[].ibs"])
+
+    def test_document_help_omits_tag_and_attribution_when_not_emitted(self):
+        legend = {"columns": {"sample_share": "not established", "time_share": "time share"}}
+        help_text = uprof_context.context_help(legend)
+
+        self.assertNotIn("row.attribution", help_text["fields"])
+        self.assertNotIn("tag_to_retire_share", help_text["read"])
+
+    def test_every_omission_reason_has_a_meaning(self):
+        reasons = uprof_context.context_help(self.LEGEND)["omission_reasons"]
+
+        self.assertEqual(set(reasons), {
+            "module_missing", "readobj_missing", "readobj_failed", "metadata_incomplete",
+            "no_code_section", "anchor_too_far", "hot_rva_not_instruction_start",
+            "objdump_missing", "objdump_failed", "build_mismatch", "context_failed", "row_cap"})
+        self.assertTrue(all(reasons.values()))
+
+    def test_document_help_is_deterministic(self):
+        first = uprof_context.context_help(self.LEGEND)
+        second = uprof_context.context_help(self.LEGEND)
+
+        self.assertEqual(json.dumps(first, indent=2), json.dumps(second, indent=2))
+        self.assertEqual(list(first["omission_reasons"]), [
+            "module_missing", "readobj_missing", "readobj_failed", "metadata_incomplete",
+            "no_code_section", "anchor_too_far", "hot_rva_not_instruction_start",
+            "objdump_missing", "objdump_failed", "build_mismatch", "context_failed", "row_cap"])
+
+
 class JsonDocumentTest(unittest.TestCase):
     def test_context_is_attached_to_its_row(self):
         contexts = [{"anchor": {"kind": "section"}}, None]
 
         text = uprof_output.json_document([("METRIC", "x")], ["module", "rva"],
-                                          [("a", "0x1"), ("b", "0x2")], contexts)
+                                          [("a", "0x1"), ("b", "0x2")],
+                                          contexts=contexts)
 
         self.assertIn('"context"', text)
         self.assertEqual(text.count('"context"'), 1)
@@ -252,7 +332,25 @@ class JsonDocumentTest(unittest.TestCase):
 
     def test_mismatched_context_count_is_rejected(self):
         with self.assertRaises(ValueError):
-            uprof_output.json_document([], ["rva"], [("0x1",)], [])
+            uprof_output.json_document([], ["rva"], [("0x1",)], contexts=[])
+
+    def test_context_help_is_emitted_once_before_the_rows(self):
+        help_text = uprof_context.context_help(ContextHelpTest.LEGEND)
+
+        text = uprof_output.json_document(
+            [("METRIC", "x")], ["rva"], [("0x1",)],
+            legend={"share_unit": "fraction"}, contexts=[{"anchor": {}}],
+            context_help=help_text)
+
+        document = json.loads(text)
+        self.assertEqual(list(document), ["METRIC", "legend", "context_help", "rows"])
+        self.assertEqual(text.count('"context_help"'), 1)
+        self.assertEqual(document["context_help"], help_text)
+
+    def test_no_context_help_keeps_the_existing_document(self):
+        without = uprof_output.json_document([("METRIC", "x")], ["rva"], [("0x1",)])
+
+        self.assertNotIn("context_help", without)
 
 
 class OutputTest(unittest.TestCase):

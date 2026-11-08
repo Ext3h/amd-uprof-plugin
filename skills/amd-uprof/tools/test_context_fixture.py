@@ -210,7 +210,7 @@ class FixtureTest(unittest.TestCase):
         self.assertEqual(context["build"]["identity"], "checksum")
         hot = next(item for item in context["instructions"] if item["rva"] == "0x101B")
         self.assertEqual(hot["samples"], 4)
-        self.assertEqual(hot["pct_samples"], 40.0)
+        self.assertEqual(hot["sample_share"], 0.4)
         self.assertEqual(hot["symbol"], {"function": "fixture_entry"})
         self.assertEqual(hot["import"],
                          {"dll": "KERNEL32.dll", "name": "ExitProcess",

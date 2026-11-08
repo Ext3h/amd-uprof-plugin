@@ -97,7 +97,7 @@ class WindowSelectionTest(unittest.TestCase):
 
 class ShareTest(unittest.TestCase):
     def test_raw_sample_share_uses_the_scoped_total(self):
-        self.assertEqual(uprof_context.instruction_share(3, 60), 5.0)
+        self.assertAlmostEqual(uprof_context.instruction_share(3, 60), 0.05)
         self.assertEqual(uprof_context.instruction_share(0, 60), 0.0)
 
     def test_an_empty_total_has_no_share(self):

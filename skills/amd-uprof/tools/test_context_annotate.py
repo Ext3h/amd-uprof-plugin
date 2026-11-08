@@ -129,10 +129,10 @@ class IbsTest(unittest.TestCase):
 
         self.assertIn('TRY_CAST("IbsDcMiss" AS BIGINT) <> 0', expressions)
 
-    def test_latency_is_clipped_like_pct_cycles(self):
+    def test_tag_to_retire_is_clipped_at_the_16_bit_maximum(self):
         expressions = " ".join(uprof_context.ibs_expression("IbsTagToRetCtr"))
 
-        self.assertIn("LEAST(TRY_CAST(\"IbsTagToRetCtr\" AS BIGINT), 131070)", expressions)
+        self.assertIn("LEAST(TRY_CAST(\"IbsTagToRetCtr\" AS BIGINT), 65535)", expressions)
 
     def test_no_dump_means_no_ibs_rows(self):
         connection = mock.Mock()

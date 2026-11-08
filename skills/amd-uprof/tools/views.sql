@@ -16,6 +16,9 @@
 --   uprof_symbols       combined symbols.parquet path for line and instruction
 --   uprof_aliases       combined symbols.publics.csv path for fold labelling
 --   uprof_pdbs          combined symbols.pdbs.csv path: the PDB symbolization chose per module
+--   uprof_sample_interval_s  requested cycle interval in seconds; empty when the interval is a
+--                       work/fetch count or the core frequency is unavailable, so cpu_seconds is
+--                       omitted
 --
 -- The SET VARIABLE statements below are the mode flags, guards and typed top/time values; no view
 -- file carries its own setup. The guards run before v_dump, so a bad capture fails once, with a
@@ -38,12 +41,14 @@ CREATE OR REPLACE TEMP MACRO is_kernel_image(p, load_address) AS
     OR kernel_basename(p) = 'hal.dll'
     OR regexp_matches(kernel_basename(p), '\.(sys|ko)$');
 -- Columns hidden from every projection: internal gap weights and totals, time_share unless the
--- dump exists, and tag_to_retire_share unless this sampler's tag column supplied values.
+-- dump exists, tag_to_retire_share unless this sampler's tag column supplied values, and
+-- cpu_seconds unless the requested interval is a time (a work/fetch interval is not time).
 CREATE OR REPLACE TEMP MACRO projected(c) AS
     c NOT IN ('weight', 'tag_cycles', 'total_samples', 'total_weight', 'total_tag_cycles',
               'sort_key', 'rn')
     AND (getvariable('has_dump') OR c <> 'time_share')
-    AND (getvariable('uprof_tag_available') = 'true' OR c <> 'tag_to_retire_share');
+    AND (getvariable('uprof_tag_available') = 'true' OR c <> 'tag_to_retire_share')
+    AND (getvariable('uprof_sample_interval_s') <> '' OR c <> 'cpu_seconds');
 
 SET VARIABLE has_dump = (getvariable('uprof_ibs_dump') <> '');
 
@@ -148,6 +153,12 @@ SET VARIABLE has_tag = (
 SET VARIABLE has_module_instances = (
   SELECT count(*) > 0 FROM duckdb_tables()
   WHERE lower(schema_name) = 'main' AND lower(table_name) = 'moduleinstance');
+
+-- Older exports carry no Module.isSystemModule; module rows then leave the classification NULL.
+SET VARIABLE has_system_module = (
+  SELECT count(*) > 0 FROM duckdb_columns()
+  WHERE lower(schema_name) = 'main' AND lower(table_name) = 'module'
+    AND lower(column_name) = 'issystemmodule');
 
 SET VARIABLE top_n = greatest(CAST(COALESCE(getvariable('uprof_top'), 20) AS BIGINT), 0);
 SET VARIABLE time_start = CAST(COALESCE(NULLIF(getvariable('uprof_time_start'), ''), '0') AS BIGINT);
@@ -538,6 +549,29 @@ ELSE $absent$
          CAST(NULL AS BOOLEAN) AS kernel_image
   WHERE false$absent$ END);
 
+-- Module.isSystemModule per module, keyed by the full normalized path and by basename. A dump's
+-- ModuleName may carry a full path while the catalog path differs only in directory, so the
+-- basename is the fallback key; bool_or keeps an exact path answer when paths collide.
+CREATE OR REPLACE TEMP VIEW v_module_flags AS
+SELECT * FROM query(CASE WHEN getvariable('has_system_module') THEN $flags$
+  SELECT module_name, bool_or(system_module) AS "isSystemModule"
+  FROM (
+    SELECT module_key(m.path) AS module_name,
+           CAST(m.isSystemModule AS BOOLEAN) AS system_module
+    FROM Module m
+    WHERE COALESCE(m.path, '') <> ''
+    UNION ALL
+    SELECT regexp_extract(module_key(m.path), '([^/]+)$', 1) AS module_name,
+           CAST(m.isSystemModule AS BOOLEAN) AS system_module
+    FROM Module m
+    WHERE COALESCE(m.path, '') <> ''
+  )
+  WHERE module_name <> ''
+  GROUP BY module_name$flags$
+ELSE $absent$
+  SELECT CAST(NULL AS VARCHAR) AS module_name, CAST(NULL AS BOOLEAN) AS "isSystemModule"
+  WHERE false$absent$ END);
+
 -- One row per whole-capture sample, before the process and time filters, with the module it landed
 -- in, the context that produced it (CPU for a dump, coreId for PMC) and whether that module is a
 -- kernel image. One dump row is one sample; a PMC row carries its event count. The ACHIEVED check
@@ -590,6 +624,42 @@ UNION ALL
 SELECT '<other processes>', NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
        max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
 FROM ranked
+WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
+HAVING count(*) > 0;
+
+-- Module shares. The key is the normalized module path the dump or UnifiedSampleSeries carries,
+-- the same key line and instruction rows use. isSystemModule comes from Module and stays NULL
+-- when the export predates the column or the module is not in the catalog; the remainder row has
+-- no single classification. When --top truncates, one <other modules> row carries the rest.
+CREATE OR REPLACE TEMP VIEW v_module_rows AS
+WITH agg AS (
+  SELECT COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module,
+         CAST(sum(w.samples) AS BIGINT) AS samples,
+         sum(w.weight) AS weight,
+         sum(w.tag_cycles) AS tag_cycles
+  FROM v_scoped w
+  GROUP BY 1
+), ranked AS (
+  SELECT *,
+         CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
+         sum(weight) OVER () AS total_weight,
+         sum(tag_cycles) OVER () AS total_tag_cycles,
+         row_number() OVER (
+           ORDER BY weight DESC NULLS LAST, samples DESC, module) AS rn
+  FROM agg
+), flagged AS (
+  SELECT r.*, f."isSystemModule"
+  FROM ranked r
+  LEFT JOIN v_module_flags f ON f.module_name = r.module
+)
+SELECT module, samples, weight, tag_cycles, "isSystemModule",
+       total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
+FROM flagged
+WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
+UNION ALL
+SELECT '<other modules>', CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles), NULL,
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
+FROM flagged
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
 

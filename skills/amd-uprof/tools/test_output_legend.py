@@ -373,7 +373,7 @@ class OutputLegendTest(unittest.TestCase):
                 self.assertIn(expected_read(mode), lines)
                 next_line = next(line for line in lines if line.startswith("NEXT: "))
                 self.assertIn("--session", next_line)
-                self.assertIn("--by line", next_line)
+                self.assertIn("--by module", next_line)
                 self.assertNotIn("hit-site", next_line)
                 self.assertNotIn("pct_", output)
                 header = next(line for line in lines if line.startswith("| process"))
@@ -502,7 +502,7 @@ class OutputLegendTest(unittest.TestCase):
         self.assertTrue(calls)
         self.assertTrue(all("--session" in call for call in calls))
         self.assertTrue(all("--pid 100" in call for call in calls))
-        self.assertTrue(any("--by line" in call for call in calls))
+        self.assertTrue(any("--by module" in call for call in calls))
         self.assertIn("--by instruction", calls[-1])
         self.assertTrue(calls[-1].endswith("--json"))
         self.assertFalse(any("hit-site" in call for call in calls))
@@ -516,7 +516,7 @@ class OutputLegendTest(unittest.TestCase):
         self.assertTrue(all("--image" in call for call in image_calls))
         expected_pattern = "%%workload%%" if os.name == "nt" else "%workload%"
         self.assertTrue(all(expected_pattern in call for call in image_calls))
-        self.assertTrue(any("--by line" in call for call in image_calls))
+        self.assertTrue(any("--by module" in call for call in image_calls))
         # The image-scope command must run, including the escaped pattern.
         result = subprocess.run(image_calls[0], shell=True, capture_output=True, text=True,
                                 encoding="utf-8")

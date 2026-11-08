@@ -21,7 +21,7 @@ from typing import Final
 from uprof_session import (ContextCadence, achieved_summary, derive_sampler, read_meta,
                            run_gap_limit_ns, system_wide)
 from uprof_util import (COPY_DIRS, DUMP_FILENAMES, UprofError, absolute, copy_session,
-                        parse_time_filter, tail_lines)
+                        parse_time_filter, skill_identity, tail_lines)
 
 IS_WINDOWS = os.name == "nt"
 TRANSLATE_TIMEOUT: Final = 4 * 60 * 60
@@ -424,6 +424,7 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     cache = symbol_cache or env_cache or symbol_cache_dir()
     servers = list(dict.fromkeys([*(env_servers or default_symbol_servers()),
                                   *(symbol_servers or [])]))
+    print(f"VERSION={skill_identity()}")
     print(f"SYMBOL_CACHE={cache}")
     print(f"SYMBOL_SERVERS={' | '.join(servers)}")
 

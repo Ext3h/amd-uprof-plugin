@@ -1,0 +1,165 @@
+"""SYMBOL_COVERAGE discloses per-module function-name coverage before a drill-down.
+
+A module whose samples carry no non-empty Function.name cannot be resolved below module/RVA.
+The line states the aggregate resolved share and the unresolved count per module, including a
+module that is absent from UnifiedSampleSeries entirely (function_id NULL). Without it a user
+reconstructs PE function boundaries by hand, which is the detour issue #27 records.
+
+Run from this directory: python -m unittest test_symbol_coverage -v
+"""
+
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import duckdb
+
+TOOLS_DIR = Path(__file__).resolve().parent
+
+GOOD = "good.dll"
+NO_STRINGS = "nostrings.dll"
+PARTIAL = "partial.dll"
+UNKNOWN = "unknown.dll"
+
+GOOD_OFFSET = 4096
+NO_STRINGS_OFFSET = 8192
+PARTIAL_NAMED_OFFSET = 16384
+PARTIAL_ANON_OFFSET = 20480
+UNKNOWN_OFFSET = 24576
+
+STOP = ("a module with no named functions cannot be drilled below module/RVA: do not write a PE "
+        "parser, map .pdata by hand or disassemble")
+
+
+def _dump_rows():
+    """good 4, nostrings 3, partial 2 named + 1 anonymous, unknown 2 rows."""
+    rows = [(index * 1_000_000_000, GOOD, GOOD_OFFSET) for index in range(4)]
+    rows += [(4_000_000_000 + index * 1_000_000_000, NO_STRINGS, NO_STRINGS_OFFSET)
+             for index in range(3)]
+    rows += [(7_000_000_000 + index * 1_000_000_000, PARTIAL, PARTIAL_NAMED_OFFSET)
+             for index in range(2)]
+    rows += [(9_000_000_000, PARTIAL, PARTIAL_ANON_OFFSET)]
+    rows += [(10_000_000_000 + index * 1_000_000_000, UNKNOWN, UNKNOWN_OFFSET)
+             for index in range(2)]
+    return rows
+
+
+class SymbolCoverageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.session = Path(self.tmp.name) / "session"
+        self.session.mkdir()
+        self._write_session()
+        self._write_dump()
+        self._write_cpu_db()
+
+    def _write_session(self, system_wide=False):
+        meta = {
+            "translateCommand": ("AMDuProfCLI.exe translate -i session "
+                                 "--ascii ibsop-event-dump"),
+            "collection": {
+                "schedule": {"elapsed": 11_000},
+                "events": {"ibsEvents": {
+                    "op": {"interval": 4_700_000},
+                    "opInterval": 4_700_000,
+                    "opCycleCount": True,
+                }},
+                "target": {"systemWide": system_wide,
+                           "attachedProcesses": [{"processId": 100}]},
+            },
+            "auxiliary": {"ibsOpSampling": True},
+        }
+        (self.session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+
+    def _write_dump(self):
+        lines = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName"]
+        processes = {GOOD: 100, NO_STRINGS: 200, PARTIAL: 300, UNKNOWN: 400}
+        for tick, module, offset in _dump_rows():
+            lines.append(f"{tick},0,1,{processes[module]},{offset},{module}")
+        (self.session / "IbsOpDump.csv").write_text("\n".join(lines) + "\n",
+                                                     encoding="utf-8", newline="\n")
+
+    def _write_cpu_db(self):
+        connection = duckdb.connect(str(self.session / "cpu.db"))
+        try:
+            connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
+            connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
+            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
+                               "name VARCHAR)")
+            connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+                               "functionId UBIGINT, moduleRVA UBIGINT)")
+            connection.execute("INSERT INTO Process VALUES (100, 'good.exe'), "
+                               "(200, 'nostrings.exe'), (300, 'partial.exe'), "
+                               "(400, 'unknown.exe')")
+            connection.execute(f"INSERT INTO Module VALUES (1, '{GOOD}'), (2, '{NO_STRINGS}'), "
+                               f"(3, '{PARTIAL}'), (4, '{UNKNOWN}')")
+            # Module 2 has a function row with a blank name; module 4 has no mapping at all.
+            connection.execute("INSERT INTO Function VALUES (10, 1, 'good_fn'), "
+                               "(20, 2, ''), (30, 3, 'partial_fn')")
+            connection.execute(f"INSERT INTO UnifiedSampleSeries VALUES "
+                               f"(1, 10, {GOOD_OFFSET}), (2, 20, {NO_STRINGS_OFFSET}), "
+                               f"(3, 30, {PARTIAL_NAMED_OFFSET})")
+        finally:
+            connection.close()
+
+    def profile(self, *extra):
+        result = subprocess.run(
+            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile",
+             "--session", str(self.session), "--by", "function", *extra],
+            capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def coverage(self, *extra):
+        document = json.loads(self.profile("--json", *extra))
+        return document.get("SYMBOL_COVERAGE")
+
+    def test_aggregate_and_per_module_unresolved_share(self):
+        text = self.coverage()
+
+        self.assertTrue(text.startswith("6/12 samples (50.0%) resolve to a named function; "),
+                        text)
+        self.assertIn(f"unresolved by module: {NO_STRINGS} 3/3 "
+                      "(100.0% unresolved, no named functions)", text)
+        self.assertIn(f"{PARTIAL} 1/3 (33.3% unresolved, partial)", text)
+        self.assertIn(f"{UNKNOWN} 2/2 (100.0% unresolved, no named functions)", text)
+        self.assertTrue(text.endswith(STOP), text)
+
+    def test_line_appears_in_markdown_and_json(self):
+        output = self.profile()
+        line = next(line for line in output.splitlines()
+                    if line.startswith("SYMBOL_COVERAGE: "))
+        self.assertEqual(line.removeprefix("SYMBOL_COVERAGE: "), self.coverage())
+
+    def test_scope_narrows_coverage_and_empty_scope_has_none(self):
+        self.assertEqual(
+            self.coverage("--pid", "100"),
+            "4/4 samples (100.0%) resolve to a named function; no module has unresolved samples")
+        self.assertIsNone(self.coverage("--pid", "999"))
+
+    def test_process_granularity_also_discloses_coverage(self):
+        result = subprocess.run(
+            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile",
+             "--session", str(self.session), "--by", "process"],
+            capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SYMBOL_COVERAGE: 6/12 samples (50.0%) resolve to a named function;",
+                      result.stdout)
+
+    def test_coverage_is_deterministic(self):
+        self.assertEqual(self.coverage(), self.coverage())
+
+    def test_cycle_controlled_attached_lists_by_sample_count(self):
+        # nostrings (3) and partial (3) tie on samples and keep module-name order; unknown (2)
+        # follows. A time-weight order would be free to differ, so the explicit order matters.
+        text = self.coverage()
+        self.assertLess(text.index(NO_STRINGS), text.index(PARTIAL))
+        self.assertLess(text.index(PARTIAL), text.index(UNKNOWN))
+
+
+if __name__ == "__main__":
+    unittest.main()

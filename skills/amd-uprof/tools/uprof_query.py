@@ -159,6 +159,12 @@ _NEXT_BY: Final = {
     "line": ("instruction",),
     "instruction": (),
 }
+_NO_NAMED_FUNCTION_STOP: Final = (
+    "a module with no named functions cannot be drilled below module/RVA: do not write a PE "
+    "parser, map .pdata by hand or disassemble")
+_UNRESOLVED_FUNCTION_STOP: Final = (
+    "unresolved samples cannot be drilled below module/RVA: do not write a PE parser, map .pdata "
+    "by hand or disassemble")
 
 
 def _sample_share_meaning(sampler: uprof_session.Sampler,
@@ -347,7 +353,8 @@ def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
                    dump: uprof_dump.DumpInfo | None, has_tag: bool,
                    tag_available: bool, system_wide: bool) -> list[tuple[str, str]]:
     """Detailed capture fields carried above the table and in the JSON document."""
-    fields = [("METRIC", sampler.metric.removeprefix("METRIC: "))]
+    fields = [("VERSION", util.skill_identity()),
+              ("METRIC", sampler.metric.removeprefix("METRIC: "))]
     if dump is None:
         if sampler.pmc_cycle_shares:
             share = ("sample_share is the busy core-cycle share (fixed cycles per sample; "
@@ -570,6 +577,41 @@ def _kernel_coverage_field(sampler: uprof_session.Sampler, kernel_covered: bool 
     return [] if warning is None else [("KERNEL_COVERAGE", warning)]
 
 
+def _coverage_field(connection: object) -> list[tuple[str, str]]:
+    """Disclose how many scoped samples resolve to a named function, and per module.
+
+    A module whose samples carry no non-empty Function.name cannot be resolved below module/RVA,
+    so the line names it before the user starts reconstructing function boundaries (issue #27).
+    """
+    columns, rows = uprof_db.fetch(connection, TOOLS_DIR / "coverage.sql")
+    if not rows:
+        return []
+    values = [dict(zip(columns, row)) for row in rows]
+    total = int(values[0]["scoped_samples"])
+    named = int(values[0]["named_total"])
+    if total == 0:
+        return []
+    text = f"{named}/{total} samples ({100.0 * named / total:.1f}%) resolve to a named function"
+    unresolved = [value for value in values
+                  if int(value["samples"]) > int(value["named_samples"])]
+    if not unresolved:
+        return [("SYMBOL_COVERAGE", f"{text}; no module has unresolved samples")]
+    parts = []
+    for value in unresolved:
+        samples = int(value["samples"])
+        named_samples = int(value["named_samples"])
+        kind = "partial" if named_samples else "no named functions"
+        share = 100.0 * (samples - named_samples) / samples
+        parts.append(f"{value['module_name']} {samples - named_samples}/{samples} "
+                     f"({share:.1f}% unresolved, {kind})")
+    # A module with no names at all is the case that provokes a manual PE/.pdata mapping.
+    stop = (_NO_NAMED_FUNCTION_STOP
+            if any(int(value["named_samples"]) == 0 for value in unresolved)
+            else _UNRESOLVED_FUNCTION_STOP)
+    return [("SYMBOL_COVERAGE",
+             f"{text}; unresolved by module: {'; '.join(parts)}; {stop}")]
+
+
 def _scope_warning(connection: object) -> list[tuple[str, str]]:
     fields: list[tuple[str, str]] = []
     empty = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
@@ -682,8 +724,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 "uprof_tag_available": "true" if tag_available else "false"})
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
-            # The legend sits directly below METRIC, before the detailed capture fields.
-            fields[1:1] = _legend_fields(legend, system_wide)
+            # The legend sits directly below METRIC, after VERSION, before the detailed fields.
+            fields[2:2] = _legend_fields(legend, system_wide)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
             check_kernel = sampler.os_requested and not dump_windowed
@@ -693,6 +735,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 fields.append(achieved)
             fields.extend(_kernel_coverage_field(
                 sampler, kernel_covered, dump_windowed, captured_samples))
+            fields.extend(_coverage_field(connection))
             fields.extend(_scope_warning(connection))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(connection)

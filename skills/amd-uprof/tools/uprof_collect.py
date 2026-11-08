@@ -17,7 +17,7 @@ from pathlib import Path
 from uprof_native import (IS_WINDOWS, failure_detail, find_uprof, ibs_unavailable_reason,
                           is_admin, print_output, require_uprof, run)
 from uprof_session import collect_summary, verify_collect
-from uprof_util import UprofError, absolute
+from uprof_util import UprofError, absolute, skill_identity
 
 _IBS_UNAVAILABLE = "ibs counters are not available"
 _CYCLE_DEFAULT = "1ms"
@@ -242,6 +242,7 @@ def collect(options: CollectOptions) -> None:
     # --dry-run prints the command without requiring the CLI to be installed.
     uprof_display = find_uprof() or "AMDuProfCLI"
     target_args, target_display = _target_args(options)
+    print(f"VERSION={skill_identity()}")
     print(interval_line)
     print(f"EVENT={_event_spec(options, options.event, interval)}")
     print(f'COMMAND="{uprof_display}" collect -e {_event_spec(options, options.event, interval)} '

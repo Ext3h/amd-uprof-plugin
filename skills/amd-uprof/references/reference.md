@@ -263,7 +263,7 @@ Samples weight each distinct address (one per dump row, the event count per PMC 
 | `rva` | module-relative address, `0x` hex |
 | `instruction` | mnemonic and operands as `llvm-objdump` prints them, raw bytes and trailing comments removed |
 | `samples` | raw scoped samples at this exact RVA |
-| `pct_samples` | `100 * samples / v_scope_totals.total_samples`; raw sample share — sampled frequency, not impact — never gap-weighted time, `null` when the scope is empty |
+| `sample_share` | `samples / v_scope_totals.total_samples`, a fraction 0.0-1.0 like the row's own `sample_share`; the mode-specific meaning is the one in `legend.columns.sample_share` — sampled frequency for op-count and fetch, core-cycle share for cycle-controlled — not impact and never gap-weighted time; `null` when the scope is empty |
 | `symbol` | optional `{function, file, line}` from `llvm-symbolizer` frame 0 (`Symbol[0]`) using the PDB recorded by the symbolization pass; `line` omitted when 0; an empty or errored record leaves the field absent |
 | `import` | optional `{dll, name, slot_rva}` when the instruction is a `call`/`callq` whose operand is a `*disp(%rip)` or absolute IAT slot; register and indirect non-IAT targets stay raw; an ordinal-only symbol is `#<ordinal>` |
 | `ibs` | optional aggregated IBS OP labels, present when the dump has a row at the RVA and supplies at least one whitelisted field; the summary may carry only `samples` |
@@ -278,13 +278,26 @@ Samples weight each distinct address (one per dump row, the event count per PMC 
 |---|---|
 | `DataSrc`, `CacheHitSt`, `IbsOpMemWidth` | `{code: sample count}`, keys sorted numerically as printed by the dump |
 | `IbsDcMiss`, `IbsOpBrnMisp`, `IbsDcLockedOp` | `{"set": n, "of": samples}` — count of nonzero values |
-| `IbsTagToRetCtr` | `{"samples", "sum", "max"}` over non-null values, clipped at 131070; omitted when every value is null |
+| `IbsTagToRetCtr` | `{"samples", "sum", "max"}` over the RVA's dump rows with the `tag_to_retire_share` policy: only an unsigned decimal integer cell counts, each clipped at 65535, the 16-bit field's maximum; NULL, negative, fractional and exponent cells are excluded, and `samples` counts the qualifying cells, not dump rows; omitted when no cell qualifies |
 
 `ibs.samples` is the dump-row count at the RVA, counted over the same PID, image and time window as the row's samples. For a PMC capture, or an IBS dump without these columns, no `ibs` field is emitted.
 
 **Build identity.** `build` carries `verified`, `identity`, `image_base`, `time_date_stamp`, `checksum`, `capture_checksum`, `size_of_image` and `capture_size`, all hex where numeric. A nonzero on-disk `CheckSum` equal to the capture's `Module.checksum` verifies the build (`identity: "checksum"`); a nonzero mismatch omits the block (`build_mismatch`). Without a usable checksum, an equal recorded `SizeOfImage` verifies it (`identity: "size"`). Without matching evidence the block is still emitted with `verified: false`, `identity: "unverified"` and a `warning` that names the missing or disagreeing evidence; verification is never claimed without it. This prevents decoding a different build than the one captured.
 
 **Omission shape.** `{"omitted": true, "reason": "<code>", "detail": "<text>"}`; `detail` is present only when non-empty. Reasons: `module_missing`, `readobj_missing`, `readobj_failed`, `metadata_incomplete` (headers lack `ImageBase`/`TimeDateStamp`/`CheckSum`/`Magic`, e.g. ELF), `no_code_section`, `anchor_too_far`, `hot_rva_not_instruction_start`, `objdump_missing`, `objdump_failed`, `build_mismatch`, `context_failed` (an LLVM tool timed out or a scoped query failed), `row_cap`. A build without matching checksum or size evidence is emitted unverified, not omitted. Symbolizer and import failures do not omit the block. The `<other instructions>` row (`rva` null) has no context.
+
+**Document help.** A single top-level `context_help` object is emitted once per JSON document, after `legend` and before `rows`. Its keys are always in this order: `scope`, `share`, `fields`, `omission_reasons`, `read`, `next`. It is built from constant text plus the document's legend, so repeated runs produce identical bytes.
+
+| Key | Content |
+|---|---|
+| `scope` | one context per instruction row; at most 20 eligible rows in the table's row order carry data, later eligible rows carry `row_cap`, and the `<other instructions>` row carries none |
+| `share` | `sample_share` is a fraction; its unit and denominator are `legend.share_unit`, `legend.share_scale` and `legend.denominators.sample_share`, and its mode-specific meaning is `legend.columns.sample_share` — the help states no second scale |
+| `fields` | `anchor` (`kind`, `rva`, `name` when named, `distance` in bytes from the anchor to the row's rva), `build` (`verified`, `identity`, hex identities and sizes, `warning` when present), `instructions` (static stream in ascending rva; `rva`, `instruction`, `samples`, `sample_share` fraction, optional `symbol`, `import`, `ibs`), `instructions[].symbol`, `instructions[].import`, `instructions[].ibs` (including the 65535 clip and the unsigned-decimal-integer policy), `omitted`, and `row.attribution` only when the legend carries that column |
+| `omission_reasons` | every reason code with its meaning, in the order listed above |
+| `read` | the sampled instruction is the entry whose `rva` equals the row's; `sample_share` is the mode-specific raw share, not a per-op cost and not a ranking; rows are ordered by `legend.impact.order_by`; imports and symbol frames identify the work kind; when the legend carries `tag_to_retire_share`, it and `ibs.IbsTagToRetCtr` are total tag-to-retire dwell evidence, not per-op latency |
+| `next` | defer to `legend.next`; rank by `legend.impact.order_by`; a high `sample_share` with a low `time_share` and no tag-to-retire evidence is frequency, not an impact finding |
+
+The help is JSON-only. Markdown output has no `context_help` and is byte-identical to a run without the context feature.
 
 **Limits and caching.** At most 20 rows carry a block, in the table's row order (its time-weight impact order); later rows carry `row_cap`. Module metadata, imports, public starts and the symbolization pass's PDB choice are cached per module across rows; each anchor is decoded once for all rows under it, and samples, symbols and IBS are aggregated once per module. Each external call has a five-minute timeout. The feature is PE/COFF-only; ELF modules omit with `metadata_incomplete`.
 

@@ -600,15 +600,19 @@ def _agreement_text(connection: object) -> str | None:
 
 
 def _write_profile(connection: object, args: argparse.Namespace,
-                   fields: list[tuple[str, str]], out_path: Path | None) -> None:
+                   fields: list[tuple[str, str]], out_path: Path | None,
+                   legend: dict[str, object] | None = None) -> None:
     """Render the profile; instruction JSON fetches its SELECT once and joins contexts to it."""
     if args.json and args.by == "instruction":
         columns, types, rows = uprof_db.fetch_typed(
             connection, TOOLS_DIR / "profile-instruction.sql")
         contexts = uprof_context.instruction_contexts(connection, columns, rows)
-        uprof_db.output_rows(columns, types, rows, fields, args.json, out_path, contexts)
+        help_text = uprof_context.context_help(legend or {})
+        uprof_db.output_rows(columns, types, rows, fields, args.json, out_path,
+                             legend, contexts, help_text)
         return
-    uprof_db.output(connection, TOOLS_DIR / f"profile-{args.by}.sql", fields, args.json, out_path)
+    uprof_db.output(connection, TOOLS_DIR / f"profile-{args.by}.sql", fields, args.json,
+                    out_path, legend)
 
 
 def run_query_command(args: argparse.Namespace) -> None:
@@ -694,15 +698,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 agreement = _agreement_text(connection)
                 if agreement:
                     fields.append(("AGREEMENT", agreement))
-            if args.json and args.by == "instruction":
-                columns, types, rows = uprof_db.fetch_typed(
-                    connection, TOOLS_DIR / "profile-instruction.sql")
-                contexts = uprof_context.instruction_contexts(connection, columns, rows)
-                uprof_db.output_rows(columns, types, rows, fields, args.json, out_path,
-                                     legend, contexts)
-            else:
-                uprof_db.output(connection, TOOLS_DIR / f"profile-{args.by}.sql", fields,
-                                args.json, out_path, legend)
+            _write_profile(connection, args, fields, out_path, legend)
         success = True
     finally:
         if artifacts is not None:

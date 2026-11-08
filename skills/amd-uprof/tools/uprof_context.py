@@ -15,7 +15,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from uprof_native import find_sibling, find_symbolizer, run
 from uprof_util import UprofError, tail_lines
@@ -30,7 +30,7 @@ IBS_FIELDS: Final = ("DataSrc", "CacheHitSt", "IbsDcMiss", "IbsOpBrnMisp",
 IBS_DISTRIBUTIONS: Final = frozenset({"DataSrc", "CacheHitSt", "IbsOpMemWidth"})
 IBS_FLAGS: Final = frozenset({"IbsDcMiss", "IbsOpBrnMisp", "IbsDcLockedOp"})
 IBS_LATENCY: Final = "IbsTagToRetCtr"
-IBS_TAG_MAX: Final = 131070
+IBS_TAG_MAX: Final = 65535
 _IBS_TAG_INT: Final = r"""regexp_full_match("IbsTagToRetCtr", '\s*[0-9]+\s*')"""
 
 _IMAGE_BASE = re.compile(r"^\s*ImageBase:\s*(0x[0-9A-Fa-f]+)\s*$")
@@ -535,7 +535,7 @@ def present_ibs_fields(columns: Iterable[str]) -> tuple[str, ...]:
 
 
 def ibs_expression(field: str) -> list[str]:
-    """SELECT expressions for one field: a value histogram, a nonzero count or latency stats.
+    """SELECT expressions for one field: a value histogram, a nonzero count or tag statistics.
 
     The field name itself is the label; nothing maps the hardware value to a semantic role.
     """
@@ -667,10 +667,10 @@ def select_window(decoded: list[DecodedInstruction], hot_rva: int,
 
 
 def instruction_share(samples: int, total_samples: int) -> float | None:
-    """Raw sample share, the same denominator as the instruction row's pct_samples."""
+    """sample_share: a fraction of the scoped samples, the same denominator as the row."""
     if not total_samples:
         return None
-    return 100.0 * samples / total_samples
+    return samples / total_samples
 
 
 def decode_stream(module_path: str, build: BuildIdentity, anchor: Anchor, last_rva: int,
@@ -748,7 +748,7 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
             "rva": _hex(instruction.rva),
             "instruction": instruction.text,
             "samples": count,
-            "pct_samples": instruction_share(count, total_samples),
+            "sample_share": instruction_share(count, total_samples),
         }
         symbol = symbols.get(instruction.rva)
         if symbol is not None:
@@ -770,6 +770,87 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
             entry["ibs"] = ibs_labels
         entries.append(entry)
     return {"anchor": anchor_json, "build": build_json, "instructions": entries}
+
+
+_CONTEXT_HELP_FIELDS: Final = {
+    "anchor": ("the instruction boundary decoding starts from: kind is export, pdb_public, "
+               "pdata or section; rva is module-relative; name is present when the source names "
+               "it; distance is the byte distance from the anchor to the row's rva"),
+    "build": ("identity of the disassembled file: verified is true only with matching checksum "
+              "or size evidence, false means unverified; identity is checksum, size or "
+              "unverified; image_base, time_date_stamp, checksum, capture_checksum, "
+              "size_of_image and capture_size are hex; size_of_image, capture_size and warning "
+              "are present when known"),
+    "instructions": ("the static decoded stream in ascending rva; each entry has rva, instruction "
+                     "(assembly), samples (raw count), sample_share (fraction) and optional "
+                     "symbol, import and ibs"),
+    "instructions[].symbol": ("llvm-symbolizer frame 0 for the instruction: function, file and "
+                              "line; absent when the tool returned no frame"),
+    "instructions[].import": ("the IAT target of a call through a slot: dll, name and slot_rva; "
+                              "absent for register or non-IAT targets"),
+    "instructions[].ibs": ("IBS OP aggregates for the same PID, image and time window as the "
+                           "row's samples: DataSrc, CacheHitSt and IbsOpMemWidth are value "
+                           "histograms; IbsDcMiss, IbsOpBrnMisp and IbsDcLockedOp are nonzero "
+                           "counts as {set, of}; IbsTagToRetCtr is {samples, sum, max} over "
+                           "unsigned decimal integer cells, each clipped at 65535, the 16-bit "
+                           "field maximum, with NULL, negative, fractional and exponent cells "
+                           "excluded; fields the dump lacks are omitted"),
+    "omitted": ("an omitted context has omitted=true, reason and optional detail; see "
+                "omission_reasons"),
+}
+_CONTEXT_HELP_OMISSIONS: Final = {
+    "module_missing": "the capture records no module path, or the file is absent on this host",
+    "readobj_missing": "llvm-readobj is unavailable",
+    "readobj_failed": "llvm-readobj failed to read the PE headers, sections, exports or unwind data",
+    "metadata_incomplete": ("the PE headers lack ImageBase, TimeDateStamp, CheckSum or Magic "
+                            "(for example an ELF module)"),
+    "no_code_section": "the row's rva is not inside an executable PE section",
+    "anchor_too_far": "the nearest safe start is beyond the 1 MiB distance cap",
+    "hot_rva_not_instruction_start": ("decoding from the anchor never reaches the row's rva on "
+                                      "an instruction boundary"),
+    "objdump_missing": "llvm-objdump is unavailable",
+    "objdump_failed": "llvm-objdump failed or produced no instructions",
+    "build_mismatch": ("a nonzero on-disk CheckSum differs from the capture's Module.checksum"),
+    "context_failed": ("an LLVM tool timed out or a scoped query failed while building this "
+                       "context"),
+    "row_cap": "this row is past the 20-row context cap",
+}
+
+
+def context_help(legend: dict[str, Any]) -> dict[str, Any]:
+    """Once-per-document help for the context blocks; JSON only, in a fixed key order.
+
+    The share unit and denominator come from the document's legend rather than a second scale,
+    so the context cannot drift from the table's sample_share meaning.
+    """
+    fields = dict(_CONTEXT_HELP_FIELDS)
+    columns = legend.get("columns") or {}
+    if "attribution" in columns:
+        fields["row.attribution"] = columns["attribution"]
+    read = ("The instruction entry whose rva equals the row's rva is the sampled instruction. "
+            "sample_share is the raw share for this capture mode: read its meaning from "
+            "legend.columns.sample_share and its fraction unit and denominator from "
+            "legend.share_unit, legend.share_scale and legend.denominators.sample_share; it is "
+            "not a per-op cost and it does not rank rows. The table orders rows by "
+            "legend.impact.order_by, not by sample_share. Imports and symbol frames identify the "
+            "work kind.")
+    if "tag_to_retire_share" in columns:
+        read += (" The row's tag_to_retire_share and the instruction ibs.IbsTagToRetCtr values "
+                 "are total tag-to-retire dwell evidence, not per-op latency.")
+    return {
+        "scope": ("one context per instruction row; at most 20 eligible rows in the table's row "
+                  "order carry data, and later eligible rows carry omitted with reason row_cap; "
+                  "the <other instructions> row carries no context"),
+        "share": ("sample_share is a fraction; legend.share_unit, legend.share_scale and "
+                  "legend.denominators.sample_share define its unit and denominator, and "
+                  "legend.columns.sample_share gives its meaning for this capture mode"),
+        "fields": fields,
+        "omission_reasons": dict(_CONTEXT_HELP_OMISSIONS),
+        "read": read,
+        "next": ("Use legend.next to change scope or granularity. Rank by "
+                 "legend.impact.order_by; a high sample_share with a low time_share and no IBS "
+                 "tag-to-retire evidence is frequency, not an impact finding."),
+    }
 
 
 @dataclass

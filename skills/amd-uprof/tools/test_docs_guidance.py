@@ -55,8 +55,17 @@ SKILL_FRAGMENTS = (
     "never `unresolved` or `no named functions`",
     "quote that split in the report",
     "`HOT_RVA:` line",
-    "`hot_rva`/`hot_samples`/`hot_sample_share`",
+    "`hot_rva`/`hot_samples`/`other_samples`/`hot_sample_share`",
+    "`other_samples` (`samples - hot_samples`)",
+    "the rest of the function, not a second hot address",
+    "the rest of the row, not a second hot address",
     "must not be used to claim the sample-hot RVA",
+    "even when `--json` or `--out-file` writes the document",
+    "`--image` selects process image names, not modules",
+    "On a single-process attached capture `--image` adds nothing",
+    "filter its JSON rows by `module`",
+    "`omitted: true` with `reason: symbolizer_failed`",
+    "do not spend calls removing temp files",
     "one `CONTEXT:` line",
     "do not read `uprof_context.py` or `context_help`",
     "profile --by module",
@@ -136,6 +145,11 @@ REFERENCE_FRAGMENTS = (
     "function rows are in the `unresolved` attribution and `function_source` is `none`",
     "must not be used to claim the sample-hot RVA",
     "one `CONTEXT:` line",
+    "omitted: true",
+    "single unscoped instruction run",
+    "on stderr before the document is written",
+    "selects process base images, not modules",
+    "`other_samples` is `samples - hot_samples`",
     "isSystemModule = false",
     "neither an OS-shipped predicate nor a kernel predicate",
     "kernel image",
@@ -233,7 +247,10 @@ class DocsGuidanceTest(unittest.TestCase):
                          "FILTER",
                          "PARENT",
                          "function_scope",
-                         "parent_sample_share"):
+                         "parent_sample_share",
+                         "other_samples",
+                         "even with `--json`/`--out-file`",
+                         "`omitted: true` and a `reason`"):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, SPEC)
 

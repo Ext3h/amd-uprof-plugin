@@ -228,9 +228,10 @@ class SanityScopeTest(unittest.TestCase):
                                  variables) as connected:
             plan = connected.sql("EXPLAIN SELECT message FROM v_scope_sanity").fetchall()[0][1]
 
-        # One read of the dump, through v_scoped. Reading v_dump_sanity for the span instead would
-        # add its two full dump scans (weighted_all and per_cpu) for every filtered profile.
-        self.assertEqual(plan.count("READ_CSV"), 1, plan)
+        # The dump is materialized when views.sql loads, so the scoped verdict must contain no
+        # CSV scan of its own. Reading v_dump_sanity for the span instead would add its two full
+        # dump scans (weighted_all and per_cpu) for every filtered profile.
+        self.assertNotIn("READ_CSV", plan)
 
 
 class ScopedQueryTest(unittest.TestCase):

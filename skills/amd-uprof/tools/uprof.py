@@ -88,7 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
     translate = sub.add_parser("translate", help="resolve symbols; optionally write an ASCII dump")
     translate.add_argument("--session", required=True)
     translate.add_argument("--out-dir", required=True)
-    translate.add_argument("--pdb-dir")
+    translate.add_argument(
+        "--symbol-path", action="append", metavar="PATH",
+        help="symbol or debug file, or a directory to search (repeatable); passed to the "
+             "translator's own symbol-path option")
     translate.add_argument("--symbol-cache")
     translate.add_argument("--symbol-server", action="append")
     translate.add_argument("--time-filter", metavar="T1:T2")
@@ -121,22 +124,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional function_start (0x hex or decimal) when --function matches more than one "
              "row in the module")
     profile.add_argument(
-        "--pdb-file", metavar="FILE",
-        help="explicit PDB for --by function|region|line|instruction, passed to llvm-symbolizer "
-             "--pdb; used before any search and relied on without GUID verification when the "
-             "image records no PDB identity")
+        "--symbol-path", action="append", metavar="PATH",
+        help="symbol or debug file, or a directory to search, for "
+             "--by function|region|line|instruction (repeatable); the path is probed: a file is "
+             "an explicit symbol/debug input, a directory a search root")
     profile.add_argument(
-        "--pdb-dir", action="append", metavar="DIR",
-        help="extra PDB search directory for --by function|region|line|instruction (repeatable); "
-             "tried before the module's directory, flat and in its <GUID><age> subdirectory")
-    profile.add_argument(
-        "--debug-file-dir", action="append", metavar="DIR",
-        help="extra debug-file directory, passed to llvm-symbolizer --debug-file-directory "
-             "(repeatable); for DWARF/separate debug files")
-    profile.add_argument(
-        "--fallback-debug-path", action="append", metavar="DIR",
-        help="extra debug-file path, passed to llvm-symbolizer --fallback-debug-path "
-             "(repeatable); used when the primary debug-file lookup fails")
+        "--image-path", action="append", metavar="PATH",
+        help="module image file, or a directory in which to find it by module basename "
+             "(repeatable), for --by function|region|line|instruction; supplies an image whose "
+             "recorded path is not on this host. Distinct from --image, which filters processes")
     profile.add_argument("--top", default="20", metavar="N|all")
     profile.add_argument("--json", action="store_true",
                          help="emit the header fields and rows as JSON")
@@ -186,7 +182,7 @@ def _dispatch(args: argparse.Namespace) -> None:
             ibs_count_control=args.ibs_count_control, dry_run=args.dry_run))
     elif args.command == "translate":
         import uprof_native
-        uprof_native.translate(args.session, args.out_dir, args.pdb_dir, args.symbol_cache,
+        uprof_native.translate(args.session, args.out_dir, args.symbol_path, args.symbol_cache,
                                args.symbol_server, args.time_filter, args.ascii, args.force)
     elif args.command == "tools":
         import uprof_native

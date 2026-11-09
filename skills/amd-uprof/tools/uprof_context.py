@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from uprof_native import find_sibling, find_symbolizer, run
+from uprof_symbols import resolve_image
 from uprof_util import UprofError, tail_lines
 
 ANCHOR_DISTANCE_CAP: Final = 1 << 20
@@ -901,10 +902,11 @@ _CONTEXT_HELP_OMISSIONS: Final = {
                            "llvm-symbolizer sits beside the other LLVM tools or on PATH"),
     "symbolizer_failed": ("llvm-symbolizer exited nonzero or resolved no address and the detail "
                           "names its exit status, JSON Error and any stderr; remedy: pass profile "
-                          "--pdb-file <file> or --pdb-dir <dir> for the PDB, or "
-                          "--debug-file-dir/--fallback-debug-path <dir> for DWARF; llvm-symbolizer "
-                          "ignores _NT_SYMBOL_PATH, so only an adjacent PDB, the recorded CodeView "
-                          "path or the skill's local srv* cache scan is searched"),
+                          "--symbol-path <file|dir> for a symbol or debug file or a search root, "
+                          "or --image-path <file|dir> when the module image is not at its "
+                          "recorded path; llvm-symbolizer ignores _NT_SYMBOL_PATH, so only an "
+                          "adjacent PDB, the recorded CodeView path or the skill's local srv* "
+                          "cache scan is searched"),
     "imports_failed": ("llvm-readobj could not read the import table; remedy: check the module "
                        "file is readable; the block is omitted rather than showing calls "
                        "without IAT targets"),
@@ -988,11 +990,15 @@ def _module_row(connection: object, module_name: str, checksum_column: bool,
 class _ContextBuilder:
     def __init__(self, connection: object, total_samples: int,
                  debug_dirs: Iterable[str] = (),
-                 fallback_paths: Iterable[str] = ()) -> None:
+                 fallback_paths: Iterable[str] = (),
+                 image_files: Iterable[str | Path] = (),
+                 image_dirs: Iterable[str | Path] = ()) -> None:
         self.connection = connection
         self.total_samples = total_samples
         self.debug_dirs = tuple(debug_dirs)
         self.fallback_paths = tuple(fallback_paths)
+        self.image_files = tuple(image_files)
+        self.image_dirs = tuple(image_dirs)
         self.modules: dict[str, _ModuleState | ContextOmission] = {}
 
     def _module(self, module_name: str) -> _ModuleState:
@@ -1019,11 +1025,18 @@ class _ContextBuilder:
         capture_checksum = row[1] if row else None
         capture_size = row[2] if row else None
         if not path:
-            raise ContextOmission("module_missing",
-                                  f"the capture records no path for {module_name!r}")
-        module_path = str(path)
-        if not Path(module_path).is_file():
-            raise ContextOmission("module_missing", f"{module_path} is not on this host")
+            resolved = resolve_image(module_name, None, self.image_files, self.image_dirs)[0]
+            if resolved is None:
+                raise ContextOmission("module_missing",
+                                      f"the capture records no path for {module_name!r}")
+            module_path = str(resolved)
+        else:
+            module_path = str(path)
+            resolved = resolve_image(module_name, module_path, self.image_files,
+                                     self.image_dirs)[0]
+            if resolved is None:
+                raise ContextOmission("module_missing", f"{module_path} is not on this host")
+            module_path = str(resolved)
         readobj = find_readobj()
         if not readobj:
             raise ContextOmission("readobj_missing",
@@ -1158,12 +1171,15 @@ def instruction_contexts(connection: object, columns: Sequence[str],
                          rows: Sequence[Sequence[object]],
                          cap: int = CONTEXT_ROW_CAP,
                          debug_dirs: Iterable[str] = (),
-                         fallback_paths: Iterable[str] = ()) -> list[object | None]:
+                         fallback_paths: Iterable[str] = (),
+                         image_files: Iterable[str | Path] = (),
+                         image_dirs: Iterable[str | Path] = ()) -> list[object | None]:
     """One context (or omission) per instruction row, in row order.
 
     Rows without a module and RVA (the aggregate row) carry no context. Rows past cap carry
-    reason row_cap instead of doing more work. debug_dirs and fallback_paths are the profile
-    --debug-file-dir and --fallback-debug-path values.
+    reason row_cap instead of doing more work. debug_dirs and fallback_paths are the debug-file
+    search roots the profile symbol path supplies; image_files and image_dirs resolve a module
+    image that is not at its recorded path.
     """
     indices = {name: index for index, name in enumerate(columns)}
     if "module" not in indices or "rva" not in indices:
@@ -1171,7 +1187,8 @@ def instruction_contexts(connection: object, columns: Sequence[str],
     total_rows = connection.execute("SELECT total_samples FROM v_scope_totals").fetchall()
     total_samples = int(total_rows[0][0] or 0) if total_rows else 0
     builder = _ContextBuilder(connection, total_samples, debug_dirs=debug_dirs,
-                              fallback_paths=fallback_paths)
+                              fallback_paths=fallback_paths, image_files=image_files,
+                              image_dirs=image_dirs)
     module_at, rva_at = indices["module"], indices["rva"]
     contexts: list[object | None] = [None] * len(rows)
     planned: dict[str, list[tuple[int, int, Anchor, int]]] = {}
@@ -1226,5 +1243,5 @@ def context_omission_summary(contexts: Sequence[object | None]) -> str | None:
     return (f"all {len(omissions)} instruction contexts omitted with symbolizer_failed: {detail}; "
             "this is one missing-symbol finding, not one failure per row; the instruction "
             "context is optional, so report the module as symbol-less or pass profile "
-            "--pdb-file <file> / --pdb-dir <dir> and re-run")
+            "--symbol-path <file|dir> and re-run")
 

@@ -200,13 +200,13 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
         if module_name not in modules:
             modules[module_name] = [module_path, []]
         modules[module_name][1].append(rva)
+    paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
+                                      getattr(args, "image_path", None))
     symbols, publics, pdbs, evidence = uprof_symbols.symbolize_modules(
         [(name, path, rvas) for name, (path, rvas) in modules.items()], artifacts,
         stream=stream, debug_info=_module_debug_info(connection),
-        pdb_file=getattr(args, "pdb_file", None),
-        pdb_dirs=getattr(args, "pdb_dir", None) or (),
-        debug_dirs=getattr(args, "debug_file_dir", None) or (),
-        fallback_paths=getattr(args, "fallback_debug_path", None) or ())
+        symbol_files=paths.symbol_files, symbol_dirs=paths.symbol_dirs,
+        image_files=paths.image_files, image_dirs=paths.image_dirs)
     causes = {item.module_name: _evidence_cause(item) for item in evidence
               if item.outcome != "resolved"}
     return {
@@ -325,16 +325,14 @@ _RANGE_UNRESOLVED_STOP: Final = (
     "legend.function_ranges.absent_by_module name why, and --by region is the page fallback "
     "where no boundary source exists")
 _SYMBOL_PATH_REMEDY: Final = (
-    "; remedy: pass profile --pdb-file <file> or --pdb-dir <dir> for a PDB, or "
-    "--debug-file-dir/--fallback-debug-path <dir> for DWARF, or place the module's debug file "
-    "beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent PDB, the recorded "
-    "CodeView path or the skill's local srv* cache scan is searched")
-# Report order is the resolution order in uprof_symbols._candidate_pdbs.
+    "; remedy: pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, "
+    "or --image-path <file|dir> when the module image is not at its recorded path, or place the "
+    "module's debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent "
+    "PDB, the recorded CodeView path or the skill's local srv* cache scan is searched")
+# Report order is the caller-facing order of the repeatable path options.
 _SYMBOL_PATH_FLAGS: Final = (
-    ("pdb_file", "--pdb-file"),
-    ("pdb_dir", "--pdb-dir"),
-    ("debug_file_dir", "--debug-file-dir"),
-    ("fallback_debug_path", "--fallback-debug-path"),
+    ("symbol_path", "--symbol-path"),
+    ("image_path", "--image-path"),
 )
 
 
@@ -395,14 +393,12 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
             parts += ["--module", _quote(module)]
         if getattr(args, "function_start", None) is not None:
             parts += ["--function-start", f"0x{args.function_start:X}"]
-    if getattr(args, "pdb_file", None):
-        parts += ["--pdb-file", _quote(args.pdb_file)]
-    for option, values in (("--pdb-dir", getattr(args, "pdb_dir", None)),
-                           ("--debug-file-dir", getattr(args, "debug_file_dir", None)),
-                           ("--fallback-debug-path",
-                            getattr(args, "fallback_debug_path", None))):
-        for value in values or ():
-            parts += [option, _quote(value)]
+    if getattr(args, "symbol_path", None):
+        for value in args.symbol_path:
+            parts += ["--symbol-path", _quote(value)]
+    if getattr(args, "image_path", None):
+        for value in args.image_path:
+            parts += ["--image-path", _quote(value)]
     if args.top != "20":
         parts += ["--top", str(args.top)]
     if json_mode:
@@ -1237,9 +1233,10 @@ def _coverage_values(connection: object) -> dict[str, Any] | None:
 
 
 def _symbol_path_flags(args: argparse.Namespace) -> list[str]:
-    """The explicit symbol-path flags passed to profile, in resolution order and deduplicated."""
-    return [flag for attribute, flag in _SYMBOL_PATH_FLAGS
-            if getattr(args, attribute, None)]
+    """The explicit symbol/image path flags passed to profile, in contract order, deduplicated."""
+    return list(dict.fromkeys(
+        flag for attribute, flag in _SYMBOL_PATH_FLAGS
+        if getattr(args, attribute, None)))
 
 
 def _symbol_coverage_legend(coverage: dict[str, Any],
@@ -1548,10 +1545,12 @@ def _write_profile(connection: object, args: argparse.Namespace,
     if args.json and args.by == "instruction":
         columns, types, rows = uprof_db.fetch_typed(
             connection, TOOLS_DIR / "profile-instruction.sql")
+        paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
+                                          getattr(args, "image_path", None))
+        debug_dirs = tuple(os.fspath(path) for path in paths.debug_dirs)
         contexts = uprof_context.instruction_contexts(
-            connection, columns, rows,
-            debug_dirs=getattr(args, "debug_file_dir", None) or (),
-            fallback_paths=getattr(args, "fallback_debug_path", None) or ())
+            connection, columns, rows, debug_dirs=debug_dirs, fallback_paths=debug_dirs,
+            image_files=paths.image_files, image_dirs=paths.image_dirs)
         help_text = uprof_context.context_help(legend or {})
         summary = uprof_context.context_omission_summary(contexts)
         if summary:

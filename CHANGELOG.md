@@ -27,6 +27,12 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- Breaking: `profile` replaces `--pdb-file`, `--pdb-dir`, `--debug-file-dir` and
+  `--fallback-debug-path` with repeatable `--symbol-path` (a symbol/debug file or a search
+  directory, probed by the tool) and adds repeatable `--image-path` (a module image file or a
+  directory searched by module basename). `translate` replaces `--pdb-dir` with repeatable
+  `--symbol-path`. Callers updating from 2.1.0 must rename the flags; the next release is a
+  major version (issue #38).
 - `SKILL.md` has a worked "where did CPU time go?" example for an attached, cycle-controlled IBS
   capture: confirm the mode and scope, rank processes by `sample_share`, roll modules up with
   `profile --by module`, then read instructions with `profile --by instruction --json` (top 20)

@@ -215,27 +215,27 @@ class CoverageChannelsTest(unittest.TestCase):
 
     def test_explicit_pdb_does_not_pair_resolved_rows_with_a_stop_line(self):
         text = uprof_query._coverage_field(
-            None, {}, _symbolizer(5575, 0), True, ["--pdb-file"],
+            None, {}, _symbolizer(5575, 0), True, ["--symbol-path"],
             _coverage([_unresolved_row("a.dll", 5575, 0)], 5575, 0))[0][1]
 
         self.assertIn("uProf DB 0/5575 samples (0.0%) resolve to a named function", text)
         self.assertIn("profile symbolizer 5575/5575 samples (100.0%) resolve below module/RVA "
-                      "(flags: --pdb-file)", text)
+                      "(flags: --symbol-path)", text)
         self.assertIn("every scoped sample is drillable below module/RVA", text)
         self.assertNotIn(NO_NAMED_STOP, text)
         self.assertNotIn(UNRESOLVED_STOP, text)
 
     def test_partial_symbolizer_resolution_keeps_the_boundary_and_names_the_flag(self):
         text = uprof_query._coverage_field(
-            None, {"b.dll": "no PDB found"}, _symbolizer(10, 4), True, ["--pdb-dir"],
+            None, {"b.dll": "no PDB found"}, _symbolizer(10, 4), True, ["--symbol-path"],
             _coverage([_unresolved_row("b.dll", 10, 0)], 10, 0))[0][1]
 
         self.assertIn("uProf DB 0/10 samples (0.0%) resolve to a named function", text)
         self.assertIn("profile symbolizer 6/10 samples (60.0%) resolve below module/RVA "
-                      "(flags: --pdb-dir)", text)
+                      "(flags: --symbol-path)", text)
         self.assertIn("cause by module: b.dll: no PDB found", text)
         self.assertIn(UNRESOLVED_STOP, text)
-        self.assertIn("remedy: pass profile --pdb-file", text)
+        self.assertIn("remedy: pass profile --symbol-path", text)
 
     def test_agreeing_channels_without_flags_keep_the_original_line(self):
         text = uprof_query._coverage_field(
@@ -259,13 +259,13 @@ class CoverageChannelsTest(unittest.TestCase):
     def test_json_legend_records_channel_counts_flags_and_drillability(self):
         entry = uprof_query._symbol_coverage_legend(
             _coverage([_unresolved_row("a.dll", 5575, 0)], 5575, 0),
-            _symbolizer(5575, 0), True, ["--pdb-file"])
+            _symbolizer(5575, 0), True, ["--symbol-path"])
 
         self.assertEqual(list(entry),
                          ["uprof_db", "flags", "profile_symbolizer", "rows_drillable"])
         self.assertEqual(entry["uprof_db"]["named_samples"], 0)
         self.assertEqual(entry["uprof_db"]["scoped_samples"], 5575)
-        self.assertEqual(entry["flags"], ["--pdb-file"])
+        self.assertEqual(entry["flags"], ["--symbol-path"])
         self.assertEqual(entry["profile_symbolizer"]["resolved_samples"], 5575)
         self.assertEqual(entry["profile_symbolizer"]["unresolved_samples"], 0)
         self.assertEqual(entry["profile_symbolizer"]["scoped_samples"], 5575)

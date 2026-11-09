@@ -226,7 +226,8 @@ class InstructionProfileTest(unittest.TestCase):
                         uprof_query._write_profile(None, args, [("METRIC", "x")], None, legend)
 
         fetched.assert_called_once()
-        built.assert_called_once_with(None, columns, rows, debug_dirs=(), fallback_paths=())
+        built.assert_called_once_with(None, columns, rows, debug_dirs=(), fallback_paths=(),
+                                      image_files=(), image_dirs=())
         rendered.assert_called_once()
         call = rendered.call_args.args
         self.assertEqual(call[:6], (columns, types, rows, [("METRIC", "x")], True, None))
@@ -326,7 +327,7 @@ class ContextHelpTest(unittest.TestCase):
 
         self.assertIn("all 3 instruction contexts omitted with symbolizer_failed", summary)
         self.assertIn("one missing-symbol finding, not one failure per row", summary)
-        self.assertIn("--pdb-file", summary)
+        self.assertIn("--symbol-path", summary)
 
     def test_context_omission_summary_needs_every_row_and_one_reason(self):
         self.assertIsNone(uprof_context.context_omission_summary([]))

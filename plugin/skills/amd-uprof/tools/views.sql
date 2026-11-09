@@ -26,6 +26,8 @@
 --                       are skipped); lets function_reason say "skipped" only when it was
 --   uprof_primary_measure  the column that orders function/region rows and --top: sample_share,
 --                       time_share or samples
+--   uprof_detail_views  'true' (the default when unset) binds the full line and instruction
+--                       views; Python binds 'false' for scopes that never render them
 --
 -- The SET VARIABLE statements below are the mode flags, guards and typed top/time values; no view
 -- file carries its own setup. The guards run before v_dump, so a bad capture fails once, with a
@@ -907,6 +909,8 @@ WHERE COALESCE(getvariable('uprof_function'), '') <> ''
 -- labelled 'shared: nameA | nameB'; a line whose addresses include one gets attribution 'shared'.
 -- When --top truncates, one <other lines> row carries the rest.
 CREATE OR REPLACE TEMP VIEW v_line_rows AS
+SELECT * FROM query(CASE
+  WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $line_rows$
 WITH scoped AS (
   SELECT w.*
   FROM v_scoped w
@@ -1002,7 +1006,18 @@ SELECT '<other lines>', NULL, NULL, NULL, NULL,
        max(parent_samples), max(parent_weight), max(parent_tag_cycles), 1, NULL
 FROM ranked
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
-HAVING count(*) > 0;
+HAVING count(*) > 0$line_rows$
+  ELSE $line_rows_empty$
+    SELECT CAST(NULL AS VARCHAR) AS "file", CAST(NULL AS INTEGER) AS line,
+           CAST(NULL AS VARCHAR) AS "function", CAST(NULL AS VARCHAR) AS module,
+           CAST(NULL AS VARCHAR) AS attribution, CAST(NULL AS BIGINT) AS samples,
+           CAST(NULL AS HUGEINT) AS weight, CAST(NULL AS DOUBLE) AS tag_cycles,
+           CAST(NULL AS BIGINT) AS total_samples, CAST(NULL AS HUGEINT) AS total_weight,
+           CAST(NULL AS DOUBLE) AS total_tag_cycles, CAST(NULL AS BIGINT) AS parent_samples,
+           CAST(NULL AS HUGEINT) AS parent_weight, CAST(NULL AS DOUBLE) AS parent_tag_cycles,
+           CAST(NULL AS INTEGER) AS sort_key, CAST(NULL AS BIGINT) AS rn
+    WHERE false$line_rows_empty$
+  END);
 
 -- Instruction shares, one row per module + RVA. Each address is annotated with the innermost
 -- symbolizer frame (the executed source position, so an inlined instance names the inlinee);
@@ -1011,6 +1026,8 @@ HAVING count(*) > 0;
 -- sample count (the same order as sample_share). When --top truncates, one <other instructions>
 -- row carries the rest.
 CREATE OR REPLACE TEMP VIEW v_instruction_rows AS
+SELECT * FROM query(CASE
+  WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $instruction_rows$
 WITH scoped AS (
   SELECT w.*
   FROM v_scoped w
@@ -1082,7 +1099,19 @@ SELECT '<other instructions>', NULL, NULL, NULL, NULL, NULL,
        max(parent_samples), max(parent_weight), max(parent_tag_cycles), 1, NULL
 FROM ranked
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
-HAVING count(*) > 0;
+HAVING count(*) > 0$instruction_rows$
+  ELSE $instruction_rows_empty$
+    SELECT CAST(NULL AS VARCHAR) AS module, CAST(NULL AS VARCHAR) AS rva,
+           CAST(NULL AS VARCHAR) AS "function", CAST(NULL AS VARCHAR) AS "file",
+           CAST(NULL AS INTEGER) AS line, CAST(NULL AS VARCHAR) AS attribution,
+           CAST(NULL AS BIGINT) AS samples, CAST(NULL AS HUGEINT) AS weight,
+           CAST(NULL AS DOUBLE) AS tag_cycles, CAST(NULL AS BIGINT) AS total_samples,
+           CAST(NULL AS HUGEINT) AS total_weight, CAST(NULL AS DOUBLE) AS total_tag_cycles,
+           CAST(NULL AS BIGINT) AS parent_samples, CAST(NULL AS HUGEINT) AS parent_weight,
+           CAST(NULL AS DOUBLE) AS parent_tag_cycles, CAST(NULL AS INTEGER) AS sort_key,
+           CAST(NULL AS BIGINT) AS rn
+    WHERE false$instruction_rows_empty$
+  END);
 
 -- Region shares: one row per module + 4 KiB address page. Samples are grouped by address, not by
 -- control flow; a page may span unrelated code, so it is a coarse bucket, not a contiguous region.

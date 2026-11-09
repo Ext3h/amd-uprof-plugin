@@ -114,6 +114,16 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.assertAlmostEqual(hot["parent_sample_share"]
                                + remainder["parent_sample_share"], 1.0)
 
+    def test_the_filtered_instruction_rows_pin_the_parent_relative_values(self):
+        document = self.scoped(self.derived_session(), "pdata_0x1050")
+        rows = [(row["rva"], row["function"], row["file"], row["samples"])
+                for row in document["rows"]]
+
+        self.assertEqual(rows, [("0x1050", "fixture_second", "<no source line>", 2),
+                                ("0x1055", "fixture_second", "<no source line>", 1)])
+        self.assertAlmostEqual(document["rows"][0]["parent_sample_share"], 2 / 3)
+        self.assertAlmostEqual(document["rows"][1]["parent_sample_share"], 1 / 3)
+
     def test_a_line_view_without_source_lines_is_one_parent_relative_row(self):
         document = self.scoped(self.derived_session(), "fixture_entry", by="line")
         rows = document["rows"]

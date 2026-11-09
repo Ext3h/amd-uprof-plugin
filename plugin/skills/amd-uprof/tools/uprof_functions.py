@@ -123,16 +123,15 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
         return RangeDerivation([], f"readobj_failed: {detail or 'no output'}")
     text = completed.stdout or ""
     try:
-        build = uprof_context.parse_file_headers(text)
+        image = uprof_context.parse_image(text)
     except ContextOmission as exc:
         # ELF and other non-PE images are not mapped with PE rules.
         return RangeDerivation([], f"not_pe: {exc.detail or exc.reason}")
-    sections = uprof_context.parse_sections(text)
+    sections = image.sections
     if not [section for section in sections if section.code and section.size > 0]:
         return RangeDerivation([], "no_code_section")
     ranges = build_ranges(module_name, sections, public_starts,
-                          uprof_context.parse_unwind_starts(text, build.image_base),
-                          uprof_context.parse_exports(text))
+                          image.unwind_starts, image.exports)
     if not ranges:
         return RangeDerivation([], "no_boundary_source")
     return RangeDerivation(ranges)

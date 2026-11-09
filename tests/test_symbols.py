@@ -20,10 +20,6 @@ from uprof_util import UprofError
 
 class PublicSymbolsTest(unittest.TestCase):
     def setUp(self):
-        try:
-            import duckdb  # noqa: F401
-        except ImportError:
-            self.skipTest("DuckDB is required to aggregate public symbols")
         self.directory = tempfile.TemporaryDirectory(prefix="uprof-publics-")
         self.addCleanup(self.directory.cleanup)
 
@@ -44,6 +40,13 @@ class PublicSymbolsTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["name_count"], "2")
         self.assertEqual(rows[0]["names"], "a | b")
+
+    def test_all_null_names_do_not_append_a_truncation_suffix(self):
+        for count in (5, 6):
+            rows = self.aggregate("rva,name\n" + "4096,\n" * count)
+
+            self.assertEqual(rows[0]["name_count"], str(count))
+            self.assertEqual(rows[0]["names"], "")
 
 
 class PdbProbeTest(unittest.TestCase):
@@ -654,6 +657,57 @@ class PublicsCacheResetTest(unittest.TestCase):
             with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
                 uprof_symbols.public_symbols(root / "again.csv", pdb, pdbutil)
             self.assertGreater(invoked.call_count, 0)
+
+
+class PublicSymbolsInvocationTest(unittest.TestCase):
+    SECTIONS = "SECTION HEADER #1\n  1000 virtual address\n"
+    PUBLICS = ("Public Symbols\n"
+               "================================================================\n"
+               "1 | S_PUB32 [size = 8] `foo`\n"
+               "        flags = function, addr = 0001:10\n")
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="uprof-publics-")
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        self.pdb = root / "x.pdb"
+        self.pdb.write_bytes(b"pdb")
+        self.pdbutil = root / "llvm-pdbutil.exe"
+        self.pdbutil.write_bytes(b"")
+        self.out = root / "publics.csv"
+        self.stream = io.StringIO()
+        uprof_symbols._PUBLICS_CACHE.reset()
+        self.addCleanup(uprof_symbols._PUBLICS_CACHE.reset)
+
+    def invoke(self, stdout, returncode=0):
+        completed = subprocess.CompletedProcess(["llvm-pdbutil"], returncode, stdout, "boom")
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=self.pdbutil), \
+                mock.patch.object(uprof_symbols, "run", return_value=completed):
+            return uprof_symbols._publics(self.pdb, self.out, Path("llvm-symbolizer.exe"),
+                                          self.stream)
+
+    def test_a_failed_invocation_is_unavailable_and_warns(self):
+        self.assertIsNone(self.invoke(self.SECTIONS, returncode=1))
+        self.assertIn("enumeration failed", self.stream.getvalue())
+
+    def test_an_empty_or_markerless_invocation_is_unavailable(self):
+        for stdout in ("", self.SECTIONS):
+            self.stream.seek(0)
+            self.stream.truncate()
+            self.assertIsNone(self.invoke(stdout))
+            self.assertIn("enumeration failed", self.stream.getvalue())
+
+    def test_a_publics_only_invocation_has_no_sections(self):
+        self.assertIsNone(self.invoke(self.PUBLICS))
+        self.assertIn("enumeration failed", self.stream.getvalue())
+
+    def test_a_nonzero_exit_with_a_valid_marker_is_unavailable(self):
+        self.assertIsNone(self.invoke(self.SECTIONS + self.PUBLICS, returncode=1))
+        self.assertIn("enumeration failed", self.stream.getvalue())
+
+    def test_a_complete_invocation_aggregates(self):
+        self.assertIsNotNone(self.invoke(self.SECTIONS + self.PUBLICS))
+        self.assertIn("FOLDS: 0 shared starts of 1", self.stream.getvalue())
 
 
 if __name__ == "__main__":

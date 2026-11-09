@@ -225,7 +225,7 @@ loss is in capture, not translation. The numbers are recorded in `references/val
 
 ## Symbolization
 
-`profile --by line|instruction` symbolizes every module in scope; there is no separate command.
+`profile --by function|region|line|instruction` symbolizes every module in scope; there is no separate command.
 
 - `profile-rvas.sql` exports distinct `(module_name, module_path, rva)` with 0x-prefixed hex offsets; each module's RVAs are written to `module-NNNN/rvas.txt`.
 - **Windows PDB discovery.** `llvm-readobj --coff-debug-directory` reads the image's PDB name, GUID and age. Candidates, in order: the explicit `--pdb-file`; each `--pdb-dir` root, as `<dir>/<pdb name>` and `<dir>/<GUID><Age>/<pdb name>`; `<pdb name>` and `<module stem>.pdb` beside the module; then, for every `_NT_SYMBOL_PATH` `srv*<cache>*<url>` entry, `<cache>/<pdb name>/<GUID><Age>/<pdb name>` and a recursive search under `<cache>/<pdb name>`. llvm-symbolizer itself ignores `_NT_SYMBOL_PATH`: its PDB sources are only an adjacent file, the recorded CodeView path or an explicit `--pdb`. The skill's own search is what finds a cached PDB and passes it as `--pdb`; the `srv*` entry contributes only local cache paths and the URL is never contacted, because LLVM has no Windows symbol-server client. `--obj` selects the image; there is no separate image-search directory. A candidate is accepted only when `llvm-pdbutil dump --summary` reports the image GUID and the internal age matches; for a canonical cache-key directory `<GUID><Age>`, the key is the age authority because the cached PDB's internal age can differ on real symbol servers. Without `llvm-pdbutil`, the first existing candidate (beside the module, an explicit `--pdb-dir` entry or the local `srv*` cache) is used with a warning and no GUID verification. Without an image GUID (llvm-readobj missing, failed, or the image records none), an explicit `--pdb-file` is used unverified with a warning and no other PDB is accepted. One evidence line per non-resolved module names the image GUID/age, the debug-info record, the searched locations, every `srv*` URL not consulted, each candidate's pdbutil exit/stderr and GUID/age mismatch, and the symbolizer's exit status and JSON `Error` with the remedy.
@@ -239,7 +239,7 @@ loss is in capture, not translation. The numbers are recorded in `references/val
 
 ### Agreement metric
 
-`agreement.sql` joins scoped addresses to `v_symbols` and compares uProf's `Function.name` with the symbolizer's `containing_function`; an inline instance therefore matches its containing function by construction.
+`agreement.sql` joins scoped addresses to `v_symbols` and compares uProf's `Function.name` with the symbolizer's `containing_function`; an inline instance therefore matches its containing function by construction. For `function` and `region`, the AGREEMENT text quotes the emitted rows' sample attribution instead of the symbolizer's unresolved count: a derived range is an attribution, so counting it as unresolved would contradict the rows. The mismatch statistics still use this join.
 
 | Field | Definition |
 |---|---|
@@ -256,19 +256,37 @@ Samples weight each distinct address (one per dump row, the event count per PMC 
 `SYMBOL_COVERAGE` reports two symbolization channels over the same `v_scoped` rows as the table, so `--pid`, `--image` and `--time-filter` narrow both.
 
 - **uProf DB channel.** `tools/coverage.sql` reads `Function.name` from the `cpu.db` that AMDuProfCLI translate produced. A sample is named when its `Function.name` is non-empty; a NULL `function_id` (no `UnifiedSampleSeries` address mapping) and a blank name both count as unresolved. `profile`'s `--pdb-file`, `--pdb-dir`, `--debug-file-dir` and `--fallback-debug-path` do not change this channel: it records only what translate symbolized.
-- **Profile symbolizer channel.** For `--by line` and `--by instruction`, the rows are named from the parquet that `profile`'s own llvm-symbolizer invocation wrote. `agreement.sql` joins `v_scoped` to that parquet and counts a sample unresolved when the symbolizer produced no name for its address; the resolved share is `scoped_samples - unresolved_samples`. Only the explicit symbol-path flags in the line's `flags:` list affect this channel.
+- **Profile symbolizer channel.** For `--by function|region|line|instruction`, the rows are named from the parquet that `profile`'s own llvm-symbolizer invocation wrote. `agreement.sql` joins `v_scoped` to that parquet and counts a sample unresolved when the symbolizer produced no name for its address; the resolved share is `scoped_samples - unresolved_samples`. Only the explicit symbol-path flags in the line's `flags:` list affect this channel.
 
 Without a disagreement and without an explicit symbol path the line keeps its single-channel form: `<named>/<total> samples (<percent>%) resolve to a named function`, followed by one `<module> <unresolved>/<samples> (<percent>% unresolved, partial|no named functions)` entry per module with unresolved samples. When the channels disagree, or an explicit symbol path was passed, the line names both: `uProf DB <named>/<total> ...; profile symbolizer <resolved>/<scoped> ... (flags: <flags>)`. Each per-module entry may add `; cause: ...` from the symbolization evidence; when a cause is known, and whenever the symbolizer channel leaves samples unresolved, the line ends with `; remedy: ...` naming the flags that can change the row channel. The stderr evidence line carries the full detail.
 
-The stop rule follows the channel that names the rows. When the symbolizer resolves every scoped sample, the line says so and does not print the boundary text, even if the uProf DB share is 0%: those rows are drillable. When the symbolizer leaves samples unresolved, the line ends by naming the boundary: do not write a PE parser, map `.pdata` by hand, convert RVAs to VAs or disassemble. Use the instruction context's `context` block instead. A module with no names is a finding to report, not a task to work around.
+The stop rule follows the channel that names the rows. For `function` and `region` the line reports the emitted rows as named, derived (synthetic binary range) and unresolved samples; a derived row is attributed and never counted as unresolved, so the line can reach the no-stop verdict even when the symbolizer named nothing. When the symbolizer resolves every scoped sample, the line says so and does not print the boundary text, even if the uProf DB share is 0%: those rows are drillable. When the symbolizer leaves samples unresolved, the line names the derived-range remedy: use `profile --by function`, which derives boundaries from the binary (`.pdata`, PE exports, PDB publics) with LLVM; do not write a PE parser, map `.pdata` by hand, convert RVAs to VAs or disassemble. `--by region` is the 4 KiB page fallback when no boundary source exists. A module with no names is a finding to report, not a task to work around.
 
-JSON carries the same distinction under `legend.symbol_coverage`, in fixed order: `uprof_db` (`source`, `named_samples`, `scoped_samples`), `flags` (the explicit symbol-path flag names used, such as `--pdb-file`, not their path values), `profile_symbolizer` (`source`, `resolved_samples`, `unresolved_samples`, `scoped_samples`, or `null` when the granularity does not symbolize) and `rows_drillable` (`true` only when the symbolizer resolved every scoped sample).
+JSON carries the same distinction under `legend.symbol_coverage`, in fixed order: `uprof_db` (`source`, `named_samples`, `scoped_samples`), `flags` (the explicit symbol-path flag names used, such as `--pdb-file`, not their path values), `profile_symbolizer` (`source`, `resolved_samples`, `unresolved_samples`, `scoped_samples`, or `null` when the granularity does not symbolize) and `rows_drillable` (`true` only when the symbolizer resolved every scoped sample). For `function` and `region`, `profile_symbolizer` instead carries `named_samples`, `derived_samples`, `resolved_samples` (named plus derived), `unresolved_samples` and `scoped_samples`, and `rows_drillable` is true when the unresolved count is zero: a synthetic range is actionable at its hot RVA.
+
+### Derived function ranges
+
+Function is the semantic unit. A release binary often has no debug symbols, so `--by function` derives function boundaries from the image itself with the LLVM tooling already used for symbolization; the consumer does not write a PE parser, does not read `.pdata` by hand and does not map addresses itself.
+
+- **Boundary sources**, strongest first: a PE export (`llvm-readobj --coff-exports`), a PDB public start (`llvm-pdbutil dump --publics` and the `symbols.publics.csv` fold cache), then a `.pdata` runtime-function start (`llvm-readobj --unwind`). At one RVA the stronger source keeps its name; a `.pdata` start with no name is a boundary but no name.
+- **Range.** A code section's selected starts are sorted and each range runs from a start to the next start, or to the section end. A section with no boundary source contributes no range, so the tool never invents one whole-section function. `function_source` is `export`, `pdb_public`, `pdata` or `none`; `function_derived` is true only for a range with no export or public name.
+- **Name.** An export or PDB public supplies its name. A boundary with no name is labelled visibly synthetic: `pdata_0x<start>` for a `.pdata` range and `sub_0x<start>` otherwise. A sample inside a range groups under it even when uProf's `Function.id` or the symbolizer assigned another name; a sample outside every range keeps its `Function.id` row, or `<unresolved>` with a `function_reason`.
+- **Attribution.** `unique` means a named range or a named uProf `Function.id`; `derived` means a range with a synthetic name; `unresolved` means neither. `legend.function_ranges` reports `source`, `derived_modules`, `ranges`, `absent_by_module` (module → why no range was derived: no path, missing file, `llvm-readobj` missing, not a PE image, no code section, or no boundary source) and the `fallback` (a fully named module is skipped and says so; a module with no derived range keeps `Function.id` and `function_reason` says why).
+- **Cost.** Only modules with at least one empty `Function.name` are read; a fully named module keeps its `Function.id` rows, costs no extra tool run, and its `function_reason` says `fully named from the uProf DB; function-range derivation skipped`. A module that was read but produced no range says why instead (no path, missing file, `llvm-readobj` missing/failed, not a PE image, no code section, or no boundary source).
+
+### Region fallback — 4 KiB address pages
+
+`--by region` is the fallback when no boundary source exists (JIT, packed or symbol-stripped code without `.pdata`) or when a page-level view is what the question needs. region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket. The row keeps `sampled_addresses` so a page with many scattered addresses is distinguishable from a dense one, and `hot_rva`/`hot_samples`/`hot_sample_share` carry the sharpest address. When the hot RVA falls in a derived range, the row names that function and its source; otherwise `function_source` is `none`.
+
+### Ranking and the hot row
+
+`--by function` and `--by region` order rows and choose the hot RVA by the mode measure: `sample_share` for a cycle-controlled or supported PMC cycle/op capture, `time_share` for an IBS fetch or gap-weighted capture. `--top` therefore selects the top rows in the measure that the row's own `READ` and `WEIGHTS` lines name. `--top all` is not needed to see a head row; `--sort` does not exist.
 
 ## Module and CPU-time questions
 
 ### Module rollup
 
-`profile --by module [--json]` is the supported rollup: one row per normalized module path with `samples`, `sample_share`, `time_share` (when the mode supplies it), `tag_to_retire_share` (a dump with a non-null tag column), `isSystemModule` and `cpu_seconds`. Use these fields; do not roll functions up in ad-hoc SQL or query `cpu.db` for them.
+`profile --by module [--json]` is the supported rollup: one row per normalized module path with `samples`, `sample_share`, `time_share` (when the mode supplies it), `tag_to_retire_share` (a dump with a non-null tag column), `isSystemModule` and `cpu_seconds`. Use these fields; do not roll functions up in ad-hoc SQL or query `cpu.db` for them. One text call answers the module question; do not also run `--by module --json` to sum third-party rows from the same capture. Drill into the module with `profile --by function`, which derives boundaries when translate named nothing.
 
 Rank by `sample_share` for a cycle-controlled or PMC cycle capture, where each sample carries fixed cycles; read `time_share` under the mode's meaning otherwise. `--top all` keeps the remainder row out of the total; otherwise `<other modules>` carries the rest and has a NULL `isSystemModule`.
 
@@ -333,7 +351,7 @@ The help is JSON-only. Markdown output has no `context_help` and is byte-identic
 
 ## SQL schema — `tools/views.sql`
 
-One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twelve inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection.
+One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds sixteen inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection.
 
 | Bound input | Meaning |
 |---|---|
@@ -348,7 +366,10 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_symbols` | combined `symbols.parquet`; empty when absent |
 | `uprof_aliases` | combined `symbols.publics.csv`; empty when absent |
 | `uprof_pdbs` | combined `symbols.pdbs.csv`: the PDB symbolization chose per module; empty when absent |
-| `uprof_sample_interval_s` | requested cycle interval in seconds, bound only for `--by module`; empty when the interval is a work/fetch count or the core frequency is unavailable, which hides `cpu_seconds` |
+| `uprof_functions` | derived function ranges CSV (`module_name,function_start,function_end,function_source,function_name`); empty when no module in scope needs derivation |
+| `uprof_range_attempted` | chr(2)-joined modules for which derivation ran; a fully named module is absent, so `function_reason` says the derivation was skipped rather than failed |
+| `uprof_primary_measure` | `sample_share` or `time_share`, the mode measure that orders `--by function`/`--by region` rows and selects their hot RVA |
+| `uprof_sample_interval_s` | requested cycle interval in seconds, bound for `--by module|function|region`; empty when the interval is a work/fetch count or the core frequency is unavailable, which hides `cpu_seconds` |
 
 | Macro | Definition |
 |---|---|
@@ -366,7 +387,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `has_system_module` | `Module` has an `isSystemModule` column; older exports leave the module classification NULL |
 | `top_n`, `time_start`, `time_end` | typed row cap and window |
 
-The 19 views:
+The 21 views:
 
 | View | Role |
 |---|---|
@@ -377,6 +398,7 @@ The 19 views:
 | `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs when system-wide, error; attached captures report `OK (attached; dump-wide)` with processes, TIDs, active TID and CPUs visited, and error only for samples outside the span; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure |
 | `v_symbols` | combined symbolizer artifact: `module_name, rva, function, function_short, containing_function, file, line` |
 | `v_public_starts` | public-symbol fold cache: `module_name, rva, name_count, names` |
+| `v_function_ranges` | derived code ranges from `uprof_functions`, typed to `module_name, function_start, function_end, function_source, function_name`; empty when no derivation ran |
 | `v_pdbs` | PDB chosen by symbolization per module (`module_name`, `pdb`); empty when absent, so the instruction context reuses it instead of discovering a PDB again |
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |
 | `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds the scope's own sampling cadence |
@@ -386,12 +408,13 @@ The 19 views:
 | `v_capture_modules` | one row per whole-capture sample: module, context (CPU for a dump, `coreId` for PMC), sample count and kernel-image flag; before scope and time filters; feeds `ACHIEVED` and `KERNEL_COVERAGE` from one scan |
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
 | `v_module_rows` | module path aggregation, ranking, totals, `isSystemModule` and the `<other modules>` remainder |
-| `v_function_rows` | by `Function.id`; `<unresolved>` row; attribution `unique`/`unresolved`; `<other functions>` |
+| `v_function_rows` | derived range when `uprof_functions` covers the RVA, else `Function.id`; `function_start`/`function_end`/`function_source`/`function_derived`; `<unresolved>` row; attribution `unique`/`derived`/`unresolved`; hot RVA by the mode measure; `<other functions>` |
+| `v_region_rows` | one row per module and 4 KiB address page; `page_start`/`page_end`, `sampled_addresses`, hot RVA and the function that owns it; attribution `unique`/`shared`/`derived`/`unresolved`; `<other regions>` |
 | `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; `<other lines>` |
 | `v_instruction_rows` | one row per module + RVA with innermost annotation; `<other instructions>` |
 
-- **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-module.sql`, `profile-function.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `agreement.sql` computes the metric, `coverage.sql` reports per-module symbol coverage, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
-- **Load order.** Bind all inputs, load `views.sql`, then (for `line`/`instruction`) run `profile-rvas.sql` on the same connection, symbolize, rebind `uprof_symbols`/`uprof_aliases`, and run the projection. `query(CASE ...)` re-binds per query, so the symbol inputs may be bound after the views are created. A hand run writes a UTF-8 `SET VARIABLE` file, `.read`s `views.sql`, then the projection, and always uses the original session's `cpu.db`.
+- **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-module.sql`, `profile-function.sql`, `profile-region.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `profile-function-modules.sql` names the modules whose samples need derived ranges, `agreement.sql` computes the metric, `coverage.sql` reports per-module symbol coverage, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
+- **Load order.** Bind all inputs, load `views.sql`, then (for `function`/`region`/`line`/`instruction`) run `profile-rvas.sql` on the same connection, symbolize, rebind `uprof_symbols`/`uprof_aliases`; for `function`/`region`, run `profile-function-modules.sql`, derive ranges from the binary with LLVM and rebind `uprof_functions`; then run the projection. `query(CASE ...)` re-binds per query, so the symbol and range inputs may be bound after the views are created. A hand run writes a UTF-8 `SET VARIABLE` file, `.read`s `views.sql`, then the projection, and always uses the original session's `cpu.db`.
 - **Guard order.** The schema and dump guards run while `views.sql` loads, before any query, so an incomplete export or dump fails once with the missing item names. The schema guards read the bound path strings (empty means absent) so no identifier is spliced; the dump guard checks that the dump exists. A conditional `query(CASE ...)` avoids binder-eager branch evaluation.
 
 ## Reproducibility and tie order
@@ -401,7 +424,8 @@ The same capture and arguments produce byte-identical output on every run. Each 
 | `--by` | ORDER BY |
 |---|---|
 | `process` | `weight DESC NULLS LAST, samples DESC, pid, process` |
-| `function` | `weight DESC NULLS LAST, samples DESC, function_id NULLS LAST` |
+| `function` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, function_name, module_name` |
+| `region` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module, page_start` |
 | `line` | `weight DESC NULLS LAST, samples DESC, file, line, function, module` |
 | `instruction` | `weight DESC NULLS LAST, samples DESC, module, rva NULLS LAST, function` |
 

@@ -1,10 +1,11 @@
-"""The worked example and new header fields are documented where a user will read them.
+"""The worked example, the derived function path and the header fields are documented.
 
-These assertions pin the guidance that removes the second trial's detour: answer the CPU-time
-question from the supported output, use `--by module` for the rollup and third-party
-classification, and stop at module/RVA when a module has no symbols instead of writing a PE
-parser. They also pin the VERSION and SYMBOL_COVERAGE header rows. Wording may change; the
-load-bearing claims may not.
+These assertions pin the guidance that removes the second trial's detour and the trial-5 audit
+detour: read the skill file before listing anything, answer the CPU-time question from the
+supported output, use `--by module` for the rollup and third-party classification, drill into the
+derived function (the tool builds it with LLVM) and fall back to `--by region` only when no
+boundary source exists. They also pin the VERSION and SYMBOL_COVERAGE header rows. Wording may
+change; the load-bearing claims may not.
 
 Run from this directory: python -m unittest test_docs_guidance -v
 """
@@ -15,12 +16,26 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encoding="utf-8")
+SPEC = (TOOLS_DIR.parent / "references" / "spec.md").read_text(encoding="utf-8")
+
+READ_FIRST = ("**Read this file first; do not list the skill tree, session directory, "
+              "references or metadata.**")
+REGION_MEANING = ("region = 4 KiB address page; samples are grouped by address, not by control "
+                  "flow; a page may span unrelated code; the hot RVA is the precise attribution "
+                  "and the page is the coarse bucket")
 
 SKILL_FRAGMENTS = (
+    READ_FIRST,
     "## Quickstart",
     "`profile --by process` first",
-    "Do not list the skill tree, the session directory or its metadata first",
+    "do not list the skill tree, the session directory, its references or its metadata",
     "run `tools` only if a command reports `MISSING`",
+    "one `profile --by module` text call",
+    "do not re-run `--by module --json` to sum",
+    "Parse a `--json` document once",
+    "do not re-query a row or legend",
+    "do not open `callstack.db` or `views.sql`",
+    "`profile --by region` is the fallback",
     "profile --by module",
     "profile --by instruction --json",
     "## Worked example: where did CPU time go?",
@@ -35,7 +50,21 @@ SKILL_FRAGMENTS = (
     "isSystemModule",
     "cpu_seconds",
     "do not re-derive these shares in SQL",
-    "Use `--by instruction` only to read the hot RVA row",
+    "Stop at the derived function",
+    "the tool derives function boundaries from the binary",
+    "with LLVM",
+    "do **not** write a PE parser",
+    "map `.pdata` by hand",
+    "convert RVAs to VAs",
+    "Use `--by instruction` only when disassembly or instruction context is asked for",
+    "Do not add `--top all`",
+    "there is no `--sort`",
+    "function_source",
+    "function_derived",
+    "function_reason",
+    "fully named from the uProf DB; function-range derivation skipped",
+    "named, derived (synthetic binary range) and unresolved",
+    "hot_rva",
     "a finding, not a blocker",
     "does not modify the capture",
     "read the symbolization warnings on stderr",
@@ -52,9 +81,6 @@ SKILL_FRAGMENTS = (
     "remedy:",
     "SYMBOLIZATION:",
     "SYMBOL_COVERAGE:",
-    "Do **not** write a PE parser",
-    "map `.pdata` by hand",
-    "convert RVAs to VAs",
     "Third-party",
     "| `VERSION` |",
     "| `SYMBOL_COVERAGE` |",
@@ -62,16 +88,24 @@ SKILL_FRAGMENTS = (
 
 REFERENCE_FRAGMENTS = (
     "### Symbol coverage",
+    "### Derived function ranges",
+    "### Region fallback — 4 KiB address pages",
     "### Module rollup",
     "### Absolute CPU time",
     "tools/coverage.sql",
     "profile --by module",
+    "One text call answers the module question",
     "isSystemModule = false",
     "neither an OS-shipped predicate nor a kernel predicate",
     "kernel image",
     "dominant non-workload dependency",
     "no named functions",
     "v_module_flags",
+    "v_function_ranges",
+    "v_region_rows",
+    "uprof_functions",
+    "uprof_primary_measure",
+    "profile-region.sql",
     "cpu_seconds",
     "not a measured cycle count",
     "Symbol-path flags on `profile`",
@@ -88,6 +122,12 @@ REFERENCE_FRAGMENTS = (
     "Verify translate symbolization",
     "SYMBOLIZATION:",
     "One evidence line per non-resolved module",
+    "the consumer does not write a PE parser",
+    "does not read `.pdata` by hand",
+    "fully named from the uProf DB; function-range derivation skipped",
+    "named_samples",
+    "derived_samples",
+    "a derived range is an attribution",
 )
 
 
@@ -101,6 +141,28 @@ class DocsGuidanceTest(unittest.TestCase):
         for fragment in REFERENCE_FRAGMENTS:
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, REFERENCE)
+
+    def test_the_read_first_sentence_precedes_the_quickstart(self):
+        self.assertLess(SKILL.index("# AMD uProf profile"), SKILL.index(READ_FIRST))
+        self.assertLess(SKILL.index(READ_FIRST), SKILL.index("## Quickstart"))
+
+    def test_the_region_fallback_keeps_the_required_wording(self):
+        for name, text in (("SKILL", SKILL), ("reference", REFERENCE), ("spec", SPEC)):
+            with self.subTest(document=name):
+                self.assertIn(REGION_MEANING, text)
+
+    def test_spec_lists_the_derived_function_and_region_granularities(self):
+        for fragment in ("--by process\\|module\\|function\\|region\\|line\\|instruction",
+                         "function_source", "function_derived", "function_reason",
+                         "hot_samples", "symbol_reason",
+                         "must not write a PE parser",
+                         "the tool derives its boundaries from the binary with LLVM",
+                         "emits no top-level `function_ranges`",
+                         "reduced `function_ranges` with only `derived_modules` and `ranges`",
+                         "derived_samples",
+                         "function_ranges"):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, SPEC)
 
     def test_the_example_stops_below_a_symbol_less_module(self):
         start = SKILL.index("## Worked example: where did CPU time go?")

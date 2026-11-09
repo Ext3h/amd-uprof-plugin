@@ -67,14 +67,14 @@ demand or reused from the cache.
 | argument | meaning |
 |---|---|
 | `--session DIR` | capture directory (required) |
-| `--by process\|module\|function\|line\|instruction` | grouping key (required) |
+| `--by process\|module\|function\|region\|line\|instruction` | grouping key (required) |
 | `--pid N` | one process by PID; mutually exclusive with `--image` |
 | `--image PATTERN` | base-image path/name filter, all PIDs of matching images |
 | `--time-filter T1:T2` | optional, seconds from capture start; default the whole capture; requires a dump capture (per-sample timestamps); PMC captures carry none and the tool rejects the filter |
 | `--top N\|all` | rows returned, default 20 |
 | `--json` | machine-readable output instead of the default table |
 | `--out-file PATH` | output destination |
-| `--pdb-file FILE` | explicit PDB for `line`/`instruction`, passed to llvm-symbolizer `--pdb` |
+| `--pdb-file FILE` | explicit PDB for `function`/`region`/`line`/`instruction`, passed to llvm-symbolizer `--pdb` |
 | `--pdb-dir DIR` | repeatable PDB search root, flat and `<GUID><age>` |
 | `--debug-file-dir DIR` | repeatable, passed to llvm-symbolizer `--debug-file-directory` |
 | `--fallback-debug-path DIR` | repeatable, passed to llvm-symbolizer `--fallback-debug-path` |
@@ -85,7 +85,8 @@ demand or reused from the cache.
 |---|---|---|---|
 | `process` | process | process, pid, samples, sample_share, time_share, tag_to_retire_share | no |
 | `module` | module path | module, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds | no |
-| `function` | function | function, module, attribution, samples, sample_share, time_share, tag_to_retire_share | no |
+| `function` | function (derived range when the binary supplies one) | function, module, function_start, function_end, function_source, function_derived, attribution, function_reason, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds, hot_rva, hot_samples, hot_sample_share | yes |
+| `region` | module + 4 KiB address page | module, page_start, page_end, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds, sampled_addresses, hot_rva, hot_samples, hot_sample_share, function, file, line, attribution, symbol_reason, function_source, function_derived | yes |
 | `line` | file:line | file, line, function, module, attribution, samples, sample_share, time_share, tag_to_retire_share | yes |
 | `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, sample_share, time_share, tag_to_retire_share | yes |
 
@@ -97,13 +98,13 @@ has non-null values, so the column is present, but every `tag_to_retire_share` i
 column does not sum to 1.0 because no tag cycles were counted. A tag cell counts only when it is
 an unsigned decimal integer; negative, fractional and exponent spellings are excluded.
 
-No filter is a prerequisite for any granularity. The module granularity emits the rollup directly, including `Module.isSystemModule` and `cpu_seconds` = `samples × requested cycle interval / the core frequency`; the seconds are an estimate at the reported nominal clock, not a measured cycle count, and are omitted with a stated reason when a sample is not a fixed cycle count or no frequency is available. `line` and `instruction` symbolize every module in
+No filter is a prerequisite for any granularity. The module granularity emits the rollup directly, including `Module.isSystemModule` and `cpu_seconds` = `samples × requested cycle interval / the core frequency`; the seconds are an estimate at the reported nominal clock, not a measured cycle count, and are omitted with a stated reason when a sample is not a fixed cycle count or no frequency is available. `function` and `region` are the symbolized scopes: function is the semantic unit and the tool derives its boundaries from the binary with LLVM (PE exports, PDB publics, then `.pdata` runtime-function starts), ending each range at the next start or the code section end; the consumer must not write a PE parser or map `.pdata` by hand. `function_source` names the boundary source (`export`, `pdb_public`, `pdata`, or `none`), `function_derived` marks a range with a synthetic name (`pdata_0x<start>`/`sub_0x<start>`), and attribution is `unique`, `derived` or `unresolved`. A module with no boundary source falls back to `--by region`: region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket. The page keeps `sampled_addresses` and names the function owning its hot RVA when one is derivable. `line` and `instruction` symbolize every module in
 scope and print a uProf-vs-symbolizer agreement summary; modules without usable symbols appear as
 `<no symbol>` with the agreement summary stating how much sample weight that covers. The `line`
 table aggregates instructions by source position; `instruction` reports them individually, each
 annotated with its function and source coordinates.
 
-`profile` takes its own symbol paths for `line`/`instruction`: `--pdb-file` is passed to
+`profile` takes its own symbol paths for `function`/`region`/`line`/`instruction`: `--pdb-file` is passed to
 llvm-symbolizer as `--pdb`; repeatable `--pdb-dir` adds PDB search roots; repeatable
 `--debug-file-dir` and `--fallback-debug-path` become `--debug-file-directory` and
 `--fallback-debug-path` for DWARF or separate debug files. llvm-symbolizer ignores
@@ -115,7 +116,7 @@ uProf's bundled DbgHelp/SymSrv, not WinDbg) before a later `profile`. `--obj` se
 there is no image-search directory. A PDB is accepted when `llvm-pdbutil` confirms its GUID and
 age; without `llvm-pdbutil` the first existing candidate (beside the module, an explicit
 `--pdb-dir` entry or the local `srv*` cache) is used unverified with a warning. These flags affect
-the `line`/`instruction` rows and the profile symbolizer share `SYMBOL_COVERAGE` reports; they do
+the `function`/`region`/`line`/`instruction` rows and the profile symbolizer share `SYMBOL_COVERAGE` reports; they do
 not change the uProf DB share from `Function.name`, which records what translate symbolized. A
 valid PDB for another build yields exit 0, no `Error` and empty `Symbol` frames, which is reported
 as a resolution failure tied to that PDB name. `translate` prints `SYMBOLIZATION: <withDebugInfo>/<modules> modules with
@@ -171,8 +172,17 @@ the UTC start is reported with its precision.
   `--json` to `--by instruction`; the JSON `next` array holds the same commands.
 - `--json`: the same rows, header information and legend semantics as structured data; the legend
   is a `legend` object with `share_unit` (`fraction`), `share_scale` (`1`), `denominators`,
-  `columns`, `absent`, `impact` (`order_by`, `gap_weighted`, `estimate`), `remainder_last`,
-  `symbol_coverage` and `next`.
+  `columns`, `absent`, `impact` (`order_by`, `gap_weighted`, `estimate`, and the mode measure that
+  orders function/region rows and selects their hot RVA), `remainder_last`, `symbol_coverage` and
+  `next`. `--by function` adds the full `function_ranges` object (`source`, `derived_modules`,
+  `ranges`, `absent_by_module`, `fallback`, `meaning`) and emits no `region` key. `--by region`
+  emits no top-level `function_ranges`; its `region` object carries the page fields
+  (`page_size`, `key`, `page_start`, `page_end`, `sampled_addresses`, `hot_rva`, `hot_samples`,
+  `hot_sample_share`, `function_source`, `function_derived`, `symbol_reason`), a `derived_function`
+  explanation, and its own reduced `function_ranges` with only `derived_modules` and `ranges`.
+  For `function` and `region`, `symbol_coverage.profile_symbolizer` reports `named_samples`,
+  `derived_samples`, `resolved_samples` (named plus derived), `unresolved_samples` and
+  `scoped_samples`; a derived range is attributed, so it never makes the row count unresolved.
 - No CSV mode and no table-rendering dependency on the database library.
 - Shares are fractions 0.0-1.0 at full precision; no rounding or multiplication is applied.
 
@@ -232,8 +242,9 @@ enumerated here; the binding property is the prohibition on papering over a degr
 When several function names share one address (COMDAT folding, aliases), a per-name share is not
 attributable. The tool detects addresses shared by more than one public name, reports their share as
 shared rather than attributing it to one name, and marks the row non-attributable. Detection
-applies at the granularities where symbols are resolved (`line`, `instruction`); `function` rows
-are labelled `unique` or `unresolved` only. A binary built
+applies at every symbolized granularity (`function`, `region`, `line`, `instruction`). `function`
+rows are labelled `unique`, `derived` (a synthetic derived-range name) or `unresolved`; `region`
+rows add `shared` for a page whose hot address carries several names. A binary built
 with `/OPT:ICF` with two names on one RVA is the measure of this behaviour.
 
 ## 7. Reproducibility

@@ -49,11 +49,18 @@ CREATE OR REPLACE TEMP MACRO is_kernel_image(p, load_address) AS
 -- Columns hidden from every projection: internal gap weights and totals, time_share unless the
 -- dump exists, tag_to_retire_share unless this sampler's tag column supplied values, and
 -- cpu_seconds unless the requested interval is a time (a work/fetch interval is not time).
+-- Parent totals and the parent-relative shares exist only for a function-scoped instruction or
+-- line view; the parent totals are internal and the parent shares are emitted only when a
+-- --function filter selected the parent.
 CREATE OR REPLACE TEMP MACRO projected(c) AS
     c NOT IN ('weight', 'tag_cycles', 'total_samples', 'total_weight', 'total_tag_cycles',
-              'sort_key', 'rn')
-    AND (getvariable('has_dump') OR c <> 'time_share')
-    AND (getvariable('uprof_tag_available') = 'true' OR c <> 'tag_to_retire_share')
+              'sort_key', 'rn', 'parent_samples', 'parent_weight', 'parent_tag_cycles')
+    AND (COALESCE(getvariable('uprof_function'), '') <> ''
+         OR c NOT IN ('parent_sample_share', 'parent_time_share',
+                      'parent_tag_to_retire_share'))
+    AND (getvariable('has_dump') OR c NOT IN ('time_share', 'parent_time_share'))
+    AND (getvariable('uprof_tag_available') = 'true'
+         OR c NOT IN ('tag_to_retire_share', 'parent_tag_to_retire_share'))
     AND (getvariable('uprof_sample_interval_s') <> '' OR c <> 'cpu_seconds');
 
 SET VARIABLE has_dump = (getvariable('uprof_ibs_dump') <> '');
@@ -555,6 +562,15 @@ CREATE OR REPLACE TEMP VIEW v_scope_totals AS
 SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT) AS total_samples
 FROM v_scoped;
 
+-- Capture denominators for the row views. They come from the whole scoped capture, so a
+-- function-scoped instruction or line view keeps capture-level sample_share/time_share/
+-- tag_to_retire_share instead of silently shrinking the denominator to the filtered rows.
+CREATE OR REPLACE TEMP VIEW v_scope_measures AS
+SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT) AS total_samples,
+       sum(weight) AS total_weight,
+       sum(tag_cycles) AS total_tag_cycles
+FROM v_scoped;
+
 -- One row per module path with its highest load address and whether that address is kernel-space,
 -- or an empty relation when the export has no ModuleInstance table. v_capture_modules asks it
 -- whether a module sits in kernel space, so the classification runs per module, not per sample.
@@ -710,9 +726,10 @@ HAVING count(*) > 0;
 -- back to Function.id, so a module whose binary is unavailable keeps its uProf naming. hot_rva is
 -- the highest-sample RVA in the row; attribution 'derived' marks a synthetic binary name, not a
 -- source symbol. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
--- otherwise the sample count (the same order as sample_share). When --top truncates, one
--- <other functions> row carries the rest.
-CREATE OR REPLACE TEMP VIEW v_function_rows AS
+-- otherwise the sample count (the same order as sample_share). This view is uncapped, so the
+-- parent lookup of a function-scoped instruction or line view is not hidden by --top; the public
+-- v_function_rows adds the cap and the <other functions> remainder.
+CREATE OR REPLACE TEMP VIEW v_function_measured AS
 WITH placed AS (
   SELECT COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module_name,
          w.rva, w.function_id, w.samples, w.weight, w.tag_cycles,
@@ -749,6 +766,7 @@ WITH placed AS (
   SELECT group_key,
          min(module_name) AS module_name,
          min(range_kind) AS range_kind,
+         max(function_id) AS function_id,
          max(function_start) AS function_start,
          max(function_end) AS function_end,
          max(function_source) AS function_source,
@@ -799,6 +817,10 @@ WITH placed AS (
                     samples DESC, function_name, module_name) AS rn
   FROM labelled
 )
+SELECT * FROM measured;
+
+-- The public function rows: the aggregated rows with --top applied and one remainder row.
+CREATE OR REPLACE TEMP VIEW v_function_rows AS
 SELECT m.function_name AS "function", m.module_name AS module,
        CASE WHEN m.function_start IS NULL THEN NULL
             ELSE printf('0x%X', m.function_start) END AS function_start,
@@ -811,16 +833,29 @@ SELECT m.function_name AS "function", m.module_name AS module,
        m.hot_samples,
        m.total_samples, m.total_weight, m.total_tag_cycles, 0 AS sort_key, m.rn,
        f."isSystemModule"
-FROM measured m
+FROM v_function_measured m
 LEFT JOIN v_module_flags f ON f.module_name = m.module_name
 WHERE getvariable('top_n') = 0 OR m.rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other functions>', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
        CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles), NULL, NULL,
        max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL, NULL
-FROM measured
+FROM v_function_measured
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
+
+-- The parent function selected by --function/--module/--function-start. Empty unless a
+-- function-scoped instruction or line view was requested. It reads the same uncapped aggregated
+-- rows as v_function_rows, so the parent measurement is a sum/join of the capture, never a second
+-- measurement. A derived range is selected by its RVA interval; a uProf Function.id row (no
+-- derived range) by its function id.
+CREATE OR REPLACE TEMP VIEW v_function_scope AS
+SELECT * FROM v_function_measured
+WHERE COALESCE(getvariable('uprof_function'), '') <> ''
+  AND function_name = getvariable('uprof_function')
+  AND module_name = COALESCE(getvariable('uprof_function_module'), '')
+  AND (COALESCE(getvariable('uprof_function_start'), '') = ''
+       OR function_start = CAST(getvariable('uprof_function_start') AS BIGINT));
 
 -- Source-line shares from the combined llvm-symbolizer artifact. The file, line and function of a
 -- group come from the innermost symbolizer frame, the executed source position inside an inlined
@@ -845,13 +880,23 @@ HAVING count(*) > 0;
 -- labelled 'shared: nameA | nameB'; a line whose addresses include one gets attribution 'shared'.
 -- When --top truncates, one <other lines> row carries the rest.
 CREATE OR REPLACE TEMP VIEW v_line_rows AS
-WITH placed AS (
+WITH scoped AS (
+  SELECT w.*
+  FROM v_scoped w
+  WHERE COALESCE(getvariable('uprof_function'), '') = ''
+     OR EXISTS (
+       SELECT 1 FROM v_function_scope fs
+       WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
+         AND ((fs.function_start IS NOT NULL
+               AND w.rva >= fs.function_start AND w.rva < fs.function_end)
+              OR (fs.function_start IS NULL AND w.function_id = fs.function_id)))
+), placed AS (
   SELECT w.module_name, w.samples, w.weight, w.tag_cycles,
          s.function AS sym_function, s.function_short AS sym_short,
          s.containing_function AS sym_containing,
          s.file AS sym_file, s.line AS sym_line,
          a.name_count, a.names
-  FROM v_scoped w
+  FROM scoped w
   LEFT JOIN v_symbols s
     ON w.module_name = s.module_name AND w.rva = s.rva
   ASOF LEFT JOIN v_public_starts a
@@ -906,9 +951,12 @@ WITH placed AS (
                 ELSE 'line:' || file_name || chr(1) || CAST(line_number AS VARCHAR) END
 ), ranked AS (
   SELECT *,
-         CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
-         sum(weight) OVER () AS total_weight,
-         sum(tag_cycles) OVER () AS total_tag_cycles,
+         (SELECT total_samples FROM v_scope_measures) AS total_samples,
+         (SELECT total_weight FROM v_scope_measures) AS total_weight,
+         (SELECT total_tag_cycles FROM v_scope_measures) AS total_tag_cycles,
+         (SELECT samples FROM v_function_scope LIMIT 1) AS parent_samples,
+         (SELECT weight FROM v_function_scope LIMIT 1) AS parent_weight,
+         (SELECT tag_cycles FROM v_function_scope LIMIT 1) AS parent_tag_cycles,
          row_number() OVER (
            ORDER BY weight DESC NULLS LAST, samples DESC,
                     file_name, line_number, function_name, module_name) AS rn
@@ -916,13 +964,15 @@ WITH placed AS (
 )
 SELECT file_name AS "file", line_number AS line, function_name AS "function",
        module_name AS module, attribution, samples, weight, tag_cycles,
-       total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
+       total_samples, total_weight, total_tag_cycles,
+       parent_samples, parent_weight, parent_tag_cycles, 0 AS sort_key, rn
 FROM ranked
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other lines>', NULL, NULL, NULL, NULL,
        CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
-       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
+       max(total_samples), max(total_weight), max(total_tag_cycles),
+       max(parent_samples), max(parent_weight), max(parent_tag_cycles), 1, NULL
 FROM ranked
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
@@ -934,11 +984,21 @@ HAVING count(*) > 0;
 -- sample count (the same order as sample_share). When --top truncates, one <other instructions>
 -- row carries the rest.
 CREATE OR REPLACE TEMP VIEW v_instruction_rows AS
-WITH placed AS (
+WITH scoped AS (
+  SELECT w.*
+  FROM v_scoped w
+  WHERE COALESCE(getvariable('uprof_function'), '') = ''
+     OR EXISTS (
+       SELECT 1 FROM v_function_scope fs
+       WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
+         AND ((fs.function_start IS NOT NULL
+               AND w.rva >= fs.function_start AND w.rva < fs.function_end)
+              OR (fs.function_start IS NULL AND w.function_id = fs.function_id)))
+), placed AS (
   SELECT w.module_name, w.rva, w.samples, w.weight, w.tag_cycles,
          s.function AS sym_function, s.file AS sym_file, s.line AS sym_line,
          a.name_count, a.names
-  FROM v_scoped w
+  FROM scoped w
   LEFT JOIN v_symbols s
     ON w.module_name = s.module_name AND w.rva = s.rva
   ASOF LEFT JOIN v_public_starts a
@@ -967,9 +1027,12 @@ WITH placed AS (
   GROUP BY module_name, rva, function_name, file_name, line_number, attribution
 ), ranked AS (
   SELECT *,
-         CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
-         sum(weight) OVER () AS total_weight,
-         sum(tag_cycles) OVER () AS total_tag_cycles,
+         (SELECT total_samples FROM v_scope_measures) AS total_samples,
+         (SELECT total_weight FROM v_scope_measures) AS total_weight,
+         (SELECT total_tag_cycles FROM v_scope_measures) AS total_tag_cycles,
+         (SELECT samples FROM v_function_scope LIMIT 1) AS parent_samples,
+         (SELECT weight FROM v_function_scope LIMIT 1) AS parent_weight,
+         (SELECT tag_cycles FROM v_function_scope LIMIT 1) AS parent_tag_cycles,
          row_number() OVER (
            ORDER BY CASE getvariable('uprof_primary_measure')
                       WHEN 'time_share' THEN weight END DESC NULLS LAST,
@@ -981,13 +1044,15 @@ SELECT module_name AS module,
        CASE WHEN rva IS NULL THEN NULL ELSE printf('0x%X', rva) END AS rva,
        function_name AS "function", file_name AS "file", line_number AS line,
        attribution, samples, weight, tag_cycles,
-       total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
+       total_samples, total_weight, total_tag_cycles,
+       parent_samples, parent_weight, parent_tag_cycles, 0 AS sort_key, rn
 FROM ranked
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other instructions>', NULL, NULL, NULL, NULL, NULL,
        CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
-       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
+       max(total_samples), max(total_weight), max(total_tag_cycles),
+       max(parent_samples), max(parent_weight), max(parent_tag_cycles), 1, NULL
 FROM ranked
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;

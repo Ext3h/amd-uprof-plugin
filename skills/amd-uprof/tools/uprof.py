@@ -109,6 +109,18 @@ def build_parser() -> argparse.ArgumentParser:
                        help="process base-image ILIKE pattern; all PIDs of matching images")
     profile.add_argument("--time-filter", metavar="T1:T2")
     profile.add_argument(
+        "--function", metavar="NAME",
+        help="narrow --by instruction|line to one function row's 'function' name; requires "
+             "--module and reports the parent function's samples, shares and cpu_seconds")
+    profile.add_argument(
+        "--module", metavar="MODULE",
+        help="the function row's 'module' value; required with --function so the filter scope is "
+             "explicit")
+    profile.add_argument(
+        "--function-start", metavar="RVA",
+        help="optional function_start (0x hex or decimal) when --function matches more than one "
+             "row in the module")
+    profile.add_argument(
         "--pdb-file", metavar="FILE",
         help="explicit PDB for --by function|region|line|instruction, passed to llvm-symbolizer "
              "--pdb; used before any search and relied on without GUID verification when the "

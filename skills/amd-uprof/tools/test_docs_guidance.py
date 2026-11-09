@@ -107,6 +107,14 @@ SKILL_FRAGMENTS = (
     "Third-party",
     "| `VERSION` |",
     "| `SYMBOL_COVERAGE` |",
+    "| `--function NAME` |",
+    "| `--function-start RVA` |",
+    "FILTER:",
+    "PARENT:",
+    "parent_sample_share",
+    "sum/join of the same capture's rows",
+    "as its one `NEXT` call",
+    "the default, unscoped views keep their existing stop",
 )
 
 REFERENCE_FRAGMENTS = (
@@ -161,6 +169,13 @@ REFERENCE_FRAGMENTS = (
     "named_samples",
     "derived_samples",
     "a derived range is an attribution",
+    "### Function-scoped instruction and line views",
+    "v_function_measured",
+    "v_function_scope",
+    "v_scope_measures",
+    "parent_sample_share",
+    "two no-range rows with the same name cannot be separated",
+    "never a second measurement",
 )
 
 
@@ -213,7 +228,12 @@ class DocsGuidanceTest(unittest.TestCase):
                          "`unresolved` is only the attribution category",
                          "must not be called `unresolved` or \"no named functions\"",
                          "function rows remain in the `unresolved` attribution",
-                         "function_ranges"):
+                         "function_ranges",
+                         "| `--function NAME` |",
+                         "FILTER",
+                         "PARENT",
+                         "function_scope",
+                         "parent_sample_share"):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, SPEC)
 

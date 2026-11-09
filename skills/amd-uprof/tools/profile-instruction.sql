@@ -4,7 +4,11 @@ FROM (
          share(samples, total_samples) AS sample_share,
          share(weight, total_weight) AS time_share,
          share(tag_cycles, total_tag_cycles) AS tag_to_retire_share,
-         weight, tag_cycles, total_samples, total_weight, total_tag_cycles, sort_key, rn
+         share(samples, parent_samples) AS parent_sample_share,
+         share(weight, parent_weight) AS parent_time_share,
+         share(tag_cycles, parent_tag_cycles) AS parent_tag_to_retire_share,
+         weight, tag_cycles, total_samples, total_weight, total_tag_cycles,
+         parent_samples, parent_weight, parent_tag_cycles, sort_key, rn
   FROM v_instruction_rows
 ) q
 ORDER BY sort_key, rn NULLS LAST;

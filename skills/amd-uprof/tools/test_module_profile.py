@@ -194,9 +194,11 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertTrue(process_calls[-1].endswith("--json"))
 
         module_calls = self.document(session)["legend"]["next"]
-        self.assertEqual(len(module_calls), 1)
-        self.assertIn("--by instruction", module_calls[0])
-        self.assertTrue(module_calls[0].endswith("--json"))
+        self.assertEqual(len(module_calls), 3)
+        self.assertIn("--by function", module_calls[0])
+        self.assertIn("--by region", module_calls[1])
+        self.assertIn("--by instruction", module_calls[2])
+        self.assertTrue(module_calls[2].endswith("--json"))
 
     def test_truncated_module_rollup_keeps_a_remainder_last(self):
         session = self.session()

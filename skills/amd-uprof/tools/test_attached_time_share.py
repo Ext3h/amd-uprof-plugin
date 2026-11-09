@@ -218,7 +218,8 @@ class AttachedTimeShareTest(unittest.TestCase):
 
         document = self._profile()
 
-        self.assertIn("within each thread (PID, TID)", document["legend"]["impact"]["estimate"])
+        self.assertIn("within each thread (PID, TID)",
+                      document["legend"]["columns"]["time_share"])
         self.assertIn("OK (attached", document["SANITY"])
 
     def test_legend_states_the_thread_partition_and_the_cycle_basis(self):
@@ -226,8 +227,8 @@ class AttachedTimeShareTest(unittest.TestCase):
 
         self.assertEqual(legend["columns"]["time_share"], TIME_MEANING)
         self.assertEqual(legend["denominators"]["time_share"], "total_weight")
-        self.assertIn("within each thread (PID, TID)", legend["impact"]["estimate"])
-        self.assertIn("sample_share (fixed cycles per sample) is the CPU-cycle share",
+        self.assertIn("within each thread (PID, TID)", legend["columns"]["time_share"])
+        self.assertIn("counts fixed cycles per sample, so sample_share is the core-cycle share",
                       legend["impact"]["estimate"])
 
     def test_headers_state_the_thread_partition(self):
@@ -235,8 +236,7 @@ class AttachedTimeShareTest(unittest.TestCase):
 
         self.assertIn("time_share = per-thread time share (off-CPU gaps are charged to the "
                       "ending sample)", output)
-        self.assertIn("time_share ranks where each thread's elapsed time went (PID, TID "
-                      "partition", output)
+        self.assertIn("sample_share orders the functions", output)
         self.assertIn("the partition is (PID, TID)", output)
         self.assertIn("exact DeltaTick-gap weights per (PID, TID)", output)
         self.assertIn("sample_share (fixed cycles per sample) is the CPU-cycle share and the "

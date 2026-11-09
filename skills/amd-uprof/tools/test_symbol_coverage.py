@@ -32,8 +32,14 @@ PARTIAL_NAMED_OFFSET = 16384
 PARTIAL_ANON_OFFSET = 20480
 UNKNOWN_OFFSET = 24576
 
-STOP = ("a module with no named functions cannot be drilled below module/RVA: do not write a PE "
-        "parser, map .pdata by hand or disassemble")
+NO_NAMED_STOP = ("a module with no named functions is covered by derived function ranges: use "
+                 "profile --by function, which derives boundaries from the binary (.pdata, PE "
+                 "exports, PDB publics) with LLVM; do not write a PE parser, map .pdata by hand "
+                 "or disassemble")
+UNRESOLVED_STOP = ("unresolved samples are covered by derived function ranges: use profile --by "
+                   "function, which derives boundaries from the binary (.pdata, PE exports, PDB "
+                   "publics) with LLVM; do not write a PE parser, map .pdata by hand or "
+                   "disassemble")
 
 
 def _dump_rows():
@@ -123,13 +129,17 @@ class SymbolCoverageTest(unittest.TestCase):
     def test_aggregate_and_per_module_unresolved_share(self):
         text = self.coverage()
 
-        self.assertTrue(text.startswith("6/12 samples (50.0%) resolve to a named function; "),
-                        text)
-        self.assertIn(f"unresolved by module: {NO_STRINGS} 3/3 "
-                      "(100.0% unresolved, no named functions)", text)
-        self.assertIn(f"{PARTIAL} 1/3 (33.3% unresolved, partial)", text)
-        self.assertIn(f"{UNKNOWN} 2/2 (100.0% unresolved, no named functions)", text)
-        self.assertTrue(text.endswith(STOP), text)
+        self.assertTrue(text.startswith(
+            "uProf DB 6/12 samples (50.0%) resolve to a named function; rows named 6/12 samples "
+            "(50.0%), derived 0/12 samples (0.0%) from a synthetic binary range, unresolved "
+            "6/12 samples (50.0%) (<no symbol>)"), text)
+        self.assertIn(f"{NO_STRINGS}: module file not available: {NO_STRINGS} is not on this "
+                      "host", text)
+        self.assertIn(f"{PARTIAL}: module file not available: {PARTIAL} is not on this host",
+                      text)
+        self.assertIn(f"{UNKNOWN}: module file not available: {UNKNOWN} is not on this host",
+                      text)
+        self.assertIn("no named or derived range covers these samples", text)
 
     def test_line_appears_in_markdown_and_json(self):
         output = self.profile()
@@ -140,7 +150,10 @@ class SymbolCoverageTest(unittest.TestCase):
     def test_scope_narrows_coverage_and_empty_scope_has_none(self):
         self.assertEqual(
             self.coverage("--pid", "100"),
-            "4/4 samples (100.0%) resolve to a named function; no module has unresolved samples")
+            "uProf DB 4/4 samples (100.0%) resolve to a named function; rows named 4/4 "
+            "samples (100.0%), derived 0/4 samples (0.0%) from a synthetic binary range, "
+            "unresolved 0/4 samples (0.0%) (<no symbol>); every scoped sample is attributed "
+            "below module/RVA; a derived row is actionable at its hot RVA")
         self.assertIsNone(self.coverage("--pid", "999"))
 
     def test_process_granularity_also_discloses_coverage(self):
@@ -170,7 +183,15 @@ class SymbolCoverageTest(unittest.TestCase):
                          ["uprof_db", "flags", "profile_symbolizer", "rows_drillable"])
         self.assertEqual(entry["uprof_db"]["named_samples"], 6)
         self.assertEqual(entry["uprof_db"]["scoped_samples"], 12)
-        self.assertIsNone(entry["profile_symbolizer"])
+        self.assertEqual(entry["profile_symbolizer"], {
+            "source": "the emitted rows: llvm-symbolizer names plus derived PE ranges",
+            "named_samples": 6,
+            "derived_samples": 0,
+            "resolved_samples": 6,
+            "unresolved_samples": 6,
+            "scoped_samples": 12,
+        })
+        self.assertFalse(entry["rows_drillable"])
         self.assertEqual(entry["flags"], [])
 
 
@@ -201,8 +222,8 @@ class CoverageChannelsTest(unittest.TestCase):
         self.assertIn("profile symbolizer 5575/5575 samples (100.0%) resolve below module/RVA "
                       "(flags: --pdb-file)", text)
         self.assertIn("every scoped sample is drillable below module/RVA", text)
-        self.assertNotIn("cannot be drilled", text)
-        self.assertNotIn("do not write a PE parser", text)
+        self.assertNotIn(NO_NAMED_STOP, text)
+        self.assertNotIn(UNRESOLVED_STOP, text)
 
     def test_partial_symbolizer_resolution_keeps_the_boundary_and_names_the_flag(self):
         text = uprof_query._coverage_field(
@@ -213,7 +234,7 @@ class CoverageChannelsTest(unittest.TestCase):
         self.assertIn("profile symbolizer 6/10 samples (60.0%) resolve below module/RVA "
                       "(flags: --pdb-dir)", text)
         self.assertIn("cause by module: b.dll: no PDB found", text)
-        self.assertIn("unresolved samples cannot be drilled below module/RVA", text)
+        self.assertIn(UNRESOLVED_STOP, text)
         self.assertIn("remedy: pass profile --pdb-file", text)
 
     def test_agreeing_channels_without_flags_keep_the_original_line(self):
@@ -232,7 +253,8 @@ class CoverageChannelsTest(unittest.TestCase):
         self.assertIn("uProf DB 0/10", text)
         self.assertIn("profile symbolizer 10/10", text)
         self.assertIn("every scoped sample is drillable", text)
-        self.assertNotIn("cannot be drilled", text)
+        self.assertNotIn(NO_NAMED_STOP, text)
+        self.assertNotIn(UNRESOLVED_STOP, text)
 
     def test_json_legend_records_channel_counts_flags_and_drillability(self):
         entry = uprof_query._symbol_coverage_legend(

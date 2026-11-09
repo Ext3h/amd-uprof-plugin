@@ -19,6 +19,12 @@
 --   uprof_sample_interval_s  requested cycle interval in seconds; empty when the interval is a
 --                       work/fetch count or the core frequency is unavailable, so cpu_seconds is
 --                       omitted
+--   uprof_functions     function-range CSV derived from the modules' PE images; empty when no
+--                       range was derived, so function rows fall back to uProf Function.id
+--   uprof_range_attempted  chr(2)-joined modules for which derivation ran (fully named modules
+--                       are skipped); lets function_reason say "skipped" only when it was
+--   uprof_primary_measure  the column that orders function/region rows and --top: sample_share,
+--                       time_share or samples
 --
 -- The SET VARIABLE statements below are the mode flags, guards and typed top/time values; no view
 -- file carries its own setup. The guards run before v_dump, so a bad capture fails once, with a
@@ -409,6 +415,22 @@ SELECT * FROM query(CASE WHEN getvariable('uprof_aliases') <> ''
   ELSE $pub$SELECT NULL::VARCHAR AS module_name, NULL::BIGINT AS rva, NULL::INTEGER AS name_count,
                    NULL::VARCHAR AS names WHERE false$pub$ END);
 
+-- Function ranges derived from the PE images by uprof_functions.py: one row per [start, end) in
+-- a module. source is export, pdb_public, pdata or none; function_name is empty when the boundary
+-- carries no name, and the function view makes that name visibly synthetic. Empty when no range
+-- was derived, so function rows group by uProf Function.id instead.
+CREATE OR REPLACE TEMP VIEW v_function_ranges AS
+SELECT * FROM query(CASE WHEN getvariable('uprof_functions') <> ''
+  THEN $ranges$SELECT module_name,
+                      CAST(function_start AS BIGINT) AS function_start,
+                      CAST(function_end AS BIGINT) AS function_end,
+                      function_source,
+                      NULLIF(function_name, '') AS function_name
+               FROM read_csv(getvariable('uprof_functions'), header = true, all_varchar = true)$ranges$
+  ELSE $ranges$SELECT NULL::VARCHAR AS module_name, NULL::BIGINT AS function_start,
+                       NULL::BIGINT AS function_end, NULL::VARCHAR AS function_source,
+                       NULL::VARCHAR AS function_name WHERE false$ranges$ END);
+
 -- PDB choice per module, recorded by symbolization: module_name, pdb. Empty when absent, so the
 -- instruction context symbolizes without a PDB instead of discovering one a second time.
 CREATE OR REPLACE TEMP VIEW v_pdbs AS
@@ -663,40 +685,121 @@ FROM flagged
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
 
--- Function shares. Grouping is by Function.id, the unit uProf resolves; a source line is not
--- additive because one function's samples span many call sites. Samples with no Function.id are
--- the '<unresolved>' row. When --top truncates, one <other functions> row carries the rest.
+-- Function shares. A sample is grouped by the derived function range that covers its RVA (from
+-- v_function_ranges) when one exists; the range name, else the uProf Function.name, else a visibly
+-- synthetic pdata_0x<start>/sub_0x<start> names the row. Samples outside every derived range fall
+-- back to Function.id, so a module whose binary is unavailable keeps its uProf naming. hot_rva is
+-- the highest-sample RVA in the row; attribution 'derived' marks a synthetic binary name, not a
+-- source symbol. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
+-- otherwise the sample count (the same order as sample_share). When --top truncates, one
+-- <other functions> row carries the rest.
 CREATE OR REPLACE TEMP VIEW v_function_rows AS
-WITH agg AS (
-  SELECT w.function_id,
-         CASE WHEN w.function_id IS NULL THEN '<unresolved>'
-              ELSE COALESCE(NULLIF(max(f.name), ''), '<unnamed>') END AS function_name,
-         CASE WHEN w.function_id IS NULL THEN '<unresolved>'
-              ELSE COALESCE(NULLIF(max(w.module_name), ''), '<unresolved>') END AS module_name,
-         CASE WHEN w.function_id IS NULL THEN 'unresolved' ELSE 'unique' END AS attribution,
-         CAST(sum(w.samples) AS BIGINT) AS samples,
-         sum(w.weight) AS weight,
-         sum(w.tag_cycles) AS tag_cycles
+WITH placed AS (
+  SELECT COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module_name,
+         w.rva, w.function_id, w.samples, w.weight, w.tag_cycles,
+         COALESCE(NULLIF(f.name, ''), '') AS db_name,
+         r.function_start, r.function_end, r.function_source,
+         r.function_name AS range_name
   FROM v_scoped w
   LEFT JOIN Function f ON f.id = w.function_id
-  GROUP BY w.function_id
-), ranked AS (
-  SELECT *,
+  LEFT JOIN v_function_ranges r
+    ON w.module_name = r.module_name
+   AND w.rva >= r.function_start AND w.rva < r.function_end
+), keyed AS (
+  SELECT module_name, rva, function_id, samples, weight, tag_cycles, db_name,
+         function_start, function_end, function_source, range_name,
+         CASE WHEN function_start IS NOT NULL
+              THEN 'r:' || module_name || chr(2) || CAST(function_start AS VARCHAR)
+              WHEN function_id IS NOT NULL THEN 'f:' || CAST(function_id AS VARCHAR)
+              ELSE 'u:' || module_name END AS group_key,
+         CASE WHEN function_start IS NOT NULL THEN 'range'
+              WHEN function_id IS NOT NULL THEN 'uprof_db'
+              ELSE 'none' END AS range_kind
+  FROM placed
+), rva_samples AS (
+  SELECT group_key, rva, CAST(sum(samples) AS BIGINT) AS samples
+  FROM keyed
+  GROUP BY group_key, rva
+), hot_ranked AS (
+  SELECT group_key, rva AS hot_rva, samples AS hot_samples,
+         row_number() OVER (PARTITION BY group_key ORDER BY samples DESC, rva) AS hot_rank
+  FROM rva_samples
+), hot AS (
+  SELECT group_key, hot_rva, hot_samples FROM hot_ranked WHERE hot_rank = 1
+), agg AS (
+  SELECT group_key,
+         min(module_name) AS module_name,
+         min(range_kind) AS range_kind,
+         max(function_start) AS function_start,
+         max(function_end) AS function_end,
+         max(function_source) AS function_source,
+         max(range_name) AS range_name,
+         max(db_name) AS db_name,
+         CAST(sum(samples) AS BIGINT) AS samples,
+         sum(weight) AS weight,
+         sum(tag_cycles) AS tag_cycles
+  FROM keyed
+  GROUP BY group_key
+), labelled AS (
+  SELECT a.*, h.hot_rva, CAST(h.hot_samples AS BIGINT) AS hot_samples,
+         CASE
+           WHEN a.range_kind = 'range' AND a.range_name IS NOT NULL THEN a.range_name
+           WHEN a.range_kind = 'range' AND a.db_name <> '' THEN a.db_name
+           WHEN a.range_kind = 'range' AND a.function_source = 'pdata'
+             THEN printf('pdata_0x%X', a.function_start)
+           WHEN a.range_kind = 'range' THEN printf('sub_0x%X', a.function_start)
+           WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN a.db_name
+           ELSE '<unresolved>'
+         END AS function_name,
+         CASE WHEN a.range_kind = 'range' AND a.range_name IS NULL AND a.db_name = ''
+              THEN true ELSE false END AS function_derived,
+         CASE WHEN a.range_kind = 'range' AND a.range_name IS NULL AND a.db_name = ''
+                   THEN 'derived'
+              WHEN a.range_kind = 'range' THEN 'unique'
+              WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN 'unique'
+              ELSE 'unresolved' END AS attribution,
+         CASE WHEN a.range_kind = 'range' THEN NULL
+              WHEN a.range_kind = 'uprof_db' AND NOT COALESCE(list_contains(
+                     string_split(NULLIF(getvariable('uprof_range_attempted'), ''), chr(2)),
+                     a.module_name), false)
+                THEN 'fully named from the uProf DB; function-range derivation skipped'
+              WHEN a.range_kind = 'uprof_db'
+                THEN 'no boundary source (export, PDB public or .pdata) covers these samples: the module file is unavailable, not a PE image, or the RVA is outside a code section; the row groups by uProf Function.id, and --by region is the page view'
+              ELSE 'no derived range and no uProf Function.id for these samples; --by region is the page view' END
+           AS function_reason
+  FROM agg a
+  LEFT JOIN hot h USING (group_key)
+), measured AS (
+  SELECT labelled.*,
          CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
          sum(weight) OVER () AS total_weight,
          sum(tag_cycles) OVER () AS total_tag_cycles,
          row_number() OVER (
-           ORDER BY weight DESC NULLS LAST, samples DESC, function_id NULLS LAST) AS rn
-  FROM agg
+           ORDER BY CASE getvariable('uprof_primary_measure')
+                      WHEN 'time_share' THEN weight END DESC NULLS LAST,
+                    samples DESC, function_name, module_name) AS rn
+  FROM labelled
 )
-SELECT function_name AS "function", module_name AS module, attribution, samples, weight, tag_cycles,
-       total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
-FROM ranked
-WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
+SELECT m.function_name AS "function", m.module_name AS module,
+       CASE WHEN m.function_start IS NULL THEN NULL
+            ELSE printf('0x%X', m.function_start) END AS function_start,
+       CASE WHEN m.function_end IS NULL THEN NULL
+            ELSE printf('0x%X', m.function_end) END AS function_end,
+       COALESCE(m.function_source, 'none') AS function_source,
+       m.function_derived, m.attribution, m.function_reason,
+       m.samples, m.weight, m.tag_cycles,
+       CASE WHEN m.hot_rva IS NULL THEN NULL ELSE printf('0x%X', m.hot_rva) END AS hot_rva,
+       m.hot_samples,
+       m.total_samples, m.total_weight, m.total_tag_cycles, 0 AS sort_key, m.rn,
+       f."isSystemModule"
+FROM measured m
+LEFT JOIN v_module_flags f ON f.module_name = m.module_name
+WHERE getvariable('top_n') = 0 OR m.rn <= getvariable('top_n')
 UNION ALL
-SELECT '<other functions>', NULL, NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
-       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
-FROM ranked
+SELECT '<other functions>', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+       CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles), NULL, NULL,
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL, NULL
+FROM measured
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
 
@@ -863,5 +966,116 @@ SELECT '<other instructions>', NULL, NULL, NULL, NULL, NULL,
        CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
        max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
 FROM ranked
+WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
+HAVING count(*) > 0;
+
+-- Region shares: one row per module + 4 KiB address page. Samples are grouped by address, not by
+-- control flow; a page may span unrelated code, so it is a coarse bucket, not a contiguous region.
+-- sampled_addresses says whether the page is a tight cluster or a diffuse bucket. hot_rva is the
+-- highest-sample RVA in the page (ties pick the lowest); its symbolizer frame names function, file
+-- and line, and the derived function range names it when the symbolizer has no frame. Rows and
+-- --top follow uprof_primary_measure as v_function_rows does. When --top truncates, one
+-- <other regions> row carries the rest.
+CREATE OR REPLACE TEMP VIEW v_region_rows AS
+WITH paged AS (
+  SELECT COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module_name,
+         w.rva, w.samples, w.weight, w.tag_cycles,
+         (w.rva // 4096) * 4096 AS page_start
+  FROM v_scoped w
+  WHERE w.rva IS NOT NULL
+), page_totals AS (
+  SELECT module_name, page_start,
+         CAST(sum(samples) AS BIGINT) AS samples,
+         sum(weight) AS weight,
+         sum(tag_cycles) AS tag_cycles,
+         count(DISTINCT rva) AS sampled_addresses
+  FROM paged
+  GROUP BY module_name, page_start
+), rva_samples AS (
+  SELECT module_name, page_start, rva, CAST(sum(samples) AS BIGINT) AS samples
+  FROM paged
+  GROUP BY module_name, page_start, rva
+), rva_ranked AS (
+  SELECT *,
+         row_number() OVER (PARTITION BY module_name, page_start
+                            ORDER BY samples DESC, rva) AS hot_rank
+  FROM rva_samples
+), hot AS (
+  SELECT module_name, page_start, rva AS hot_rva, samples AS hot_samples
+  FROM rva_ranked
+  WHERE hot_rank = 1
+), placed AS (
+  SELECT p.*, h.hot_rva, h.hot_samples,
+         s.function AS sym_function, s.file AS hot_file, s.line AS hot_line,
+         a.name_count, a.names,
+         r.function_start AS hot_function_start,
+         r.function_source AS ranged_source,
+         r.function_name AS hot_range_name
+  FROM page_totals p
+  JOIN hot h USING (module_name, page_start)
+  LEFT JOIN v_symbols s
+    ON s.module_name = p.module_name AND s.rva = h.hot_rva
+  ASOF LEFT JOIN v_public_starts a
+    ON a.module_name = p.module_name AND h.hot_rva >= a.rva
+  LEFT JOIN v_function_ranges r
+    ON r.module_name = p.module_name
+   AND h.hot_rva >= r.function_start AND h.hot_rva < r.function_end
+), labelled AS (
+  SELECT *,
+         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared: ' || names
+              WHEN COALESCE(sym_function, '') <> '' THEN sym_function
+              WHEN hot_range_name IS NOT NULL THEN hot_range_name
+              WHEN hot_function_start IS NOT NULL AND ranged_source = 'pdata'
+                THEN printf('pdata_0x%X', hot_function_start)
+              WHEN hot_function_start IS NOT NULL THEN printf('sub_0x%X', hot_function_start)
+              ELSE NULL END AS hot_function,
+         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared'
+              WHEN COALESCE(sym_function, '') <> '' THEN 'unique'
+              WHEN hot_range_name IS NOT NULL THEN 'unique'
+              WHEN hot_function_start IS NOT NULL THEN 'derived'
+              ELSE 'unresolved' END AS attribution,
+         CASE WHEN COALESCE(name_count, 1) <= 1 AND COALESCE(sym_function, '') = ''
+                   AND hot_function_start IS NULL
+              THEN 'no symbolizer frame and no derived function range cover hot_rva; the page is the coarse bucket'
+              WHEN COALESCE(sym_function, '') = '' AND COALESCE(hot_file, '') = ''
+              THEN 'no source line: the derived function range names hot_rva but there is no symbolizer file/line'
+              WHEN COALESCE(sym_function, '') <> '' AND COALESCE(hot_file, '') = ''
+              THEN 'no source line: the symbolizer named hot_rva''s function but returned no file/line'
+              ELSE NULL END AS symbol_reason,
+         CASE WHEN hot_function_start IS NULL THEN 'none' ELSE ranged_source END
+           AS function_source,
+         CASE WHEN hot_function_start IS NOT NULL AND COALESCE(sym_function, '') = ''
+                   AND hot_range_name IS NULL
+              THEN true ELSE false END AS function_derived
+  FROM placed
+), measured AS (
+  SELECT labelled.*,
+         CAST(sum(samples) OVER () AS BIGINT) AS total_samples,
+         sum(weight) OVER () AS total_weight,
+         sum(tag_cycles) OVER () AS total_tag_cycles,
+         row_number() OVER (
+           ORDER BY CASE getvariable('uprof_primary_measure')
+                      WHEN 'time_share' THEN weight END DESC NULLS LAST,
+                    samples DESC, page_start, module_name) AS rn
+  FROM labelled
+)
+SELECT m.module_name AS module,
+       printf('0x%X', m.page_start) AS page_start,
+       printf('0x%X', m.page_start + 4096) AS page_end,
+       m.samples, m.weight, m.tag_cycles,
+       m.total_samples, m.total_weight, m.total_tag_cycles, 0 AS sort_key, m.rn,
+       m.sampled_addresses, m.hot_rva, m.hot_samples,
+       m.hot_function, m.hot_file, m.hot_line,
+       m.attribution, m.symbol_reason,
+       COALESCE(m.function_source, 'none') AS function_source, m.function_derived,
+       f."isSystemModule"
+FROM measured m
+LEFT JOIN v_module_flags f ON f.module_name = m.module_name
+WHERE getvariable('top_n') = 0 OR m.rn <= getvariable('top_n')
+UNION ALL
+SELECT '<other regions>', NULL, NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL,
+       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+FROM measured
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;

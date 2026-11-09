@@ -40,6 +40,15 @@ SYMBOLIZED: Final = ("function", "region", "line", "instruction")
 RANGE_SCOPES: Final = ("function", "region")
 # Scopes that can be narrowed to one parent function with --function/--module.
 FUNCTION_SCOPED: Final = ("instruction", "line")
+# The row view each --by projects; views.sql keeps the full schema for direct readers.
+_ROW_VIEWS: Final = {
+    "process": "v_process_rows",
+    "module": "v_module_rows",
+    "function": "v_function_rows",
+    "region": "v_region_rows",
+    "line": "v_line_rows",
+    "instruction": "v_instruction_rows",
+}
 _ALL_NS: Final = "9223372036854775807"
 
 
@@ -153,6 +162,29 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
         "uprof_function_start": ("" if getattr(args, "function_start", None) is None
                                  else str(args.function_start)),
     }
+
+
+def _required_views(by: str, has_dump: bool, scope_filtered: bool,
+                    system_wide: bool) -> set[str]:
+    """The view closure one run needs: its row view and every view Python reads.
+
+    views.sql stays the full schema; loading only this closure skips the CREATE VIEW bind cost of
+    the row views another --by projects. The dump, capture-span, symbol, context and
+    line/instruction roots stay unconditional: guards, headers, coverage, agreement and the
+    instruction context read them for every --by.
+    """
+    # v_dump is a TEMP TABLE (always executed, never a closure member), so its source view is
+    # rooted directly: the closure graph only follows CREATE VIEW bodies and cannot see it.
+    roots = {"v_dump_source", "v_capture_span", "v_pdbs", "v_symbols",
+             "v_public_starts", "v_line_rows", "v_instruction_rows", "v_scoped",
+             "v_scope_totals", "v_capture_modules", _ROW_VIEWS[by]}
+    if has_dump:
+        # _dump_sanity reads v_dump_sanity and, when the report is scoped on a system-wide
+        # capture, v_scope_sanity; _achieved_field reads v_dump_context.
+        roots |= {"v_dump_sanity", "v_dump_context"}
+        if scope_filtered and system_wide:
+            roots.add("v_scope_sanity")
+    return roots
 
 
 def _module_debug_info(connection: object) -> dict[str, bool]:
@@ -1611,10 +1643,13 @@ def run_query_command(args: argparse.Namespace) -> None:
     variables = _variables(args, dump, top, time_start, time_end, sampler.event_column,
                            sample_interval_s, primary_measure)
     variables["uprof_ibs_parquet"] = "" if samples is None else str(samples)
+    views = _required_views(args.by, dump is not None,
+                            _scope_filter_active(args, time_start, time_end), system_wide)
     artifacts: Path | None = None
     success = False
     try:
-        with uprof_db.open_query(cpu_db, [TOOLS_DIR / "views.sql"], variables) as connection:
+        with uprof_db.open_query(cpu_db, [TOOLS_DIR / "views.sql"], variables,
+                                 views) as connection:
             causes: dict[str, str] = {}
             symbolizer: dict[str, Any] | None = None
             symbolized = False

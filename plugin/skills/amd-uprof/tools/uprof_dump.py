@@ -20,12 +20,20 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from uprof_native import TRANSLATE_TIMEOUT, require_uprof, run, translate_command
 from uprof_session import Sampler
 from uprof_util import DUMP_FILENAMES, UprofError, absolute, copy_session, read_text, tail_lines
 
 _TIME_FILTER = re.compile(r"--time-filter[ =]+(\d+(?:\.\d+)?:\d+(?:\.\d+)?)")
+
+# The dump columns time_share reads. A run may hand views.sql a Parquet copy of exactly these
+# columns instead of the ASCII dump; see samples_parquet().
+SAMPLE_COLUMNS: Final = ("DeltaTick", "CPU_Number", "TID", "PID", "Offset", "ModuleName",
+                         "IbsTagToRetCtr")
+# Bump when SAMPLE_COLUMNS or the conversion below changes; it invalidates every samples cache.
+_SAMPLES_FORMAT: Final = 1
 
 
 @dataclass
@@ -47,6 +55,125 @@ def cache_dir(session_dir: Path | str) -> Path:
     full = os.path.normcase(os.path.abspath(os.fspath(session_dir))).rstrip("\\/")
     digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:16]
     return Path(tempfile.gettempdir()) / "uprof-dump-cache" / digest
+
+
+def _samples_paths(dump_path: Path, directory: Path) -> tuple[Path, Path]:
+    name = Path(dump_path).stem + ".samples.parquet"
+    return directory / name, directory / (name + ".json")
+
+
+def _file_key(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_size, stat.st_mtime_ns
+
+
+def _sha256_file(path: Path) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _read_samples_meta(path: Path) -> dict[str, object] | None:
+    try:
+        meta = json.loads(read_text(path))
+    except (UprofError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def _samples_meta_matches(meta: dict[str, object] | None, source: Path,
+                          key: tuple[int, int]) -> bool:
+    return bool(meta
+                and meta.get("format") == _SAMPLES_FORMAT
+                and meta.get("columns") == list(SAMPLE_COLUMNS)
+                and meta.get("source") == str(source)
+                and meta.get("bytes") == key[0]
+                and meta.get("mtime_ns") == key[1])
+
+
+def _write_samples_meta(path: Path, meta: dict[str, object]) -> None:
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(meta, handle, indent=2)
+
+
+def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
+    """A Parquet copy of the dump's SAMPLE_COLUMNS, built or refreshed on demand.
+
+    The sidecar records the source size, mtime and sha256. A matching size and mtime reuse the
+    copy without reading either file; a mismatch compares the sha256, so rewritten bytes reuse it
+    and a changed dump rebuilds it. Any failure returns None, and the caller reads the CSV.
+    """
+    source = Path(dump.path)
+    key = _file_key(source)
+    if key is None:
+        return None
+    directory = dump.cache_dir if dump.cache_dir is not None else cache_dir(session_dir)
+    target, meta_path = _samples_paths(source, directory)
+    meta = _read_samples_meta(meta_path)
+    if target.is_file() and _samples_meta_matches(meta, source, key):
+        return target
+    sha = _sha256_file(source)
+    if sha is None:
+        return None
+    if target.is_file() and meta is not None and meta.get("sha256") == sha:
+        try:
+            _write_samples_meta(meta_path, {**meta, "bytes": key[0], "mtime_ns": key[1]})
+        except OSError:
+            return None
+        return target
+    return _build_samples(source, target, meta_path, directory, sha, key)
+
+
+def _build_samples(source: Path, target: Path, meta_path: Path, directory: Path, sha: str,
+                   key: tuple[int, int]) -> Path | None:
+    try:
+        import duckdb
+    except ImportError:
+        return None
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        handle, staging_name = tempfile.mkstemp(prefix=f".{target.stem}-",
+                                                suffix=".parquet.tmp", dir=directory)
+        os.close(handle)
+    except OSError:
+        return None
+    staging = Path(staging_name)
+    connection = None
+    try:
+        connection = duckdb.connect()
+        # The CSV order is the tie-break for lag() over equal DeltaTick values; keep it.
+        connection.execute("SET preserve_insertion_order = true")
+        columns = ", ".join(f'"{name}"' for name in SAMPLE_COLUMNS)
+        connection.execute(
+            f"COPY (SELECT {columns} FROM read_csv(?, header = true, all_varchar = true)) "
+            "TO ? (FORMAT PARQUET, COMPRESSION zstd)", [str(source), str(staging)])
+        rows = connection.execute("SELECT count(*) FROM read_parquet(?)",
+                                  [str(staging)]).fetchone()[0]
+    except (duckdb.Error, OSError):
+        # Fall back to the CSV: the views report a missing column or a read failure themselves.
+        staging.unlink(missing_ok=True)
+        return None
+    finally:
+        if connection is not None:
+            connection.close()
+    try:
+        os.replace(staging, target)
+        _write_samples_meta(meta_path, {
+            "format": _SAMPLES_FORMAT, "source": str(source), "bytes": key[0],
+            "mtime_ns": key[1], "sha256": sha, "rows": int(rows),
+            "columns": list(SAMPLE_COLUMNS)})
+    except OSError:
+        staging.unlink(missing_ok=True)
+        return None
+    return target
 
 
 def remove_databases(directory: Path) -> None:

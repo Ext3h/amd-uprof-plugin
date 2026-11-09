@@ -107,7 +107,7 @@ SKILL_FRAGMENTS = (
     "read the symbolization warnings on stderr",
     "samples × interval / core_frequency",
     "not a measured cycle count",
-    "`--pdb-file",
+    "`--symbol-path",
     "does not read `_NT_SYMBOL_PATH`",
     "The URL is never contacted",
     "DWARF is read from the module itself",

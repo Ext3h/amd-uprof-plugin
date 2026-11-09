@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, TextIO
@@ -30,6 +31,101 @@ _PUBLIC_NAME = re.compile(r"S_PUB32 \[[^\]]*\] `([^`]*)`\s*$")
 _PUBLIC_ADDRESS = re.compile(r"flags\s*=\s*([^,]*),\s*addr\s*=\s*(\d+):(\d+)")
 
 PDB_PROBE_TIMEOUT: Final = 5 * 60
+
+
+def symbolizer_search_paths(symbol_files: Iterable[str | Path],
+                            symbol_dirs: Iterable[str | Path]
+                            ) -> tuple[list[str], list[str]]:
+    """The debug-file search directories a symbol-path set supplies.
+
+    Every search directory is both a primary and a fallback root, so one flag covers both
+    symbolizer lookups. An explicit non-PDB symbol file contributes its directory, which is how a
+    caller supplies a separate DWARF/debug file.
+    """
+    roots = [os.fspath(path) for path in symbol_dirs]
+    parents = [os.fspath(Path(path).parent) for path in symbol_files
+               if Path(path).suffix.lower() != ".pdb"]
+    combined = list(dict.fromkeys([*roots, *parents]))
+    return combined, combined
+
+
+@dataclass(frozen=True)
+class SourcePaths:
+    """Caller-facing symbol and image paths, split by whether each path is a file or a root.
+
+    symbol_files are explicit symbol/debug files; symbol_dirs are search roots. image_files are
+    explicit module images; image_dirs are searched by the module's basename. The tool probes the
+    filesystem, so a caller never has to choose between a file and a directory flag.
+    """
+
+    symbol_files: tuple[Path, ...] = ()
+    symbol_dirs: tuple[Path, ...] = ()
+    image_files: tuple[Path, ...] = ()
+    image_dirs: tuple[Path, ...] = ()
+
+    @property
+    def debug_dirs(self) -> tuple[Path, ...]:
+        """Search roots for separate debug files: the directory roots and a debug file's parent."""
+        return tuple(Path(path) for path in symbolizer_search_paths(
+            self.symbol_files, self.symbol_dirs)[0])
+
+
+def _probe_paths(values: list[str] | tuple[str, ...] | None, option: str
+                 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    files: list[Path] = []
+    dirs: list[Path] = []
+    for value in values or ():
+        path = absolute(value)
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            dirs.append(path)
+        else:
+            raise UprofError(f"{option} path not found: {path}")
+    return tuple(dict.fromkeys(files)), tuple(dict.fromkeys(dirs))
+
+
+def probe_paths(symbol_paths: list[str] | tuple[str, ...] | None = None,
+                image_paths: list[str] | tuple[str, ...] | None = None) -> SourcePaths:
+    """Split repeatable --symbol-path/--image-path values into explicit files and search roots."""
+    symbol_files, symbol_dirs = _probe_paths(symbol_paths, "--symbol-path")
+    image_files, image_dirs = _probe_paths(image_paths, "--image-path")
+    return SourcePaths(symbol_files, symbol_dirs, image_files, image_dirs)
+
+
+def _image_names(module_name: str, module_path: str | None) -> list[str]:
+    names: list[str] = []
+    for value in (module_path, module_name):
+        if value:
+            name = Path(value).name
+            if name:
+                names.append(name)
+    return list(dict.fromkeys(names))
+
+
+def resolve_image(module_name: str, module_path: str | None,
+                  image_files: tuple[Path, ...] | list[Path] = (),
+                  image_dirs: tuple[Path, ...] | list[Path] = ()
+                  ) -> tuple[Path | None, str | None]:
+    """Resolve the image for one module from --image-path, else from the capture's own path.
+
+    An explicit image file matches by basename; a directory is searched for the basename. The
+    capture's recorded path is the last resort, so a run without --image-path is unchanged. The
+    second value names the source when --image-path supplied the image, and is None otherwise.
+    """
+    names = _image_names(module_name, module_path)
+    folded = {name.casefold() for name in names}
+    for path in image_files:
+        if path.name.casefold() in folded:
+            return path, "explicit --image-path file"
+    for directory in image_dirs:
+        for name in names:
+            candidate = Path(directory) / name
+            if candidate.is_file():
+                return candidate, f"found in --image-path directory {directory}"
+    if module_path and Path(module_path).is_file():
+        return Path(module_path), None
+    return None, None
 
 
 @dataclass
@@ -198,16 +294,15 @@ def _symbol_server_entries() -> list[tuple[Path, str]]:
 
 
 def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
-                    age: int | None, pdb_dirs: list[str] | tuple[str, ...] = (),
-                    pdb_file: str | Path | None = None) -> list[Path]:
+                    age: int | None, symbol_dirs: Iterable[str | Path] = (),
+                    symbol_files: Iterable[str | Path] = ()) -> list[Path]:
     module_name = exe.stem
     names = list(dict.fromkeys([pdb_name, module_name + ".pdb"]))
     candidates: list[Path] = []
-    # An explicit --pdb-file is the caller's choice, so it is probed first; --pdb-dir roots come
-    # before the module's own directory and its keyed <GUID><age> subdirectory.
-    if pdb_file:
-        candidates.append(Path(pdb_file))
-    for directory in pdb_dirs:
+    # Caller-supplied symbol files are the caller's choice, so they are probed first; search
+    # roots come before the module's own directory and its keyed <GUID><age> subdirectory.
+    candidates.extend(Path(path) for path in symbol_files)
+    for directory in symbol_dirs:
         root = Path(directory)
         candidates.extend(root / name for name in names)
         if module_guid and age is not None:
@@ -228,12 +323,13 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
 
 def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str,
                 module_age: int | None,
-                pdb_dirs: list[str] | tuple[str, ...] = (),
-                pdb_file: str | Path | None = None) -> PdbSearch:
+                symbol_dirs: Iterable[str | Path] = (),
+                symbol_files: Iterable[str | Path] = ()) -> PdbSearch:
     """Probe every candidate once; the search carries each rejection as evidence."""
     search = PdbSearch(urls=[url for _root, url in _symbol_server_entries()])
     for path in dict.fromkeys(
-            _candidate_pdbs(exe_path, pdb_name, module_guid, module_age, pdb_dirs, pdb_file)):
+            _candidate_pdbs(exe_path, pdb_name, module_guid, module_age, symbol_dirs,
+                            symbol_files)):
         probe = _probe_pdb(pdbutil, path, module_guid, module_age)
         search.probes.append(probe)
         if probe.status == "accepted":
@@ -524,17 +620,16 @@ def _publics(pdb: Path, out_file: Path, symbolizer: Path, stream: TextIO) -> Pat
 def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                      stream: TextIO = sys.stdout, module_name: str | None = None,
                      found_debug_info: bool | None = None,
-                     pdb_dirs: list[str] | tuple[str, ...] = (),
-                     pdb_file: str | Path | None = None,
-                     debug_dirs: list[str] | tuple[str, ...] = (),
-                     fallback_paths: list[str] | tuple[str, ...] = ()) -> SymbolizedModule:
-    """Symbolize the RVAs into out_dir; return the artifacts and the PDB-search evidence.
+                     symbol_files: Iterable[str | Path] = (),
+                     symbol_dirs: Iterable[str | Path] = ()) -> SymbolizedModule:
+    """Symbolize the RVAs into out_dir; return the artifacts and the symbol-search evidence.
 
-    The PDB is found from the module's debug directory: an explicit --pdb-file, a --pdb-dir, the
-    module's directory or a _NT_SYMBOL_PATH cache, and the chosen file is passed to
-    llvm-symbolizer as --pdb. debug_dirs and fallback_paths go to llvm-symbolizer as
-    --debug-file-directory and --fallback-debug-path for DWARF. When no PDB is accepted the
-    symbolizer still runs once, so its JSON Error object names the missing PDB instead of a
+    The symbol file is found from the module's debug directory: each explicit symbol file, each
+    symbol directory, the module's directory or a _NT_SYMBOL_PATH cache, and the chosen PDB is
+    passed to llvm-symbolizer as its explicit symbol input. A symbol entry is probed by the
+    caller: a file is an explicit symbol/debug file; a directory is a search root and is also
+    passed to llvm-symbolizer as a debug-file search directory. When no PDB is accepted the
+    symbolizer still runs once, so its JSON Error object names the missing file instead of a
     synthetic "GUID/age mismatch".
     """
     exe_input = exe  # llvm-symbolizer records this spelling as ModuleName
@@ -548,11 +643,16 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
     symbolizer_path = require_symbolizer()
     evidence = ModuleEvidence(module_name or exe, exe, found_debug_info=found_debug_info)
     pdb: Path | None = None
+    pdb_files = [Path(path) for path in symbol_files
+                 if Path(path).suffix.lower() == ".pdb"]
+    search_dirs = [Path(path) for path in symbol_dirs]
+    debug_dirs, fallback_paths = symbolizer_search_paths(symbol_files, search_dirs)
 
     if os.name == "nt":
         readobj = find_sibling(symbolizer_path, "llvm-readobj")
         pdbutil = find_sibling(symbolizer_path, "llvm-pdbutil")
         readobj_error = None
+        explicit = next((path for path in pdb_files if path.is_file()), None)
         try:
             pdb_name, module_guid, module_age = _readobj_info(exe_input, readobj)
         except (UprofError, OSError) as exc:
@@ -560,7 +660,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             module_guid = module_age = None
             readobj_error = str(exc)
         evidence.image_guid, evidence.image_age = module_guid, module_age
-        if module_guid is None and not (pdb_file and Path(pdb_file).is_file()):
+        if module_guid is None and explicit is None:
             if readobj is None:
                 evidence.note = "llvm-readobj not found beside llvm-symbolizer or on PATH"
             elif readobj_error:
@@ -569,8 +669,9 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                 evidence.note = "the image's debug directory records no PDB"
             evidence.outcome = ("no_debug_info" if found_debug_info is False
                                 else "readobj_failed")
-            if pdb_file and not Path(pdb_file).is_file():
-                evidence.note = f"--pdb-file not found: {pdb_file}"
+            if pdb_files:
+                evidence.note = ("--symbol-path file not found: "
+                                 + ", ".join(os.fspath(path) for path in pdb_files))
             evidence.symbolizer = _run_symbolizer(
                 symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
                 debug_dirs=debug_dirs, fallback_paths=fallback_paths)
@@ -579,27 +680,26 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
             return SymbolizedModule(parquet, None, None, evidence)
         if module_guid is None:
-            # An explicit --pdb-file remains the caller's choice when the image carries no PDB
+            # An explicit symbol file remains the caller's choice when the image carries no PDB
             # identity; it is used unverified rather than silently ignored.
-            explicit = Path(pdb_file)
             probe = PdbProbe(explicit, "accepted",
-                             detail="caller-supplied --pdb-file, not GUID-verified")
+                             detail="caller-supplied --symbol-path file, not GUID-verified")
             evidence.search = PdbSearch(pdb=explicit, probes=[probe])
             pdb = explicit
-            print("WARNING: the image records no PDB identity; using --pdb-file without GUID "
-                  "verification", file=stream)
+            print("WARNING: the image records no PDB identity; using the --symbol-path file "
+                  "without GUID verification", file=stream)
         elif pdbutil:
             evidence.search = _choose_pdb(pdbutil, exe_path, pdb_name, module_guid, module_age,
-                                          pdb_dirs, pdb_file)
+                                          search_dirs, pdb_files)
             pdb = evidence.search.pdb
         else:
             probes = [
                 PdbProbe(path, "accepted" if path.is_file() else "not_found",
-                         detail=("caller-supplied --pdb-file, used without GUID verification"
-                                 if pdb_file and path == Path(pdb_file)
-                                 else "used without GUID verification"))
+                         detail=("caller-supplied --symbol-path file, used without GUID "
+                                 "verification"
+                                 if path in pdb_files else "used without GUID verification"))
                 for path in dict.fromkeys(_candidate_pdbs(
-                    exe_path, pdb_name, module_guid, module_age, pdb_dirs, pdb_file))]
+                    exe_path, pdb_name, module_guid, module_age, search_dirs, pdb_files))]
             pdb = next((probe.path for probe in probes if probe.status == "accepted"), None)
             evidence.search = PdbSearch(pdb=pdb, probes=probes)
             if pdb:
@@ -716,10 +816,10 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
         if evidence.search.urls:
             facts.append("symbol-server URLs not consulted: "
                          + ", ".join(evidence.search.urls))
-    remedy = ("pass profile --pdb-file <file> or --pdb-dir <dir> for the PDB, "
-              "--debug-file-dir/--fallback-debug-path <dir> for DWARF, or place the matching "
-              "PDB beside the module or in a local srv* cache "
-              "(translate --pdb-dir/--symbol-cache/--symbol-server can stage it), then re-run "
+    remedy = ("pass profile --symbol-path <file|dir> for a symbol or debug file or a search "
+              "root, --image-path <file|dir> when the module image is not at its recorded path, "
+              "or place the matching debug file beside the module or in a local srv* cache "
+              "(translate --symbol-path/--symbol-cache/--symbol-server can stage it), then re-run "
               "profile; a third-party module with no symbols is a finding, not a blocker")
     print(f"WARNING: no symbols resolved for {evidence.module_name} "
           f"({evidence.module_path}): {'; '.join(facts)}; {remedy}", file=stream)
@@ -742,20 +842,20 @@ def _write_pdb_manifest(inputs: list[tuple[str, str]], out_dir: Path) -> Path:
 def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | Path,
                       stream: TextIO = sys.stdout,
                       debug_info: dict[str, bool] | None = None,
-                      pdb_dirs: list[str] | tuple[str, ...] = (),
-                      pdb_file: str | Path | None = None,
-                      debug_dirs: list[str] | tuple[str, ...] = (),
-                      fallback_paths: list[str] | tuple[str, ...] = ()
+                      symbol_files: Iterable[str | Path] = (),
+                      symbol_dirs: Iterable[str | Path] = (),
+                      image_files: Iterable[str | Path] = (),
+                      image_dirs: Iterable[str | Path] = ()
                       ) -> tuple[Path | None, Path | None, Path | None, list[ModuleEvidence]]:
     """Symbolize every module in scope and combine the artifacts.
 
     modules holds (module_name, binary_path, [rva hex text]) groups. debug_info maps a module key
-    to Module.foundDebugInfo so the evidence separates "no debug info recorded" from "PDB
-    missing". pdb_file is an explicit PDB path and pdb_dirs are explicit search roots; debug_dirs
-    and fallback_paths go to llvm-symbolizer as --debug-file-directory and --fallback-debug-path.
-    Returns (symbols.parquet, symbols.publics.csv, symbols.pdbs.csv, evidence); the parquet is
-    None when no module could be symbolized, in which case the SQL reports every address as
-    '<no symbol>'.
+    to Module.foundDebugInfo so the evidence separates "no debug info recorded" from "symbol file
+    missing". symbol_files are explicit symbol/debug files and symbol_dirs are search roots.
+    image_files are explicit module images and image_dirs are searched by the module's basename;
+    the caller probes --symbol-path and --image-path once with probe_paths. Returns
+    (symbols.parquet, symbols.publics.csv, symbols.pdbs.csv, evidence); the parquet is None when
+    no module could be symbolized, in which case the SQL reports every address as '<no symbol>'.
     """
     out_path = absolute(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -765,22 +865,24 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     pdb_inputs: list[tuple[str, str]] = []
     evidence: list[ModuleEvidence] = []
     for index, (module_name, module_path, rvas) in enumerate(modules):
-        if not module_path:
-            item = ModuleEvidence(module_name, module_path,
+        recorded_path = module_path
+        resolved, _source = resolve_image(module_name, module_path, tuple(image_files),
+                                          tuple(image_dirs))
+        if resolved is None:
+            basename = Path(module_path).name if module_path else Path(module_name).name
+            if not module_path:
+                note = ("the capture records no path for this module and no --image-path image "
+                        f"matches {basename}")
+            else:
+                note = (f"{module_path} is not on this host and no --image-path image matches "
+                        f"{basename}")
+            item = ModuleEvidence(module_name, recorded_path,
                                   found_debug_info=(debug_info or {}).get(module_name),
-                                  outcome="module_missing",
-                                  note="the capture records no path for this module")
+                                  outcome="module_missing", note=note)
             evidence.append(item)
             _evidence_line(item, stream)
             continue
-        if not Path(module_path).is_file():
-            item = ModuleEvidence(module_name, module_path,
-                                  found_debug_info=(debug_info or {}).get(module_name),
-                                  outcome="module_missing",
-                                  note=f"{module_path} is not on this host")
-            evidence.append(item)
-            _evidence_line(item, stream)
-            continue
+        module_path = os.fspath(resolved)
         module_dir = out_path / f"module-{index:04d}"
         rva_file = module_dir / "rvas.txt"
         try:
@@ -795,8 +897,7 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
             result = symbolize_module(
                 module_path, rva_file, module_dir, stream=stream, module_name=module_name,
                 found_debug_info=(debug_info or {}).get(module_name),
-                pdb_dirs=pdb_dirs, pdb_file=pdb_file, debug_dirs=debug_dirs,
-                fallback_paths=fallback_paths)
+                symbol_files=symbol_files, symbol_dirs=symbol_dirs)
         except UprofError as exc:
             item = ModuleEvidence(module_name, module_path,
                                   found_debug_info=(debug_info or {}).get(module_name),

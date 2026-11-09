@@ -120,10 +120,11 @@ class PdbProbeTest(unittest.TestCase):
 
         self.assertEqual(errors, [("0x10", "'C:\\x\\amdvlk64.pdb': no such file or directory")])
 
-    def test_an_explicit_pdb_dir_is_searched_before_the_module_dir(self):
+    def test_an_explicit_symbol_directory_is_searched_before_the_module_dir(self):
         with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": ""}):
             candidates = uprof_symbols._candidate_pdbs(
-                Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1, [r"C:\symbols"])
+                Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1,
+                symbol_dirs=[r"C:\symbols"])
 
         self.assertEqual(candidates, [Path(r"C:\symbols\fixture.pdb"),
                                       Path(r"C:\symbols\ABCD1\fixture.pdb"),
@@ -240,11 +241,12 @@ class NoPdbEvidenceTest(unittest.TestCase):
 
 
 class ExplicitPdbTest(unittest.TestCase):
-    def test_an_explicit_pdb_file_is_probed_before_any_search_root(self):
+    def test_an_explicit_symbol_file_is_probed_before_any_search_root(self):
         with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": ""}):
             candidates = uprof_symbols._candidate_pdbs(
                 Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1,
-                [r"C:\symbols"], r"C:\choice\other.pdb")
+                symbol_dirs=[r"C:\symbols"],
+                symbol_files=[Path(r"C:\choice\other.pdb")])
 
         self.assertEqual(candidates[0], Path(r"C:\choice\other.pdb"))
         self.assertEqual(candidates[1], Path(r"C:\symbols\fixture.pdb"))
@@ -285,28 +287,187 @@ class ExplicitPdbTest(unittest.TestCase):
         self.assertIn("another build", result.errors[0][1])
 
 
+class SourcePathProbeTest(unittest.TestCase):
+    """--symbol-path and --image-path each accept a file or a directory, probed by the tool."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="uprof-paths-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.pdb = self.root / "app.pdb"
+        self.pdb.write_bytes(b"pdb")
+        self.debug = self.root / "app.debug"
+        self.debug.write_bytes(b"debug")
+        self.symbols = self.root / "symbols"
+        self.symbols.mkdir()
+        self.image = self.root / "app.exe"
+        self.image.write_bytes(b"MZ")
+        self.images = self.root / "images"
+        self.images.mkdir()
+        (self.images / "app.exe").write_bytes(b"MZ")
+
+    def test_a_symbol_file_and_a_directory_are_told_apart(self):
+        paths = uprof_symbols.probe_paths([str(self.pdb), str(self.symbols)])
+
+        self.assertEqual(paths.symbol_files, (self.pdb,))
+        self.assertEqual(paths.symbol_dirs, (self.symbols,))
+        self.assertEqual(paths.image_files, ())
+        self.assertEqual(paths.image_dirs, ())
+
+    def test_an_image_file_and_a_directory_are_told_apart(self):
+        paths = uprof_symbols.probe_paths(
+            image_paths=[str(self.image), str(self.images)])
+
+        self.assertEqual(paths.image_files, (self.image,))
+        self.assertEqual(paths.image_dirs, (self.images,))
+        self.assertEqual(paths.symbol_files, ())
+
+    def test_a_missing_symbol_path_is_an_error_naming_the_option(self):
+        with self.assertRaisesRegex(UprofError, "--symbol-path"):
+            uprof_symbols.probe_paths([str(self.root / "missing")])
+
+    def test_a_missing_image_path_is_an_error_naming_the_option(self):
+        with self.assertRaisesRegex(UprofError, "--image-path"):
+            uprof_symbols.probe_paths(image_paths=[str(self.root / "missing")])
+
+    def test_a_non_pdb_symbol_file_is_a_debug_search_root(self):
+        paths = uprof_symbols.probe_paths([str(self.debug)])
+
+        self.assertEqual(paths.symbol_files, (self.debug,))
+        self.assertEqual(paths.debug_dirs, (self.root,))
+
+
+class ImageResolutionTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="uprof-images-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.image = self.root / "app.exe"
+        self.image.write_bytes(b"MZ")
+        self.images = self.root / "images"
+        self.images.mkdir()
+        self.found = self.images / "app.exe"
+        self.found.write_bytes(b"MZ")
+
+    def test_an_explicit_image_file_wins_over_a_directory(self):
+        image, source = uprof_symbols.resolve_image(
+            "app.exe", "C:/capture/app.exe", image_files=(self.image,),
+            image_dirs=(self.images,))
+
+        self.assertEqual(image, self.image)
+        self.assertIn("explicit", source)
+
+    def test_an_image_directory_finds_the_module_basename(self):
+        image, source = uprof_symbols.resolve_image(
+            "app.exe", "C:/capture/app.exe", image_dirs=(self.images,))
+
+        self.assertEqual(image, self.found)
+        self.assertIn(str(self.images), source)
+
+    def test_the_captured_path_is_used_without_an_image_path(self):
+        image, source = uprof_symbols.resolve_image("app.exe", str(self.image))
+
+        self.assertEqual(image, self.image)
+        self.assertIsNone(source)
+
+    def test_an_image_directory_resolves_a_module_the_capture_cannot_supply(self):
+        image, _source = uprof_symbols.resolve_image(
+            "app.exe", "C:/capture/app.exe", image_dirs=(self.images,))
+
+        self.assertEqual(image, self.found)
+
+    def test_an_unmatched_image_path_resolves_nothing(self):
+        image, source = uprof_symbols.resolve_image(
+            "other.exe", "C:/capture/other.exe", image_dirs=(self.images,))
+
+        self.assertIsNone(image)
+        self.assertIsNone(source)
+
+
 class ProfilePathOptionsTest(unittest.TestCase):
-    def test_profile_accepts_explicit_symbol_paths(self):
+    def test_profile_accepts_repeatable_neutral_paths(self):
         import uprof
 
         args = uprof.build_parser().parse_args([
             "profile", "--session", "s", "--by", "line",
-            "--pdb-file", "chosen.pdb",
-            "--pdb-dir", "one", "--pdb-dir", "two",
-            "--debug-file-dir", "debug",
-            "--fallback-debug-path", "fallback"])
+            "--symbol-path", "one", "--symbol-path", "two",
+            "--image-path", "three", "--image-path", "four"])
 
-        self.assertEqual(args.pdb_file, "chosen.pdb")
-        self.assertEqual(args.pdb_dir, ["one", "two"])
-        self.assertEqual(args.debug_file_dir, ["debug"])
-        self.assertEqual(args.fallback_debug_path, ["fallback"])
+        self.assertEqual(args.symbol_path, ["one", "two"])
+        self.assertEqual(args.image_path, ["three", "four"])
 
-    def test_profile_has_no_image_search_directory(self):
+    def test_profile_rejects_the_old_names(self):
+        import uprof
+
+        for option in ("--pdb-file", "--pdb-dir", "--debug-file-dir",
+                       "--fallback-debug-path", "--image-dir"):
+            with self.subTest(option=option):
+                with self.assertRaises(SystemExit):
+                    uprof.build_parser().parse_args(
+                        ["profile", "--session", "s", "--by", "line", option, "x"])
+
+    def test_the_process_image_filter_stays_separate_from_image_path(self):
+        import uprof
+
+        args = uprof.build_parser().parse_args([
+            "profile", "--session", "s", "--by", "line",
+            "--image", "%app%", "--image-path", "images"])
+
+        self.assertEqual(args.image, "%app%")
+        self.assertEqual(args.image_path, ["images"])
+
+    def test_translate_accepts_repeatable_symbol_paths(self):
+        import uprof
+
+        args = uprof.build_parser().parse_args([
+            "translate", "--session", "s", "--out-dir", "o",
+            "--symbol-path", "one", "--symbol-path", "two"])
+
+        self.assertEqual(args.symbol_path, ["one", "two"])
+
+    def test_translate_rejects_the_pdb_directory_name(self):
         import uprof
 
         with self.assertRaises(SystemExit):
             uprof.build_parser().parse_args(
-                ["profile", "--session", "s", "--by", "line", "--image-dir", "images"])
+                ["translate", "--session", "s", "--out-dir", "o", "--pdb-dir", "x"])
+
+
+class TranslateSymbolPathTest(unittest.TestCase):
+    def test_each_symbol_path_is_forwarded(self):
+        import uprof_native
+
+        command = uprof_native.translate_command(
+            "uprof", "session", symbol_paths=["one", "two"])
+
+        self.assertEqual(command.count("--symbol-path"), 2)
+        self.assertIn("one", command)
+        self.assertIn("two", command)
+
+
+class ImagePathSymbolizationTest(unittest.TestCase):
+    def test_the_resolved_image_reaches_the_symbolizer(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-image-plumb-") as directory:
+            root = Path(directory)
+            images = root / "images"
+            images.mkdir()
+            image = images / "app.exe"
+            image.write_bytes(b"MZ")
+            evidence = uprof_symbols.ModuleEvidence("app.exe", str(image), outcome="resolved")
+            result = uprof_symbols.SymbolizedModule(
+                root / "symbols.parquet", None, None, evidence)
+            with mock.patch.object(uprof_symbols, "symbolize_module",
+                                   return_value=result) as symbolized, \
+                    mock.patch.object(uprof_symbols, "require_symbolizer",
+                                      return_value=Path("llvm-symbolizer.exe")), \
+                    mock.patch.object(uprof_symbols, "_combine_artifacts",
+                                      return_value=(root / "symbols.parquet", None)):
+                uprof_symbols.symbolize_modules(
+                    [("app.exe", "C:/capture/app.exe", ["0x101B"])], root,
+                    image_dirs=(images,))
+            called_with = symbolized.call_args.args[0]
+
+        self.assertEqual(called_with, str(image))
 
 
 if __name__ == "__main__":

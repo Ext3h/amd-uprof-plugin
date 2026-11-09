@@ -851,7 +851,10 @@ WITH placed AS (
 SELECT * FROM measured;
 
 -- The public function rows: the aggregated rows with --top applied and one remainder row.
+-- measured is materialized because both branches read it, and an inlined CTE would evaluate the
+-- whole aggregation and the hot-RVA ranking once per branch.
 CREATE OR REPLACE TEMP VIEW v_function_rows AS
+WITH measured AS MATERIALIZED (SELECT * FROM v_function_measured)
 SELECT m.function_name AS "function", m.module_name AS module,
        CASE WHEN m.function_start IS NULL THEN NULL
             ELSE printf('0x%X', m.function_start) END AS function_start,
@@ -864,14 +867,14 @@ SELECT m.function_name AS "function", m.module_name AS module,
        m.hot_samples,
        m.total_samples, m.total_weight, m.total_tag_cycles, 0 AS sort_key, m.rn,
        f."isSystemModule"
-FROM v_function_measured m
+FROM measured m
 LEFT JOIN v_module_flags f ON f.module_name = m.module_name
 WHERE getvariable('top_n') = 0 OR m.rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other functions>', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
        CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles), NULL, NULL,
        max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL, NULL
-FROM v_function_measured
+FROM measured
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
 

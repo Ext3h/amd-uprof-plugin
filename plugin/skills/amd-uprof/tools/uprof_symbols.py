@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import csv
+import io
 import json
 import os
 import re
@@ -12,6 +13,7 @@ import sys
 import tempfile
 import threading
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, TextIO
@@ -33,6 +35,9 @@ _PUBLIC_NAME = re.compile(r"S_PUB32 \[[^\]]*\] `([^`]*)`\s*$")
 _PUBLIC_ADDRESS = re.compile(r"flags\s*=\s*([^,]*),\s*addr\s*=\s*(\d+):(\d+)")
 
 PDB_PROBE_TIMEOUT: Final = 5 * 60
+# Module work is native-tool and DuckDB bound and releases the GIL, so a small fixed pool stops
+# short of oversubscribing instead of scaling with the module count.
+MAX_SYMBOLIZATION_WORKERS: Final = 8
 
 
 def symbolizer_search_paths(symbol_files: Iterable[str | Path],
@@ -385,14 +390,19 @@ def _run_symbolizer(symbolizer: Path, exe: str, pdb: Path | None, rva_file: Path
                     out_file: Path, functions: str = "linkage",
                     warn_failure: bool = True,
                     debug_dirs: list[str] | tuple[str, ...] = (),
-                    fallback_paths: list[str] | tuple[str, ...] = ()) -> SymbolizerRun:
+                    fallback_paths: list[str] | tuple[str, ...] = (),
+                    stream: TextIO | None = None) -> SymbolizerRun:
     """Run one pass and keep its exit status and JSON Error objects as evidence.
 
     JSON output carries the resolution error on stdout, not stderr, so an exit 1 with records is
     a partial result whose Error messages name the missing or mismatched PDB. debug_dirs become
     llvm-symbolizer --debug-file-directory options and fallback_paths become
     --fallback-debug-path, which is how a caller supplies a separate DWARF/debug-file location.
+    Warnings go to stream, which defaults to sys.stderr; a concurrent caller passes its own
+    buffer so module text is replayed in order.
     """
+    if stream is None:
+        stream = sys.stderr
     command = [str(symbolizer), f"--obj={exe}"]
     if pdb:
         command.append(f"--pdb={pdb}")
@@ -411,7 +421,7 @@ def _run_symbolizer(symbolizer: Path, exe: str, pdb: Path | None, rva_file: Path
             f"llvm-symbolizer resolved no address ({records} empty Symbol entries); "
             f"the PDB {pdb.name} is probably for another build")))
         if warn_failure:
-            print(f"WARNING: {exe}: {run_result.errors[-1][1]}", file=sys.stderr)
+            print(f"WARNING: {exe}: {run_result.errors[-1][1]}", file=stream)
     if completed.returncode != 0 and not (completed.stdout or "").strip():
         detail = (run_result.errors[0][1] if run_result.errors
                   else tail_lines(run_result.stderr) or "no output")
@@ -421,21 +431,23 @@ def _run_symbolizer(symbolizer: Path, exe: str, pdb: Path | None, rva_file: Path
                   else tail_lines(run_result.stderr))
         suffix = f": {reason}" if reason else ""
         print(f"WARNING: llvm-symbolizer exited {completed.returncode} for {exe}{suffix}; the "
-              "addresses it could not symbolize become '<no symbol>'", file=sys.stderr)
+              "addresses it could not symbolize become '<no symbol>'", file=stream)
     if completed.returncode == 0 and run_result.stderr.strip() and warn_failure:
-        print(f"WARNING: llvm-symbolizer: {tail_lines(run_result.stderr)}", file=sys.stderr)
+        print(f"WARNING: llvm-symbolizer: {tail_lines(run_result.stderr)}", file=stream)
     with open(out_file, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(completed.stdout or "")
     return run_result
 
 
 def _write_parquet(out_file: Path, parquet_file: Path,
-                   short_file: Path | None = None) -> Path | None:
+                   short_file: Path | None = None, stream: TextIO | None = None) -> Path | None:
+    if stream is None:
+        stream = sys.stderr
     try:
         import duckdb
     except ImportError:
         print(f"WARNING: DuckDB not found; cannot write {parquet_file}, so symbolization fails",
-              file=sys.stderr)
+              file=stream)
         return None
     temp_file = parquet_file.with_name(parquet_file.name + ".tmp")
     temp_file.unlink(missing_ok=True)
@@ -493,7 +505,7 @@ COPY (
         with contextlib.suppress(OSError):
             temp_file.unlink()
         print(f"WARNING: could not write {parquet_file}; symbolization fails ({exc})",
-              file=sys.stderr)
+              file=stream)
         return None
 
 # --------------------------------------------------------------- public symbols
@@ -743,9 +755,9 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                                  + ", ".join(os.fspath(path) for path in pdb_files))
             evidence.symbolizer = _run_symbolizer(
                 symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
-                debug_dirs=debug_dirs, fallback_paths=fallback_paths)
+                debug_dirs=debug_dirs, fallback_paths=fallback_paths, stream=stream)
             print("PDB=none", file=stream)
-            parquet = _write_parquet(jsonl_file, parquet_file)
+            parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
             return SymbolizedModule(parquet, None, None, evidence)
         if module_guid is None:
@@ -778,9 +790,9 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             evidence.outcome = ("no_debug_info" if found_debug_info is False else "no_pdb")
             evidence.symbolizer = _run_symbolizer(
                 symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
-                debug_dirs=debug_dirs, fallback_paths=fallback_paths)
+                debug_dirs=debug_dirs, fallback_paths=fallback_paths, stream=stream)
             print("PDB=none", file=stream)
-            parquet = _write_parquet(jsonl_file, parquet_file)
+            parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
             return SymbolizedModule(parquet, None, None, evidence)
         print("PDB_MATCH=yes", file=stream)
@@ -788,7 +800,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
 
     evidence.symbolizer = _run_symbolizer(
         symbolizer_path, exe_input, pdb, rva_path, jsonl_file, debug_dirs=debug_dirs,
-        fallback_paths=fallback_paths)
+        fallback_paths=fallback_paths, stream=stream)
     if (evidence.symbolizer.returncode == 0 and evidence.symbolizer.records
             and evidence.symbolizer.empty_records == evidence.symbolizer.records
             and evidence.symbolizer.errors):
@@ -799,12 +811,12 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
     try:
         _run_symbolizer(symbolizer_path, exe_input, pdb, rva_path, short_file,
                         debug_dirs=debug_dirs, fallback_paths=fallback_paths,
-                        functions="short", warn_failure=False)
+                        functions="short", warn_failure=False, stream=stream)
     except UprofError as exc:
         print(f"WARNING: llvm-symbolizer short-name pass failed; line function identity "
               f"may be less precise ({exc})", file=stream)
         short_file = None
-    parquet = _write_parquet(jsonl_file, parquet_file, short_file)
+    parquet = _write_parquet(jsonl_file, parquet_file, short_file, stream=stream)
     if os.name == "nt" and pdb:
         publics = _publics(pdb, jsonl_file, symbolizer_path, stream)
     else:
@@ -908,6 +920,115 @@ def _write_pdb_manifest(inputs: list[tuple[str, str]], out_dir: Path) -> Path:
     return path
 
 
+@dataclass
+class _ModuleSymbolization:
+    """One module's buffered stream text and artifacts, replayed in module order by the caller.
+
+    output holds the MODULE, PDB, FOLDS and warning lines until every earlier module finished, so
+    concurrent workers cannot reorder them. error is the exception the sequential loop would have
+    raised at this module; the caller writes output first, then re-raises it.
+    """
+
+    module_name: str
+    output: str
+    evidence: ModuleEvidence | None = None
+    parquet: Path | None = None
+    publics: Path | None = None
+    pdb: str | None = None
+    error: Exception | None = None
+
+
+def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list[str],
+                      out_path: Path, debug_info: dict[str, bool] | None,
+                      symbol_files: Iterable[str | Path],
+                      symbol_dirs: Iterable[str | Path],
+                      image_files: Iterable[str | Path],
+                      image_dirs: Iterable[str | Path]) -> _ModuleSymbolization:
+    """Symbolize one module into its own directory; return its text instead of writing it."""
+    output = io.StringIO()
+    evidence: ModuleEvidence | None = None
+    try:
+        recorded_path = module_path
+        resolved, _source = resolve_image(module_name, module_path, tuple(image_files),
+                                          tuple(image_dirs))
+        if resolved is None:
+            basename = Path(module_path).name if module_path else Path(module_name).name
+            if not module_path:
+                note = ("the capture records no path for this module and no --image-path image "
+                        f"matches {basename}")
+            else:
+                note = (f"{module_path} is not on this host and no --image-path image matches "
+                        f"{basename}")
+            evidence = ModuleEvidence(module_name, recorded_path,
+                                      found_debug_info=(debug_info or {}).get(module_name),
+                                      outcome="module_missing", note=note)
+            _evidence_line(evidence, output)
+            return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence)
+        module_path = os.fspath(resolved)
+        module_dir = out_path / f"module-{index:04d}"
+        rva_file = module_dir / "rvas.txt"
+        try:
+            module_dir.mkdir()
+            with open(rva_file, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write("\n".join(rvas) + "\n")
+        except OSError as exc:
+            raise UprofError(f"cannot write the symbol work files in {module_dir}: {exc}; "
+                             "check free space and permissions on the artifact directory") from exc
+        print(f"MODULE: {module_name}: {len(rvas)} addresses in {module_path}", file=output)
+        try:
+            result = symbolize_module(
+                module_path, rva_file, module_dir, stream=output, module_name=module_name,
+                found_debug_info=(debug_info or {}).get(module_name),
+                symbol_files=symbol_files, symbol_dirs=symbol_dirs)
+        except UprofError as exc:
+            evidence = ModuleEvidence(module_name, module_path,
+                                      found_debug_info=(debug_info or {}).get(module_name),
+                                      outcome="failed", note=str(exc))
+            _evidence_line(evidence, output)
+            return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence)
+        evidence = result.evidence
+        _evidence_line(evidence, output)
+        if result.parquet is None:
+            raise UprofError(f"cannot write the symbol artifact for {module_path} in {module_dir}")
+        return _ModuleSymbolization(
+            module_name, output.getvalue(), evidence=evidence, parquet=result.parquet,
+            publics=result.publics, pdb=str(result.pdb) if result.pdb else None)
+    except Exception as exc:
+        return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence,
+                                    error=exc)
+
+
+def _symbolize_tasks(modules: list[tuple[str, str, list[str]]], out_path: Path,
+                     stream: TextIO, debug_info: dict[str, bool] | None,
+                     symbol_files: Iterable[str | Path],
+                     symbol_dirs: Iterable[str | Path],
+                     image_files: Iterable[str | Path],
+                     image_dirs: Iterable[str | Path]) -> list[_ModuleSymbolization]:
+    """Symbolize modules in a bounded pool; write each module's text in module index order."""
+    symbol_files, symbol_dirs = tuple(symbol_files), tuple(symbol_dirs)
+    image_files, image_dirs = tuple(image_files), tuple(image_dirs)
+    workers = max(1, min(len(modules), MAX_SYMBOLIZATION_WORKERS, os.cpu_count() or 1))
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="uprof-symbol")
+    try:
+        futures = [
+            pool.submit(_symbolize_worker, index, module_name, module_path, rvas, out_path,
+                        debug_info, symbol_files, symbol_dirs, image_files, image_dirs)
+            for index, (module_name, module_path, rvas) in enumerate(modules)
+        ]
+        outcomes: list[_ModuleSymbolization] = []
+        for future in futures:
+            outcome = future.result()
+            stream.write(outcome.output)
+            if outcome.error is not None:
+                raise outcome.error
+            outcomes.append(outcome)
+        return outcomes
+    finally:
+        # A failed module stops replay: shutdown(wait=True) awaits the workers already running
+        # and cancels the ones still queued.
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
 def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | Path,
                       stream: TextIO = sys.stdout,
                       debug_info: dict[str, bool] | None = None,
@@ -922,7 +1043,8 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     to Module.foundDebugInfo so the evidence separates "no debug info recorded" from "symbol file
     missing". symbol_files are explicit symbol/debug files and symbol_dirs are search roots.
     image_files are explicit module images and image_dirs are searched by the module's basename;
-    the caller probes --symbol-path and --image-path once with probe_paths. Returns
+    the caller probes --symbol-path and --image-path once with probe_paths. Modules are symbolized
+    concurrently, but their stream text and the combined artifacts keep module order. Returns
     (symbols.parquet, symbols.publics.csv, symbols.pdbs.csv, evidence); the parquet is None when
     no module could be symbolized, in which case the SQL reports every address as '<no symbol>'.
     """
@@ -934,61 +1056,21 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     pdb_inputs: list[tuple[str, str]] = []
     evidence: list[ModuleEvidence] = []
     # The public-symbol scratch lives only while the modules are enumerated; a process that
-    # profiles twice in a row must not reuse the first run's scratch or memo.
+    # profiles twice in a row must not reuse the first run's scratch or memo. The pool joins
+    # every worker before _symbolize_tasks returns, so the finally cannot race a worker.
     _PUBLICS_CACHE.reset()
     try:
-        for index, (module_name, module_path, rvas) in enumerate(modules):
-            recorded_path = module_path
-            resolved, _source = resolve_image(module_name, module_path, tuple(image_files),
-                                              tuple(image_dirs))
-            if resolved is None:
-                basename = Path(module_path).name if module_path else Path(module_name).name
-                if not module_path:
-                    note = ("the capture records no path for this module and no --image-path "
-                            f"image matches {basename}")
-                else:
-                    note = (f"{module_path} is not on this host and no --image-path image "
-                            f"matches {basename}")
-                item = ModuleEvidence(module_name, recorded_path,
-                                      found_debug_info=(debug_info or {}).get(module_name),
-                                      outcome="module_missing", note=note)
-                evidence.append(item)
-                _evidence_line(item, stream)
-                continue
-            module_path = os.fspath(resolved)
-            module_dir = out_path / f"module-{index:04d}"
-            rva_file = module_dir / "rvas.txt"
-            try:
-                module_dir.mkdir()
-                with open(rva_file, "w", encoding="utf-8", newline="\n") as handle:
-                    handle.write("\n".join(rvas) + "\n")
-            except OSError as exc:
-                raise UprofError(f"cannot write the symbol work files in {module_dir}: {exc}; "
-                                 "check free space and permissions on the artifact "
-                                 "directory") from exc
-            print(f"MODULE: {module_name}: {len(rvas)} addresses in {module_path}", file=stream)
-            try:
-                result = symbolize_module(
-                    module_path, rva_file, module_dir, stream=stream, module_name=module_name,
-                    found_debug_info=(debug_info or {}).get(module_name),
-                    symbol_files=symbol_files, symbol_dirs=symbol_dirs)
-            except UprofError as exc:
-                item = ModuleEvidence(module_name, module_path,
-                                      found_debug_info=(debug_info or {}).get(module_name),
-                                      outcome="failed", note=str(exc))
-                evidence.append(item)
-                _evidence_line(item, stream)
-                continue
-            evidence.append(result.evidence)
-            _evidence_line(result.evidence, stream)
-            if result.parquet is None:
-                raise UprofError(f"cannot write the symbol artifact for {module_path} in "
-                                 f"{module_dir}")
-            parquet_inputs.append((module_name, result.parquet))
-            if result.publics:
-                public_inputs.append((module_name, result.publics))
-            if result.pdb:
-                pdb_inputs.append((module_name, str(result.pdb)))
+        outcomes = _symbolize_tasks(modules, out_path, stream, debug_info, symbol_files,
+                                    symbol_dirs, image_files, image_dirs)
+        for outcome in outcomes:
+            if outcome.evidence is not None:
+                evidence.append(outcome.evidence)
+            if outcome.parquet is not None:
+                parquet_inputs.append((outcome.module_name, outcome.parquet))
+            if outcome.publics:
+                public_inputs.append((outcome.module_name, outcome.publics))
+            if outcome.pdb:
+                pdb_inputs.append((outcome.module_name, outcome.pdb))
     finally:
         _PUBLICS_CACHE.reset()
     if not parquet_inputs:

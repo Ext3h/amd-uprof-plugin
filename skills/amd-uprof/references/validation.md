@@ -102,6 +102,16 @@ regression number.
 
 ## Capture-mode fixtures
 
+Status by capture mode:
+
+| capture | status |
+|---|---|
+| supported cycle event | verified |
+| other PMC event | not established |
+| IBS OP, cycle interval | implemented; verified on an external cycle-controlled capture |
+| IBS OP, op interval | verified |
+| IBS fetch | supported, unverified |
+
 Commands: `python tools/uprof.py profile --session <path> --by <granularity> --top all`. Row counts
 are the uncapped views.
 

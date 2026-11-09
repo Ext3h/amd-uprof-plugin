@@ -197,8 +197,11 @@ SELECT * FROM query(CASE
     WHERE false$empty$
   WHEN COALESCE(getvariable('uprof_ibs_parquet'), '') <> ''
     THEN $parquet$SELECT * FROM read_parquet(getvariable('uprof_ibs_parquet'))$parquet$
+  -- The sample only infers types and every column is read as text, so sample_size = 1 reads the
+  -- header and stops instead of scanning data rows at bind time.
   ELSE $csv$SELECT * FROM read_csv(getvariable('uprof_ibs_dump'),
-                                   header = true, all_varchar = true)$csv$
+                                   header = true, all_varchar = true,
+                                   sample_size = 1)$csv$
 END);
 
 -- DeltaTick is a cumulative, start-relative nanosecond timestamp; all columns are read as text so

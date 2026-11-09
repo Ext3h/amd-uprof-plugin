@@ -18,8 +18,9 @@ SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encoding="utf-8")
 SPEC = (TOOLS_DIR.parent / "references" / "spec.md").read_text(encoding="utf-8")
 
-READ_FIRST = ("**Read this file first; do not list the skill tree, session directory, "
-              "references or metadata.**")
+READ_FIRST = ("**Read this file before running any command: no command runs before this read "
+              "completes. Do not list the skill tree, session directory, references or "
+              "metadata.**")
 REGION_MEANING = ("region = 4 KiB address page; samples are grouped by address, not by control "
                   "flow; a page may span unrelated code; the hot RVA is the precise attribution "
                   "and the page is the coarse bucket")
@@ -28,14 +29,23 @@ SKILL_FRAGMENTS = (
     READ_FIRST,
     "## Quickstart",
     "`profile --by process` first",
-    "do not list the skill tree, the session directory, its references or its metadata",
-    "run `tools` only if a command reports `MISSING`",
+    "Do not list the skill tree, the session directory, its references or its metadata, "
+    "and run `tools` only if a command reports `MISSING`",
     "one `profile --by module` text call",
+    "carrying the module's `hot_rva`",
     "do not re-run `--by module --json` to sum",
     "Parse a `--json` document once",
     "do not re-query a row or legend",
     "do not open `callstack.db` or `views.sql`",
     "`profile --by region` is the fallback",
+    "do not run `--by region` after the function output has answered",
+    "function scope is unresolved and `function_source` is `none`",
+    "instruction context is asked for, not as a default drill-down",
+    "`HOT_RVA:` line",
+    "`hot_rva`/`hot_samples`/`hot_sample_share`",
+    "must not be used to claim the sample-hot RVA",
+    "one `CONTEXT:` line",
+    "do not read `uprof_context.py` or `context_help`",
     "profile --by module",
     "profile --by instruction --json",
     "## Worked example: where did CPU time go?",
@@ -95,6 +105,11 @@ REFERENCE_FRAGMENTS = (
     "tools/coverage.sql",
     "profile --by module",
     "One text call answers the module question",
+    "highest-sample address as `hot_rva`",
+    "`HOT_RVA:` summary",
+    "maximum `hot_samples` across all function rows",
+    "must not be used to claim the sample-hot RVA",
+    "one `CONTEXT:` line",
     "isSystemModule = false",
     "neither an OS-shipped predicate nor a kernel predicate",
     "kernel image",
@@ -154,12 +169,15 @@ class DocsGuidanceTest(unittest.TestCase):
     def test_spec_lists_the_derived_function_and_region_granularities(self):
         for fragment in ("--by process\\|module\\|function\\|region\\|line\\|instruction",
                          "function_source", "function_derived", "function_reason",
-                         "hot_samples", "symbol_reason",
+                         "hot_samples", "hot_sample_share", "symbol_reason",
                          "must not write a PE parser",
                          "the tool derives its boundaries from the binary with LLVM",
                          "emits no top-level `function_ranges`",
                          "reduced `function_ranges` with only `derived_modules` and `ranges`",
                          "derived_samples",
+                         "The impact order is the mode's primary measure for process, module",
+                         "maximum\n  `hot_samples` across all function rows",
+                         "must not be used to claim the sample-hot RVA",
                          "function_ranges"):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, SPEC)

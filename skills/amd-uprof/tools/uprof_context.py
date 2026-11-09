@@ -932,9 +932,10 @@ def context_help(legend: dict[str, Any]) -> dict[str, Any]:
             "sample_share is the raw share for this capture mode: read its meaning from "
             "legend.columns.sample_share and its fraction unit and denominator from "
             "legend.share_unit, legend.share_scale and legend.denominators.sample_share; it is "
-            "not a per-op cost and it does not rank rows. The table orders rows by "
-            "legend.impact.order_by, not by sample_share. Imports and symbol frames identify the "
-            "work kind.")
+            "not a per-op cost. The table orders rows by legend.impact.order_by, the mode's "
+            "primary measure: when that measure is sample_share the first row is the sample-hot "
+            "instruction, and when it is time_share the table is not a sample-hot ranking. "
+            "Imports and symbol frames identify the work kind.")
     if "tag_to_retire_share" in columns:
         read += (" The row's tag_to_retire_share and the instruction ibs.IbsTagToRetCtr values "
                  "are total tag-to-retire dwell evidence, not per-op latency.")
@@ -1205,4 +1206,25 @@ def instruction_contexts(connection: object, columns: Sequence[str],
     for module_name, items in planned.items():
         _build_module_contexts(builder, contexts, module_name, items)
     return contexts
+
+
+def context_omission_summary(contexts: Sequence[object | None]) -> str | None:
+    """One stated fact when every emitted context omitted for the same symbolizer failure.
+
+    A symbol-less module fails every row for one reason. Repeating that as N omission objects
+    invites N investigations; the caller prints this once on stderr instead.
+    """
+    omissions = [item for item in contexts
+                 if isinstance(item, dict) and item.get("omitted")]
+    if not omissions or len(omissions) != len(contexts):
+        return None
+    if any(item.get("reason") != "symbolizer_failed" for item in omissions):
+        return None
+    details = sorted({str(item.get("detail")) for item in omissions if item.get("detail")})
+    detail = details[0] if len(details) == 1 else (
+        "llvm-symbolizer resolved no symbol for the instruction rows")
+    return (f"all {len(omissions)} instruction contexts omitted with symbolizer_failed: {detail}; "
+            "this is one missing-symbol finding, not one failure per row; the instruction "
+            "context is optional, so report the module as symbol-less or pass profile "
+            "--pdb-file <file> / --pdb-dir <dir> and re-run")
 

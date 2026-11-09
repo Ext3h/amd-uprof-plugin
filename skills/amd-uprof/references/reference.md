@@ -276,17 +276,19 @@ Function is the semantic unit. A release binary often has no debug symbols, so `
 
 ### Region fallback — 4 KiB address pages
 
-`--by region` is the fallback when no boundary source exists (JIT, packed or symbol-stripped code without `.pdata`) or when a page-level view is what the question needs. region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket. The row keeps `sampled_addresses` so a page with many scattered addresses is distinguishable from a dense one, and `hot_rva`/`hot_samples`/`hot_sample_share` carry the sharpest address. When the hot RVA falls in a derived range, the row names that function and its source; otherwise `function_source` is `none`.
+`--by region` is the fallback only when the function scope is unresolved and `function_source` is `none`, or when an explicitly requested page-level view needs it. region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket. The row keeps `sampled_addresses` so a page with many scattered addresses is distinguishable from a dense one, and `hot_rva`/`hot_samples`/`hot_sample_share` carry the sharpest address. When the hot RVA falls in a derived range, the row names that function and its source; otherwise `function_source` is `none`.
 
 ### Ranking and the hot row
 
-`--by function` and `--by region` order rows and choose the hot RVA by the mode measure: `sample_share` for a cycle-controlled or supported PMC cycle/op capture, `time_share` for an IBS fetch or gap-weighted capture. `--top` therefore selects the top rows in the measure that the row's own `READ` and `WEIGHTS` lines name. `--top all` is not needed to see a head row; `--sort` does not exist.
+`--by process`, `--by module`, `--by function`, `--by region` and `--by instruction` order rows and choose `--top` by the mode measure: `sample_share` for a cycle-controlled, op-count or supported PMC cycle capture, `time_share` for an IBS fetch or gap-weighted capture, and raw `samples` when a PMC event leaves `sample_share` unestablished. `--top` therefore selects the top rows in the measure that the row's own `READ` and `WEIGHTS` lines name. `--top all` is not needed to see a head row; `--sort` does not exist.
+
+The sample-hot address is the `hot_rva` with the largest `hot_samples`, and it is not necessarily inside the top-ranked row: a function may rank first by `time_share` while a different function's address has the most samples. `--by module` carries each module's `hot_rva`/`hot_samples`/`hot_sample_share`; `--by function` prints one `HOT_RVA:` summary computed as the maximum `hot_samples` across all function rows, not the top row's `hot_rva`. Use those for a sample-hot claim. The instruction table follows the same mode measure: it is sample-hot for cycle/op/PMC captures, but for a time-based capture it is `time_share`-ordered and must not be used to claim the sample-hot RVA or that no single instruction exceeds a sample threshold.
 
 ## Module and CPU-time questions
 
 ### Module rollup
 
-`profile --by module [--json]` is the supported rollup: one row per normalized module path with `samples`, `sample_share`, `time_share` (when the mode supplies it), `tag_to_retire_share` (a dump with a non-null tag column), `isSystemModule` and `cpu_seconds`. Use these fields; do not roll functions up in ad-hoc SQL or query `cpu.db` for them. One text call answers the module question; do not also run `--by module --json` to sum third-party rows from the same capture. Drill into the module with `profile --by function`, which derives boundaries when translate named nothing.
+`profile --by module [--json]` is the supported rollup: one row per normalized module path with `samples`, `sample_share`, `time_share` (when the mode supplies it), `tag_to_retire_share` (a dump with a non-null tag column), `isSystemModule`, `cpu_seconds` and the module's highest-sample address as `hot_rva`/`hot_samples`/`hot_sample_share`. Use these fields; do not roll functions up in ad-hoc SQL or query `cpu.db` for them. One text call answers the module question and names its sample-hot address; do not also run `--by module --json` to sum third-party rows from the same capture. Drill into the module with `profile --by function`, which derives boundaries when translate named nothing.
 
 Rank by `sample_share` for a cycle-controlled or PMC cycle capture, where each sample carries fixed cycles; read `time_share` under the mode's meaning otherwise. `--top all` keeps the remainder row out of the total; otherwise `<other modules>` carries the rest and has a NULL `isSystemModule`.
 
@@ -316,7 +318,9 @@ Rank by `sample_share` for a cycle-controlled or PMC cycle capture, where each s
 | `import` | optional `{dll, name, slot_rva}` when the instruction is a `call`/`callq` whose operand is a `*disp(%rip)` or absolute IAT slot; register and indirect non-IAT targets stay raw; an ordinal-only symbol is `#<ordinal>` |
 | `ibs` | optional aggregated IBS OP labels, present when the dump has a row at the RVA and supplies at least one whitelisted field; the summary may carry only `samples` |
 
-`samples` counts how often the hardware selected the instruction for sampling: it is sampling/dispatch frequency, not impact, and a high count does not make the instruction costly. The table's row order — and therefore `--top` and the row cap below — is the time weight (`DeltaTick` gaps); a capture without a dump has no weight and falls back to `samples`, as the ranking section describes. The per-instruction IBS labels are the evidence for the instruction's cost.
+`samples` counts how often the hardware selected the instruction for sampling: it is sampling/dispatch frequency, not impact, and a high count does not make the instruction costly. The table's row order — and therefore `--top` and the row cap below — is the mode's primary measure: `sample_share` for cycle/op/PMC captures and the time weight (`DeltaTick` gaps) for a time-based capture, falling back to `samples` when neither is available. The first row is sample-hot only in the sample-ordered case; a time-ordered table must not be used to claim the sample-hot RVA or that no single instruction exceeds a sample threshold — `HOT_RVA:`/function/region `hot_rva` is that attribution. The per-instruction IBS labels are the evidence for the instruction's cost.
+
+When every context is omitted with `symbolizer_failed`, stderr prints one `CONTEXT:` line naming the shared detail, the count and the remedy; that is one missing-PDB finding, not one failure per row, and `uprof_context.py`/`context_help` need not be read to confirm it.
 
 **IAT resolution.** `llvm-readobj --coff-imports` is parsed as text — its JSON style is not valid JSON. Each `Import` block's `ImportAddressTableRVA` plus `symbol index * slot width` (8 bytes for PE32+, 4 for PE32) gives the slot RVA; symbols keep the block's order and the parenthesized hint/ordinal is not part of the name. A `callq *disp(%rip)` slot is `next_rva + disp`, using the following decoded instruction for the RIP value; an absolute operand is converted to an RVA by subtracting `image_base` before the lookup. `DelayImport` blocks are not IAT slots. Import failure is not fatal: imports stay absent.
 
@@ -347,7 +351,7 @@ Rank by `sample_share` for a cycle-controlled or PMC cycle capture, where each s
 
 The help is JSON-only. Markdown output has no `context_help` and is byte-identical to a run without the context feature.
 
-**Limits and caching.** The 20-row cap counts row slots in the table's row order (its time-weight impact order); a row that omits for another reason still consumes one, and later rows carry `row_cap`. Module metadata, imports, public starts and the symbolization pass's PDB choice are cached per module across rows; each anchor is decoded once for all rows under it, and samples, symbols and IBS are aggregated once per module. Each external call has a five-minute timeout. The feature is PE/COFF-only; ELF modules omit with `metadata_incomplete`.
+**Limits and caching.** The 20-row cap counts row slots in the table's order (the mode's primary measure); a row that omits for another reason still consumes one, and later rows carry `row_cap`. Module metadata, imports, public starts and the symbolization pass's PDB choice are cached per module across rows; each anchor is decoded once for all rows under it, and samples, symbols and IBS are aggregated once per module. Each external call has a five-minute timeout. The feature is PE/COFF-only; ELF modules omit with `metadata_incomplete`.
 
 ## SQL schema — `tools/views.sql`
 
@@ -368,7 +372,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_pdbs` | combined `symbols.pdbs.csv`: the PDB symbolization chose per module; empty when absent |
 | `uprof_functions` | derived function ranges CSV (`module_name,function_start,function_end,function_source,function_name`); empty when no module in scope needs derivation |
 | `uprof_range_attempted` | chr(2)-joined modules for which derivation ran; a fully named module is absent, so `function_reason` says the derivation was skipped rather than failed |
-| `uprof_primary_measure` | `sample_share` or `time_share`, the mode measure that orders `--by function`/`--by region` rows and selects their hot RVA |
+| `uprof_primary_measure` | `sample_share` or `time_share`, the mode measure that orders the row views and selects their `--top` and hot RVA |
 | `uprof_sample_interval_s` | requested cycle interval in seconds, bound for `--by module|function|region`; empty when the interval is a work/fetch count or the core frequency is unavailable, which hides `cpu_seconds` |
 
 | Macro | Definition |
@@ -407,11 +411,11 @@ The 21 views:
 | `v_module_flags` | `Module.isSystemModule` keyed by the full normalized path and its basename, so a short dump `ModuleName` still classifies; empty when the export has no such column |
 | `v_capture_modules` | one row per whole-capture sample: module, context (CPU for a dump, `coreId` for PMC), sample count and kernel-image flag; before scope and time filters; feeds `ACHIEVED` and `KERNEL_COVERAGE` from one scan |
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
-| `v_module_rows` | module path aggregation, ranking, totals, `isSystemModule` and the `<other modules>` remainder |
+| `v_module_rows` | module path aggregation, ranking, totals, `isSystemModule`, the module's `hot_rva`/`hot_samples` and the `<other modules>` remainder |
 | `v_function_rows` | derived range when `uprof_functions` covers the RVA, else `Function.id`; `function_start`/`function_end`/`function_source`/`function_derived`; `<unresolved>` row; attribution `unique`/`derived`/`unresolved`; hot RVA by the mode measure; `<other functions>` |
 | `v_region_rows` | one row per module and 4 KiB address page; `page_start`/`page_end`, `sampled_addresses`, hot RVA and the function that owns it; attribution `unique`/`shared`/`derived`/`unresolved`; `<other regions>` |
 | `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; `<other lines>` |
-| `v_instruction_rows` | one row per module + RVA with innermost annotation; `<other instructions>` |
+| `v_instruction_rows` | one row per module + RVA with innermost annotation, ordered by the mode's primary measure; `<other instructions>` |
 
 - **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-module.sql`, `profile-function.sql`, `profile-region.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `profile-function-modules.sql` names the modules whose samples need derived ranges, `agreement.sql` computes the metric, `coverage.sql` reports per-module symbol coverage, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
 - **Load order.** Bind all inputs, load `views.sql`, then (for `function`/`region`/`line`/`instruction`) run `profile-rvas.sql` on the same connection, symbolize, rebind `uprof_symbols`/`uprof_aliases`; for `function`/`region`, run `profile-function-modules.sql`, derive ranges from the binary with LLVM and rebind `uprof_functions`; then run the projection. `query(CASE ...)` re-binds per query, so the symbol and range inputs may be bound after the views are created. A hand run writes a UTF-8 `SET VARIABLE` file, `.read`s `views.sql`, then the projection, and always uses the original session's `cpu.db`.
@@ -423,20 +427,22 @@ The same capture and arguments produce byte-identical output on every run. Each 
 
 | `--by` | ORDER BY |
 |---|---|
-| `process` | `weight DESC NULLS LAST, samples DESC, pid, process` |
+| `process` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, pid, process` |
+| `module` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module` |
 | `function` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, function_name, module_name` |
 | `region` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module, page_start` |
 | `line` | `weight DESC NULLS LAST, samples DESC, file, line, function, module` |
-| `instruction` | `weight DESC NULLS LAST, samples DESC, module, rva NULLS LAST, function` |
+| `instruction` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module, rva NULLS LAST, function` |
 
-For PMC every weight is NULL, so ranking falls through to `samples`; for the supported cycle event a
-PMC sample is a fixed cycle count, so that order ranks where cycles were spent, and any other PMC
-event has no established ordering claim. Every IBS mode ranks by `time_share`. The JSON
-`legend.impact` (`order_by`, `gap_weighted`, `estimate`) and the `READ` line state this ordering,
-with `gap_weighted` false when the capture records no DeltaTick gaps. For IBS, `sample_share` is
-the raw sample share: a core-cycle share, a dispatched-op frequency share or a fetch-sample
-frequency share as the mode states, never a per-op cost; `tag_to_retire_share`, where the dump
-supplies it, is total tag-to-retire cycles, not per-op latency.
+For a time-based capture the `time_share` weight orders the rows; for a cycle-controlled, op-count or
+supported PMC cycle capture the sample count orders them, which is the same order as
+`sample_share`. For any other PMC event the weight is NULL and the sample count is the only
+available order, with no established ordering claim beyond it. The JSON `legend.impact` (`order_by`,
+`gap_weighted`, `estimate`, `primary_measure`, `primary_measure_reason`) and the `READ` line state
+this ordering, with `gap_weighted` false when the capture records no DeltaTick gaps. For IBS,
+`sample_share` is the raw sample share: a core-cycle share, a dispatched-op frequency share or a
+fetch-sample frequency share as the mode states, never a per-op cost; `tag_to_retire_share`, where
+the dump supplies it, is total tag-to-retire cycles, not per-op latency.
 
 **Display escaping.** Table cells and header values escape controls as described in `SKILL.md`, Output; JSON carries the true characters, so table/JSON parity is modulo that display escaping. `--out-file` receives the same bytes as stdout.
 
@@ -461,7 +467,7 @@ supplies it, is total tag-to-retire cycles, not per-op latency.
   as no attribution and use RVA-level samples plus disassembly.
 - **Instruction context is PE/COFF-only and JSON-only.** It reads PE headers, sections and the COFF
   import table; an ELF module omits with `metadata_incomplete`. Markdown output never carries it,
-  and only the first 20 instruction rows — the top time-weight rows — are expanded.
+  and only the first 20 instruction rows — the rows in the mode's primary-measure order — are expanded.
 - **`--json --out-file` writes no file when the query fails** (including the dump sanity error);
   the reason is on stderr and the exit code is 2, so check the exit code before reading the file.
 - **`<multiple>` is coarse.** A source line carrying several overload signatures is reported as one ambiguous annotation, not split per signature.

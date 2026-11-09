@@ -7,8 +7,10 @@ import csv
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -544,6 +546,63 @@ def _write_pairs(path: Path, pairs: list[tuple[int, str]]) -> None:
         writer.writerows(pairs)
 
 
+class _PublicsCache:
+    """Run-scoped reuse for the per-module public-symbol enumeration.
+
+    One scratch directory serves every module of one symbolization run, and a PDB already
+    enumerated in the run is copied instead of enumerated again. symbolize_modules resets
+    the cache at both ends, so nothing survives the run.
+
+    The module loop runs on a thread pool, so every call gets its own scratch file and the
+    memo is guarded by a lock. A PDB enumerated concurrently by two threads is written twice;
+    both results are valid and the last one is kept.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._directory: tempfile.TemporaryDirectory | None = None
+        self._results: dict[Path, tuple[int, int]] = {}
+        self._outputs: dict[Path, Path] = {}
+        self._counter = 0
+
+    def pairs_path(self) -> Path:
+        """A scratch file no other concurrent enumeration writes to."""
+        with self._lock:
+            if self._directory is None:
+                self._directory = tempfile.TemporaryDirectory(prefix="uprof-publics-")
+            self._counter += 1
+            return Path(self._directory.name) / f"pairs-{self._counter}.csv"
+
+    def cached(self, pdb: Path, out_path: Path) -> tuple[int, int] | None:
+        """Copy a PDB's result already written this run; None when it was not seen."""
+        with self._lock:
+            source = self._outputs.get(pdb)
+            result = self._results.get(pdb)
+        if source is None:
+            return None
+        shutil.copyfile(source, out_path)
+        return result
+
+    def remember(self, pdb: Path, out_path: Path, result: tuple[int, int]) -> None:
+        with self._lock:
+            self._outputs[pdb] = out_path
+            self._results[pdb] = result
+
+    def reset(self) -> None:
+        # Only the bracketing caller resets, and only after every worker has joined.
+        with self._lock:
+            directory, self._directory = self._directory, None
+            self._results.clear()
+            self._outputs.clear()
+            self._counter = 0
+        if directory is not None:
+            with contextlib.suppress(Exception):
+                directory.cleanup()
+
+
+_PUBLICS_CACHE = _PublicsCache()
+
+
 def _aggregate_publics(pairs_path: Path, out_path: Path) -> tuple[int, int]:
     """Group names by RVA in SQL; return (starts, starts with more than one name)."""
     try:
@@ -588,14 +647,19 @@ def public_symbols(out_file: str | Path, pdb_file: str | Path,
     if not pdbutil_path.is_file():
         raise UprofError("llvm-pdbutil not found; install LLVM")
 
+    cached = _PUBLICS_CACHE.cached(pdb_path, out_path)
+    if cached is not None:
+        return cached
+
     sections_run = run([str(pdbutil_path), "dump", "-section-headers", str(pdb_path)])
     publics_run = run([str(pdbutil_path), "dump", "-publics", str(pdb_path)])
     pairs = _pairs((publics_run.stdout or "").splitlines(),
                    _sections((sections_run.stdout or "").splitlines()))
-    with tempfile.TemporaryDirectory(prefix="uprof-publics-") as directory:
-        pairs_path = Path(directory) / "pairs.csv"
-        _write_pairs(pairs_path, pairs)
-        return _aggregate_publics(pairs_path, out_path)
+    pairs_path = _PUBLICS_CACHE.pairs_path()
+    _write_pairs(pairs_path, pairs)
+    result = _aggregate_publics(pairs_path, out_path)
+    _PUBLICS_CACHE.remember(pdb_path, out_path, result)
+    return result
 
 
 def _publics(pdb: Path, out_file: Path, symbolizer: Path, stream: TextIO) -> Path | None:
@@ -864,56 +928,64 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     public_inputs: list[tuple[str, Path]] = []
     pdb_inputs: list[tuple[str, str]] = []
     evidence: list[ModuleEvidence] = []
-    for index, (module_name, module_path, rvas) in enumerate(modules):
-        recorded_path = module_path
-        resolved, _source = resolve_image(module_name, module_path, tuple(image_files),
-                                          tuple(image_dirs))
-        if resolved is None:
-            basename = Path(module_path).name if module_path else Path(module_name).name
-            if not module_path:
-                note = ("the capture records no path for this module and no --image-path image "
-                        f"matches {basename}")
-            else:
-                note = (f"{module_path} is not on this host and no --image-path image matches "
-                        f"{basename}")
-            item = ModuleEvidence(module_name, recorded_path,
-                                  found_debug_info=(debug_info or {}).get(module_name),
-                                  outcome="module_missing", note=note)
-            evidence.append(item)
-            _evidence_line(item, stream)
-            continue
-        module_path = os.fspath(resolved)
-        module_dir = out_path / f"module-{index:04d}"
-        rva_file = module_dir / "rvas.txt"
-        try:
-            module_dir.mkdir()
-            with open(rva_file, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write("\n".join(rvas) + "\n")
-        except OSError as exc:
-            raise UprofError(f"cannot write the symbol work files in {module_dir}: {exc}; "
-                             "check free space and permissions on the artifact directory") from exc
-        print(f"MODULE: {module_name}: {len(rvas)} addresses in {module_path}", file=stream)
-        try:
-            result = symbolize_module(
-                module_path, rva_file, module_dir, stream=stream, module_name=module_name,
-                found_debug_info=(debug_info or {}).get(module_name),
-                symbol_files=symbol_files, symbol_dirs=symbol_dirs)
-        except UprofError as exc:
-            item = ModuleEvidence(module_name, module_path,
-                                  found_debug_info=(debug_info or {}).get(module_name),
-                                  outcome="failed", note=str(exc))
-            evidence.append(item)
-            _evidence_line(item, stream)
-            continue
-        evidence.append(result.evidence)
-        _evidence_line(result.evidence, stream)
-        if result.parquet is None:
-            raise UprofError(f"cannot write the symbol artifact for {module_path} in {module_dir}")
-        parquet_inputs.append((module_name, result.parquet))
-        if result.publics:
-            public_inputs.append((module_name, result.publics))
-        if result.pdb:
-            pdb_inputs.append((module_name, str(result.pdb)))
+    # The public-symbol scratch lives only while the modules are enumerated; a process that
+    # profiles twice in a row must not reuse the first run's scratch or memo.
+    _PUBLICS_CACHE.reset()
+    try:
+        for index, (module_name, module_path, rvas) in enumerate(modules):
+            recorded_path = module_path
+            resolved, _source = resolve_image(module_name, module_path, tuple(image_files),
+                                              tuple(image_dirs))
+            if resolved is None:
+                basename = Path(module_path).name if module_path else Path(module_name).name
+                if not module_path:
+                    note = ("the capture records no path for this module and no --image-path "
+                            f"image matches {basename}")
+                else:
+                    note = (f"{module_path} is not on this host and no --image-path image "
+                            f"matches {basename}")
+                item = ModuleEvidence(module_name, recorded_path,
+                                      found_debug_info=(debug_info or {}).get(module_name),
+                                      outcome="module_missing", note=note)
+                evidence.append(item)
+                _evidence_line(item, stream)
+                continue
+            module_path = os.fspath(resolved)
+            module_dir = out_path / f"module-{index:04d}"
+            rva_file = module_dir / "rvas.txt"
+            try:
+                module_dir.mkdir()
+                with open(rva_file, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write("\n".join(rvas) + "\n")
+            except OSError as exc:
+                raise UprofError(f"cannot write the symbol work files in {module_dir}: {exc}; "
+                                 "check free space and permissions on the artifact "
+                                 "directory") from exc
+            print(f"MODULE: {module_name}: {len(rvas)} addresses in {module_path}", file=stream)
+            try:
+                result = symbolize_module(
+                    module_path, rva_file, module_dir, stream=stream, module_name=module_name,
+                    found_debug_info=(debug_info or {}).get(module_name),
+                    symbol_files=symbol_files, symbol_dirs=symbol_dirs)
+            except UprofError as exc:
+                item = ModuleEvidence(module_name, module_path,
+                                      found_debug_info=(debug_info or {}).get(module_name),
+                                      outcome="failed", note=str(exc))
+                evidence.append(item)
+                _evidence_line(item, stream)
+                continue
+            evidence.append(result.evidence)
+            _evidence_line(result.evidence, stream)
+            if result.parquet is None:
+                raise UprofError(f"cannot write the symbol artifact for {module_path} in "
+                                 f"{module_dir}")
+            parquet_inputs.append((module_name, result.parquet))
+            if result.publics:
+                public_inputs.append((module_name, result.publics))
+            if result.pdb:
+                pdb_inputs.append((module_name, str(result.pdb)))
+    finally:
+        _PUBLICS_CACHE.reset()
     if not parquet_inputs:
         return None, None, None, evidence
     symbols_file, publics_file = _combine_artifacts(parquet_inputs, public_inputs, out_path)

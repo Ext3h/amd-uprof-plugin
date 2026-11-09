@@ -262,6 +262,7 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
     info: dict[str, Any] = {"modules": 0, "ranges": 0, "absent_by_module": {}, "attempted": []}
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
     ranges: list[uprof_functions.FunctionRange] = []
+    candidates: list[tuple[str, str]] = []
     for module_name, module_path, _unresolved, _samples in rows:
         name = str(module_name)
         info["attempted"].append(name)
@@ -272,9 +273,20 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
         if not Path(path).is_file():
             info["absent_by_module"][name] = f"{path} is not on this host"
             continue
-        publics = connection.execute(
-            "SELECT rva, names FROM v_public_starts WHERE module_name = CAST(? AS VARCHAR)",
-            [name]).fetchall()
+        candidates.append((name, path))
+    # One read of the combined public-symbol artifact for every module that will be derived.
+    # Looking the artifact up per module re-read the whole CSV once per module.
+    publics_by_module: dict[str, list] = {}
+    if candidates:
+        placeholders = ", ".join("?" for _ in candidates)
+        rows_publics = connection.execute(
+            "SELECT module_name, rva, names FROM v_public_starts "
+            f"WHERE module_name IN ({placeholders})",
+            [name for name, _path in candidates]).fetchall()
+        for module_name, rva, names in rows_publics:
+            publics_by_module.setdefault(str(module_name), []).append((rva, names))
+    for name, path in candidates:
+        publics = publics_by_module.get(name, [])
         result = uprof_functions.derive_module_ranges(
             name, path, uprof_functions.public_starts_from_names(publics))
         if not result.ranges:

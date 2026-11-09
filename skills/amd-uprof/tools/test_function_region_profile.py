@@ -139,6 +139,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertEqual(entry["attribution"], "unique")
         self.assertIsNone(entry["function_reason"])
         self.assertEqual((entry["hot_rva"], entry["hot_samples"]), ("0x101B", 3))
+        self.assertEqual(entry["other_samples"], 1)
         self.assertAlmostEqual(entry["hot_sample_share"], 3 / 9)
         self.assertFalse(entry["isSystemModule"])
         self.assertIsNotNone(entry["cpu_seconds"])
@@ -151,6 +152,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertTrue(synthetic["function_derived"])
         self.assertEqual(synthetic["attribution"], "derived")
         self.assertEqual((synthetic["hot_rva"], synthetic["hot_samples"]), ("0x1050", 2))
+        self.assertEqual(synthetic["other_samples"], 1)
 
         self.assertEqual(rows["fixture_second"]["function_source"], "export")
         self.assertEqual([row["function"] for row in document["rows"]],
@@ -169,6 +171,8 @@ class FunctionRangeProfileTest(unittest.TestCase):
                       result.stdout)
         self.assertIn("FUNCTION_RANGES: ", result.stderr)
         self.assertIn("HOT_RVA: ", result.stdout)
+        self.assertIn("other_samples 1 = the function's 4 samples minus hot_samples 3",
+                      result.stdout)
         # Every row is resolved, so the minimal path stops here and offers no region call.
         self.assertFalse(any(line.startswith("NEXT: ")
                              for line in result.stdout.splitlines()))

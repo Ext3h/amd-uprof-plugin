@@ -29,7 +29,7 @@ WORKLOAD_KEY = "c:/app/workload.exe"
 NTDLL_KEY = "ntdll.dll"
 HELPER_KEY = "c:/app/helper.dll"
 
-HOT_COLUMNS = ["hot_rva", "hot_samples", "hot_sample_share"]
+HOT_COLUMNS = ["hot_rva", "hot_samples", "other_samples", "hot_sample_share"]
 COLUMNS = ["module", "samples", "sample_share", "time_share", "tag_to_retire_share",
            "isSystemModule", "cpu_seconds"] + HOT_COLUMNS
 
@@ -144,8 +144,10 @@ class ModuleProfileTest(unittest.TestCase):
         # Every sample in this fixture sits at RVA 4096, so the module hot address is that RVA.
         self.assertEqual(by_module[WORKLOAD_KEY]["hot_rva"], "0x1000")
         self.assertEqual(by_module[WORKLOAD_KEY]["hot_samples"], 3)
+        self.assertEqual(by_module[WORKLOAD_KEY]["other_samples"], 0)
         self.assertAlmostEqual(by_module[WORKLOAD_KEY]["hot_sample_share"], 0.5, places=12)
         self.assertEqual(by_module[NTDLL_KEY]["hot_samples"], 2)
+        self.assertEqual(by_module[NTDLL_KEY]["other_samples"], 0)
         self.assertAlmostEqual(by_module[NTDLL_KEY]["hot_sample_share"], 1 / 3, places=12)
 
     def test_module_hot_rva_is_the_highest_sample_address(self):
@@ -161,9 +163,11 @@ class ModuleProfileTest(unittest.TestCase):
         # Workload has two samples at 0x1000 and one at 0x2000; ntdll has one at 0x2000.
         self.assertEqual(by_module[WORKLOAD_KEY]["hot_rva"], "0x1000")
         self.assertEqual(by_module[WORKLOAD_KEY]["hot_samples"], 2)
+        self.assertEqual(by_module[WORKLOAD_KEY]["other_samples"], 1)
         self.assertAlmostEqual(by_module[WORKLOAD_KEY]["hot_sample_share"], 0.5, places=12)
         self.assertEqual(by_module[NTDLL_KEY]["hot_rva"], "0x2000")
         self.assertEqual(by_module[NTDLL_KEY]["hot_samples"], 1)
+        self.assertEqual(by_module[NTDLL_KEY]["other_samples"], 0)
         self.assertAlmostEqual(by_module[NTDLL_KEY]["hot_sample_share"], 0.25, places=12)
 
     def test_cpu_seconds_is_hidden_when_the_interval_is_work_not_time(self):

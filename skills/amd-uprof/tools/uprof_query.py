@@ -657,6 +657,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         columns["hot_rva"] = ("highest-sample RVA in the function; ties pick the lowest RVA; the "
                               "precise attribution inside the range")
         columns["hot_samples"] = "samples at hot_rva"
+        columns["other_samples"] = ("samples outside hot_rva: samples - hot_samples; the rest of "
+                                    "the function, not a second hot address")
         columns["hot_sample_share"] = ("hot_rva's samples as a share of the scoped capture "
                                        "total")
         columns["function_reason"] = ("why this row has no derived range "
@@ -746,6 +748,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             columns["hot_rva"] = ("highest-sample RVA in the module; ties pick the lowest RVA; "
                                   "the precise attribution inside the module")
             columns["hot_samples"] = "samples at hot_rva"
+            columns["other_samples"] = ("samples outside hot_rva: samples - hot_samples; the "
+                                        "rest of the module, not a second hot address")
             columns["hot_sample_share"] = ("hot_rva's samples as a share of the scoped capture "
                                            "total")
         if has_system_module:
@@ -959,7 +963,8 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool) -> list[tuple[str,
                 parts.append(f"{key} = {legend['columns'][key]}")
     if "function_ranges" in legend:
         for key in ("function_start", "function_end", "function_source", "function_derived",
-                    "hot_rva", "hot_samples", "hot_sample_share", "function_reason"):
+                    "hot_rva", "hot_samples", "other_samples", "hot_sample_share",
+                    "function_reason"):
             if key in legend["columns"]:
                 parts.append(f"{key} = {legend['columns'][key]}")
     if "region" in legend["columns"]:
@@ -968,7 +973,7 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool) -> list[tuple[str,
             parts.append(f"{key} = {legend['columns'][key]}")
     if ("hot_rva" in legend["columns"] and "attribution" not in legend["columns"]
             and "region" not in legend["columns"]):
-        for key in ("hot_rva", "hot_samples", "hot_sample_share"):
+        for key in ("hot_rva", "hot_samples", "other_samples", "hot_sample_share"):
             parts.append(f"{key} = {legend['columns'][key]}")
     if "isSystemModule" in legend["columns"]:
         parts.append(f"isSystemModule = {legend['columns']['isSystemModule']}")
@@ -1389,8 +1394,21 @@ def _tag_nonzero(connection: object) -> int:
     return int(rows[0][0] or 0) if rows else 0
 
 
+_MODULE_SUFFIXES: Final = (".dll", ".sys", ".so", ".dylib")
+
+
+def _looks_like_module(pattern: str) -> bool:
+    """True for a pattern whose suffix names a module file, not a process image."""
+    name = pattern.strip().strip('"').replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.endswith(_MODULE_SUFFIXES)
+
+
 def _scope_warning(connection: object, image_pattern: str | None = None) -> list[tuple[str, str]]:
-    """Say that the scope matched nothing, and for --image name what the filter selects."""
+    """Say that the scope matched nothing, and for --image name what the filter selects.
+
+    The text also goes to stderr: with --json or --out-file the WARNING field alone leaves a
+    successful-looking file whose scope is empty.
+    """
     fields: list[tuple[str, str]] = []
     empty = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
     if empty and empty[0][0] == 0:
@@ -1406,7 +1424,11 @@ def _scope_warning(connection: object, image_pattern: str | None = None) -> list
                 message += f"; available images in this capture: {shown}"
             else:
                 message += "; this capture records no process image names"
+            if _looks_like_module(image_pattern):
+                message += ("; the pattern looks like a module name: --image scopes process image "
+                            "names, not modules; use --by module or --function ... --module")
         fields.append(("WARNING", message))
+        print(f"WARNING: {message}", file=sys.stderr)
     return fields
 
 
@@ -1457,20 +1479,24 @@ def _hot_rva_field(connection: object) -> list[tuple[str, str]]:
     try:
         connection.execute("SET VARIABLE top_n = ?", ["0"])
         rows = connection.execute(
-            "SELECT function, module, hot_rva, hot_samples, total_samples FROM v_function_rows "
-            "WHERE hot_samples IS NOT NULL ORDER BY hot_samples DESC, hot_rva LIMIT 1"
+            "SELECT function, module, hot_rva, hot_samples, samples, total_samples "
+            "FROM v_function_rows WHERE hot_samples IS NOT NULL "
+            "ORDER BY hot_samples DESC, hot_rva LIMIT 1"
         ).fetchall()
     finally:
         connection.execute("SET VARIABLE top_n = ?", [str(previous)])
     if not rows:
         return []
-    function, module, hot_rva, hot_samples, total_samples = rows[0]
+    function, module, hot_rva, hot_samples, samples, total_samples = rows[0]
     total = int(total_samples or 0)
-    share = f"{100.0 * int(hot_samples or 0) / total:.1f}%" if total else "an absent share"
+    hot = int(hot_samples or 0)
+    other = int(samples or 0) - hot
+    share = f"{100.0 * hot / total:.1f}%" if total else "an absent share"
     return [("HOT_RVA", (f"{module or '<unknown module>'} {function or '<unresolved>'} at "
-                         f"{hot_rva} with {int(hot_samples or 0)} samples ({share} of the scoped "
-                         "capture); the highest-sample address across the function rows, not "
-                         "the top function row's hot_rva"))]
+                         f"{hot_rva} with {hot} samples ({share} of the scoped capture); "
+                         f"other_samples {other} = the function's {int(samples or 0)} samples "
+                         f"minus hot_samples {hot}; the highest-sample address across the "
+                         "function rows, not the top function row's hot_rva"))]
 
 
 def _agreement_text(connection: object,

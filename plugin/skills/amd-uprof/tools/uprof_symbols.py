@@ -917,35 +917,34 @@ _PUBLICS_CACHE = _PublicsCache()
 
 
 def _aggregate_publics(pairs_path: Path, out_path: Path) -> tuple[int, int]:
-    """Group names by RVA in SQL; return (starts, starts with more than one name)."""
+    """Group names by RVA in memory; return (starts, starts with more than one name).
+
+    The pairs file is the caller's CSV of (rva, name). A name reads as NULL when its field is
+    empty, and NULL names sort after named ones and are left out of the label, which is what
+    the CSV/SQL path this replaces produced.
+    """
+    by_rva: dict[int, list[str | None]] = {}
     try:
-        import duckdb
-    except ImportError as exc:
-        raise UprofError(
-            "the DuckDB Python package is not installed; install it with: "
-            f"{sys.executable} -m pip install duckdb") from exc
-    try:
-        with duckdb.connect() as connection:
-            connection.execute(
-                "CREATE TEMP TABLE pairs AS "
-                "SELECT CAST(rva AS BIGINT) AS rva, name "
-                "FROM read_csv(?, header = true, all_varchar = true)", [str(pairs_path)])
-            starts, shared = connection.execute(
-                "SELECT count(*), count(*) FILTER (WHERE n > 1) "
-                "FROM (SELECT rva, count(*) AS n FROM pairs GROUP BY rva)").fetchone()
-            connection.execute("""
-                COPY (
-                  SELECT rva, count(*) AS name_count,
-                         CASE WHEN count(*) > 4 THEN
-                           array_to_string(list_slice(list_sort(list(name)), 1, 4), ' | ') ||
-                           ' | ... (+' || CAST(count(*) - 4 AS VARCHAR) || ' more)'
-                         ELSE array_to_string(list_sort(list(name)), ' | ') END AS names
-                  FROM pairs GROUP BY rva ORDER BY rva
-                ) TO ? (FORMAT csv, HEADER)
-            """, [str(out_path)])
-    except duckdb.Error as exc:
+        with open(pairs_path, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.reader(handle)
+            next(reader, None)
+            for rva_text, name in reader:
+                by_rva.setdefault(int(rva_text), []).append(name or None)
+        with open(out_path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle, lineterminator="\n")
+            writer.writerow(["rva", "name_count", "names"])
+            for rva in sorted(by_rva):
+                names = by_rva[rva]
+                ordered = sorted(names, key=lambda value: (value is None, value or ""))
+                label = " | ".join(value for value in ordered[:4] if value is not None)
+                if len(ordered) > 4:
+                    label += f" | ... (+{len(ordered) - 4} more)"
+                writer.writerow([rva, len(names), label])
+    except (OSError, ValueError, csv.Error) as exc:
         raise UprofError(f"cannot aggregate public symbols: {exc}") from exc
-    return int(starts), int(shared)
+    starts = len(by_rva)
+    shared = sum(1 for names in by_rva.values() if len(names) > 1)
+    return starts, shared
 
 def public_symbols(out_file: str | Path, pdb_file: str | Path,
                    pdbutil: str | Path) -> tuple[int, int]:
@@ -964,10 +963,11 @@ def public_symbols(out_file: str | Path, pdb_file: str | Path,
     if cached is not None:
         return cached
 
-    sections_run = run([str(pdbutil_path), "dump", "-section-headers", str(pdb_path)])
-    publics_run = run([str(pdbutil_path), "dump", "-publics", str(pdb_path)])
-    pairs = _pairs((publics_run.stdout or "").splitlines(),
-                   _sections((sections_run.stdout or "").splitlines()))
+    # One invocation supplies both records; the run-scoped cache gives each call its own pairs
+    # file in the shared scratch directory.
+    combined = run([str(pdbutil_path), "dump", "-section-headers", "-publics", str(pdb_path)])
+    lines = (combined.stdout or "").splitlines()
+    pairs = _pairs(lines, _sections(lines))
     pairs_path = _PUBLICS_CACHE.pairs_path()
     _write_pairs(pairs_path, pairs)
     result = _aggregate_publics(pairs_path, out_path)
@@ -1214,15 +1214,24 @@ def _combine_artifacts(parquet_inputs: list[tuple[str, Path]],
             connection.execute("COPY combined TO ? (FORMAT parquet)", [str(symbols_file)])
             if public_inputs:
                 connection.execute(
-                    "CREATE TEMP TABLE publics(module_name VARCHAR, rva VARCHAR, "
-                    "name_count INTEGER, names VARCHAR)")
-                for module_name, path in public_inputs:
-                    connection.execute(
-                        "INSERT INTO publics SELECT CAST(? AS VARCHAR), rva, "
-                        "CAST(name_count AS INTEGER), names FROM read_csv(?, header = true, "
-                        "all_varchar = true)", [module_name, str(path)])
-                connection.execute("COPY (SELECT * FROM publics) TO ? (FORMAT csv, HEADER)",
-                                   [str(publics_file)])
+                    "CREATE TEMP TABLE public_files(module_name VARCHAR, path VARCHAR, "
+                    "position BIGINT)")
+                # Forward-slash spellings are what read_csv reports as filename, so the join
+                # cannot miss a file because of the platform's separator.
+                paths = [str(path).replace("\\", "/") for _module_name, path in public_inputs]
+                connection.executemany(
+                    "INSERT INTO public_files VALUES (?, ?, ?)",
+                    [(module_name, paths[position], position)
+                     for position, (module_name, _path) in enumerate(public_inputs)])
+                connection.execute("""
+                    COPY (
+                      SELECT f.module_name, c.rva,
+                             CAST(c.name_count AS INTEGER) AS name_count, c.names
+                      FROM read_csv(?, header = true, all_varchar = true, filename = true) c
+                      JOIN public_files f ON f.path = c.filename
+                      ORDER BY f.position, CAST(c.rva AS BIGINT)
+                    ) TO ? (FORMAT csv, HEADER)
+                """, [paths, str(publics_file)])
     except (duckdb.Error, OSError) as exc:
         raise UprofError(f"cannot combine the symbol artifacts in {out_dir}: {exc}") from exc
     return symbols_file, (publics_file if public_inputs else None)

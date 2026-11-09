@@ -1,8 +1,9 @@
 """`profile --by module` answers the module rollup without ad-hoc SQL against cpu.db.
 
 The rows carry samples, the shares, `Module.isSystemModule` and `cpu_seconds`, so the third-party
-rule and the absolute CPU time are read from supported output (issues #25, #26). The NEXT chain is
-the two-call path process -> module -> instruction rather than every granularity.
+rule and the absolute CPU time are read from supported output (issues #25, #26). The rows also
+carry the module's highest-sample RVA. The NEXT chain is the minimal path process -> module ->
+function rather than every granularity.
 
 Run from this directory: python -m unittest test_module_profile -v
 """
@@ -28,8 +29,9 @@ WORKLOAD_KEY = "c:/app/workload.exe"
 NTDLL_KEY = "ntdll.dll"
 HELPER_KEY = "c:/app/helper.dll"
 
+HOT_COLUMNS = ["hot_rva", "hot_samples", "hot_sample_share"]
 COLUMNS = ["module", "samples", "sample_share", "time_share", "tag_to_retire_share",
-           "isSystemModule", "cpu_seconds"]
+           "isSystemModule", "cpu_seconds"] + HOT_COLUMNS
 
 
 def _meta(cycle_controlled):
@@ -51,7 +53,8 @@ class ModuleProfileTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
-    def session(self, name="cycle", flags=True, cycle_controlled=True, modules=None):
+    def session(self, name="cycle", flags=True, cycle_controlled=True, modules=None,
+                body=None):
         session = self.root / name
         if session.is_dir():
             return session
@@ -78,7 +81,7 @@ class ModuleProfileTest(unittest.TestCase):
         finally:
             connection.close()
         rows = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName,IbsTagToRetCtr"]
-        rows += self._dump_rows()
+        rows += self._dump_rows() if body is None else body
         (session / "IbsOpDump.csv").write_text("\n".join(rows) + "\n", encoding="utf-8",
                                                newline="\n")
         return session
@@ -138,10 +141,34 @@ class ModuleProfileTest(unittest.TestCase):
         # cpu_seconds = samples x interval: three 1 ms samples are 3 ms.
         self.assertAlmostEqual(by_module[WORKLOAD_KEY]["cpu_seconds"], 0.003, places=12)
         self.assertAlmostEqual(by_module[HELPER_KEY]["cpu_seconds"], 0.001, places=12)
+        # Every sample in this fixture sits at RVA 4096, so the module hot address is that RVA.
+        self.assertEqual(by_module[WORKLOAD_KEY]["hot_rva"], "0x1000")
+        self.assertEqual(by_module[WORKLOAD_KEY]["hot_samples"], 3)
+        self.assertAlmostEqual(by_module[WORKLOAD_KEY]["hot_sample_share"], 0.5, places=12)
+        self.assertEqual(by_module[NTDLL_KEY]["hot_samples"], 2)
+        self.assertAlmostEqual(by_module[NTDLL_KEY]["hot_sample_share"], 1 / 3, places=12)
+
+    def test_module_hot_rva_is_the_highest_sample_address(self):
+        rows = [
+            f"1000000000,0,1,100,4096,{WORKLOAD},10",
+            f"2000000000,0,1,100,4096,{WORKLOAD},20",
+            f"3000000000,0,1,100,8192,{WORKLOAD},30",
+            f"4000000000,0,1,100,8192,ntdll.dll,40",
+        ]
+        columns, module_rows = self.run_sql(self.session("hot-rva", body=rows))
+        by_module = {row["module"]: row for row in module_rows}
+
+        # Workload has two samples at 0x1000 and one at 0x2000; ntdll has one at 0x2000.
+        self.assertEqual(by_module[WORKLOAD_KEY]["hot_rva"], "0x1000")
+        self.assertEqual(by_module[WORKLOAD_KEY]["hot_samples"], 2)
+        self.assertAlmostEqual(by_module[WORKLOAD_KEY]["hot_sample_share"], 0.5, places=12)
+        self.assertEqual(by_module[NTDLL_KEY]["hot_rva"], "0x2000")
+        self.assertEqual(by_module[NTDLL_KEY]["hot_samples"], 1)
+        self.assertAlmostEqual(by_module[NTDLL_KEY]["hot_sample_share"], 0.25, places=12)
 
     def test_cpu_seconds_is_hidden_when_the_interval_is_work_not_time(self):
         columns, rows = self.run_sql(self.session(), interval="")
-        self.assertEqual(columns, COLUMNS[:-1])
+        self.assertEqual(columns, [column for column in COLUMNS if column != "cpu_seconds"])
         self.assertNotIn("cpu_seconds", rows[0])
 
     def test_missing_system_module_column_is_null_not_a_classification(self):
@@ -185,20 +212,19 @@ class ModuleProfileTest(unittest.TestCase):
         output = self.profile(session)
         self.assertIn("cpu_seconds absent (the requested interval is a work count", output)
 
-    def test_next_is_the_two_call_module_chain(self):
+    def test_next_is_the_minimal_module_chain(self):
         session = self.session()
         process_calls = self.document(session, "process")["legend"]["next"]
-        self.assertEqual(len(process_calls), 2)
+        self.assertEqual(len(process_calls), 1)
         self.assertIn("--by module", process_calls[0])
-        self.assertIn("--by instruction", process_calls[-1])
-        self.assertTrue(process_calls[-1].endswith("--json"))
+        self.assertNotIn("--by instruction", process_calls[0])
 
+        # The function call decides whether region is needed; module does not pre-empt it.
         module_calls = self.document(session)["legend"]["next"]
-        self.assertEqual(len(module_calls), 3)
+        self.assertEqual(len(module_calls), 1)
         self.assertIn("--by function", module_calls[0])
-        self.assertIn("--by region", module_calls[1])
-        self.assertIn("--by instruction", module_calls[2])
-        self.assertTrue(module_calls[2].endswith("--json"))
+        self.assertNotIn("--by region", module_calls[0])
+        self.assertNotIn("--by instruction", module_calls[0])
 
     def test_truncated_module_rollup_keeps_a_remainder_last(self):
         session = self.session()

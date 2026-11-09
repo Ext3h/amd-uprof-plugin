@@ -266,10 +266,10 @@ _CPU_SECONDS_ATTACHED: Final = (
     "; an attached thread's off-CPU time is not sampled, so this is its running CPU time")
 _NEXT_BY: Final = {
     "process": ("module",),
-    "module": ("function", "region"),
-    "function": ("region",),
+    "module": ("function",),
+    "function": (),
     "region": (),
-    "line": ("instruction",),
+    "line": (),
     "instruction": (),
 }
 _REGION_MEANING: Final = (
@@ -366,10 +366,19 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
     return " ".join(parts)
 
 
-def _next_calls(args: argparse.Namespace) -> list[str]:
-    """Drill-down calls from the current --by; the last one is the JSON document."""
+def _next_calls(args: argparse.Namespace,
+                row_attribution: dict[str, int] | None = None) -> list[str]:
+    """Drill-down calls, stopping at the function unless its rows are unresolved.
+
+    The CPU-time path ends at the derived function. Region is the page fallback, offered only
+    when function rows still carry unresolved samples; instruction context is a separate request,
+    not a default drill-down.
+    """
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
-    calls.append(_profile_command(args, "instruction", json_mode=True))
+    if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
+        calls.append(_profile_command(args, "region"))
+    if args.by == "line":
+        calls.append(_profile_command(args, "instruction", json_mode=True))
     return calls
 
 
@@ -415,7 +424,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             args: argparse.Namespace, system_wide: bool,
             sample_interval_s: float | None = None,
             has_system_module: bool | None = None,
-            range_info: dict[str, Any] | None = None) -> dict[str, Any]:
+            range_info: dict[str, Any] | None = None,
+            row_attribution: dict[str, int] | None = None) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -512,6 +522,12 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
                         "sample per thread is ignored (no gap before it), and NULL sorts last"
                         + (_CYCLE_BASIS if _cycle_controlled(sampler) else ""))
     if args.by in ("module", "region", "function"):
+        if args.by == "module":
+            columns["hot_rva"] = ("highest-sample RVA in the module; ties pick the lowest RVA; "
+                                  "the precise attribution inside the module")
+            columns["hot_samples"] = "samples at hot_rva"
+            columns["hot_sample_share"] = ("hot_rva's samples as a share of the scoped capture "
+                                           "total")
         if has_system_module:
             columns["isSystemModule"] = _SYSTEM_MODULE_MEANING
         else:
@@ -531,22 +547,43 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args),
+        "next": _next_calls(args, row_attribution),
     }
-    if args.by in ("function", "region"):
+    if args.by in ("process", "module", "function", "region"):
         measure, reason = _primary_measure(sampler, dump)
         result["impact"]["order_by"] = [measure] + ([] if measure == "samples" else ["samples"])
         result["impact"]["gap_weighted"] = measure == "time_share"
         result["impact"]["primary_measure"] = measure
         result["impact"]["primary_measure_reason"] = reason
-        noun = "functions" if args.by == "function" else "pages"
-        precise = ("hot_rva is the highest-sample RVA inside the function"
-                   if args.by == "function"
-                   else ("hot_rva is the highest-sample RVA inside the page and the precise "
-                         "attribution"))
+        noun = {"process": "processes", "module": "modules", "function": "functions",
+                "region": "pages"}[args.by]
         result["impact"]["estimate"] = (
             f"{reason}; --top selects the highest rows by {measure}, so the default 20 already "
-            f"carries the hot {noun}; {precise}")
+            f"carries the hot {noun}")
+        if args.by in ("function", "region"):
+            precise = ("hot_rva is the highest-sample RVA inside the function"
+                       if args.by == "function"
+                       else ("hot_rva is the highest-sample RVA inside the page and the precise "
+                             "attribution"))
+            result["impact"]["estimate"] += f"; {precise}"
+    if args.by == "instruction":
+        measure, reason = _primary_measure(sampler, dump)
+        result["impact"]["order_by"] = [measure] + ([] if measure == "samples" else ["samples"])
+        result["impact"]["gap_weighted"] = measure == "time_share"
+        result["impact"]["primary_measure"] = measure
+        result["impact"]["primary_measure_reason"] = reason
+        result["impact"]["estimate"] = (
+            f"{reason}; --top selects the highest instruction rows by {measure}")
+        if measure == "time_share":
+            result["impact"]["sample_hot"] = (
+                "this instruction table is time_share-ordered, not sample-hot: do not read its "
+                "first row as the sample-hot RVA or claim that no single instruction exceeds a "
+                "sample threshold; the function or region hot_rva and hot_samples are the "
+                "sample-hot attribution")
+        else:
+            result["impact"]["sample_hot"] = (
+                "this instruction table is sample-ordered, so its first row is the sample-hot "
+                "instruction and agrees with the function or region hot_rva")
     if args.by == "function":
         info = range_info or {}
         result["function_ranges"] = {
@@ -631,25 +668,35 @@ def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
             read += f"; {_SAMPLE_CAVEAT}"
         read += "; the <other regions> row is last, not ranked"
         return read
-    if legend["impact"]["gap_weighted"]:
+    measure = legend["impact"].get("primary_measure")
+    if measure == "time_share":
         if system_wide:
             read = "time_share ranks where time went; sample_share is not a per-op cost"
         else:
             read = ("time_share ranks where each thread's elapsed time went (PID, TID partition, "
                     "so a migrating thread is counted once); sample_share is not a per-op cost")
-            if sample.startswith("core-cycle share"):
-                read += ("; with fixed cycles per sample, sample_share is the CPU-cycle share "
-                         "and the better ranking")
         if "tag_to_retire_share" in legend["columns"]:
             read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
+    elif measure == "sample_share":
+        if sample.startswith("busy core-cycle"):
+            read = ("sample_share is the busy core-cycle share, so the sample order ranks where "
+                    "cycles were spent")
+        else:
+            read = f"sample_share orders the rows: {sample}"
+            if sample.startswith(("dispatched-op", "fetch-sample")):
+                read += f"; {_SAMPLE_CAVEAT}"
+        if "tag_to_retire_share" in legend["columns"]:
+            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
     elif sample.startswith("not established"):
         read = ("sample_share is not established for this event; rows are ordered by raw sample "
                 "count only, not a time or impact claim")
     else:
         read = ("sample_share is the busy core-cycle share, so the sample order ranks where "
                 "cycles were spent")
+    if "sample_hot" in legend["impact"]:
+        read += f"; {legend['impact']['sample_hot']}"
     read += "; the <other ...> row is last, not ranked"
     return read
 
@@ -687,6 +734,10 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool) -> list[tuple[str,
         for key in ("region", "sampled_addresses", "hot_rva", "hot_samples", "hot_sample_share",
                     "function_source", "function_derived", "symbol_reason"):
             parts.append(f"{key} = {legend['columns'][key]}")
+    if ("hot_rva" in legend["columns"] and "attribution" not in legend["columns"]
+            and "region" not in legend["columns"]):
+        for key in ("hot_rva", "hot_samples", "hot_sample_share"):
+            parts.append(f"{key} = {legend['columns'][key]}")
     if "isSystemModule" in legend["columns"]:
         parts.append(f"isSystemModule = {legend['columns']['isSystemModule']}")
     elif "isSystemModule" in legend["absent"]:
@@ -695,9 +746,11 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool) -> list[tuple[str,
         parts.append(f"cpu_seconds = {legend['columns']['cpu_seconds']}")
     elif "cpu_seconds" in legend["absent"]:
         parts.append(f"cpu_seconds absent ({legend['absent']['cpu_seconds']})")
-    return [("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
-            ("READ", _read_text(legend, system_wide)),
-            ("NEXT", _next_text(legend["next"]))]
+    fields = [("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
+              ("READ", _read_text(legend, system_wide))]
+    if legend["next"]:
+        fields.append(("NEXT", _next_text(legend["next"])))
+    return fields
 
 
 def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
@@ -1160,6 +1213,34 @@ def _row_attribution(connection: object, by: str) -> dict[str, int]:
     return counts
 
 
+def _hot_rva_field(connection: object) -> list[tuple[str, str]]:
+    """The highest-sample address across the function rows, independent of the row order.
+
+    A function row can be low in the table while one address inside it is the hottest sample in
+    the scope, so the summary is the maximum hot_samples over the rows, not the top row's hot_rva.
+    Query the view uncapped so --top cannot hide it; restore the cap before the projection.
+    """
+    previous = connection.execute("SELECT getvariable('top_n')").fetchall()
+    previous = previous[0][0] if previous else 0
+    try:
+        connection.execute("SET VARIABLE top_n = ?", ["0"])
+        rows = connection.execute(
+            "SELECT function, module, hot_rva, hot_samples, total_samples FROM v_function_rows "
+            "WHERE hot_samples IS NOT NULL ORDER BY hot_samples DESC, hot_rva LIMIT 1"
+        ).fetchall()
+    finally:
+        connection.execute("SET VARIABLE top_n = ?", [str(previous)])
+    if not rows:
+        return []
+    function, module, hot_rva, hot_samples, total_samples = rows[0]
+    total = int(total_samples or 0)
+    share = f"{100.0 * int(hot_samples or 0) / total:.1f}%" if total else "an absent share"
+    return [("HOT_RVA", (f"{module or '<unknown module>'} {function or '<unresolved>'} at "
+                         f"{hot_rva} with {int(hot_samples or 0)} samples ({share} of the scoped "
+                         "capture); the highest-sample address across the function rows, not "
+                         "the top function row's hot_rva"))]
+
+
 def _agreement_text(connection: object,
                     values: dict[str, Any] | None = None,
                     by: str | None = None,
@@ -1214,6 +1295,9 @@ def _write_profile(connection: object, args: argparse.Namespace,
             debug_dirs=getattr(args, "debug_file_dir", None) or (),
             fallback_paths=getattr(args, "fallback_debug_path", None) or ())
         help_text = uprof_context.context_help(legend or {})
+        summary = uprof_context.context_omission_summary(contexts)
+        if summary:
+            print(f"CONTEXT: {summary}", file=sys.stderr)
         uprof_db.output_rows(columns, types, rows, fields, args.json, out_path,
                              legend, contexts, help_text)
         return
@@ -1312,7 +1396,7 @@ def run_query_command(args: argparse.Namespace) -> None:
             uprof_db.set_variables(connection, {
                 "uprof_tag_available": "true" if tag_available else "false"})
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
-                             sample_interval_s, has_system_module, range_info)
+                             sample_interval_s, has_system_module, range_info, row_attribution)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             # The legend sits directly below METRIC, after VERSION, before the detailed fields.
             fields[2:2] = _legend_fields(legend, system_wide)
@@ -1325,6 +1409,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 fields.append(achieved)
             fields.extend(_kernel_coverage_field(
                 sampler, kernel_covered, dump_windowed, captured_samples))
+            if args.by == "function":
+                fields.extend(_hot_rva_field(connection))
             coverage = _coverage_values(connection)
             flags = _symbol_path_flags(args)
             fields.extend(_coverage_field(

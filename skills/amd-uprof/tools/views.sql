@@ -618,9 +618,10 @@ ELSE $pmc$
   LEFT JOIN v_module_catalog c ON c.module_name = module_key(m.path)$pmc$ END);
 
 -- Process shares. samples is the per-row sample count summed over the group (one per dump row, the
--- event-column count per PMC row). When --top truncates, one <other processes> row carries the
--- rest so each emitted share still sums to 1.0; a share with a zero denominator is NULL, as an
--- all-zero tag column leaves tag_to_retire_share.
+-- event-column count per PMC row). Rows and --top follow uprof_primary_measure: gap weight for a
+-- time-based capture, otherwise the sample count (the same order as sample_share). When --top
+-- truncates, one <other processes> row carries the rest so each emitted share still sums to 1.0;
+-- a share with a zero denominator is NULL, as an all-zero tag column leaves tag_to_retire_share.
 CREATE OR REPLACE TEMP VIEW v_process_rows AS
 WITH agg AS (
   SELECT pid, process,
@@ -635,7 +636,9 @@ WITH agg AS (
          sum(weight) OVER () AS total_weight,
          sum(tag_cycles) OVER () AS total_tag_cycles,
          row_number() OVER (
-           ORDER BY weight DESC NULLS LAST, samples DESC, pid, process) AS rn
+           ORDER BY CASE getvariable('uprof_primary_measure')
+                      WHEN 'time_share' THEN weight END DESC NULLS LAST,
+                    samples DESC, pid, process) AS rn
   FROM agg
 )
 SELECT process, pid, samples, weight, tag_cycles,
@@ -652,7 +655,9 @@ HAVING count(*) > 0;
 -- Module shares. The key is the normalized module path the dump or UnifiedSampleSeries carries,
 -- the same key line and instruction rows use. isSystemModule comes from Module and stays NULL
 -- when the export predates the column or the module is not in the catalog; the remainder row has
--- no single classification. When --top truncates, one <other modules> row carries the rest.
+-- no single classification. Rows and --top follow uprof_primary_measure: gap weight for a
+-- time-based capture, otherwise the sample count (the same order as sample_share). When --top
+-- truncates, one <other modules> row carries the rest.
 CREATE OR REPLACE TEMP VIEW v_module_rows AS
 WITH agg AS (
   SELECT COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module,
@@ -667,20 +672,34 @@ WITH agg AS (
          sum(weight) OVER () AS total_weight,
          sum(tag_cycles) OVER () AS total_tag_cycles,
          row_number() OVER (
-           ORDER BY weight DESC NULLS LAST, samples DESC, module) AS rn
+           ORDER BY CASE getvariable('uprof_primary_measure')
+                      WHEN 'time_share' THEN weight END DESC NULLS LAST,
+                    samples DESC, module) AS rn
   FROM agg
+), rva_samples AS (
+  SELECT COALESCE(NULLIF(module_name, ''), '<unknown module>') AS module,
+         rva, CAST(sum(samples) AS BIGINT) AS samples
+  FROM v_scoped
+  GROUP BY 1, 2
+), hot_ranked AS (
+  SELECT module, rva AS hot_rva, samples AS hot_samples,
+         row_number() OVER (PARTITION BY module ORDER BY samples DESC, rva) AS hot_rank
+  FROM rva_samples
+), hot AS (
+  SELECT module, hot_rva, hot_samples FROM hot_ranked WHERE hot_rank = 1
 ), flagged AS (
-  SELECT r.*, f."isSystemModule"
+  SELECT r.*, f."isSystemModule", h.hot_rva, h.hot_samples
   FROM ranked r
   LEFT JOIN v_module_flags f ON f.module_name = r.module
+  LEFT JOIN hot h ON h.module = r.module
 )
-SELECT module, samples, weight, tag_cycles, "isSystemModule",
+SELECT module, samples, weight, tag_cycles, "isSystemModule", hot_rva, hot_samples,
        total_samples, total_weight, total_tag_cycles, 0 AS sort_key, rn
 FROM flagged
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other modules>', CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles), NULL,
-       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
+       NULL, NULL, max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
 FROM flagged
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
@@ -911,7 +930,9 @@ HAVING count(*) > 0;
 -- Instruction shares, one row per module + RVA. Each address is annotated with the innermost
 -- symbolizer frame (the executed source position, so an inlined instance names the inlinee);
 -- addresses without a symbol keep their samples as '<no symbol>' with attribution 'unresolved'.
--- When --top truncates, one <other instructions> row carries the rest.
+-- Rows and --top follow uprof_primary_measure: gap weight for a time-based capture, otherwise the
+-- sample count (the same order as sample_share). When --top truncates, one <other instructions>
+-- row carries the rest.
 CREATE OR REPLACE TEMP VIEW v_instruction_rows AS
 WITH placed AS (
   SELECT w.module_name, w.rva, w.samples, w.weight, w.tag_cycles,
@@ -950,7 +971,9 @@ WITH placed AS (
          sum(weight) OVER () AS total_weight,
          sum(tag_cycles) OVER () AS total_tag_cycles,
          row_number() OVER (
-           ORDER BY weight DESC NULLS LAST, samples DESC,
+           ORDER BY CASE getvariable('uprof_primary_measure')
+                      WHEN 'time_share' THEN weight END DESC NULLS LAST,
+                    samples DESC,
                     module_name, rva NULLS LAST, function_name) AS rn
   FROM agg
 )

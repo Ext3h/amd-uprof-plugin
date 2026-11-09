@@ -168,9 +168,22 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertIn("function_source = boundary source of the range: pdb_public, export, pdata",
                       result.stdout)
         self.assertIn("FUNCTION_RANGES: ", result.stderr)
-        self.assertIn("--by region", result.stdout)
-        next_line = next(line for line in result.stdout.splitlines() if line.startswith("NEXT: "))
-        self.assertTrue(next_line.endswith("--json"))
+        self.assertIn("HOT_RVA: ", result.stdout)
+        # Every row is resolved, so the minimal path stops here and offers no region call.
+        self.assertFalse(any(line.startswith("NEXT: ")
+                             for line in result.stdout.splitlines()))
+
+    def test_next_offers_region_only_when_a_function_is_unresolved(self):
+        resolved = self.document(self.fixture_session("resolved-stop"))
+        self.assertEqual(resolved["legend"]["next"], [])
+
+        session = Session(self.root, "unresolved-stop")
+        session.module(1, self.root / "missing.dll", False).function(10, 1, "")
+        session.sample(1, 10, 0x2010, 2)
+        calls = self.document(session.write())["legend"]["next"]
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--by region", calls[0])
+        self.assertNotIn("--by instruction", calls[0])
 
     def test_coverage_and_agreement_split_named_derived_and_unresolved(self):
         result = self.run_profile(self.fixture_session())
@@ -295,6 +308,14 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertEqual([row["function"] for row in document["rows"]],
                          ["fixture_second", "<other functions>"])
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "time_share")
+
+        # The top row is time-hot, but HOT_RVA is the highest-sample address across all rows.
+        output = self.run_profile(session, "--top", "1").stdout
+        hot = next(line for line in output.splitlines() if line.startswith("HOT_RVA: "))
+        self.assertIn("fixture_entry", hot)
+        self.assertIn("0x101B", hot)
+        self.assertIn("2 samples", hot)
+        self.assertNotIn("fixture_second", hot)
 
     def test_ordering_and_top_follow_the_sample_measure(self):
         session = self.ordering_session("cycle-order", fetch=False, second_rva=0x201B)

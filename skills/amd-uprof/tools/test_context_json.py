@@ -319,6 +319,24 @@ class ContextHelpTest(unittest.TestCase):
             "imports_failed", "build_mismatch", "context_failed", "row_cap"})
         self.assertTrue(all(reasons.values()))
 
+    def test_context_omission_summary_is_one_symbolizer_fact(self):
+        contexts = [{"omitted": True, "reason": "symbolizer_failed",
+                     "detail": "llvm-symbolizer: no PDB"} for _ in range(3)]
+        summary = uprof_context.context_omission_summary(contexts)
+
+        self.assertIn("all 3 instruction contexts omitted with symbolizer_failed", summary)
+        self.assertIn("one missing-symbol finding, not one failure per row", summary)
+        self.assertIn("--pdb-file", summary)
+
+    def test_context_omission_summary_needs_every_row_and_one_reason(self):
+        self.assertIsNone(uprof_context.context_omission_summary([]))
+        self.assertIsNone(uprof_context.context_omission_summary([
+            {"omitted": True, "reason": "symbolizer_failed", "detail": "x"},
+            {"anchor": {"kind": "section"}}]))
+        self.assertIsNone(uprof_context.context_omission_summary([
+            {"omitted": True, "reason": "symbolizer_failed"},
+            {"omitted": True, "reason": "row_cap"}]))
+
     def test_document_help_is_deterministic(self):
         first = uprof_context.context_help(self.LEGEND)
         second = uprof_context.context_help(self.LEGEND)

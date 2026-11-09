@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -516,6 +517,143 @@ class PublicsMemoTest(unittest.TestCase):
             self.assertGreater(invoked.call_count, calls)
 
 
+class ParallelSymbolizationTest(unittest.TestCase):
+    """Modules symbolize concurrently, but stream text and artifacts keep module order."""
+
+    def test_concurrent_modules_keep_output_and_artifact_order(self):
+        cpu_count = os.cpu_count() or 1
+        if cpu_count < 2:
+            self.skipTest("a thread pool needs at least two CPUs to run modules together")
+        count = min(4, cpu_count)
+        with tempfile.TemporaryDirectory(prefix="uprof-parallel-") as directory:
+            root = Path(directory)
+            names = [f"module{index}.exe" for index in range(count)]
+            modules = []
+            for name in names:
+                path = root / name
+                path.write_bytes(b"MZ")
+                modules.append((name, str(path), ["0x1000"]))
+            barrier = threading.Barrier(count, timeout=5)
+            threads: set[int] = set()
+
+            def symbolize(exe, rva_file, out_dir, stream, module_name=None, **_kwargs):
+                threads.add(threading.get_ident())
+                barrier.wait()
+                print(f"SYMBOLIZED: {module_name}", file=stream)
+                evidence = uprof_symbols.ModuleEvidence(module_name, exe, outcome="resolved")
+                return uprof_symbols.SymbolizedModule(
+                    Path(out_dir) / "symbols.parquet", None, None, evidence)
+
+            stream = io.StringIO()
+            with mock.patch.object(uprof_symbols, "require_symbolizer",
+                                   return_value=Path("llvm-symbolizer.exe")), \
+                    mock.patch.object(uprof_symbols, "symbolize_module",
+                                      side_effect=symbolize), \
+                    mock.patch.object(uprof_symbols, "_combine_artifacts",
+                                      return_value=(root / "symbols.parquet", None)) as combine:
+                uprof_symbols.symbolize_modules(modules, root / "out", stream=stream)
+
+        expected: list[str] = []
+        for name in names:
+            expected.append(f"MODULE: {name}: 1 addresses in {root / name}")
+            expected.append(f"SYMBOLIZED: {name}")
+        self.assertEqual(stream.getvalue().splitlines(), expected)
+        # Reaching the barrier proves every call was in flight at once; one worker cannot.
+        self.assertGreater(len(threads), 1)
+        parquet_inputs = combine.call_args.args[0]
+        self.assertEqual([name for name, _path in parquet_inputs], names)
+
+
+class SymbolizeTasksErrorReplayTest(unittest.TestCase):
+    def test_an_error_stops_replay_before_later_modules(self):
+        def worker(index, name, path, rvas, out_path, debug_info, symbol_files,
+                   symbol_dirs, image_files, image_dirs):
+            if name == "b.exe":
+                return uprof_symbols._ModuleSymbolization(
+                    name, "MODULE: b.exe\nFAILURE DETAIL\n", error=RuntimeError("boom"))
+            return uprof_symbols._ModuleSymbolization(name, f"MODULE: {name}\n")
+
+        modules = [("a.exe", "", ["0x1"]), ("b.exe", "", ["0x1"]), ("c.exe", "", ["0x1"])]
+        stream = io.StringIO()
+        with mock.patch.object(uprof_symbols, "_symbolize_worker", side_effect=worker):
+            with self.assertRaises(RuntimeError):
+                uprof_symbols._symbolize_tasks(modules, Path("out"), stream, None,
+                                               (), (), (), ())
+
+        output = stream.getvalue()
+        self.assertIn("MODULE: a.exe", output)
+        self.assertIn("FAILURE DETAIL", output)
+        self.assertNotIn("MODULE: c.exe", output)
+
+
+class PublicsCacheResetTest(unittest.TestCase):
+    def setUp(self):
+        uprof_symbols._PUBLICS_CACHE.reset()
+        self.addCleanup(uprof_symbols._PUBLICS_CACHE.reset)
+
+    def _seed(self):
+        cache = uprof_symbols._PUBLICS_CACHE
+        scratch = cache.pairs_path()
+        cache.remember(Path("x.pdb"), Path("out.csv"), (1, 2))
+        return scratch
+
+    def _assert_cleared(self):
+        cache = uprof_symbols._PUBLICS_CACHE
+        self.assertEqual(cache._results, {})
+        self.assertEqual(cache._outputs, {})
+        self.assertEqual(cache._counter, 0)
+        self.assertIsNone(cache._directory)
+
+    def test_a_successful_symbolization_clears_the_cache(self):
+        cache = uprof_symbols._PUBLICS_CACHE
+        scratch = self._seed()
+
+        def tasks(*_args, **_kwargs):
+            self.assertEqual(cache._results, {})
+            cache.pairs_path()
+            cache.remember(Path("y.pdb"), Path("out2.csv"), (3, 4))
+            return []
+
+        with tempfile.TemporaryDirectory(prefix="uprof-reset-ok-") as tmp, \
+                mock.patch.object(uprof_symbols, "require_symbolizer",
+                                  return_value=Path("llvm-symbolizer.exe")), \
+                mock.patch.object(uprof_symbols, "_symbolize_tasks", side_effect=tasks):
+            uprof_symbols.symbolize_modules([], Path(tmp), stream=io.StringIO())
+
+        self._assert_cleared()
+        self.assertFalse(scratch.parent.exists())
+
+    def test_a_failed_symbolization_clears_the_cache_and_the_next_run_reenumerates(self):
+        cache = uprof_symbols._PUBLICS_CACHE
+        scratch = self._seed()
+
+        def tasks(*_args, **_kwargs):
+            self.assertEqual(cache._results, {})
+            cache.pairs_path()
+            cache.remember(Path("y.pdb"), Path("out2.csv"), (3, 4))
+            raise RuntimeError("boom")
+
+        with tempfile.TemporaryDirectory(prefix="uprof-reset-fail-") as tmp:
+            with mock.patch.object(uprof_symbols, "require_symbolizer",
+                                   return_value=Path("llvm-symbolizer.exe")), \
+                    mock.patch.object(uprof_symbols, "_symbolize_tasks", side_effect=tasks):
+                with self.assertRaises(RuntimeError):
+                    uprof_symbols.symbolize_modules([], Path(tmp), stream=io.StringIO())
+            self._assert_cleared()
+            self.assertFalse(scratch.parent.exists())
+
+            root = Path(tmp)
+            pdb = root / "x.pdb"
+            pdb.write_bytes(b"pdb")
+            pdbutil = root / "llvm-pdbutil.exe"
+            pdbutil.write_bytes(b"")
+            stdout = ("SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
+                      "1 | S_PUB32 [size = 8] `foo`\n"
+                      "        flags = function, addr = 0001:10\n")
+            completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, stdout, "")
+            with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
+                uprof_symbols.public_symbols(root / "again.csv", pdb, pdbutil)
+            self.assertGreater(invoked.call_count, 0)
 
 
 if __name__ == "__main__":

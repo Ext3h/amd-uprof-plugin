@@ -207,8 +207,9 @@ END);
 -- maximum. Only an unsigned decimal integer cell counts; NULL, negative, fractional, exponent and
 -- nan/inf spellings stay NULL and are excluded from the tag_to_retire_share denominator rather
 -- than being charged the maximum. The empty branch gives a PMC capture a typed, empty relation so
--- the downstream views bind without touching a dump.
-CREATE OR REPLACE TEMP VIEW v_dump AS
+-- the downstream views bind without touching a dump. Materialized as a table: the ASCII dump is
+-- parsed once per run, and every downstream view scans these typed rows instead of re-reading it.
+CREATE OR REPLACE TEMP TABLE v_dump AS
 SELECT * FROM query(CASE
   WHEN NOT getvariable('has_dump') THEN $empty$
     SELECT CAST(NULL AS BIGINT) AS delta_tick,
@@ -695,14 +696,18 @@ HAVING count(*) > 0;
 -- when the export predates the column or the module is not in the catalog; the remainder row has
 -- no single classification. Rows and --top follow uprof_primary_measure: gap weight for a
 -- time-based capture, otherwise the sample count (the same order as sample_share). When --top
--- truncates, one <other modules> row carries the rest.
+-- truncates, one <other modules> row carries the rest. The module totals and the per-module RVA
+-- samples share one materialized scan of v_scoped; a second reference would evaluate it again.
 CREATE OR REPLACE TEMP VIEW v_module_rows AS
-WITH agg AS (
-  SELECT COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module,
-         CAST(sum(w.samples) AS BIGINT) AS samples,
-         sum(w.weight) AS weight,
-         sum(w.tag_cycles) AS tag_cycles
+WITH scanned AS MATERIALIZED (
+  SELECT w.module_name, w.rva, w.samples, w.weight, w.tag_cycles
   FROM v_scoped w
+), agg AS (
+  SELECT COALESCE(NULLIF(module_name, ''), '<unknown module>') AS module,
+         CAST(sum(samples) AS BIGINT) AS samples,
+         sum(weight) AS weight,
+         sum(tag_cycles) AS tag_cycles
+  FROM scanned
   GROUP BY 1
 ), ranked AS (
   SELECT *,
@@ -717,7 +722,7 @@ WITH agg AS (
 ), rva_samples AS (
   SELECT COALESCE(NULLIF(module_name, ''), '<unknown module>') AS module,
          rva, CAST(sum(samples) AS BIGINT) AS samples
-  FROM v_scoped
+  FROM scanned
   GROUP BY 1, 2
 ), hot_ranked AS (
   SELECT module, rva AS hot_rva, samples AS hot_samples,

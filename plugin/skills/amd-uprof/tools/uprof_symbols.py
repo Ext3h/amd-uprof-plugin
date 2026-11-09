@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import csv
+import hashlib
 import io
 import json
 import os
@@ -18,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, TextIO
 
-from uprof_native import find_sibling, require_symbolizer, run
+from uprof_native import find_sibling, require_symbolizer, run, symbol_cache_dir
 from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
 
 _GUID = re.compile(r"^\s*GUID:\s*(.+)$")
@@ -213,6 +214,22 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
     guid = age = None
     if not readobj:
         return pdb_name, guid, age
+    # The debug directory belongs to the image bytes, so the probe result is keyed on the image
+    # and readobj build and survives until either changes.
+    image_id = artifact_file_identity(exe)
+    readobj_id = artifact_file_identity(readobj)
+    cache_key = None
+    if artifact_identity_present(image_id) and artifact_identity_present(readobj_id):
+        cache_key = artifact_key({"kind": "readobj", "image": image_id, "readobj": readobj_id})
+        cached = load_cached_artifacts("readobj", cache_key, ("info.json",))
+        if cached is not None:
+            try:
+                data = json.loads((cached[0] / "info.json").read_text(encoding="utf-8"))
+                return (str(data["pdb_name"]),
+                        None if data.get("guid") is None else str(data["guid"]),
+                        None if data.get("age") is None else int(data["age"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
     completed = run([str(readobj), "--coff-debug-directory", exe],
                     timeout=PDB_PROBE_TIMEOUT)
     if completed.returncode != 0:
@@ -230,6 +247,10 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
                 guid = _normalize_guid(value)
             else:
                 age = _as_int(value)
+    if cache_key is not None:
+        store_cached_text("readobj", cache_key, "info.json",
+                          json.dumps({"pdb_name": pdb_name, "guid": guid, "age": age},
+                                     sort_keys=True) + "\n")
     return pdb_name, guid, age
 
 
@@ -332,16 +353,46 @@ def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str,
                 module_age: int | None,
                 symbol_dirs: Iterable[str | Path] = (),
                 symbol_files: Iterable[str | Path] = ()) -> PdbSearch:
-    """Probe every candidate once; the search carries each rejection as evidence."""
-    search = PdbSearch(urls=[url for _root, url in _symbol_server_entries()])
-    for path in dict.fromkeys(
-            _candidate_pdbs(exe_path, pdb_name, module_guid, module_age, symbol_dirs,
-                            symbol_files)):
+    """Probe every candidate once; the search carries each rejection as evidence.
+
+    The result is cached on the pdbutil build and every candidate's identity, so a PDB that
+    appears, disappears or is rebuilt changes the key. A tool-level probe failure is not stored.
+    """
+    candidates = list(dict.fromkeys(_candidate_pdbs(
+        exe_path, pdb_name, module_guid, module_age, symbol_dirs, symbol_files)))
+    urls = [url for _root, url in _symbol_server_entries()]
+    pdbutil_id = artifact_file_identity(pdbutil)
+    cache_key = None
+    if artifact_identity_present(pdbutil_id):
+        cache_key = artifact_key({
+            "kind": "pdb-search",
+            "pdbutil": pdbutil_id,
+            "pdb_name": pdb_name,
+            "guid": module_guid,
+            "age": module_age,
+            "symbol_dirs": [os.path.normcase(os.path.abspath(os.fspath(path)))
+                            for path in symbol_dirs],
+            "symbol_files": [os.path.normcase(os.path.abspath(os.fspath(path)))
+                             for path in symbol_files],
+            "urls": urls,
+            "candidates": [[os.path.normcase(os.path.abspath(os.fspath(path))),
+                            artifact_file_identity(path)] for path in candidates],
+        })
+        cached = load_cached_artifacts("pdb-search", cache_key, ("search.json",))
+        if cached is not None:
+            search = _search_from_data(_read_json(cached[0] / "search.json"))
+            if search is not None:
+                return search
+    search = PdbSearch(urls=urls)
+    for path in candidates:
         probe = _probe_pdb(pdbutil, path, module_guid, module_age)
         search.probes.append(probe)
         if probe.status == "accepted":
             search.pdb = path
-            return search
+            break
+    if cache_key is not None and all(probe.status != "probe_failed" for probe in search.probes):
+        store_cached_text("pdb-search", cache_key, "search.json",
+                          json.dumps(_search_data(search), sort_keys=True) + "\n")
     return search
 
 
@@ -507,6 +558,256 @@ COPY (
         print(f"WARNING: could not write {parquet_file}; symbolization fails ({exc})",
               file=stream)
         return None
+
+# ---------------------------------------------------------------- artifact cache
+
+# Bump when a cached artifact's content or layout changes; other versions are ignored.
+ARTIFACT_CACHE_FORMAT: Final = 1
+_ARTIFACT_CACHE_DIR: Final = "uprof-profile-artifacts"
+
+
+def _cache_root(kind: str) -> Path | None:
+    """The per-user cache directory for one artifact kind, or None when it is unusable.
+
+    It sits beside the symbol cache the tool already uses; cache I/O is best-effort and never
+    fails a profile.
+    """
+    try:
+        root = symbol_cache_dir() / _ARTIFACT_CACHE_DIR / f"v{ARTIFACT_CACHE_FORMAT}" / kind
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+    except OSError:
+        return None
+
+
+def artifact_key(payload: object) -> str:
+    """A stable cache key for a JSON-serializable description of every artifact input."""
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def artifact_file_identity(path: str | Path | None) -> dict[str, object]:
+    """Cheap build identity for a file: normalized absolute path, size and mtime.
+
+    A rebuilt file changes size or mtime; a missing path records that instead of a build.
+    """
+    if path is None:
+        return {"path": None}
+    resolved = os.path.normcase(os.path.abspath(os.fspath(path)))
+    try:
+        stat = os.stat(resolved)
+    except OSError:
+        return {"path": resolved, "missing": True}
+    return {"path": resolved, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def artifact_file_digest(path: str | Path) -> str:
+    """sha256 of a file's bytes, read in blocks so a large input never loads at once."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def artifact_identity_present(identity: dict[str, object]) -> bool:
+    """True when the identity came from an existing file; only those may key a cache entry.
+
+    This also keeps tests that substitute fake tool paths from touching the cache.
+    """
+    return identity.get("path") is not None and not identity.get("missing")
+
+
+def load_cached_artifacts(kind: str, key: str,
+                          names: Iterable[str]) -> tuple[Path, dict[str, object]] | None:
+    """The directory and metadata of a complete cache entry, or None when it is absent.
+
+    The metadata is written last, so its presence is what makes an entry readable.
+    """
+    root = _cache_root(kind)
+    if root is None:
+        return None
+    directory = root / key[:2] / key
+    try:
+        meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict) or meta.get("format") != ARTIFACT_CACHE_FORMAT:
+        return None
+    if any(not (directory / name).is_file() for name in names):
+        return None
+    return directory, meta
+
+
+def _temporary_beside(directory: Path, name: str) -> Path:
+    """An unused temp path in directory, unique to this writer."""
+    handle, path = tempfile.mkstemp(prefix=name + ".", suffix=".tmp", dir=directory)
+    os.close(handle)
+    return Path(path)
+
+
+def _remove_quietly(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _write_cache_meta(directory: Path, meta: dict[str, object]) -> None:
+    temporary = _temporary_beside(directory, "meta.json")
+    try:
+        with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump({**meta, "format": ARTIFACT_CACHE_FORMAT}, handle, sort_keys=True)
+            handle.write("\n")
+        os.replace(temporary, directory / "meta.json")
+    except OSError:
+        _remove_quietly(temporary)
+        raise
+
+
+def store_cached_artifacts(kind: str, key: str, files: dict[str, Path],
+                           meta: dict[str, object] | None = None) -> None:
+    """Copy finished artifacts into the cache, metadata last so a reader sees a whole entry.
+
+    Concurrent writers to one key are safe: each store uses its own temp file and replaces
+    whole artifacts; a failed store leaves no metadata, so a reader ignores the entry.
+    """
+    root = _cache_root(kind)
+    if root is None:
+        return
+    directory = root / key[:2] / key
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, source in files.items():
+            temporary = _temporary_beside(directory, name)
+            try:
+                shutil.copyfile(source, temporary)
+                os.replace(temporary, directory / name)
+            except OSError:
+                _remove_quietly(temporary)
+                raise
+        _write_cache_meta(directory, meta or {})
+    except OSError:
+        # Best-effort: recomputing next run is always correct, so a failed write is not an error.
+        return
+
+
+def store_cached_text(kind: str, key: str, name: str, text: str,
+                      meta: dict[str, object] | None = None) -> None:
+    """Store one small text artifact and its metadata; see store_cached_artifacts."""
+    root = _cache_root(kind)
+    if root is None:
+        return
+    directory = root / key[:2] / key
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = _temporary_beside(directory, name)
+        try:
+            with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
+            os.replace(temporary, directory / name)
+        except OSError:
+            _remove_quietly(temporary)
+            raise
+        _write_cache_meta(directory, meta or {})
+    except OSError:
+        # Best-effort: see store_cached_artifacts.
+        return
+
+
+def _symbolizer_run_data(value: SymbolizerRun | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return {"returncode": value.returncode,
+            "errors": [[address, message] for address, message in value.errors],
+            "stderr": value.stderr,
+            "records": value.records,
+            "empty_records": value.empty_records}
+
+
+def _symbolizer_run_from_data(data: object) -> SymbolizerRun | None:
+    if not isinstance(data, dict):
+        return None
+    errors: list[tuple[str | None, str]] = []
+    for item in data.get("errors") or []:
+        if isinstance(item, list) and len(item) == 2:
+            errors.append((None if item[0] is None else str(item[0]), str(item[1])))
+    return SymbolizerRun(int(data.get("returncode") or 0), errors,
+                         str(data.get("stderr") or ""), int(data.get("records") or 0),
+                         int(data.get("empty_records") or 0))
+
+
+def _read_json(path: Path) -> object:
+    """Parsed JSON, or None when the file is missing or malformed."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _search_data(search: PdbSearch | None) -> dict[str, object] | None:
+    if search is None:
+        return None
+    return {
+        "pdb": str(search.pdb) if search.pdb else None,
+        "probes": [{"path": str(probe.path), "status": probe.status,
+                    "pdb_guid": probe.pdb_guid, "pdb_age": probe.pdb_age,
+                    "detail": probe.detail} for probe in search.probes],
+        "urls": list(search.urls),
+    }
+
+
+def _search_from_data(data: object) -> PdbSearch | None:
+    if not isinstance(data, dict) or "probes" not in data:
+        return None
+    probes = []
+    for item in data.get("probes") or []:
+        if not isinstance(item, dict) or not item.get("path"):
+            continue
+        probes.append(PdbProbe(Path(str(item["path"])), str(item.get("status") or ""),
+                               pdb_guid=(None if item.get("pdb_guid") is None
+                                         else str(item["pdb_guid"])),
+                               pdb_age=(None if item.get("pdb_age") is None
+                                        else str(item["pdb_age"])),
+                               detail=str(item.get("detail") or "")))
+    return PdbSearch(pdb=Path(str(data["pdb"])) if data.get("pdb") else None,
+                     probes=probes,
+                     urls=[str(url) for url in data.get("urls") or []])
+
+
+def _evidence_data(evidence: ModuleEvidence) -> dict[str, object]:
+    """JSON form of the evidence, so a cached module replays the same outcome and cause text."""
+    return {
+        "module_name": evidence.module_name,
+        "module_path": evidence.module_path,
+        "found_debug_info": evidence.found_debug_info,
+        "image_guid": evidence.image_guid,
+        "image_age": evidence.image_age,
+        "search": _search_data(evidence.search),
+        "symbolizer": _symbolizer_run_data(evidence.symbolizer),
+        "pdb": evidence.pdb,
+        "outcome": evidence.outcome,
+        "note": evidence.note,
+    }
+
+
+def _evidence_from_data(data: object) -> ModuleEvidence:
+    if not isinstance(data, dict):
+        return ModuleEvidence("", "", outcome="failed")
+    age = data.get("image_age")
+    found = data.get("found_debug_info")
+    return ModuleEvidence(
+        module_name=str(data.get("module_name") or ""),
+        module_path=str(data.get("module_path") or ""),
+        found_debug_info=(None if found is None else bool(found)),
+        image_guid=(None if data.get("image_guid") is None else str(data["image_guid"])),
+        image_age=(None if age is None else int(age)),
+        search=_search_from_data(data.get("search")),
+        symbolizer=_symbolizer_run_from_data(data.get("symbolizer")),
+        pdb=(None if data.get("pdb") is None else str(data["pdb"])),
+        outcome=str(data.get("outcome") or "failed"),
+        note=(None if data.get("note") is None else str(data["note"])),
+    )
 
 # --------------------------------------------------------------- public symbols
 
@@ -681,6 +982,24 @@ def _publics(pdb: Path, out_file: Path, symbolizer: Path, stream: TextIO) -> Pat
         print("FOLDS: skipped (llvm-pdbutil not found; install LLVM to label folded addresses)",
               file=stream)
         return None
+    # The public-symbol table belongs to the PDB alone, so its key carries no capture input and
+    # one entry serves every capture that resolves the same PDB.
+    pdb_id = artifact_file_identity(pdb)
+    pdbutil_id = artifact_file_identity(pdbutil)
+    cache_key = None
+    if artifact_identity_present(pdb_id) and artifact_identity_present(pdbutil_id):
+        cache_key = artifact_key({"kind": "publics", "pdb": pdb_id, "pdbutil": pdbutil_id})
+        cached = load_cached_artifacts("publics", cache_key, ("publics.csv",))
+        if cached is not None:
+            directory, meta = cached
+            try:
+                shutil.copyfile(directory / "publics.csv", publics_file)
+            except OSError:
+                cached = None
+            else:
+                print(f"FOLDS: {int(meta.get('shared') or 0)} shared starts of "
+                      f"{int(meta.get('starts') or 0)} in {publics_file}", file=stream)
+                return publics_file
     try:
         starts, shared = public_symbols(publics_file, pdb_file=pdb, pdbutil=pdbutil)
     except UprofError as exc:
@@ -688,6 +1007,9 @@ def _publics(pdb: Path, out_file: Path, symbolizer: Path, stream: TextIO) -> Pat
               file=stream)
         print("FOLDS: skipped (enumeration failed)", file=stream)
         return None
+    if cache_key is not None:
+        store_cached_artifacts("publics", cache_key, {"publics.csv": publics_file},
+                               {"starts": starts, "shared": shared})
     print(f"FOLDS: {shared} shared starts of {starts} in {publics_file}", file=stream)
     return publics_file
 
@@ -793,6 +1115,45 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
         print("PDB_MATCH=yes", file=stream)
         evidence.pdb = str(pdb)
 
+    # The symbolizer reads the image, the resolved PDB, the RVA list and the tool, and all four
+    # are in the key. An unresolved module is not cached: there is no build identity to key it on.
+    cache_key: str | None = None
+    image_id = artifact_file_identity(exe_path)
+    pdb_id = artifact_file_identity(pdb)
+    symbolizer_id = artifact_file_identity(symbolizer_path)
+    try:
+        rva_digest: str | None = artifact_file_digest(rva_path)
+    except OSError:
+        rva_digest = None
+    if (rva_digest is not None and artifact_identity_present(image_id)
+            and artifact_identity_present(pdb_id) and artifact_identity_present(symbolizer_id)):
+        cache_key = artifact_key({
+            "kind": "symbols",
+            "module_image": image_id,
+            "module_spelling": os.path.normcase(os.path.abspath(exe_input)),
+            "module_name": module_name,
+            "pdb": pdb_id,
+            "symbolizer": symbolizer_id,
+            "rva_sha256": rva_digest,
+            "debug_dirs": [os.path.normcase(os.path.abspath(os.fspath(path)))
+                           for path in debug_dirs],
+            "fallback_paths": [os.path.normcase(os.path.abspath(os.fspath(path)))
+                               for path in fallback_paths],
+            "found_debug_info": found_debug_info,
+        })
+    if cache_key is not None:
+        cached = load_cached_artifacts("symbols", cache_key, ("symbols.parquet",))
+        if cached is not None:
+            directory, meta = cached
+            try:
+                shutil.copyfile(directory / "symbols.parquet", parquet_file)
+            except OSError:
+                cached = None
+            else:
+                publics = _publics(pdb, jsonl_file, symbolizer_path, stream)
+                return SymbolizedModule(parquet_file, publics, pdb,
+                                        _evidence_from_data(meta.get("evidence")))
+
     evidence.symbolizer = _run_symbolizer(
         symbolizer_path, exe_input, pdb, rva_path, jsonl_file, debug_dirs=debug_dirs,
         fallback_paths=fallback_paths, stream=stream)
@@ -818,6 +1179,10 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
         publics = None
         print("FOLDS: skipped (DWARF symbols; PDB public-symbol fold detection is "
               "Windows-only, unverified)", file=stream)
+    # A failed short-name pass would cache a less precise artifact, so the next run retries it.
+    if cache_key is not None and parquet is not None and short_file is not None:
+        store_cached_artifacts("symbols", cache_key, {"symbols.parquet": parquet},
+                               {"evidence": _evidence_data(evidence)})
     return SymbolizedModule(parquet, publics, pdb, evidence)
 
 

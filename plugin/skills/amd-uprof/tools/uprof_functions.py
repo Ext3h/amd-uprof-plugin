@@ -10,6 +10,7 @@ the boundaries carry; the SQL adds a visibly synthetic name when no source symbo
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Iterable, Sequence
@@ -17,6 +18,8 @@ from typing import Final, Iterable, Sequence
 import uprof_context
 from uprof_context import ContextOmission, PeSection
 from uprof_native import run
+from uprof_symbols import (artifact_file_identity, artifact_identity_present, artifact_key,
+                           load_cached_artifacts, store_cached_text)
 from uprof_util import UprofError, tail_lines
 
 READOBJ_TIMEOUT: Final = 5 * 60
@@ -102,6 +105,16 @@ def public_starts_from_names(rows: Iterable[tuple[object, object]]) -> list[tupl
     return starts
 
 
+def _ranges_from_cache(path: Path, module_name: str) -> list[FunctionRange] | None:
+    """Ranges from a cached artifact, or None when the artifact is unreadable or malformed."""
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))["ranges"]
+        return [FunctionRange(module_name, int(row[0]), int(row[1]), str(row[2]),
+                              None if row[3] is None else str(row[3])) for row in rows]
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        return None
+
+
 def derive_module_ranges(module_name: str, module_path: str | Path,
                          public_starts: Sequence[tuple[int, str | None]] = (),
                          readobj: str | None = None) -> RangeDerivation:
@@ -113,6 +126,29 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
     tool = readobj or uprof_context.find_readobj()
     if not tool:
         return RangeDerivation([], "readobj_missing")
+    # The ranges depend only on the image, the effective public starts and the readobj build, so
+    # an entry serves every capture. Only the first name at an RVA can win, and sorting by RVA
+    # makes the key independent of the row order the SQL returned. Failures are not stored: a
+    # tool failure may be transient and an empty result carries its reason.
+    image_id = artifact_file_identity(module_path)
+    readobj_id = artifact_file_identity(tool)
+    cache_key = None
+    if artifact_identity_present(image_id) and artifact_identity_present(readobj_id):
+        first_by_rva: dict[int, str | None] = {}
+        for rva, name in public_starts:
+            first_by_rva.setdefault(rva, name)
+        cache_key = artifact_key({
+            "kind": "ranges",
+            "module_name": module_name,
+            "image": image_id,
+            "readobj": readobj_id,
+            "public_starts": sorted(first_by_rva.items()),
+        })
+        cached = load_cached_artifacts("ranges", cache_key, ("ranges.json",))
+        if cached is not None:
+            ranges = _ranges_from_cache(cached[0] / "ranges.json", module_name)
+            if ranges is not None:
+                return RangeDerivation(ranges)
     try:
         completed = run([tool, "--file-headers", "--sections", "--unwind", "--coff-exports",
                          str(module_path)], timeout=READOBJ_TIMEOUT)
@@ -135,6 +171,11 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
                           uprof_context.parse_exports(text))
     if not ranges:
         return RangeDerivation([], "no_boundary_source")
+    if cache_key is not None:
+        store_cached_text("ranges", cache_key, "ranges.json",
+                          json.dumps({"ranges": [[item.start, item.end, item.source, item.name]
+                                                 for item in ranges]},
+                                     separators=(",", ":")) + "\n")
     return RangeDerivation(ranges)
 
 

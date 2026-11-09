@@ -157,6 +157,9 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
         "uprof_range_attempted": "",
         "uprof_sample_interval_s": "" if sample_interval_s is None else repr(sample_interval_s),
         "uprof_primary_measure": primary_measure,
+        # Only the line and instruction projections read the detail views (FUNCTION_SCOPED);
+        # every other scope must not pay to bind them.
+        "uprof_detail_views": "true" if args.by in FUNCTION_SCOPED else "false",
         "uprof_function": getattr(args, "function", None) or "",
         "uprof_function_module": getattr(args, "module", None) or "",
         "uprof_function_start": ("" if getattr(args, "function_start", None) is None

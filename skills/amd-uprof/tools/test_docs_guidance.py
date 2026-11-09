@@ -243,7 +243,7 @@ class DocsGuidanceTest(unittest.TestCase):
                          "`derived`, never `unresolved` or \"no named functions\"",
                          "rows remain `unresolved` only when neither a name nor a derived range "
                          "covers them",
-                         "A derived range is attributed, never unresolved",
+                         "report per-scope agreement and coverage",
                          "the maximum per-function hot sample count",
                          "must not be used to claim the sample-hot address",
                          "other_samples",

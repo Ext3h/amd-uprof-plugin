@@ -1,99 +1,44 @@
 # amd-uprof skill — specification
 
-This document states what the skill must do. Implementation choices are not specified here; where a
-behaviour depends on one, this document says what must be true rather than how.
+What the skill must do; exact keys, enums and flags are implementation vocabulary in
+`references/reference.md`.
 
 ## Naming rules
 
-Seven principles bind every output and every report derived from it. State the requirement, not the
-incident that produced it.
+Seven principles bind every output and every report derived from it.
 
-1. **Claim only what the measurement supports.** A superlative or share names its measure and its
-   denominator: sample-hot/`sample_share` versus time-hot/`time_share`, and capture versus parent.
-2. **State provenance exactly.** Synthetic and derived names are labelled and never presented as
-   source symbols; the attribution set is exactly `unique`, `shared`, `derived`, `unresolved`.
-3. **Do not overclaim structure or classification.** A region page is an address bucket, not
-   contiguous code; third-party is exactly `Module.isSystemModule = false`, and a system-flagged
-   vendor dependency is reported as the dominant non-workload dependency.
-4. **Absence carries cause and remedy.** A data limit is not a tool failure; never invent evidence.
-   "not established" and "not consulted" state what they mean.
-5. **Caller-facing names are neutral.** Platform and tool names stay internal; `--symbol-path` and
-   `--image-path` are the contract.
-6. **Contract names are verbatim and consistent** across text, JSON and legends; no synonyms.
-7. **Name the remainder and the truncation.** The `<other ...>` row is unranked; "hot" is the
-   emitted maximum, not an assumed global.
-
-**Required vocabulary and contract.**
-
-- Attribution: `unique` is a named address; `derived` is a synthetic range; `shared` is an address
-  with several names; `unresolved` has neither name nor range. Function rows use
-  `unique`/`derived`/`unresolved`; region rows add `shared`; line and instruction rows use
-  `unique`/`shared`/`unresolved`.
-- `function_source`: `export`, `pdb_public`, `pdata`, `none`. A range with no source name is
-  `pdata_0x<start>` or `sub_0x<start>` with `function_derived=true`.
-- Shares: `sample_share`, `time_share`, `tag_to_retire_share` and `hot_sample_share` are fractions
-  0.0-1.0 of the scoped capture; `parent_sample_share`, `parent_time_share` and
-  `parent_tag_to_retire_share` are fractions of the parent function. `samples` is a raw count.
-  `other_samples` is `samples - hot_samples`.
-- Keys: a module key is the normalized path (case-folded, `/` separators), and a basename maps to
-  the same module; an RVA is `0x` hex; a function is addressed by `module` plus `function_start`.
-- Flags: `profile` takes repeatable `--symbol-path` and `--image-path`, each a file or a search
-  root; `translate` stages with `--pdb-dir`, `--symbol-cache` and `--symbol-server`.
-- Fixed header order: `VERSION`, `METRIC`, optional `FILTER` and `PARENT`, `COLUMNS`, `READ`,
-  optional `NEXT`, `DUMP`, optional `DB`, `TIME_SHARE`, `TAG_TO_RETIRE_SHARE`, `WEIGHTS`, optional
-  `SANITY`, `ACHIEVED`, `KERNEL_COVERAGE`, `HOT_RVA`, `SYMBOL_COVERAGE`, `WARNING`, `AGREEMENT`.
-- `legend.symbol_coverage` keys: `uprof_db`, `flags`, `profile_symbolizer`, `rows_drillable`.
-- `context_help` keys: `scope`, `share`, `fields`, `omission_reasons`, `read`, `next`.
-- Omission reasons: `module_missing`, `readobj_missing`, `readobj_failed`, `metadata_incomplete`,
-  `no_code_section`, `anchor_too_far`, `hot_rva_not_instruction_start`, `objdump_missing`,
-  `objdump_failed`, `symbolizer_missing`, `symbolizer_failed`, `imports_failed`, `build_mismatch`,
-  `context_failed`, `row_cap`.
-- Scope: a function-scoped view states `FILTER` and `PARENT`; its parent totals are a sum/join of
-  the capture's rows, not a second measurement.
+1. **Claim only what the measurement supports.** Name the measure and its denominator.
+2. **State provenance exactly.** Label synthetic and derived names, never source symbols;
+   attribution is named, derived, shared or unresolved.
+3. **Do not overclaim structure.** A page is an address bucket; third-party is the system flag, and
+   a system-flagged vendor dependency is the dominant non-workload dependency.
+4. **Absence carries cause and remedy.** Never invent evidence; a data limit is not a failure.
+5. **Caller-facing names are neutral.** `--symbol-path` and `--image-path` are the contract.
+6. **Contract names are verbatim and consistent** across text, JSON and legends.
+7. **Name the remainder and the truncation.** `<other ...>` is unranked; "hot" is the maximum.
 
 ## 0. Purpose
 
-Give an agent (Windows or Linux) a repeatable way to profile CPU time with AMD uProf: capture,
-translate, attribute samples to processes, functions, source lines or instructions, and report
-sample shares and time shares — stating what each share measures.
+Profile CPU time with AMD uProf; attribute samples to processes, functions, lines or instructions;
+report sample and time shares, stating what each measures.
 
 ## 1. Capture — `collect`
 
-- Captures PMCx076 `CYCLES_NOT_IN_HALT` cycle samples by default; supports per-PID attach.
-- Supports IBS OP with the interval expressed in dispatched ops or in cycles.
-- Sample rate is expressed in **time** (`--sample-interval` takes a time value) and converted to
-  cycles using the core frequency reported for the machine; the conversion and the frequency used
-  are printed. For IBS in dispatched-op mode the interval is a work count, not a time rate, and is
-  stated as such.
-- After the capture, verifies that what was requested is what was applied: event, interval,
-  sampling enabled, IBS vs PMC, system-wide vs attached PIDs. A mismatch fails.
-- OS-mode samples are requested for both capture events: cycle counting passes `user=1,os=1`, and
-  IBS samples user and OS by default. The request is applied and encoded, but it is not sufficient
-  for kernel coverage. An unelevated capture contains no kernel-mode samples, so kernel coverage
-  requires an elevated capture.
-- The tool states that limitation at both points where it can: `collect` notes the consequence
-  before the capture runs, and `profile` prints `KERNEL_COVERAGE` when the applied sampler requested
-  OS mode and the whole capture contains no sample in any kernel image. The profile-time check names
-  the sampler's OS-mode bit (`os`, `opOs` or `fetchOs`), reports an empty capture as such, and is
-  suppressed when the session records a translate `--time-filter`, because the resolved dump may
-  hold only that window. This is distinct from the warning that elevated user processes may be
-  missing: that one is about process coverage, this one about kernel coverage.
-- An IBS capture that the machine cannot perform (no IBS counters — hypervisor/VBS active, or an
-  unsupported CPU) falls back to cycle sampling **visibly**: one line naming the cause before the
-  fallback capture runs.
-- `--dry-run` validates the invocation without capturing.
-- The delivered sample rate can be below the requested interval. The tool reports the achieved
-  rate rather than assuming the request was met (see `profile`'s `ACHIEVED:` header).
+- Captures cycle samples by default, supports per-PID attach and IBS OP with a dispatched-op or
+  cycle interval, and converts the time rate to cycles at the core frequency, printing the
+  conversion; an IBS dispatched-op interval is stated as work, not time.
+- After the capture, verifies that the request matches what was applied and fails on a mismatch.
+- OS mode is requested, but an unelevated capture has no kernel samples. `collect` says so;
+  `profile` prints `KERNEL_COVERAGE` when OS mode was requested and no kernel sample exists,
+  before any scope filter; a translate time filter suppresses the check.
+- An IBS capture the machine cannot perform falls back visibly, naming the cause; `--dry-run`
+  validates without capturing, and the delivered rate is reported, not assumed.
 
 ## 2. Translation — `translate`
 
-- Requires an output directory; copies the session and translates the copy.
-- Never translates in place, and no message anywhere instructs a user to do so.
-- An output directory that already holds `cpu.db`, `callstack.db` or an ASCII dump is refused
-  unless `--force`; `--force` removes the generated files and the copied session inputs first, so
-  a repeated translate produces the same counts as a fresh one and unrelated files are untouched.
-- Prints the session path of the copy.
-- The source session's files and timestamps are unchanged afterwards.
+- Requires an output directory; copies the session and translates the copy, never in place, and
+  refuses existing generated artifacts unless `--force` removes them and the copied inputs.
+- Prints the copy's path; the source session is unchanged.
 
 ## 3. Query surface
 
@@ -106,233 +51,128 @@ sample shares and time shares — stating what each share measures.
 | `schema` | whether the capture's export matches the contract the query surface consumes |
 | `tools` | which external tools will be used, at which versions |
 
-`interval` does not exist. The time estimator is part of the `profile` output, together with the
-sanity verdict for the dump it consumes; there is no separate command.
+`interval` does not exist; its estimator and sanity and scope-coverage verdicts are part of
+`profile`.
 
 ### 3.2 `profile` arguments
 
 | argument | meaning |
 |---|---|
-| `--session DIR` | capture directory (required) |
-| `--by process\|module\|function\|region\|line\|instruction` | grouping key (required) |
-| `--pid N` | one process by PID; mutually exclusive with `--image` |
-| `--image PATTERN` | base-image path/name filter, all PIDs of matching images; an empty scope warns on stderr even with `--json`/`--out-file`, and a module-suffix pattern states that `--image` does not select modules |
-| `--time-filter T1:T2` | optional, seconds from capture start; default the whole capture; requires a dump capture (per-sample timestamps); PMC captures carry none and the tool rejects the filter |
+| `--session DIR`, `--by process\|module\|function\|region\|line\|instruction` | capture directory and grouping key (both required) |
+| `--pid N`, `--image PATTERN` | one PID, or every matching base image; mutually exclusive |
+| `--time-filter T1:T2` | seconds from capture start; dump captures only; rejected for PMC |
 | `--top N\|all` | rows returned, default 20 |
-| `--function NAME` | narrow `instruction`/`line` rows to one parent function row; requires `--module`; rejected with any other granularity |
-| `--module MODULE` | the function row's `module`; required with `--function` |
-| `--function-start RVA` | optional `function_start` (`0x` hex or decimal) when the name matches more than one row in the module |
-| `--json` | machine-readable output instead of the default table |
-| `--out-file PATH` | output destination |
-| `--symbol-path PATH` | repeatable symbol or debug file, or symbol/debug search root |
-| `--image-path PATH` | repeatable module image file, or module image search root |
+| `--function NAME`, `--module MODULE`, `--function-start RVA` | explicit parent scope; never inferred |
+| `--json`, `--out-file PATH` | machine-readable output and its destination |
+| `--symbol-path`, `--image-path` | repeatable; a symbol/image file or a search root |
 
-`translate` accepts `--pdb-dir`, `--symbol-cache` and `--symbol-server` to stage symbol files into
-a local cache for a later `profile`. `profile` consumes that cache and never contacts a symbol URL.
+`translate` stages symbol files; `profile` never contacts a symbol URL.
 
 ### 3.3 Granularities
 
-| `--by` | row key | columns | symbolization |
-|---|---|---|---|
-| `process` | process | process, pid, samples, sample_share, time_share, tag_to_retire_share | no |
-| `module` | module path | module, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds, hot_rva, hot_samples, other_samples, hot_sample_share | no |
-| `function` | function (derived range when the binary supplies one) | function, module, function_start, function_end, function_source, function_derived, attribution, function_reason, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds, hot_rva, hot_samples, other_samples, hot_sample_share | yes |
-| `region` | module + 4 KiB address page | module, page_start, page_end, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds, sampled_addresses, hot_rva, hot_samples, hot_sample_share, function, file, line, attribution, symbol_reason, function_source, function_derived | yes |
-| `line` | file:line | file, line, function, module, attribution, samples, sample_share, time_share, tag_to_retire_share, parent_sample_share, parent_time_share, parent_tag_to_retire_share | yes |
-| `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, sample_share, time_share, tag_to_retire_share, parent_sample_share, parent_time_share, parent_tag_to_retire_share | yes |
+| `--by` | row key | symbolization |
+|---|---|---|
+| `process` | process | no |
+| `module` | module path | no |
+| `function` | function (derived range when the binary supplies one) | yes |
+| `region` | module + 4 KiB address page | yes |
+| `line` | file:line | yes |
+| `instruction` | module + RVA | yes |
 
-The `parent_*` columns are emitted only when `--function` selects a parent, and only for the
-measures the capture supplies.
+Every share is a fraction and `samples` a raw count; `time_share` is absent for PMC captures and
+`tag_to_retire_share` without a usable tag column; a supplied measure is present even at zero, and
+every output states which columns apply and why. No filter is a prerequisite.
 
-Every share is a fraction 0.0-1.0; `samples` stays a raw count. `time_share` is absent for PMC
-captures (the export aggregates PMC samples per window); `tag_to_retire_share` is absent for PMC,
-IBS fetch, and IBS OP dumps without a usable `IbsTagToRetCtr` column (absent, or carrying no
-non-null value); every output states which columns apply and why. An all-zero `IbsTagToRetCtr`
-has non-null values, so the column is present, but every `tag_to_retire_share` is NULL and the
-column does not sum to 1.0 because no tag cycles were counted. A tag cell counts only when it is
-an unsigned decimal integer; negative, fractional and exponent spellings are excluded.
+`--by module` emits the rollup with the system flag, an estimated `cpu_seconds` (omitted with its
+reason when not derivable) and the hot address fields; `other_samples` is the rest of the row, and
+module keys are normalized so a basename and a full path classify together.
 
-No filter is a prerequisite for any granularity. The module granularity emits the rollup directly, including `Module.isSystemModule`, `cpu_seconds` = `samples × requested cycle interval / the core frequency`, and the module's `hot_rva`/`hot_samples`/`other_samples`/`hot_sample_share` (its highest-sample address, the samples there, the rest of the module as `samples - hot_samples`, and the hot address's share); `other_samples` is not a second hot address. The seconds are an estimate at the reported nominal clock, not a measured cycle count, and are omitted with a stated reason when a sample is not a fixed cycle count or no frequency is available. Module keys are normalized as stated in the naming rules; a basename and a full path naming the same module classify as one module. `function` and `region` are the symbolized scopes. Function is the semantic unit; the tool derives its boundaries from the binary with LLVM, and the consumer must not write a PE parser or map `.pdata` by hand. `function_source` names the boundary source (`export`, `pdb_public`, `pdata` or `none`), `function_derived` marks a range with a synthetic name (`pdata_0x<start>`/`sub_0x<start>`), and attribution follows the naming rules. `unresolved` is only the attribution category: a derived range is attributed, so a module whose boundaries came from derived ranges is `derived` even when every name is synthetic, and must not be called `unresolved` or "no named functions"; function rows remain in the `unresolved` attribution only when neither a name nor a derived range covers their address. A module whose function rows remain in the `unresolved` attribution with `function_source` `none` falls back to `--by region`: region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket. The page keeps `sampled_addresses` and names the function owning its hot RVA when one is derivable. `line` and `instruction` symbolize every module in
-scope and print a uProf-vs-symbolizer agreement summary; modules without usable symbols appear as
-`<no symbol>` with the agreement summary stating how much sample weight that covers. The `line`
-table aggregates instructions by source position; `instruction` reports them individually, each
-annotated with its function and source coordinates.
+Function is the semantic unit: the tool derives boundaries from the binary, and the consumer must
+not parse the image or map its function tables by hand. A synthetic range is visibly labelled and
+attributed. `unresolved` is only the attribution category: a derived range is attributed, so such a
+module is `derived`, never `unresolved` or "no named functions", and rows remain `unresolved` only
+when neither a name nor a derived range covers them.
 
-`line` and `instruction` accept an explicit parent scope: `--function NAME --module MODULE`
-(optionally `--function-start RVA`) selects one `function` row. The scope is explicit, never
-inferred from the top row, and the parent is matched by the range that row was derived from when it
-has one, otherwise by the uProf function identity. The parent totals are a sum/join of the
-capture's rows, not a second measurement, and do not depend on `--top`. Every filtered output
-states the filter in a `FILTER` header field and the parent measurement in a `PARENT` field: the
-parent's samples, its `sample_share` of the scoped capture, `time_share`/`tag_to_retire_share` when
-the mode supplies them (else the absence reason), and `cpu_seconds` when applicable. The rows keep
-the ordinary capture-level shares and add `parent_sample_share`/`parent_time_share`/
-`parent_tag_to_retire_share` relative to the parent function; the `<other ...>` remainder carries
-the same parent shares, so a truncated view and its remainder sum to the parent total. A filtered
-instruction view offers its sibling filtered line view as its one `NEXT` call, and a filtered line
-view offers the filtered instruction view with `--json`; the unscoped views keep their previous
-stops. The line view needs source positions: a function with none is one `<no source line>` row
-relative to the parent, not an empty table.
+Where function rows remain `unresolved` and no boundary source exists, fall back to `--by region`:
+region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span
+unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket. `line`
+and `instruction` symbolize every module in scope; modules without usable symbols appear as
+`<no symbol>` with the share of weight that covers.
 
-`profile` takes its own symbol paths for `function`/`region`/`line`/`instruction`: repeatable
-`--symbol-path` adds a symbol or debug file or a symbol/debug search root, and repeatable
-`--image-path` adds a module image file or a module image search root. A symbol source is accepted when its
-identity is verified; without verification it is used with a warning. The tool
-does not contact a symbol URL: only local files and local symbol-cache entries are consulted, and a
-fetched PDB must be staged into that cache by `translate` (`--pdb-dir`, `--symbol-cache`,
-`--symbol-server`) before a later `profile`. DWARF is read from the module itself or through the
-search roots. These flags affect the rows of the symbolized granularities and the
-profile symbolizer share `SYMBOL_COVERAGE` reports; they do not change the uProf DB share from
-`Function.name`, which records what translate symbolized. A symbol file valid for another build is
-reported as a resolution failure tied to that file name, not as success. `translate` prints
-`SYMBOLIZATION: <withDebugInfo>/<modules> modules with debug info, <N> Function rows` and warns
-when either count is zero, because its exit status does not establish symbolization. The
-per-module evidence line states the symbolization evidence when a module is unresolved.
+`line` and `instruction` accept an explicit parent scope, never inferred from the top row; parent
+totals are a join of the capture's rows, not a second measurement, and do not depend on `--top`.
+Rows add parent shares and the remainder carries them, so a truncated view and its remainder sum to
+the parent total.
+
+`--symbol-path` and `--image-path` affect the symbolized rows and the profile symbolizer share, not
+the share of samples the capture itself named; a source is accepted only when its identity is
+verified, and another build's source is a resolution failure, not success.
 
 ### 3.4 Time filter
 
-Samples are selected by timestamp. The first sample per context **inside the window** carries no
-weight, because its gap crosses the boundary — the same rule as the first sample of a capture.
-The context is a CPU for a system-wide capture and a thread (`PID`, `TID`) for an attached one.
-Filtering never re-translates.
+Samples are selected by timestamp; the first sample per context inside the window carries no weight
+because its gap crosses the boundary. Filtering never re-translates.
 
 ### 3.5 Clock anchoring
 
-A workload that prints its own `QueryPerformanceCounter` reading can be placed on the capture
-timeline: `anchor` takes the session and that reading and reports seconds from capture start, the
-same units `--time-filter` uses. A negative value is attach latency — the reading precedes the
-capture start, and the capture does not cover it. Where the session records a start wall-clock time,
-the UTC start is reported with its precision.
+`anchor` reports seconds from capture start for a workload's own clock reading, the units
+`--time-filter` uses; a negative value is attach latency, outside the capture. A recorded start
+wall-clock time is reported as UTC with its precision.
 
 ### 3.6 Output
 
-- Default: a Markdown pipe table, right-aligned numerics, with the header lines (`METRIC:`, `DUMP:`,
-  `SANITY:`, `ACHIEVED:`, `KERNEL_COVERAGE:`, `AGREEMENT:`) as plain lines above it. Header fields
-  appear in the fixed order stated in the naming rules. `VERSION` names the producing skill copy
-  and its version; `DB` names the capture
-  directory the dump must come from when the dump is not in the session directory. A
-  function-scoped line or instruction view adds `FILTER:` (the explicit module + RVA range, or
-  module + uProf `Function.id`) and `PARENT:` (the parent samples, capture share, time/tag share
-  or absence reason, and `cpu_seconds`). `SANITY` validates the dump against
-  the capture metadata and states the coverage it is based on; the dump-wide verdict is labeled as
-  such, and when `--image`/`--pid` or `--time-filter` restricts a system-wide report, a scoped
-  coverage verdict follows from the scope's last sample against the end of its window. The
-  dump-wide capacity is the recorded span × CPUs for a system-wide capture; an attached capture is
-  judged per thread instead (never `elapsed × CPUs`), so its verdict is thread coverage and errors
-  only for samples outside the span; it also reports the processes, TIDs, busiest TID's samples
-  and CPUs visited. Attached captures (or a missing
-  `systemWide`, which counts as attached) keep the attached verdict instead, because their
-  coverage is where the attached threads ran. `ACHIEVED` states the
-  samples delivered, the capture window, the per-CPU rate, the requested interval, and the busiest
-  sampling context's cadence, and says so when that context delivers far below the request. The
-  per-CPU rate divides by every CPU and is not the delivered cadence.
-  `KERNEL_COVERAGE` appears when an OS-mode request produced no kernel-image sample in the whole
-  capture — computed before `--image`/`--pid` and `--time-filter`, so a user-only scope can neither
-  create nor hide it — and states that elevation is required; it is the profile-time counterpart of
-  the capture-time note. A scope that selects no sample prints one
-  `WARNING: no samples in the selected scope` to stderr even with `--json`/`--out-file`; JSON also carries `WARNING`. With `--image`, the warning names the capture's
-  `Process.name` values and states that `--image` selects process images, not modules; a
-  module-suffix pattern adds the `--by module`/`--function ... --module` remedy.
-- Every output carries a short three-line legend. `COLUMNS` states the unit once (share columns are
-  fractions 0.0-1.0), `samples` as raw count, `sample_share`'s mode-dependent meaning, the
-  `time_share` and `tag_to_retire_share` labels, the `attribution` definition when the scope emits
-  it, and any absent column with its reason; the detailed definitions stay in the `METRIC`,
-  `TIME_SHARE` and `TAG_TO_RETIRE_SHARE` header lines. `READ` states which column ranks where time
-  went, that `sample_share` is not a per-op cost, that `tag_to_retire_share` is total tag-to-retire
-  cycles (higher = more wait), and that the `<other ...>` row is last, not ranked. `NEXT` gives
-  full runnable calls joined by `&&`, each derived from the current `--by` and keeping the session,
-  the `--pid`/`--image`/time-filter scope and a non-default `--top`: process -> module -> function,
-  and region only when the function rows remain in the `unresolved` attribution; the CPU-time path stops at the derived
-  function, and instruction context is a separate request. A function-scoped instruction or line
-  view instead offers its filtered sibling view (line or instruction) with the same
-  `--function`/`--module`/`--function-start` and `--top`. The JSON `next` array holds the same
-  commands and is empty when the path has stopped.
-- `--json`: the same rows, header information and legend semantics as structured data; the legend
-  is a `legend` object with `share_unit` (`fraction`), `share_scale` (`1`), `denominators`,
-  `columns`, `absent`, `impact` (`order_by`, `gap_weighted`, `estimate`, `primary_measure`,
-  `primary_measure_reason`, and a `sample_hot` note for instruction scope), `remainder_last`,
-  `symbol_coverage` (keys in the fixed order stated in the naming rules),
-  `next`, and, for a function-scoped line/instruction view, `function_scope`
-  (`module`, `function`, `range_kind` = `derived_range` or `uprof_function_id`, hex
-  `function_start`/`function_end`, `filter`, a `parent` object with its samples, shares and
-  `cpu_seconds` (its shares are of the scoped capture), the row columns' `denominators`,
-  `measurement` and `child_shares`). The impact order is the mode's primary measure for process, module,
-  function, region and instruction; a sample-ordered instruction table's first row is sample-hot,
-  while a time-ordered one is not. `--by function` also emits a `HOT_RVA` header field: the maximum
-  `hot_samples` across all function rows, not the top row's `hot_rva`, with that row's
-  `other_samples` (`samples - hot_samples`, the rest of the function). `--by function` adds the full `function_ranges` object (`source`, `derived_modules`,
-  `ranges`, `absent_by_module`, `fallback`, `meaning`) and emits no `region` key. `--by region`
-  emits no top-level `function_ranges`; its `region` object carries the page fields
-  (`page_size`, `key`, `page_start`, `page_end`, `sampled_addresses`, `hot_rva`, `hot_samples`,
-  `hot_sample_share`, `function_source`, `function_derived`, `symbol_reason`), a `derived_function`
-  explanation, and its own reduced `function_ranges` with only `derived_modules` and `ranges`.
-  For `function` and `region`, `symbol_coverage.profile_symbolizer` reports `named_samples`,
-  `derived_samples`, `resolved_samples` (named plus derived), `unresolved_samples` and
-  `scoped_samples`; a derived range is attributed, so it never makes the row count unresolved.
+- Default: a Markdown pipe table, right-aligned numerics, named header lines in a fixed order. The
+  legend states the share unit and mode-specific meaning, absent columns with reasons, what to
+  read, and the runnable next calls. Next calls descend process -> module -> function, stop at the
+  derived function, and offer region only while function rows remain `unresolved`.
+- `--json` carries the same rows and semantics; exact keys and fixed orders are in `reference.md`.
+  The function view reports the hot address summary: the maximum per-function hot sample count,
+  not the top row's address. The impact order is the mode's primary measure; a time-ordered table
+  must not be used to claim the sample-hot address.
+- A scope with no samples prints one warning on stderr even with `--json`/`--out-file`; JSON also
+  carries it. A process-image filter names the process images and the module remedy.
 - No CSV mode and no table-rendering dependency on the database library.
-- Shares are fractions 0.0-1.0 at full precision; no rounding or multiplication is applied.
 
-**Instruction context.** JSON output for `--by instruction` adds a `context` object to instruction rows and nothing else changes. Markdown bytes are identical to the output without the block. The block is JSON-only because it is a nested, variable-length structure, not a table.
-
-- **Content.** The context names the anchor it decoded from, the build identity it verified, and the decoded instruction window with the raw sample count and the per-instruction `sample_share` fraction, plus optional symbolizer frame-0 location, import name and aggregated IBS OP fields. `sample_share` uses the row's denominator and the same mode-specific meaning stated in `legend.columns.sample_share`; the context defines no second scale. `symbol` is the frame-0 name; the instruction text may carry a nearest-symbol decoration, which is not that name. IBS values are AMD-encoded counts or histograms, not decoded meanings.
-- **Anchor and window.** The anchor is the nearest safe start at or below the hot RVA — a PE export, a PDB public symbol or a `.pdata` runtime function, preferring an export, then a public, then `.pdata` at the same RVA — or the containing code-section start within the distance cap. `anchor.kind` names the source. There is no backward decode and no symmetric window. The window is at most 32 decoded instructions before the hot RVA and at most 32 after it. The hot RVA must decode as an instruction start.
-- **Raw share rule and order.** Each instruction's `sample_share` is its raw share of the same scoped samples as the row, a fraction from 0.0 to 1.0. A raw sample is an operation the hardware selected for sampling, so for op-count and fetch captures this is sampling/dispatch frequency, not impact, while for cycle-controlled captures it is a core-cycle share; the legend states which. It is never a priority signal or a per-op cost. The table orders by the mode's primary measure: `sample_share` for cycle/op/PMC captures, `time_share` for a time-based capture, and raw `samples` otherwise. For a sample-ordered capture the first row is the sample-hot instruction and agrees with `HOT_RVA:`; for a time-ordered capture the table is not a sample-hot ranking and must not be used to claim the sample-hot RVA or that no single instruction exceeds a sample threshold. `HOT_RVA:`/function/region `hot_rva` is that attribution. The IBS event and tag-to-retire fields are the cost evidence. The context's IBS tag aggregate uses the same unsigned-decimal-integer, 65535-clipped policy as `tag_to_retire_share`.
-- **Document help.** JSON output carries one top-level `context_help` object, emitted after `legend` and before `rows`, with the keys in the fixed order stated in the naming rules. It describes the `anchor`, `build`, instruction stream, `attribution` when the table emits it, and every omission reason; it points to `legend` for the share unit and denominator instead of restating them; it says the cap counts row slots, that the instruction text may carry a nearest-symbol decoration while `symbol` is the frame-0 name, and that IBS values are AMD-encoded; and it states what to read and what to do next, deferring to `legend.next`. Its `read` states that rows follow `legend.impact.order_by`, so a sample-ordered table is sample-hot and a time-ordered one is not. When every context omits with `symbolizer_failed`, stderr prints one `CONTEXT:` summary naming the shared detail and remedy. It is JSON-only and promises no field the document does not emit.
-- **Row cap.** The cap is 20 row slots in the table's mode-primary order (sample-hot when `sample_share` ranks, time-ordered otherwise); a row that omits for another reason still consumes a slot, and later rows carry the `row_cap` omission. The `<other instructions>` row carries none.
-- **Build identity.** A matching nonzero PE `CheckSum` verifies the build; without a usable checksum a matching recorded `SizeOfImage` does. With no matching evidence the block is emitted with `identity: "unverified"` and a warning, never omitted as unverified; a nonzero checksum mismatch omits it.
-- **Omission.** Any condition that prevents a correct block (missing module, no safe anchor, hot RVA not on a boundary, mismatched build, unavailable LLVM tool) omits the block with a stable machine-readable reason and never guesses. Reasons, in the fixed order stated in the naming rules. An omission made after the module was examined carries the same `build` object as an emitted block, so an unverified build or size mismatch remains visible on the omitted row. A symbolizer failure (nonzero exit, JSON `Error`, or a PDB that resolves no address) and an unreadable import table omit the block with that evidence in `detail`; an unresolved individual IAT target leaves only that optional field absent and does not omit the block. A build without matching checksum or size evidence is emitted unverified, not omitted. Each omitted row carries `omitted: true` and a `reason` in the JSON, so one unscoped instruction run can be filtered by `module`; a single-process attached capture needs no `--image` scope and no stderr grep for per-row failures.
-- **Portability.** The block is produced for Windows modules only; an ELF module is reported as unsupported, not decoded under different rules.
+**Instruction context.** The instruction JSON adds one context per row; Markdown bytes are
+identical. It names the anchor, the build identity and the decoded window with raw samples and
+per-instruction shares, defining no second share scale; the anchor is the nearest safe start at or
+below the hot address, with no backward decode. Anything that prevents a correct block omits it
+with a stable reason and never guesses; an unverified build is emitted unverified. The row cap
+counts emitted slots in the mode's primary order; an omitted row consumes a slot, and the remainder
+row carries none. Windows modules only.
 
 ## 4. Columns and capture modes
 
 | column | meaning | mode-dependent |
 |---|---|---|
 | `samples` | raw number of samples in the row | no |
-| `sample_share` | fraction of samples; what a sample represents depends on the sampler (below) | **yes** |
-| `time_share` | share of time estimated from the capture's per-sample gap weights, partitioned by CPU for a system-wide capture and by `(PID, TID)` for an attached one; an estimate, not unqualified impact. An attached gap includes off-CPU time; for a cycle-controlled capture `sample_share` is the CPU-cycle share and the better ranking | absent for PMC captures (the export aggregates PMC samples per window); the estimator still defines its meaning |
-| `tag_to_retire_share` | share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency | present only for an IBS OP dump with a usable `IbsTagToRetCtr` (at least one non-null value) |
-| `parent_sample_share`, `parent_time_share`, `parent_tag_to_retire_share` | the row's samples, gap weight or tag cycles as a share of the selected parent function, not the capture; emitted only for a function-scoped `instruction`/`line` view, and only for the measures the capture supplies | no |
+| `sample_share` | fraction of samples; what a sample represents depends on the sampler | yes |
+| `time_share` | gap-weighted time share; an estimate, not unqualified impact | absent for PMC |
+| `tag_to_retire_share` | share of total tag-to-retire cycles, not per-op latency | usable-tag IBS OP only |
+| parent shares | the row as a share of the selected parent function | parent-scoped views |
 
-| capture | a sample represents | `sample_share` is | status |
-|---|---|---|---|
-| PMC, supported cycle event (`CYCLES_NOT_IN_HALT`, hwId 118, sampling) | fixed cycle count | busy core-cycle share (halted excluded) | verified |
-| PMC, any other event (not the supported cycle event, or not sampling) | one event-column count | not established | not established |
-| IBS OP, interval in cycles | selected op (cycle-controlled interval) | core-cycle share (fixed cycles per sample), not wall time, not a per-op cost | implemented; verified on an external cycle-controlled capture |
-| IBS OP, interval in ops | selected op (op-count interval) | dispatched-op frequency share (fixed dispatched ops per sample), not a per-op cost | verified |
-| IBS fetch | fetch event | fetch-sample frequency share (fixed fetch events per sample) | supported, unverified |
+| capture | a sample represents | `sample_share` is |
+|---|---|---|
+| supported cycle event | fixed cycle count | busy core-cycle share |
+| other PMC event | one event count | not established |
+| IBS OP, cycle interval | selected operation | core-cycle share, not wall time |
+| IBS OP, op interval | selected operation | dispatched-op frequency share |
+| IBS fetch | fetch event | fetch-sample frequency share |
 
-Every output states the capture's mode and what each column measures, derived from the capture's
-metadata; for `time_share` it states the estimator, the partition (CPU or `(PID, TID)`) and the
-window, or why `time_share` is unavailable.
-An instruction or op share must never be presented as CPU time or as a per-operation cost. The
-`COLUMNS` legend restates the `sample_share` reading for the mode. For the supported cycle event,
-fixed cycles make the share the busy core-cycle share and the sample order the ranking; any other
-PMC event leaves it not established. For op-count and fetch, a raw sample counts selected
-operations or events, so the share is a frequency share; for cycle-controlled it is a core-cycle
-share, not wall time. None is a per-op cost, and the cheap-often/expensive-rarely caveat applies
-only to frequency shares. `READ` names `time_share` (estimated from gaps; per `(PID, TID)` for an
-attached capture, where a cycle-controlled `sample_share` is named as the CPU-cycle share and the
-better ranking) as
-the ordering estimate; `tag_to_retire_share`, where present, is total tag-to-retire cycles, a
-total, not per-op latency.
+Every output states the capture mode and what each column measures; an instruction or op share is
+never presented as CPU time.
 
 ## 5. Failure behaviour
 
-The tool must never return output that is wrong, incomplete or unrepresentative without saying so.
-Any condition that would make a result misleading — incompatible capture, unusable sampler, missing
-tooling, an output path colliding with an input — is detected, reported with the action that fixes
-it, and exits nonzero. The specific checks are implementation choices and are deliberately not
-enumerated here; the binding property is the prohibition on papering over a degraded result.
+Never return output that is wrong, incomplete or unrepresentative without saying so. A misleading
+condition — incompatible capture, unusable sampler, missing tooling, an output path colliding with
+an input — is reported with the fix and exits nonzero; no degraded result is papered over.
 
 ## 6. Shared addresses
 
-When several function names share one address (COMDAT folding, aliases), a per-name share is not
-attributable. The tool detects addresses shared by more than one public name, reports their share as
-shared rather than attributing it to one name, and marks the row non-attributable. Detection
-applies at every symbolized granularity (`function`, `region`, `line`, `instruction`). `function`
-rows are labelled `unique`, `derived` (a synthetic derived-range name) or `unresolved`; `region`
-rows add `shared` for a page whose hot address carries several names; `line` and `instruction`
-rows are labelled `unique`, `shared` or `unresolved`.
+When several function names share one address, a per-name share is not attributable: report it as
+shared and mark the row non-attributable at every symbolized granularity. A derived range is
+attributed, never unresolved.
 
 ## 7. Reproducibility
 
@@ -344,17 +184,17 @@ documented tie order permits permutation.
 | rule | requirement |
 |---|---|
 | single surface | one command with subcommands; no parallel entry points |
-| division of labour | SQL answers every question about the data — joins, filters, shares, ranking, tie-breaks; Python only orchestrates, parses metadata, calls external tools and formats results |
-| no optional toggles | a flag names an input or a semantic choice; a preference is decided always-on or never-on and appears as behaviour, not as a flag |
+| division of labour | SQL answers every data question; Python orchestrates and formats |
+| no optional toggles | a flag names an input or a semantic choice; a preference is always-on or never-on |
 | no dead weight | no unused parameters, fields or compatibility shims; no private library APIs |
 | single source | shared constants and shared SQL exist once |
-| token-efficient docs | tables over prose; measured numbers stated once |
+| token-efficient docs | tables over prose; numbers stated once |
 
 ## 9. Anti-goals
 
 | must not exist | because |
 |---|---|
-| aggregation-bin weighting as a time estimator for op-count captures | within-bin counts are instruction shares, not time shares |
+| aggregation-bin weighting for op-count captures | within-bin counts are instruction shares, not time shares |
 | translating a capture in place, or instructing a user to | destroys the original metadata |
 | silent sampler fallback or silent estimator substitution | the wrong reading looks correct |
 | reimplementing a query in Python | duplication, drift, and paths the database already answers |
@@ -363,4 +203,4 @@ documented tie order permits permutation.
 ## 10. Evidence
 
 Measured acceptance figures, their capture, filter and estimator are recorded in
-`references/validation.md` in the skill. They are a regression baseline, not requirements.
+`references/validation.md`; they are a regression baseline, not requirements.

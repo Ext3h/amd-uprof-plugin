@@ -27,6 +27,11 @@ REGION_MEANING = ("region = 4 KiB address page; samples are grouped by address, 
                   "flow; a page may span unrelated code; the hot RVA is the precise attribution "
                   "and the page is the coarse bucket")
 
+
+def _flat(text):
+    """Compare wording without depending on where a document wraps its lines."""
+    return " ".join(text.split())
+
 SKILL_FRAGMENTS = (
     READ_FIRST,
     "The first tool call of the task is the Read of this file",
@@ -225,34 +230,37 @@ class DocsGuidanceTest(unittest.TestCase):
     def test_the_region_fallback_keeps_the_required_wording(self):
         for name, text in (("SKILL", SKILL), ("reference", REFERENCE), ("spec", SPEC)):
             with self.subTest(document=name):
-                self.assertIn(REGION_MEANING, text)
+                self.assertIn(REGION_MEANING, _flat(text))
 
-    def test_spec_lists_the_derived_function_and_region_granularities(self):
+    def test_spec_states_the_requirements_behind_the_derived_function_and_region_paths(self):
+        spec = _flat(SPEC)
         for fragment in ("--by process\\|module\\|function\\|region\\|line\\|instruction",
-                         "function_source", "function_derived", "function_reason",
-                         "hot_samples", "hot_sample_share", "symbol_reason",
-                         "must not write a PE parser",
-                         "the tool derives its boundaries from the binary with LLVM",
-                         "emits no top-level `function_ranges`",
-                         "reduced `function_ranges` with only `derived_modules` and `ranges`",
-                         "derived_samples",
-                         "The impact order is the mode's primary measure for process, module",
-                         "maximum\n  `hot_samples` across all function rows",
-                         "must not be used to claim the sample-hot RVA",
+                         "`--function NAME`",
+                         "the tool derives boundaries from the binary",
+                         "must not parse the image or map its function tables by hand",
+                         "A synthetic range is visibly labelled and attributed",
                          "`unresolved` is only the attribution category",
-                         "must not be called `unresolved` or \"no named functions\"",
-                         "function rows remain in the `unresolved` attribution",
-                         "function_ranges",
-                         "| `--function NAME` |",
-                         "FILTER",
-                         "PARENT",
-                         "function_scope",
-                         "parent_sample_share",
+                         "`derived`, never `unresolved` or \"no named functions\"",
+                         "rows remain `unresolved` only when neither a name nor a derived range "
+                         "covers them",
+                         "A derived range is attributed, never unresolved",
+                         "the maximum per-function hot sample count",
+                         "must not be used to claim the sample-hot address",
                          "other_samples",
+                         "module keys are normalized",
+                         "parent totals are a join of the capture's rows, not a second measurement",
+                         "the profile symbolizer share, not the share of samples the capture "
+                         "itself named",
+                         "another build's source is a resolution failure, not success",
                          "even with `--json`/`--out-file`",
-                         "`omitted: true` and a `reason`"):
+                         "an omitted row consumes a slot",
+                         "a supplied measure is present even at zero",
+                         "scope-coverage verdicts are part of `profile`",
+                         "system-flagged vendor dependency is the dominant non-workload "
+                         "dependency",
+                         "`interval` does not exist"):
             with self.subTest(fragment=fragment):
-                self.assertIn(fragment, SPEC)
+                self.assertIn(fragment, spec)
 
     def test_the_example_stops_below_a_symbol_less_module(self):
         start = SKILL.index("## Worked example: where did CPU time go?")

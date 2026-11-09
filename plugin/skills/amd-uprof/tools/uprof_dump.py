@@ -20,12 +20,20 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from uprof_native import TRANSLATE_TIMEOUT, require_uprof, run, translate_command
 from uprof_session import Sampler
 from uprof_util import DUMP_FILENAMES, UprofError, absolute, copy_session, read_text, tail_lines
 
 _TIME_FILTER = re.compile(r"--time-filter[ =]+(\d+(?:\.\d+)?:\d+(?:\.\d+)?)")
+
+# The dump columns time_share reads. A run may hand views.sql a Parquet copy of exactly these
+# columns instead of the ASCII dump; see samples_parquet().
+SAMPLE_COLUMNS: Final = ("DeltaTick", "CPU_Number", "TID", "PID", "Offset", "ModuleName",
+                         "IbsTagToRetCtr")
+# Bump when SAMPLE_COLUMNS or the conversion below changes; it invalidates every samples cache.
+_SAMPLES_FORMAT: Final = 1
 
 
 @dataclass
@@ -47,6 +55,211 @@ def cache_dir(session_dir: Path | str) -> Path:
     full = os.path.normcase(os.path.abspath(os.fspath(session_dir))).rstrip("\\/")
     digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:16]
     return Path(tempfile.gettempdir()) / "uprof-dump-cache" / digest
+
+
+def _samples_paths(dump_path: Path, directory: Path) -> tuple[Path, Path]:
+    name = Path(dump_path).stem + ".samples.parquet"
+    return directory / name, directory / (name + ".json")
+
+
+def _unsupported_path(target: Path) -> Path:
+    return target.with_name(target.name + ".unsupported.json")
+
+
+def _file_key(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_size, stat.st_mtime_ns
+
+
+def _sha256_file(path: Path) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _read_samples_meta(path: Path) -> dict[str, object] | None:
+    try:
+        meta = json.loads(read_text(path))
+    except (UprofError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def _normalized_source(source: Path) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(source)))
+
+
+def _copy_valid(target: Path, meta: dict[str, object]) -> bool:
+    """The copy itself still matches the size and digest recorded when it was written."""
+    try:
+        if not target.is_file() or target.stat().st_size != meta.get("copy_bytes"):
+            return False
+        return _sha256_file(target) == meta.get("copy_sha256")
+    except OSError:
+        return False
+
+
+def _samples_meta_matches(meta: dict[str, object] | None, source: Path,
+                          key: tuple[int, int], target: Path) -> bool:
+    return bool(meta
+                and meta.get("format") == _SAMPLES_FORMAT
+                and meta.get("columns") == list(SAMPLE_COLUMNS)
+                and meta.get("source") == _normalized_source(source)
+                and meta.get("bytes") == key[0]
+                and meta.get("mtime_ns") == key[1]
+                and _copy_valid(target, meta))
+
+
+def _write_samples_meta(path: Path, meta: dict[str, object]) -> None:
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(meta, handle, indent=2)
+
+
+def _read_unsupported(path: Path) -> dict[str, object] | None:
+    try:
+        marker = json.loads(read_text(path))
+    except (UprofError, ValueError):
+        return None
+    return marker if isinstance(marker, dict) else None
+
+
+def _unsupported_marker_matches(marker: dict[str, object] | None, source: Path,
+                                key: tuple[int, int]) -> bool:
+    """A previous build proved this source lacks a required column; skip it until it changes."""
+    return bool(marker
+                and marker.get("format") == _SAMPLES_FORMAT
+                and marker.get("columns") == list(SAMPLE_COLUMNS)
+                and marker.get("source") == _normalized_source(source)
+                and marker.get("bytes") == key[0]
+                and marker.get("mtime_ns") == key[1])
+
+
+def _write_unsupported(path: Path, source: Path, key: tuple[int, int],
+                       missing: list[str]) -> None:
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump({"format": _SAMPLES_FORMAT, "columns": list(SAMPLE_COLUMNS),
+                   "source": _normalized_source(source), "bytes": key[0],
+                   "mtime_ns": key[1], "missing": missing}, handle, indent=2)
+
+
+def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
+    """A Parquet copy of the dump's SAMPLE_COLUMNS, built or refreshed on demand.
+
+    The sidecar records the source size, mtime and sha256 and the copy's size and sha256. A
+    matching source size and mtime reuse the copy after verifying the copy's recorded size and
+    digest; a source mismatch compares the source sha256, so rewritten bytes reuse the copy and a
+    changed dump rebuilds it. Any failure returns None, and the caller reads the CSV. A dump that
+    lacks a required column is recorded, so later runs skip the rebuild and the source hash until
+    it changes.
+    """
+    source = Path(dump.path)
+    key = _file_key(source)
+    if key is None:
+        return None
+    directory = dump.cache_dir if dump.cache_dir is not None else cache_dir(session_dir)
+    target, meta_path = _samples_paths(source, directory)
+    unsupported_path = _unsupported_path(target)
+    if _unsupported_marker_matches(_read_unsupported(unsupported_path), source, key):
+        return None
+    meta = _read_samples_meta(meta_path)
+    if target.is_file() and _samples_meta_matches(meta, source, key, target):
+        return target
+    sha = _sha256_file(source)
+    if sha is None:
+        return None
+    if (target.is_file() and meta is not None and meta.get("sha256") == sha
+            and meta.get("format") == _SAMPLES_FORMAT
+            and meta.get("columns") == list(SAMPLE_COLUMNS)
+            and _copy_valid(target, meta)):
+        try:
+            _write_samples_meta(meta_path, {**meta, "source": _normalized_source(source),
+                                            "bytes": key[0], "mtime_ns": key[1]})
+        except OSError:
+            return None
+        return target
+    built = _build_samples(source, target, meta_path, unsupported_path, directory, sha, key)
+    if built is None:
+        print(f"WARNING: cannot build the Parquet dump copy for {source}; reading the CSV",
+              file=sys.stderr)
+        return None
+    try:
+        unsupported_path.unlink()
+    except OSError:
+        pass
+    return built
+
+
+def _build_samples(source: Path, target: Path, meta_path: Path, unsupported_path: Path,
+                   directory: Path, sha: str, key: tuple[int, int]) -> Path | None:
+    try:
+        import duckdb
+    except ImportError:
+        return None
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        handle, staging_name = tempfile.mkstemp(prefix=f".{target.stem}-",
+                                                suffix=".parquet.tmp", dir=directory)
+        os.close(handle)
+    except OSError:
+        return None
+    staging = Path(staging_name)
+    try:
+        connection = None
+        try:
+            connection = duckdb.connect()
+            # The CSV order is the tie-break for lag() over equal DeltaTick values; keep it.
+            connection.execute("SET preserve_insertion_order = true")
+            columns = ", ".join(f'"{name}"' for name in SAMPLE_COLUMNS)
+            connection.execute(
+                f"COPY (SELECT {columns} FROM read_csv(?, header = true, all_varchar = true)) "
+                "TO ? (FORMAT PARQUET, COMPRESSION zstd)", [str(source), str(staging)])
+            rows = connection.execute("SELECT count(*) FROM read_parquet(?)",
+                                      [str(staging)]).fetchone()[0]
+        except (duckdb.Error, OSError) as exc:
+            # A dump without one of SAMPLE_COLUMNS (a fetch dump has no tag column) can never
+            # build this copy; record that so later runs skip the rebuild and the source hash.
+            missing: list[str] = []
+            if isinstance(exc, duckdb.Error) and connection is not None:
+                try:
+                    described = connection.execute(
+                        "DESCRIBE SELECT * FROM read_csv(?, header = true, all_varchar = true)",
+                        [str(source)]).fetchall()
+                    available = {str(row[0]) for row in described}
+                    missing = [name for name in SAMPLE_COLUMNS if name not in available]
+                except duckdb.Error:
+                    missing = []
+            if missing:
+                try:
+                    _write_unsupported(unsupported_path, source, key, missing)
+                except OSError:
+                    pass
+            return None
+        finally:
+            if connection is not None:
+                connection.close()
+        try:
+            os.replace(staging, target)
+            copy_sha = _sha256_file(target)
+            if copy_sha is None:
+                raise OSError("cannot read back the Parquet copy")
+            _write_samples_meta(meta_path, {
+                "format": _SAMPLES_FORMAT, "source": _normalized_source(source),
+                "bytes": key[0], "mtime_ns": key[1], "sha256": sha, "rows": int(rows),
+                "columns": list(SAMPLE_COLUMNS), "copy_bytes": target.stat().st_size,
+                "copy_sha256": copy_sha})
+        except (OSError, ValueError):
+            return None
+        return target
+    finally:
+        staging.unlink(missing_ok=True)
 
 
 def remove_databases(directory: Path) -> None:

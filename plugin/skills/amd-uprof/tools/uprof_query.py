@@ -1591,6 +1591,9 @@ def run_query_command(args: argparse.Namespace) -> None:
         dump = None
     else:
         dump = uprof_dump.resolve_dump(session, sampler)
+    # A Parquet copy of the dump's time_share columns removes the ASCII parse from every run.
+    # None keeps the CSV path, so a missing column or a write failure still reaches the views.
+    samples = uprof_dump.samples_parquet(dump, session) if dump is not None else None
     if (out_path and dump is not None
             and os.path.normcase(os.fspath(dump.path)) == os.path.normcase(
                 os.fspath(out_path))):
@@ -1607,6 +1610,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                          else None)
     variables = _variables(args, dump, top, time_start, time_end, sampler.event_column,
                            sample_interval_s, primary_measure)
+    variables["uprof_ibs_parquet"] = "" if samples is None else str(samples)
     artifacts: Path | None = None
     success = False
     try:

@@ -470,5 +470,53 @@ class ImagePathSymbolizationTest(unittest.TestCase):
         self.assertEqual(called_with, str(image))
 
 
+class PublicsMemoTest(unittest.TestCase):
+    def test_the_same_pdb_is_enumerated_once_per_run(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-memo-") as tmp:
+            root = Path(tmp)
+            pdb = root / "x.pdb"
+            pdb.write_bytes(b"pdb")
+            pdbutil = root / "llvm-pdbutil.exe"
+            pdbutil.write_bytes(b"")
+            stdout = ("SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
+                      "1 | S_PUB32 [size = 8] `foo`\n"
+                      "        flags = function, addr = 0001:10\n")
+            completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, stdout, "")
+            uprof_symbols._PUBLICS_CACHE.reset()
+            self.addCleanup(uprof_symbols._PUBLICS_CACHE.reset)
+            with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
+                first = uprof_symbols.public_symbols(root / "one.csv", pdb, pdbutil)
+                calls = invoked.call_count
+                second = uprof_symbols.public_symbols(root / "two.csv", pdb, pdbutil)
+
+            self.assertEqual(first, second)
+            self.assertEqual(invoked.call_count, calls)
+
+    def test_a_failed_copy_re_enumerates_instead_of_failing(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-memo-copy-") as tmp:
+            root = Path(tmp)
+            pdb = root / "x.pdb"
+            pdb.write_bytes(b"pdb")
+            pdbutil = root / "llvm-pdbutil.exe"
+            pdbutil.write_bytes(b"")
+            stdout = ("SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
+                      "1 | S_PUB32 [size = 8] `foo`\n"
+                      "        flags = function, addr = 0001:10\n")
+            completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, stdout, "")
+            uprof_symbols._PUBLICS_CACHE.reset()
+            self.addCleanup(uprof_symbols._PUBLICS_CACHE.reset)
+            with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
+                first = uprof_symbols.public_symbols(root / "one.csv", pdb, pdbutil)
+                calls = invoked.call_count
+                with mock.patch.object(uprof_symbols.shutil, "copyfile",
+                                       side_effect=OSError("gone")):
+                    second = uprof_symbols.public_symbols(root / "two.csv", pdb, pdbutil)
+
+            self.assertEqual(first, second)
+            self.assertGreater(invoked.call_count, calls)
+
+
+
+
 if __name__ == "__main__":
     unittest.main()

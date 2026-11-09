@@ -290,7 +290,7 @@ def tool_report() -> None:
 def translate_command(uprof: str | Path, session: str | Path, *,
                       symbol_cache: str | Path | None = None,
                       symbol_servers: Iterable[str] = (),
-                      pdb_dir: str | Path | None = None,
+                      symbol_paths: Iterable[str | Path] = (),
                       time_filter: str | None = None,
                       ascii_kind: str | None = None) -> list[str]:
     """The AMDuProfCLI translate argument list shared by translate and the dump cache."""
@@ -299,8 +299,8 @@ def translate_command(uprof: str | Path, session: str | Path, *,
         command += ["--symbol-cache-dir", os.fspath(symbol_cache)]
     for server in symbol_servers:
         command += ["--symbol-server", server]
-    if pdb_dir is not None:
-        command += ["--symbol-path", os.fspath(pdb_dir)]
+    for path in symbol_paths:
+        command += ["--symbol-path", os.fspath(path)]
     if time_filter:
         command += ["--time-filter", time_filter]
     if ascii_kind:
@@ -423,7 +423,8 @@ def symbolization_counts(cpu_db: Path | str) -> tuple[int, int | None, int] | No
 
 
 def translate(session_dir: Path | str, out_dir: Path | str,
-              pdb_dir: Path | str | None = None, symbol_cache: Path | str | None = None,
+              symbol_paths: Iterable[str | Path] | None = None,
+              symbol_cache: Path | str | None = None,
               symbol_servers: list[str] | None = None, time_filter: str | None = None,
               ascii_kind: str | None = None, force: bool = False) -> None:
     session = absolute(session_dir)
@@ -466,7 +467,7 @@ def translate(session_dir: Path | str, out_dir: Path | str,
 
     command = translate_command(
         uprof, out, symbol_cache=cache, symbol_servers=servers,
-        pdb_dir=absolute(pdb_dir) if pdb_dir else None,
+        symbol_paths=[absolute(path) for path in symbol_paths or ()],
         time_filter=time_filter, ascii_kind=ascii_kind)
 
     completed = run(command, timeout=TRANSLATE_TIMEOUT)
@@ -493,7 +494,7 @@ def translate(session_dir: Path | str, out_dir: Path | str,
             print("WARNING: translate exited 0 and printed 'Translation finished', but this "
                   "cpu.db has no symbol evidence; the exit status is not symbolization success. "
                   "Check the SYMBOL_CACHE and SYMBOL_SERVERS paths above, or pass --symbol-cache, "
-                  "--symbol-server or --pdb-dir and re-run translate into a new --out-dir")
+                  "--symbol-server or --symbol-path and re-run translate into a new --out-dir")
     if ascii_kind:
         dump = out / DUMP_FILENAMES[ascii_kind]
         if not dump.is_file():

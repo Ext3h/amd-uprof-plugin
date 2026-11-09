@@ -32,7 +32,7 @@ PARTIAL_NAMED_OFFSET = 16384
 PARTIAL_ANON_OFFSET = 20480
 UNKNOWN_OFFSET = 24576
 
-NO_NAMED_STOP = ("a module with no named functions is covered by derived function ranges: use "
+NO_NAMED_STOP = ("a module with no source names is covered by derived function ranges: use "
                  "profile --by function, which derives boundaries from the binary (.pdata, PE "
                  "exports, PDB publics) with LLVM; do not write a PE parser, map .pdata by hand "
                  "or disassemble")

@@ -18,18 +18,28 @@ SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encoding="utf-8")
 SPEC = (TOOLS_DIR.parent / "references" / "spec.md").read_text(encoding="utf-8")
 
-READ_FIRST = ("**Read this file before running any command: no command runs before this read "
-              "completes. Do not list the skill tree, session directory, references or "
-              "metadata.**")
+READ_FIRST = ("**Read this file before running any command. The first tool call of the task is "
+              "the Read of this file; wait for it to complete before any other tool call. Do not "
+              "issue any other tool call (no `ls`, `source`, environment check or other command) "
+              "in the same turn as this read; the next tool call is `profile --by process`. Do "
+              "not list the skill tree, session directory, references or metadata.**")
 REGION_MEANING = ("region = 4 KiB address page; samples are grouped by address, not by control "
                   "flow; a page may span unrelated code; the hot RVA is the precise attribution "
                   "and the page is the coarse bucket")
 
 SKILL_FRAGMENTS = (
     READ_FIRST,
+    "The first tool call of the task is the Read of this file",
+    "wait for it to complete before any other tool call",
+    "Do not issue any other tool call",
+    "in the same turn as this read",
+    "the next tool call is `profile --by process`",
+    "Python 3.9 or newer",
+    "do not add `-I`",
+    "No environment or version preflight",
     "## Quickstart",
     "`profile --by process` first",
-    "Do not list the skill tree, the session directory, its references or its metadata, "
+    "do not list the skill tree, the session directory, its references or its metadata, "
     "and run `tools` only if a command reports `MISSING`",
     "one `profile --by module` text call",
     "carrying the module's `hot_rva`",
@@ -39,8 +49,11 @@ SKILL_FRAGMENTS = (
     "do not open `callstack.db` or `views.sql`",
     "`profile --by region` is the fallback",
     "do not run `--by region` after the function output has answered",
-    "function scope is unresolved and `function_source` is `none`",
+    "function rows are in the `unresolved` attribution and `function_source` is `none`",
     "instruction context is asked for, not as a default drill-down",
+    "`unresolved` is only the tool's attribution category",
+    "never `unresolved` or `no named functions`",
+    "quote that split in the report",
     "`HOT_RVA:` line",
     "`hot_rva`/`hot_samples`/`hot_sample_share`",
     "must not be used to claim the sample-hot RVA",
@@ -108,13 +121,18 @@ REFERENCE_FRAGMENTS = (
     "highest-sample address as `hot_rva`",
     "`HOT_RVA:` summary",
     "maximum `hot_samples` across all function rows",
+    "`unresolved` is the attribution category",
+    "a derived range is attributed, not unresolved",
+    "report the row attribution, not the channel count",
+    "never \"unresolved\" or \"no named functions\"",
+    "function rows are in the `unresolved` attribution and `function_source` is `none`",
     "must not be used to claim the sample-hot RVA",
     "one `CONTEXT:` line",
     "isSystemModule = false",
     "neither an OS-shipped predicate nor a kernel predicate",
     "kernel image",
     "dominant non-workload dependency",
-    "no named functions",
+    "no source names",
     "v_module_flags",
     "v_function_ranges",
     "v_region_rows",
@@ -161,6 +179,20 @@ class DocsGuidanceTest(unittest.TestCase):
         self.assertLess(SKILL.index("# AMD uProf profile"), SKILL.index(READ_FIRST))
         self.assertLess(SKILL.index(READ_FIRST), SKILL.index("## Quickstart"))
 
+    def test_the_read_and_the_first_command_are_separate_turns(self):
+        self.assertLess(SKILL.index(READ_FIRST), SKILL.index("## Quickstart"))
+        quickstart = SKILL[SKILL.index("## Quickstart"):SKILL.index("## Commands")]
+        self.assertIn("do not issue any other tool call in that turn", quickstart)
+        self.assertIn("Then run `profile --by process`", quickstart)
+
+    def test_the_invocation_states_the_interpreter_and_keeps_sibling_imports(self):
+        start = SKILL.index("One entry point")
+        section = SKILL[start:SKILL.index("## Quickstart")]
+        self.assertIn("Python 3.9 or newer", section)
+        self.assertIn("do not add `-I`", section)
+        self.assertIn("sibling modules", section)
+        self.assertIn("No environment or version preflight", section)
+
     def test_the_region_fallback_keeps_the_required_wording(self):
         for name, text in (("SKILL", SKILL), ("reference", REFERENCE), ("spec", SPEC)):
             with self.subTest(document=name):
@@ -178,6 +210,9 @@ class DocsGuidanceTest(unittest.TestCase):
                          "The impact order is the mode's primary measure for process, module",
                          "maximum\n  `hot_samples` across all function rows",
                          "must not be used to claim the sample-hot RVA",
+                         "`unresolved` is only the attribution category",
+                         "must not be called `unresolved` or \"no named functions\"",
+                         "function rows remain in the `unresolved` attribution",
                          "function_ranges"):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, SPEC)

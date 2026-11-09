@@ -276,7 +276,7 @@ _REGION_MEANING: Final = (
     "4 KiB address page; samples are grouped by address, not by control flow; a page may span "
     "unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket")
 _NO_NAMED_FUNCTION_STOP: Final = (
-    "a module with no named functions is covered by derived function ranges: use profile --by "
+    "a module with no source names is covered by derived function ranges: use profile --by "
     "function, which derives boundaries from the binary (.pdata, PE exports, PDB publics) with "
     "LLVM; do not write a PE parser, map .pdata by hand or disassemble")
 _UNRESOLVED_FUNCTION_STOP: Final = (
@@ -1131,7 +1131,7 @@ def _coverage_field(connection: object,
     for value in unresolved:
         samples = int(value["samples"])
         named_samples = int(value["named_samples"])
-        kind = "partial" if named_samples else "no named functions"
+        kind = "partial" if named_samples else "no source names"
         share = 100.0 * (samples - named_samples) / samples
         cause = (causes or {}).get(value["module_name"])
         reason = f"; cause: {cause}" if cause else ""

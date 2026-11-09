@@ -9,6 +9,7 @@
 --   uprof_time_start    window start in ns from capture start (inclusive)
 --   uprof_time_end      window end in ns (exclusive)
 --   uprof_ibs_dump      absolute IBS ASCII dump path; empty for a PMC capture
+--   uprof_ibs_parquet   cached Parquet copy of the dump's SAMPLE_COLUMNS; empty to read the CSV
 --   uprof_event_column  PMC sample column in UnifiedSampleSeries; empty for a dump capture
 --   uprof_session_meta  session.uprof path when the file exists, else empty
 --   uprof_tag_available 'true' only for an IBS OP dump whose IbsTagToRetCtr exists and has a
@@ -177,6 +178,27 @@ SET VARIABLE top_n = greatest(CAST(COALESCE(getvariable('uprof_top'), 20) AS BIG
 SET VARIABLE time_start = CAST(COALESCE(NULLIF(getvariable('uprof_time_start'), ''), '0') AS BIGINT);
 SET VARIABLE time_end = CAST(COALESCE(NULLIF(getvariable('uprof_time_end'), ''), '9223372036854775807') AS BIGINT);
 
+-- The dump rows time_share reads. A run may hand over a Parquet copy of exactly these columns
+-- (uprof_dump.samples_parquet); otherwise the ASCII dump is read as text. The copy holds the same
+-- cell text, so the casts below behave identically either way. The variable is optional, so a
+-- direct load of this file reads the dump. A PMC capture has no dump to bind.
+CREATE OR REPLACE TEMP VIEW v_dump_source AS
+SELECT * FROM query(CASE
+  WHEN NOT getvariable('has_dump') THEN $empty$
+    SELECT CAST(NULL AS VARCHAR) AS "DeltaTick",
+           CAST(NULL AS VARCHAR) AS "CPU_Number",
+           CAST(NULL AS VARCHAR) AS "TID",
+           CAST(NULL AS VARCHAR) AS "PID",
+           CAST(NULL AS VARCHAR) AS "Offset",
+           CAST(NULL AS VARCHAR) AS "ModuleName",
+           CAST(NULL AS VARCHAR) AS "IbsTagToRetCtr"
+    WHERE false$empty$
+  WHEN COALESCE(getvariable('uprof_ibs_parquet'), '') <> ''
+    THEN $parquet$SELECT * FROM read_parquet(getvariable('uprof_ibs_parquet'))$parquet$
+  ELSE $csv$SELECT * FROM read_csv(getvariable('uprof_ibs_dump'),
+                                   header = true, all_varchar = true)$csv$
+END);
+
 -- DeltaTick is a cumulative, start-relative nanosecond timestamp; all columns are read as text so
 -- uProf's empty or non-numeric cells cannot force a column type. tid identifies the thread in an
 -- attached capture: the achieved-cadence check uses it as the context there and cpu for a
@@ -210,7 +232,7 @@ SELECT * FROM query(CASE
            CASE WHEN regexp_full_match("IbsTagToRetCtr", '\s*[0-9]+\s*')
                 THEN LEAST(TRY_CAST("IbsTagToRetCtr" AS DOUBLE), 65535)
                 ELSE NULL END AS tag_cycles
-    FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)$tagged$
+    FROM v_dump_source$tagged$
   ELSE $untagged$
     SELECT CAST(DeltaTick AS BIGINT) AS delta_tick,
            CAST(CPU_Number AS INTEGER) AS cpu,
@@ -219,7 +241,7 @@ SELECT * FROM query(CASE
            CAST("Offset" AS BIGINT) AS rva,
            module_key(ModuleName) AS module_name,
            CAST(NULL AS DOUBLE) AS tag_cycles
-    FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)$untagged$
+    FROM v_dump_source$untagged$
 END);
 
 -- The capture span recorded in session.uprof, in capture-relative nanoseconds. Shared by the

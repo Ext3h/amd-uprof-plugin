@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -468,6 +469,53 @@ class ImagePathSymbolizationTest(unittest.TestCase):
             called_with = symbolized.call_args.args[0]
 
         self.assertEqual(called_with, str(image))
+
+
+class ParallelSymbolizationTest(unittest.TestCase):
+    """Modules symbolize concurrently, but stream text and artifacts keep module order."""
+
+    def test_concurrent_modules_keep_output_and_artifact_order(self):
+        cpu_count = os.cpu_count() or 1
+        if cpu_count < 2:
+            self.skipTest("a thread pool needs at least two CPUs to run modules together")
+        count = min(4, cpu_count)
+        with tempfile.TemporaryDirectory(prefix="uprof-parallel-") as directory:
+            root = Path(directory)
+            names = [f"module{index}.exe" for index in range(count)]
+            modules = []
+            for name in names:
+                path = root / name
+                path.write_bytes(b"MZ")
+                modules.append((name, str(path), ["0x1000"]))
+            barrier = threading.Barrier(count, timeout=5)
+            threads: set[int] = set()
+
+            def symbolize(exe, rva_file, out_dir, stream, module_name=None, **_kwargs):
+                threads.add(threading.get_ident())
+                barrier.wait()
+                print(f"SYMBOLIZED: {module_name}", file=stream)
+                evidence = uprof_symbols.ModuleEvidence(module_name, exe, outcome="resolved")
+                return uprof_symbols.SymbolizedModule(
+                    Path(out_dir) / "symbols.parquet", None, None, evidence)
+
+            stream = io.StringIO()
+            with mock.patch.object(uprof_symbols, "require_symbolizer",
+                                   return_value=Path("llvm-symbolizer.exe")), \
+                    mock.patch.object(uprof_symbols, "symbolize_module",
+                                      side_effect=symbolize), \
+                    mock.patch.object(uprof_symbols, "_combine_artifacts",
+                                      return_value=(root / "symbols.parquet", None)) as combine:
+                uprof_symbols.symbolize_modules(modules, root / "out", stream=stream)
+
+        expected: list[str] = []
+        for name in names:
+            expected.append(f"MODULE: {name}: 1 addresses in {root / name}")
+            expected.append(f"SYMBOLIZED: {name}")
+        self.assertEqual(stream.getvalue().splitlines(), expected)
+        # Reaching the barrier proves every call was in flight at once; one worker cannot.
+        self.assertGreater(len(threads), 1)
+        parquet_inputs = combine.call_args.args[0]
+        self.assertEqual([name for name, _path in parquet_inputs], names)
 
 
 if __name__ == "__main__":

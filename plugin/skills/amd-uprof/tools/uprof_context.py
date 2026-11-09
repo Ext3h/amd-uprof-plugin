@@ -44,6 +44,7 @@ _UNWIND_START = re.compile(r"^\s*StartAddress:\s*\(?(0x[0-9A-Fa-f]+)\)?\s*$")
 _EXPORT_BLOCK = re.compile(r"^\s*Export\s*\{\s*$")
 _EXPORT_RVA = re.compile(r"^\s*RVA:\s*(0x[0-9A-Fa-f]+)\s*$")
 _EXPORT_NAME = re.compile(r"^\s*Name:\s*(.*?)\s*$")
+_SECTION_BLOCK = re.compile(r"^\s*Section\s*\{\s*$")
 _SECTION_NAME = re.compile(r"^\s*Name:\s*(\S+)(?:\s+\(([0-9A-Fa-f ]+)\))?\s*$")
 _SECTION_VIRTUAL_SIZE = re.compile(r"^\s*VirtualSize:\s*(0x[0-9A-Fa-f]+)\s*$")
 _SECTION_VIRTUAL_ADDRESS = re.compile(r"^\s*VirtualAddress:\s*(0x[0-9A-Fa-f]+)\s*$")
@@ -297,6 +298,107 @@ def _append_section(sections: list[PeSection], values: dict[str, object]) -> Non
     size = values.get("virtual_size") or values.get("raw_size") or 0
     sections.append(PeSection(start=int(start), size=int(size),
                               code=bool(values.get("code", False))))
+
+
+@dataclass(frozen=True)
+class ParsedImage:
+    """The pieces of one llvm-readobj dump that boundary derivation needs.
+
+    sections keeps the dump's order; unwind_starts and exports hold one entry per start and
+    export in dump order.
+    """
+
+    build: BuildIdentity
+    sections: list[PeSection]
+    unwind_starts: list[tuple[int, str | None]]
+    exports: list[tuple[int, str | None]]
+
+
+def parse_image(text: str) -> ParsedImage:
+    """File headers, sections, .pdata starts and exports from one llvm-readobj text.
+
+    One scan replaces calling parse_file_headers, parse_sections, parse_unwind_starts and
+    parse_exports over the same text, whose unwind tables dominate it. Those four parsers stay
+    for callers that read a single piece. Raises the same metadata_incomplete omission as
+    parse_file_headers when the file headers are incomplete.
+    """
+    image_base = checksum = magic = date_stamp = size_of_image = None
+    sections: list[PeSection] = []
+    unwind_addresses: set[int] = set()
+    exports: list[tuple[int, str | None]] = []
+    current: dict[str, object] = {}
+    in_section = in_export = False
+    rva: int | None = None
+    name: str | None = None
+    for line in text.splitlines():
+        bare = line.strip()
+        # The base parser scans StartAddress globally, so record it before the block state can
+        # consume the line.
+        if match := _UNWIND_START.match(line):
+            unwind_addresses.add(int(match.group(1), 16))
+        if in_section:
+            if bare == "}":
+                _append_section(sections, current)
+                current = {}
+                in_section = False
+            elif bare.startswith("Name:"):
+                if match := _SECTION_NAME.match(line):
+                    current["name"] = match.group(1)
+            elif bare.startswith("VirtualSize:"):
+                if match := _SECTION_VIRTUAL_SIZE.match(line):
+                    current["virtual_size"] = int(match.group(1), 16)
+            elif bare.startswith("VirtualAddress:"):
+                if match := _SECTION_VIRTUAL_ADDRESS.match(line):
+                    current["start"] = int(match.group(1), 16)
+            elif bare.startswith("RawDataSize:"):
+                if match := _SECTION_RAW_SIZE.match(line):
+                    current["raw_size"] = int(match.group(1), 10)
+            elif "IMAGE_SCN_CNT_CODE" in bare or "IMAGE_SCN_MEM_EXECUTE" in bare:
+                current["code"] = True
+            continue
+        if in_export:
+            if bare == "}":
+                if rva is not None:
+                    exports.append((rva, name))
+                in_export = False
+            elif rva is None and bare.startswith("RVA:"):
+                if match := _EXPORT_RVA.match(line):
+                    rva = int(match.group(1), 16)
+            elif name is None and bare.startswith("Name:"):
+                if match := _EXPORT_NAME.match(line):
+                    name = match.group(1) or None
+            continue
+        if bare.startswith("Section") and _SECTION_BLOCK.match(line):
+            current, in_section = {}, True
+        elif _EXPORT_BLOCK.match(line):
+            in_export, rva, name = True, None, None
+        elif bare.startswith("ImageBase:"):
+            if image_base is None and (match := _IMAGE_BASE.match(line)):
+                image_base = int(match.group(1), 16)
+        elif bare.startswith("CheckSum:"):
+            if checksum is None and (match := _CHECKSUM.match(line)):
+                checksum = int(match.group(1), 16)
+        elif bare.startswith("SizeOfImage:"):
+            if size_of_image is None and (match := _SIZE_OF_IMAGE.match(line)):
+                size_of_image = int(match.group(1), 10)
+        elif bare.startswith("Magic:"):
+            if magic is None and (match := _MAGIC.match(line)):
+                magic = int(match.group(1), 16)
+        elif bare.startswith("TimeDateStamp:"):
+            if date_stamp is None and (match := _DATE_STAMP.match(line)):
+                date_stamp = int(match.group(1), 16)
+    missing = [name for name, value in (("ImageBase", image_base), ("TimeDateStamp", date_stamp),
+                                        ("CheckSum", checksum), ("Magic", magic))
+               if value is None]
+    if missing:
+        raise ContextOmission("metadata_incomplete",
+                              f"llvm-readobj file headers lack {', '.join(missing)}")
+    unwind_starts = [(address - image_base, None) for address in sorted(unwind_addresses)
+                     if address - image_base >= 0]
+    return ParsedImage(
+        BuildIdentity(image_base=image_base, time_date_stamp=date_stamp, checksum=checksum,
+                      magic=magic, size_of_image=size_of_image or 0),
+        sections, unwind_starts, exports)
 
 
 def find_code_section(sections: list[PeSection], rva: int) -> PeSection | None:
@@ -1048,8 +1150,9 @@ class _ContextBuilder:
                                   tail_lines((completed.stdout or "") + "\n" +
                                              (completed.stderr or "")))
         text = completed.stdout or ""
-        build = parse_file_headers(text)
-        sections = parse_sections(text)
+        image = parse_image(text)
+        build = image.build
+        sections = image.sections
         try:
             verified = verify_build(build, capture_checksum, capture_size)
         except ContextOmission as exc:
@@ -1075,8 +1178,7 @@ class _ContextBuilder:
             [module_name]).fetchone()
         pdb = pdb_row[0] if pdb_row else None
         return _ModuleState(module_path, verified, sections, imports, public_starts,
-                            parse_unwind_starts(text, build.image_base),
-                            parse_exports(text), str(pdb) if pdb else None)
+                            image.unwind_starts, image.exports, str(pdb) if pdb else None)
 
     def _samples(self, module_name: str, rvas: list[int]) -> dict[int, int]:
         if not rvas:

@@ -9,6 +9,19 @@ Header fields are emitted in this fixed order, with optional fields omitted when
 optional `DB`, `TIME_SHARE`, `TAG_TO_RETIRE_SHARE`, `WEIGHTS`, optional `SANITY`, `ACHIEVED`,
 `KERNEL_COVERAGE`, `HOT_RVA`, `SYMBOL_COVERAGE`, `WARNING`, `AGREEMENT`.
 
+## Granularities
+
+`--by` selects the row key; `function`, `region`, `line` and `instruction` symbolize.
+
+| `--by` | row key | symbolization |
+|---|---|---|
+| `process` | process | no |
+| `module` | module path | no |
+| `function` | function (derived range when the binary supplies one) | yes |
+| `region` | module + 4 KiB address page | yes |
+| `line` | file:line | yes |
+| `instruction` | module + RVA | yes |
+
 ## session.uprof
 
 UTF-8 JSON (a BOM is tolerated). The keys the tools read:

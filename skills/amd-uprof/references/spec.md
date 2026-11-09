@@ -70,18 +70,11 @@ report sample and time shares, stating what each measures.
 
 ### 3.3 Granularities
 
-| `--by` | row key | symbolization |
-|---|---|---|
-| `process` | process | no |
-| `module` | module path | no |
-| `function` | function (derived range when the binary supplies one) | yes |
-| `region` | module + 4 KiB address page | yes |
-| `line` | file:line | yes |
-| `instruction` | module + RVA | yes |
+`--by` groups rows by the selected granularity; `function`, `region`, `line` and `instruction`
+symbolize, `process` and `module` do not. Row keys and symbolization mechanics are in `reference.md`.
 
-Every share is a fraction and `samples` a raw count; `time_share` is absent for PMC captures and
-`tag_to_retire_share` without a usable tag column; a supplied measure is present even at zero, and
-every output states which columns apply and why. No filter is a prerequisite.
+Every share is a fraction and `samples` a raw count; a supplied measure is present even at zero. No
+filter is a prerequisite.
 
 `--by module` emits the rollup with the system flag, an estimated `cpu_seconds` (omitted with its
 reason when not derivable) and the hot address fields; `other_samples` is the rest of the row, and
@@ -96,13 +89,12 @@ when neither a name nor a derived range covers them.
 Where function rows remain `unresolved` and no boundary source exists, fall back to `--by region`:
 region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span
 unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket. `line`
-and `instruction` symbolize every module in scope; modules without usable symbols appear as
-`<no symbol>` with the share of weight that covers.
+and `instruction` symbolize every module in scope, report per-scope agreement and coverage, and
+mark modules without usable symbols `<no symbol>` with the share of weight that covers.
 
-`line` and `instruction` accept an explicit parent scope, never inferred from the top row; parent
-totals are a join of the capture's rows, not a second measurement, and do not depend on `--top`.
-Rows add parent shares and the remainder carries them, so a truncated view and its remainder sum to
-the parent total.
+`line` and `instruction` take an explicit parent scope, never inferred from the top row; parent
+totals are a join of the capture's rows, not a second measurement and independent of `--top`; rows
+and the remainder carry the same parent shares, so they sum to the parent total.
 
 `--symbol-path` and `--image-path` affect the symbolized rows and the profile symbolizer share, not
 the share of samples the capture itself named; a source is accepted only when its identity is
@@ -143,13 +135,10 @@ row carries none. Windows modules only.
 
 ## 4. Columns and capture modes
 
-| column | meaning | mode-dependent |
-|---|---|---|
-| `samples` | raw number of samples in the row | no |
-| `sample_share` | fraction of samples; what a sample represents depends on the sampler | yes |
-| `time_share` | gap-weighted time share; an estimate, not unqualified impact | absent for PMC |
-| `tag_to_retire_share` | share of total tag-to-retire cycles, not per-op latency | usable-tag IBS OP only |
-| parent shares | the row as a share of the selected parent function | parent-scoped views |
+`sample_share` depends on the sampler; `time_share` is a gap-weighted estimate and is absent for PMC
+captures; `tag_to_retire_share` is the share of tag-to-retire cycles, not per-op latency, and is
+absent without a usable tag column; parent shares are the row as a share of the selected parent
+function.
 
 | capture | a sample represents | `sample_share` is |
 |---|---|---|
@@ -159,8 +148,8 @@ row carries none. Windows modules only.
 | IBS OP, op interval | selected operation | dispatched-op frequency share |
 | IBS fetch | fetch event | fetch-sample frequency share |
 
-Every output states the capture mode and what each column measures; an instruction or op share is
-never presented as CPU time.
+Every output states the capture mode, each column's meaning and any absent column with its cause;
+an instruction or op share is never presented as CPU time.
 
 ## 5. Failure behaviour
 
@@ -171,8 +160,7 @@ an input — is reported with the fix and exits nonzero; no degraded result is p
 ## 6. Shared addresses
 
 When several function names share one address, a per-name share is not attributable: report it as
-shared and mark the row non-attributable at every symbolized granularity. A derived range is
-attributed, never unresolved.
+shared and mark the row non-attributable at every symbolized granularity.
 
 ## 7. Reproducibility
 

@@ -7,6 +7,8 @@ the boundary rule without a toolchain.
 Run from the repository root: python tests/run_tests.py test_function_ranges
 """
 
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +16,7 @@ from unittest import mock
 
 import uprof_context
 import uprof_functions
+import uprof_symbols
 from uprof_context import PeSection
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
@@ -80,6 +83,15 @@ class BoundaryTest(unittest.TestCase):
 
 @unittest.skipUnless(READOBJ, "llvm-readobj is required")
 class FixtureDerivationTest(unittest.TestCase):
+    def setUp(self):
+        # A private cache root makes every run a miss, so parse_image is always exercised even on
+        # a host whose warm cache already holds this fixture.
+        self.cache = tempfile.TemporaryDirectory(prefix="uprof-ranges-")
+        self.addCleanup(self.cache.cleanup)
+        patcher = mock.patch.object(uprof_symbols, "ARTIFACT_CACHE_ROOT", Path(self.cache.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_fixture_pdata_exports_and_section_end_define_the_ranges(self):
         result = uprof_functions.derive_module_ranges("fixture.exe", FIXTURE)
 
@@ -96,6 +108,24 @@ class FixtureDerivationTest(unittest.TestCase):
 
         self.assertEqual(result.ranges, [])
         self.assertEqual(result.reason, "readobj_missing")
+
+    def test_a_malformed_ranges_entry_is_deleted_when_recompute_stores_nothing(self):
+        uprof_functions.derive_module_ranges("fixture.exe", FIXTURE)
+        entry = next((Path(self.cache.name) / "v1" / "ranges").rglob("meta.json")).parent
+        ranges_path = entry / "ranges.json"
+        ranges_path.write_text('{"ranges": "bad"}', encoding="utf-8")
+        meta = json.loads((entry / "meta.json").read_text(encoding="utf-8"))
+        meta["files"]["ranges.json"] = {
+            "size": ranges_path.stat().st_size,
+            "sha256": uprof_symbols.artifact_file_digest(ranges_path)}
+        (entry / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        with mock.patch.object(uprof_functions, "run",
+                               return_value=subprocess.CompletedProcess([], 0, "", "")):
+            result = uprof_functions.derive_module_ranges("fixture.exe", FIXTURE)
+
+        self.assertIsNotNone(result.reason)
+        self.assertFalse(entry.exists())
 
 
 if __name__ == "__main__":

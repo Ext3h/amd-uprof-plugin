@@ -9,6 +9,7 @@
 --   uprof_time_start    window start in ns from capture start (inclusive)
 --   uprof_time_end      window end in ns (exclusive)
 --   uprof_ibs_dump      absolute IBS ASCII dump path; empty for a PMC capture
+--   uprof_ibs_parquet   cached Parquet copy of the dump's SAMPLE_COLUMNS; empty to read the CSV
 --   uprof_event_column  PMC sample column in UnifiedSampleSeries; empty for a dump capture
 --   uprof_session_meta  session.uprof path when the file exists, else empty
 --   uprof_tag_available 'true' only for an IBS OP dump whose IbsTagToRetCtr exists and has a

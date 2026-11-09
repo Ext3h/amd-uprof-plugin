@@ -101,7 +101,7 @@ def _without_comments(duckdb: Any, text: str) -> str:
 
 
 def _view_plan(duckdb: Any, statements: Sequence[Any],
-               roots: set[str]) -> tuple[set[str], list[str | None]]:
+               roots: set[str], source: str) -> tuple[set[str], list[str | None]]:
     """The CREATE VIEW names to execute, and each statement's view name (None when not a view).
 
     A view name inside a dollar-quoted string counts as a reference: query(CASE ...) chooses that
@@ -120,7 +120,7 @@ def _view_plan(duckdb: Any, statements: Sequence[Any],
     unknown = sorted(root for root in roots if root not in graph)
     if unknown:
         raise UprofError(
-            f"internal error: views.sql does not define {', '.join(unknown)}")
+            f"internal error: {source} does not define {', '.join(unknown)}")
     needed: set[str] = set()
     pending = list(roots)
     while pending:
@@ -146,7 +146,7 @@ def run_script(connection: Any, sql_path: Path, views: set[str] | None = None) -
             connection.execute(statement)
         return
     duckdb = _duckdb()
-    needed, names = _view_plan(duckdb, statements, views)
+    needed, names = _view_plan(duckdb, statements, views, sql_path.name)
     for statement, name in zip(statements, names):
         if name is None or name in needed:
             connection.execute(statement)

@@ -7,6 +7,7 @@ Run from the repository root: python tests/run_tests.py test_sanity_scope
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -229,9 +230,11 @@ class SanityScopeTest(unittest.TestCase):
             plan = connected.sql("EXPLAIN SELECT message FROM v_scope_sanity").fetchall()[0][1]
 
         # The dump is materialized when views.sql loads, so the scoped verdict must contain no
-        # CSV scan of its own. Reading v_dump_sanity for the span instead would add its two full
-        # dump scans (weighted_all and per_cpu) for every filtered profile.
+        # CSV scan of its own, and it must scan the materialized table exactly once. Reading
+        # v_dump_sanity for the span instead would add its two full dump scans (weighted_all and
+        # per_cpu) for every filtered profile.
         self.assertNotIn("READ_CSV", plan)
+        self.assertEqual(plan.count("v_dump"), 1, plan)
 
 
 class ScopedQueryTest(unittest.TestCase):

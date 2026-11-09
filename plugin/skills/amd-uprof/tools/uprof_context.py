@@ -332,6 +332,10 @@ def parse_image(text: str) -> ParsedImage:
     name: str | None = None
     for line in text.splitlines():
         bare = line.strip()
+        # The base parser scans StartAddress globally, so record it before the block state can
+        # consume the line.
+        if match := _UNWIND_START.match(line):
+            unwind_addresses.add(int(match.group(1), 16))
         if in_section:
             if bare == "}":
                 _append_section(sections, current)
@@ -366,7 +370,7 @@ def parse_image(text: str) -> ParsedImage:
             continue
         if bare.startswith("Section") and _SECTION_BLOCK.match(line):
             current, in_section = {}, True
-        elif bare == "Export {":
+        elif _EXPORT_BLOCK.match(line):
             in_export, rva, name = True, None, None
         elif bare.startswith("ImageBase:"):
             if image_base is None and (match := _IMAGE_BASE.match(line)):
@@ -383,9 +387,6 @@ def parse_image(text: str) -> ParsedImage:
         elif bare.startswith("TimeDateStamp:"):
             if date_stamp is None and (match := _DATE_STAMP.match(line)):
                 date_stamp = int(match.group(1), 16)
-        elif bare.startswith("StartAddress:"):
-            if match := _UNWIND_START.match(line):
-                unwind_addresses.add(int(match.group(1), 16))
     missing = [name for name, value in (("ImageBase", image_base), ("TimeDateStamp", date_stamp),
                                         ("CheckSum", checksum), ("Magic", magic))
                if value is None]

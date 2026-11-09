@@ -127,5 +127,79 @@ class ViewsSourceTest(unittest.TestCase):
             self.assertEqual(len(from_csv), len(ROWS))
 
 
+class SamplesMetadataTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="uprof-samples-meta-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.dump = _dump(self.root)
+        self.info = _info(self.dump, self.root)
+        self.target = uprof_dump.samples_parquet(self.info, self.root)
+        self.assertIsNotNone(self.target)
+        self.meta_path = Path(str(self.target) + ".json")
+
+    def meta(self):
+        return json.loads(self.meta_path.read_text(encoding="utf-8"))
+
+    def write_meta(self, **changes):
+        self.meta_path.write_text(json.dumps({**self.meta(), **changes}), encoding="utf-8")
+
+    def test_a_stale_format_is_rebuilt(self):
+        stamp = self.target.stat().st_mtime_ns
+        self.write_meta(format=0)
+
+        rebuilt = uprof_dump.samples_parquet(self.info, self.root)
+
+        self.assertEqual(rebuilt, self.target)
+        self.assertEqual(self.meta()["format"], uprof_dump._SAMPLES_FORMAT)
+        self.assertNotEqual(self.target.stat().st_mtime_ns, stamp)
+
+    def test_stale_columns_are_rebuilt(self):
+        self.write_meta(columns=["wrong"])
+
+        uprof_dump.samples_parquet(self.info, self.root)
+
+        self.assertEqual(self.meta()["columns"], list(uprof_dump.SAMPLE_COLUMNS))
+
+    def test_a_matching_sha_updates_a_stale_source(self):
+        stamp = self.target.stat().st_mtime_ns
+        self.write_meta(source="elsewhere")
+
+        reused = uprof_dump.samples_parquet(self.info, self.root)
+
+        self.assertEqual(reused, self.target)
+        self.assertEqual(self.meta()["source"], uprof_dump._normalized_source(self.dump))
+        self.assertEqual(self.target.stat().st_mtime_ns, stamp)
+
+    def test_a_truncated_copy_is_rebuilt(self):
+        self.target.write_bytes(b"")
+
+        rebuilt = uprof_dump.samples_parquet(self.info, self.root)
+
+        self.assertEqual(rebuilt, self.target)
+        self.assertGreater(self.target.stat().st_size, 0)
+        with duckdb.connect() as connection:
+            rows = connection.execute("SELECT count(*) FROM read_parquet(?)",
+                                      [str(self.target)]).fetchone()[0]
+        self.assertEqual(rows, len(ROWS))
+
+    def test_a_corrupt_same_size_copy_is_rebuilt(self):
+        corrupted = b"\0" * self.target.stat().st_size
+        self.target.write_bytes(corrupted)
+
+        rebuilt = uprof_dump.samples_parquet(self.info, self.root)
+
+        self.assertEqual(rebuilt, self.target)
+        self.assertNotEqual(self.target.read_bytes(), corrupted)
+
+    def test_a_missing_copy_is_rebuilt(self):
+        self.target.unlink()
+
+        rebuilt = uprof_dump.samples_parquet(self.info, self.root)
+
+        self.assertEqual(rebuilt, self.target)
+        self.assertTrue(self.target.is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

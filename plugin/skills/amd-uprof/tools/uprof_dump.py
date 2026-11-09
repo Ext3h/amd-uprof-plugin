@@ -89,14 +89,29 @@ def _read_samples_meta(path: Path) -> dict[str, object] | None:
     return meta if isinstance(meta, dict) else None
 
 
+def _normalized_source(source: Path) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(source)))
+
+
+def _copy_valid(target: Path, meta: dict[str, object]) -> bool:
+    """The copy itself still matches the size and digest recorded when it was written."""
+    try:
+        if not target.is_file() or target.stat().st_size != meta.get("copy_bytes"):
+            return False
+        return _sha256_file(target) == meta.get("copy_sha256")
+    except OSError:
+        return False
+
+
 def _samples_meta_matches(meta: dict[str, object] | None, source: Path,
-                          key: tuple[int, int]) -> bool:
+                          key: tuple[int, int], target: Path) -> bool:
     return bool(meta
                 and meta.get("format") == _SAMPLES_FORMAT
                 and meta.get("columns") == list(SAMPLE_COLUMNS)
-                and meta.get("source") == str(source)
+                and meta.get("source") == _normalized_source(source)
                 and meta.get("bytes") == key[0]
-                and meta.get("mtime_ns") == key[1])
+                and meta.get("mtime_ns") == key[1]
+                and _copy_valid(target, meta))
 
 
 def _write_samples_meta(path: Path, meta: dict[str, object]) -> None:
@@ -107,9 +122,10 @@ def _write_samples_meta(path: Path, meta: dict[str, object]) -> None:
 def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
     """A Parquet copy of the dump's SAMPLE_COLUMNS, built or refreshed on demand.
 
-    The sidecar records the source size, mtime and sha256. A matching size and mtime reuse the
-    copy without reading either file; a mismatch compares the sha256, so rewritten bytes reuse it
-    and a changed dump rebuilds it. Any failure returns None, and the caller reads the CSV.
+    The sidecar records the source size, mtime and sha256 and the copy's size and sha256. A
+    matching source size and mtime reuse the copy after verifying the copy's recorded size and
+    digest; a source mismatch compares the source sha256, so rewritten bytes reuse the copy and a
+    changed dump rebuilds it. Any failure returns None, and the caller reads the CSV.
     """
     source = Path(dump.path)
     key = _file_key(source)
@@ -118,14 +134,18 @@ def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
     directory = dump.cache_dir if dump.cache_dir is not None else cache_dir(session_dir)
     target, meta_path = _samples_paths(source, directory)
     meta = _read_samples_meta(meta_path)
-    if target.is_file() and _samples_meta_matches(meta, source, key):
+    if target.is_file() and _samples_meta_matches(meta, source, key, target):
         return target
     sha = _sha256_file(source)
     if sha is None:
         return None
-    if target.is_file() and meta is not None and meta.get("sha256") == sha:
+    if (target.is_file() and meta is not None and meta.get("sha256") == sha
+            and meta.get("format") == _SAMPLES_FORMAT
+            and meta.get("columns") == list(SAMPLE_COLUMNS)
+            and _copy_valid(target, meta)):
         try:
-            _write_samples_meta(meta_path, {**meta, "bytes": key[0], "mtime_ns": key[1]})
+            _write_samples_meta(meta_path, {**meta, "source": _normalized_source(source),
+                                            "bytes": key[0], "mtime_ns": key[1]})
         except OSError:
             return None
         return target
@@ -166,11 +186,15 @@ def _build_samples(source: Path, target: Path, meta_path: Path, directory: Path,
             connection.close()
     try:
         os.replace(staging, target)
+        copy_sha = _sha256_file(target)
+        if copy_sha is None:
+            raise OSError("cannot read back the Parquet copy")
         _write_samples_meta(meta_path, {
-            "format": _SAMPLES_FORMAT, "source": str(source), "bytes": key[0],
-            "mtime_ns": key[1], "sha256": sha, "rows": int(rows),
-            "columns": list(SAMPLE_COLUMNS)})
-    except OSError:
+            "format": _SAMPLES_FORMAT, "source": _normalized_source(source),
+            "bytes": key[0], "mtime_ns": key[1], "sha256": sha, "rows": int(rows),
+            "columns": list(SAMPLE_COLUMNS), "copy_bytes": target.stat().st_size,
+            "copy_sha256": copy_sha})
+    except (OSError, ValueError):
         staging.unlink(missing_ok=True)
         return None
     return target

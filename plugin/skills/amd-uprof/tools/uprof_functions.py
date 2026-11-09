@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Iterable, Sequence
@@ -19,7 +20,7 @@ import uprof_context
 from uprof_context import ContextOmission, PeSection
 from uprof_native import run
 from uprof_symbols import (artifact_file_identity, artifact_identity_present, artifact_key,
-                           load_cached_artifacts, store_cached_text)
+                           derivation_version, load_cached_artifacts, store_cached_text)
 from uprof_util import UprofError, tail_lines
 
 READOBJ_TIMEOUT: Final = 5 * 60
@@ -115,6 +116,23 @@ def _ranges_from_cache(path: Path, module_name: str) -> list[FunctionRange] | No
         return None
 
 
+def _ranges_cache_key(module_name: str, image_id: dict[str, object],
+                      readobj_id: dict[str, object],
+                      public_starts: Sequence[tuple[int, str | None]]) -> str:
+    """The range key: the image, the effective public starts and the derivation version."""
+    first_by_rva: dict[int, str | None] = {}
+    for rva, name in public_starts:
+        first_by_rva.setdefault(rva, name)
+    return artifact_key({
+        "kind": "ranges",
+        "derivation": derivation_version("ranges"),
+        "module_name": module_name,
+        "image": image_id,
+        "readobj": readobj_id,
+        "public_starts": sorted(first_by_rva.items()),
+    })
+
+
 def derive_module_ranges(module_name: str, module_path: str | Path,
                          public_starts: Sequence[tuple[int, str | None]] = (),
                          readobj: str | None = None) -> RangeDerivation:
@@ -134,21 +152,14 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
     readobj_id = artifact_file_identity(tool)
     cache_key = None
     if artifact_identity_present(image_id) and artifact_identity_present(readobj_id):
-        first_by_rva: dict[int, str | None] = {}
-        for rva, name in public_starts:
-            first_by_rva.setdefault(rva, name)
-        cache_key = artifact_key({
-            "kind": "ranges",
-            "module_name": module_name,
-            "image": image_id,
-            "readobj": readobj_id,
-            "public_starts": sorted(first_by_rva.items()),
-        })
+        cache_key = _ranges_cache_key(module_name, image_id, readobj_id, public_starts)
         cached = load_cached_artifacts("ranges", cache_key, ("ranges.json",))
         if cached is not None:
             ranges = _ranges_from_cache(cached[0] / "ranges.json", module_name)
             if ranges is not None:
                 return RangeDerivation(ranges)
+            # A malformed content shape is deleted so the recompute below replaces it.
+            shutil.rmtree(cached[0], ignore_errors=True)
     try:
         completed = run([tool, "--file-headers", "--sections", "--unwind", "--coff-exports",
                          str(module_path)], timeout=READOBJ_TIMEOUT)

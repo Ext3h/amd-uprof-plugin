@@ -9,6 +9,7 @@ Run from the repository root: python tests/run_tests.py test_function_region_pro
 
 import csv
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,7 @@ import duckdb
 
 import uprof_context
 import uprof_query
+import uprof_symbols
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
@@ -106,13 +108,27 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.artifacts = self.root / "artifacts"
+        # The CLI subprocess must not write into the user's real artifact cache.
+        self.real_root = uprof_symbols._artifact_cache_root()
+        self.real_before = self._real_files()
+        self.addCleanup(self._assert_no_real_cache_growth)
+
+    def _real_files(self):
+        if not self.real_root.is_dir():
+            return set()
+        return {path for path in self.real_root.rglob("*") if path.is_file()}
+
+    def _assert_no_real_cache_growth(self):
+        self.assertEqual(self._real_files(), self.real_before)
 
     def run_profile(self, session, *extra, by="function"):
         path = session.path if isinstance(session, Session) else session
+        env = {**os.environ, "UPROF_ARTIFACT_CACHE_ROOT": str(self.artifacts)}
         result = subprocess.run(
             [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
              str(path), "--by", by, *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            capture_output=True, text=True, encoding="utf-8", env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 

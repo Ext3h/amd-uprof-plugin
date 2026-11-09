@@ -280,4 +280,4 @@ Run `uprof.py tools` only when a command reports `MISSING`; each row is `<NAME>=
 
 ## References
 
-`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, derived function ranges, the 21 SQL views, the `tag_to_retire_share` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).
+`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, derived function ranges, the 24 SQL views, the `tag_to_retire_share` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).

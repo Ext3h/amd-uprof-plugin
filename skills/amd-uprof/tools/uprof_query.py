@@ -38,7 +38,22 @@ GRANULARITY_LABELS: Final = MappingProxyType({
 SYMBOLIZED: Final = ("function", "region", "line", "instruction")
 # Scopes whose rows are grouped by function ranges derived from the PE image.
 RANGE_SCOPES: Final = ("function", "region")
+# Scopes that can be narrowed to one parent function with --function/--module.
+FUNCTION_SCOPED: Final = ("instruction", "line")
 _ALL_NS: Final = "9223372036854775807"
+
+
+def _rva_value(value: str) -> int:
+    """Parse an RVA as 0x-prefixed hex or decimal."""
+    text = str(value).strip()
+    try:
+        number = int(text, 16) if text.lower().startswith("0x") else int(text, 10)
+    except ValueError as exc:
+        raise util.UprofError(
+            f"--function-start needs an RVA as 0x hex or decimal; got {value!r}") from exc
+    if number < 0:
+        raise util.UprofError(f"--function-start needs a non-negative RVA; got {value!r}")
+    return number
 
 
 def _check_args(args: argparse.Namespace) -> None:
@@ -48,6 +63,24 @@ def _check_args(args: argparse.Namespace) -> None:
         raise util.UprofError("--image must not be empty; use '%' to match every process image")
     if args.pid is not None and args.pid < 0:
         raise util.UprofError("--pid needs a non-negative PID")
+    function = getattr(args, "function", None)
+    module = getattr(args, "module", None)
+    start = getattr(args, "function_start", None)
+    if function is None and (module is not None or start is not None):
+        raise util.UprofError("--module and --function-start need --function")
+    if function is not None:
+        if args.by not in FUNCTION_SCOPED:
+            raise util.UprofError(
+                "--function narrows --by instruction or --by line to one parent function; "
+                f"it cannot be used with --by {args.by}")
+        if not function:
+            raise util.UprofError("--function must not be empty")
+        if not module:
+            raise util.UprofError(
+                "--function needs --module naming the function row's module, so the filter "
+                "scope is explicit")
+        if start is not None:
+            args.function_start = _rva_value(start)
 
 
 def _top_value(value: str) -> int:
@@ -115,6 +148,10 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
         "uprof_range_attempted": "",
         "uprof_sample_interval_s": "" if sample_interval_s is None else repr(sample_interval_s),
         "uprof_primary_measure": primary_measure,
+        "uprof_function": getattr(args, "function", None) or "",
+        "uprof_function_module": getattr(args, "module", None) or "",
+        "uprof_function_start": ("" if getattr(args, "function_start", None) is None
+                                 else str(args.function_start)),
     }
 
 
@@ -351,6 +388,13 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
         parts += ["--image", _quote(args.image)]
     if args.time_filter:
         parts += ["--time-filter", _quote(args.time_filter)]
+    if getattr(args, "function", None):
+        parts += ["--function", _quote(args.function)]
+        module = getattr(args, "module", None)
+        if module:
+            parts += ["--module", _quote(module)]
+        if getattr(args, "function_start", None) is not None:
+            parts += ["--function-start", f"0x{args.function_start:X}"]
     if getattr(args, "pdb_file", None):
         parts += ["--pdb-file", _quote(args.pdb_file)]
     for option, values in (("--pdb-dir", getattr(args, "pdb_dir", None)),
@@ -372,13 +416,17 @@ def _next_calls(args: argparse.Namespace,
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
     when function rows still carry unresolved samples; instruction context is a separate request,
-    not a default drill-down.
+    not a default drill-down. A function-scoped instruction or line view was asked for, so it
+    offers the sibling view with the same --function/--module scope; the unscoped views keep
+    their old stops.
     """
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))
     if args.by == "line":
         calls.append(_profile_command(args, "instruction", json_mode=True))
+    if args.by == "instruction" and getattr(args, "function", None):
+        calls.append(_profile_command(args, "line"))
     return calls
 
 
@@ -419,13 +467,170 @@ def _primary_measure(sampler: uprof_session.Sampler,
                           "time_share ranks where time went")
 
 
+def _share_value(part: Any, whole: Any) -> float | None:
+    """A 0.0-1.0 share, or None when the denominator is absent or zero."""
+    if part is None or not whole:
+        return None
+    return float(part) / float(whole)
+
+
+def _function_scope_json(scope: dict[str, Any], sample_interval_s: float | None,
+                         dump: uprof_dump.DumpInfo | None,
+                         tag_available: bool) -> dict[str, Any]:
+    """The JSON form of the parent-unit measurement for a filtered instruction/line view."""
+    start = scope["function_start"]
+    end = scope["function_end"]
+    return {
+        "module": scope["module"],
+        "function": scope["function"],
+        "range_kind": "derived_range" if start is not None else "uprof_function_id",
+        "function_start": None if start is None else f"0x{start:X}",
+        "function_end": None if end is None else f"0x{end:X}",
+        "filter": scope["filter"],
+        "parent": {
+            "samples": int(scope["samples"] or 0),
+            "sample_share": _share_value(scope["samples"], scope["total_samples"]),
+            "time_share": (_share_value(scope["weight"], scope["total_weight"])
+                           if dump is not None else None),
+            "tag_to_retire_share": (
+                _share_value(scope["tag_cycles"], scope["total_tag_cycles"])
+                if tag_available else None),
+            "cpu_seconds": (None if sample_interval_s is None
+                            else float(scope["samples"] or 0) * sample_interval_s),
+            "shares_are": "of the scoped capture",
+        },
+        "denominators": {
+            "sample_share": "total_samples",
+            "time_share": "total_weight",
+            "tag_to_retire_share": "total_tag_cycles",
+            "parent_sample_share": "parent_samples",
+            "parent_time_share": "parent_weight",
+            "parent_tag_to_retire_share": "parent_tag_cycles",
+        },
+        "measurement": ("the parent totals are the sum of this function's own rows from the "
+                        "same capture (a sum/join, not a new capture or profiling run)"),
+        "child_shares": ("sample_share/time_share/tag_to_retire_share are relative to the scoped "
+                         "capture; parent_sample_share/parent_time_share/"
+                         "parent_tag_to_retire_share are relative to the parent function"),
+    }
+
+
+def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, Any] | None:
+    """The parent function selected by --function/--module/--function-start, or None.
+
+    The row comes from the same uncapped function aggregation as --by function, so its samples,
+    weight and tag cycles are the sum of the function's own rows, not a re-measurement.
+    """
+    if not getattr(args, "function", None):
+        return None
+    sql = """
+        SELECT module_name, function_name, range_kind, function_start, function_end,
+               function_source, function_derived, attribution, function_id,
+               samples, weight, tag_cycles, total_samples, total_weight, total_tag_cycles
+        FROM v_function_measured
+        WHERE function_name = ? AND module_name = ?"""
+    params: list[Any] = [args.function, args.module]
+    if getattr(args, "function_start", None) is not None:
+        sql += " AND function_start = ?"
+        params.append(args.function_start)
+    rows = connection.execute(sql, params).fetchall()
+    wanted = (f"--function {args.function!r} --module {args.module!r}"
+              + ("" if getattr(args, "function_start", None) is None
+                 else f" --function-start 0x{args.function_start:X}"))
+    if not rows:
+        raise util.UprofError(
+            f"no function row matches {wanted}; copy the function, module and function_start "
+            "cells from a --by function row (the filter uses the same --pid/--image/"
+            "--time-filter scope)")
+    if len(rows) > 1:
+        starts = sorted(f"0x{row[3]:X}" for row in rows if row[3] is not None)
+        if not starts:
+            raise util.UprofError(
+                f"{wanted} matches {len(rows)} function rows with no derived range; neither row "
+                "has a function_start, so --function-start cannot separate them")
+        raise util.UprofError(
+            f"{wanted} matches {len(rows)} function rows; add --function-start <RVA> to choose "
+            f"one (function_start: {', '.join(starts)})")
+    (module_name, function_name, range_kind, start, end, source, derived, attribution,
+     function_id, samples, weight, tag_cycles, total_samples, total_weight,
+     total_tag_cycles) = rows[0]
+    if range_kind == "range":
+        scope_filter = (f"module {module_name!r} + RVA in [0x{start:X},0x{end:X}); "
+                        f"function_source={source}"
+                        + (", synthetic derived name" if derived else ", source name"))
+    elif function_id is not None:
+        scope_filter = (f"module {module_name!r} + uProf Function.id {function_id} (no derived "
+                        "range)")
+    else:
+        raise util.UprofError(
+            f"{wanted} has no derived range and no uProf Function.id; there is no address set "
+            "to filter the instruction or line rows to; use --by region for the page view")
+    return {
+        "module": module_name,
+        "function": function_name,
+        "function_start": None if start is None else int(start),
+        "function_end": None if end is None else int(end),
+        "function_source": source,
+        "function_derived": bool(derived),
+        "attribution": attribution,
+        "function_id": None if function_id is None else int(function_id),
+        "samples": int(samples or 0),
+        "weight": weight,
+        "tag_cycles": tag_cycles,
+        "total_samples": int(total_samples or 0),
+        "total_weight": total_weight,
+        "total_tag_cycles": total_tag_cycles,
+        "filter": (scope_filter + "; only samples inside this function are counted, and the rows "
+                   "are a subset of the scoped capture, not a re-measurement"),
+    }
+
+
+def _percent_share(part: Any, whole: Any) -> str:
+    share = _share_value(part, whole)
+    return "an absent share" if share is None else f"{100.0 * share:.1f}%"
+
+
+def _function_scope_fields(scope: dict[str, Any], legend: dict[str, Any],
+                           sample_interval_s: float | None) -> list[tuple[str, str]]:
+    """The explicit filter and the parent-unit measurement, with every denominator named."""
+    parent = [f"{scope['samples']} samples",
+              f"sample_share {_percent_share(scope['samples'], scope['total_samples'])} of the "
+              "scoped capture"]
+    absent = legend.get("absent", {})
+    if "time_share" in legend.get("columns", {}):
+        parent.append("time_share "
+                      f"{_percent_share(scope['weight'], scope['total_weight'])} of the scoped "
+                      "capture")
+    else:
+        parent.append(f"time_share absent ({absent.get('time_share', 'not applicable')})")
+    if "tag_to_retire_share" in legend.get("columns", {}):
+        parent.append("tag_to_retire_share "
+                      f"{_percent_share(scope['tag_cycles'], scope['total_tag_cycles'])} of the "
+                      "scoped capture")
+    else:
+        parent.append("tag_to_retire_share absent "
+                      f"({absent.get('tag_to_retire_share', 'not applicable')})")
+    if sample_interval_s is not None:
+        seconds = float(scope["samples"]) * sample_interval_s
+        parent.append(f"cpu_seconds {seconds:.3f} s (parent samples x interval)")
+    else:
+        parent.append(f"cpu_seconds absent ({absent.get('cpu_seconds', 'not applicable')})")
+    parent_text = ("; ".join(parent)
+                   + "; the parent totals are the sum of this function's own rows (a sum/join, "
+                     "not a new measurement); child sample_share/time_share/tag_to_retire_share "
+                     "use the capture denominators, parent_sample_share/parent_time_share/"
+                     "parent_tag_to_retire_share use the parent totals")
+    return [("FILTER", scope["filter"]), ("PARENT", parent_text)]
+
+
 def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             has_tag: bool, tag_available: bool,
             args: argparse.Namespace, system_wide: bool,
             sample_interval_s: float | None = None,
             has_system_module: bool | None = None,
             range_info: dict[str, Any] | None = None,
-            row_attribution: dict[str, int] | None = None) -> dict[str, Any]:
+            row_attribution: dict[str, int] | None = None,
+            function_scope: dict[str, Any] | None = None) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -437,6 +642,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "samples": "raw sample count",
         "sample_share": _sample_share_meaning(sampler, dump),
     }
+    denominators: dict[str, str] = {"sample_share": "total_samples"}
     if args.by == "function":
         columns["attribution"] = ("unique / derived (synthetic binary range) / unresolved (no "
                                   "symbol)")
@@ -457,6 +663,21 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
                                       "(function_start/function_end are NULL)")
     elif args.by in ("line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
+        if function_scope is not None:
+            columns["parent_sample_share"] = (
+                "row samples as a share of the selected parent function's samples, not the "
+                "capture")
+            denominators["parent_sample_share"] = "parent_samples"
+            if dump is not None:
+                columns["parent_time_share"] = (
+                    "row gap weight as a share of the selected parent function's gap weight, not "
+                    "the capture")
+                denominators["parent_time_share"] = "parent_weight"
+            if tag_available:
+                columns["parent_tag_to_retire_share"] = (
+                    "row tag-to-retire cycles as a share of the selected parent function's "
+                    "tag-to-retire cycles, not the capture")
+                denominators["parent_tag_to_retire_share"] = "parent_tag_cycles"
     elif args.by == "region":
         columns["attribution"] = ("hot_rva: unique / shared (folded names) / derived (synthetic "
                                   "binary range) / unresolved (no symbol)")
@@ -471,7 +692,6 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         columns["function_derived"] = ("true when the hot function name is synthetic "
                                        "(sub_<rva>/pdata_<start>), not a source symbol")
         columns["symbol_reason"] = ("why function/file/line are NULL for hot_rva")
-    denominators: dict[str, str] = {"sample_share": "total_samples"}
     absent: dict[str, str] = {}
     if dump is None:
         absent["time_share"] = ("this export aggregates PMC samples per window; capture with "
@@ -549,6 +769,9 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "remainder_last": True,
         "next": _next_calls(args, row_attribution),
     }
+    if function_scope is not None:
+        result["function_scope"] = _function_scope_json(
+            function_scope, sample_interval_s, dump, tag_available)
     if args.by in ("process", "module", "function", "region"):
         measure, reason = _primary_measure(sampler, dump)
         result["impact"]["order_by"] = [measure] + ([] if measure == "samples" else ["samples"])
@@ -697,6 +920,10 @@ def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
                 "cycles were spent")
     if "sample_hot" in legend["impact"]:
         read += f"; {legend['impact']['sample_hot']}"
+    if "function_scope" in legend:
+        read += ("; the rows are only the selected function: sample_share/time_share/"
+                 "tag_to_retire_share stay relative to the scoped capture, while parent_* are "
+                 "relative to the parent function, and every other function is excluded")
     read += "; the <other ...> row is last, not ranked"
     return read
 
@@ -725,6 +952,11 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool) -> list[tuple[str,
     else:
         parts.append(f"tag_to_retire_share absent "
                      f"({legend['absent']['tag_to_retire_share']})")
+    if "function_scope" in legend:
+        for key in ("parent_sample_share", "parent_time_share",
+                    "parent_tag_to_retire_share"):
+            if key in legend["columns"]:
+                parts.append(f"{key} = {legend['columns'][key]}")
     if "function_ranges" in legend:
         for key in ("function_start", "function_end", "function_source", "function_derived",
                     "hot_rva", "hot_samples", "hot_sample_share", "function_reason"):
@@ -1344,8 +1576,10 @@ def run_query_command(args: argparse.Namespace) -> None:
 
     stream = sys.stderr
     primary_measure, _ = _primary_measure(sampler, dump)
+    function_scoped = getattr(args, "function", None) is not None
     sample_interval_s = (_cpu_seconds_interval(sampler)
-                         if args.by in ("module", "region", "function") else None)
+                         if args.by in ("module", "region", "function") or function_scoped
+                         else None)
     variables = _variables(args, dump, top, time_start, time_end, sampler.event_column,
                            sample_interval_s, primary_measure)
     artifacts: Path | None = None
@@ -1372,6 +1606,7 @@ def run_query_command(args: argparse.Namespace) -> None:
 
             range_info: dict[str, Any] | None = None
             row_attribution: dict[str, int] | None = None
+            function_scope: dict[str, Any] | None = None
             if args.by in RANGE_SCOPES:
                 functions_path, range_info = _derive_scope_ranges(connection, artifacts, stream)
                 if functions_path is not None:
@@ -1382,6 +1617,18 @@ def run_query_command(args: argparse.Namespace) -> None:
                 variables["uprof_range_attempted"] = attempted
                 uprof_db.set_variables(connection, {"uprof_range_attempted": attempted})
                 row_attribution = _row_attribution(connection, args.by)
+            elif function_scoped:
+                # A function filter can name a derived range, so the instruction/line scope needs
+                # the same boundary derivation the function scope performs.
+                functions_path, range_info = _derive_scope_ranges(connection, artifacts, stream)
+                if functions_path is not None:
+                    variables["uprof_functions"] = str(functions_path)
+                    uprof_db.set_variables(connection,
+                                           {"uprof_functions": str(functions_path)})
+                attempted = chr(2).join(range_info.get("attempted", []))
+                variables["uprof_range_attempted"] = attempted
+                uprof_db.set_variables(connection, {"uprof_range_attempted": attempted})
+                function_scope = _function_scope(connection, args)
 
             sanity_message, tag_values = _dump_sanity(
                 connection, dump is not None,
@@ -1396,10 +1643,14 @@ def run_query_command(args: argparse.Namespace) -> None:
             uprof_db.set_variables(connection, {
                 "uprof_tag_available": "true" if tag_available else "false"})
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
-                             sample_interval_s, has_system_module, range_info, row_attribution)
+                             sample_interval_s, has_system_module, range_info, row_attribution,
+                             function_scope)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
-            # The legend sits directly below METRIC, after VERSION, before the detailed fields.
+            # The filter and its parent measurement precede the reading rule; both sit directly
+            # below METRIC, after VERSION, before the detailed fields.
             fields[2:2] = _legend_fields(legend, system_wide)
+            if function_scope is not None:
+                fields[2:2] = _function_scope_fields(function_scope, legend, sample_interval_s)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
             check_kernel = sampler.os_requested and not dump_windowed

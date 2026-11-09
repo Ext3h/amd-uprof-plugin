@@ -72,6 +72,9 @@ demand or reused from the cache.
 | `--image PATTERN` | base-image path/name filter, all PIDs of matching images |
 | `--time-filter T1:T2` | optional, seconds from capture start; default the whole capture; requires a dump capture (per-sample timestamps); PMC captures carry none and the tool rejects the filter |
 | `--top N\|all` | rows returned, default 20 |
+| `--function NAME` | narrow `instruction`/`line` rows to one parent function row; requires `--module`; rejected with any other granularity |
+| `--module MODULE` | the function row's `module`; required with `--function` |
+| `--function-start RVA` | optional `function_start` (`0x` hex or decimal) when the name matches more than one row in the module |
 | `--json` | machine-readable output instead of the default table |
 | `--out-file PATH` | output destination |
 | `--pdb-file FILE` | explicit PDB for `function`/`region`/`line`/`instruction`, passed to llvm-symbolizer `--pdb` |
@@ -87,8 +90,11 @@ demand or reused from the cache.
 | `module` | module path | module, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds, hot_rva, hot_samples, hot_sample_share | no |
 | `function` | function (derived range when the binary supplies one) | function, module, function_start, function_end, function_source, function_derived, attribution, function_reason, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds, hot_rva, hot_samples, hot_sample_share | yes |
 | `region` | module + 4 KiB address page | module, page_start, page_end, samples, sample_share, time_share, tag_to_retire_share, isSystemModule, cpu_seconds, sampled_addresses, hot_rva, hot_samples, hot_sample_share, function, file, line, attribution, symbol_reason, function_source, function_derived | yes |
-| `line` | file:line | file, line, function, module, attribution, samples, sample_share, time_share, tag_to_retire_share | yes |
-| `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, sample_share, time_share, tag_to_retire_share | yes |
+| `line` | file:line | file, line, function, module, attribution, samples, sample_share, time_share, tag_to_retire_share, parent_sample_share, parent_time_share, parent_tag_to_retire_share | yes |
+| `instruction` | module + RVA | module, rva, function, file, line, attribution, samples, sample_share, time_share, tag_to_retire_share, parent_sample_share, parent_time_share, parent_tag_to_retire_share | yes |
+
+The `parent_*` columns are emitted only when `--function` selects a parent, and only for the
+measures the capture supplies.
 
 Every share is a fraction 0.0-1.0; `samples` stays a raw count. `time_share` is absent for PMC
 captures (the export aggregates PMC samples per window); `tag_to_retire_share` is absent for PMC,
@@ -103,6 +109,24 @@ scope and print a uProf-vs-symbolizer agreement summary; modules without usable 
 `<no symbol>` with the agreement summary stating how much sample weight that covers. The `line`
 table aggregates instructions by source position; `instruction` reports them individually, each
 annotated with its function and source coordinates.
+
+`line` and `instruction` accept an explicit parent scope: `--function NAME --module MODULE`
+(optionally `--function-start RVA`) filters the rows to the matching `function` row. The scope is
+explicit, never inferred from the top row. A derived range filters by `RVA in
+[function_start, function_end)`; a row with no derived range (a fully named module, where
+derivation is skipped) filters by uProf `Function.id`. The parent totals come from the same
+uncapped function aggregation as `--by function` (a sum/join of the capture's rows, not a second
+measurement), so they do not depend on `--top`. Every filtered output states the filter in a
+`FILTER` header field and the parent measurement in a `PARENT` field: the parent's samples, its
+`sample_share` of the scoped capture, `time_share`/`tag_to_retire_share` when the mode supplies
+them (else the absence reason), and `cpu_seconds` when applicable. The rows keep the ordinary
+capture-level shares and add `parent_sample_share`/`parent_time_share`/
+`parent_tag_to_retire_share` relative to the parent function; the `<other ...>` remainder carries
+the same parent shares, so a truncated view and its remainder sum to the parent total. A filtered
+instruction view offers its sibling filtered line view as its one `NEXT` call, and a filtered line
+view offers the filtered instruction view with `--json`; the unscoped views keep their previous
+stops. The line view needs source positions: a function with none is one `<no source line>` row
+relative to the parent, not an empty table.
 
 `profile` takes its own symbol paths for `function`/`region`/`line`/`instruction`: `--pdb-file` is passed to
 llvm-symbolizer as `--pdb`; repeatable `--pdb-dir` adds PDB search roots; repeatable
@@ -143,7 +167,10 @@ the UTC start is reported with its precision.
 ### 3.6 Output
 
 - Default: a Markdown pipe table, right-aligned numerics, with the header lines (`METRIC:`, `DUMP:`,
-  `SANITY:`, `ACHIEVED:`, `KERNEL_COVERAGE:`, `AGREEMENT:`) as plain lines above it. `SANITY` validates the dump against
+  `SANITY:`, `ACHIEVED:`, `KERNEL_COVERAGE:`, `AGREEMENT:`) as plain lines above it. A
+  function-scoped line or instruction view adds `FILTER:` (the explicit module + RVA range, or
+  module + uProf `Function.id`) and `PARENT:` (the parent samples, capture share, time/tag share
+  or absence reason, and `cpu_seconds`). `SANITY` validates the dump against
   the capture metadata and states the coverage it is based on; the dump-wide verdict is labeled as
   such, and when `--image`/`--pid` or `--time-filter` restricts a system-wide report, a scoped
   coverage verdict follows from the scope's last sample against the end of its window. The
@@ -170,13 +197,19 @@ the UTC start is reported with its precision.
   full runnable calls joined by `&&`, each derived from the current `--by` and keeping the session,
   the `--pid`/`--image`/time-filter scope and a non-default `--top`: process -> module -> function,
   and region only when the function rows remain in the `unresolved` attribution; the CPU-time path stops at the derived
-  function, and instruction context is a separate request. The JSON `next` array holds the same
+  function, and instruction context is a separate request. A function-scoped instruction or line
+  view instead offers its filtered sibling view (line or instruction) with the same
+  `--function`/`--module`/`--function-start` and `--top`. The JSON `next` array holds the same
   commands and is empty when the path has stopped.
 - `--json`: the same rows, header information and legend semantics as structured data; the legend
   is a `legend` object with `share_unit` (`fraction`), `share_scale` (`1`), `denominators`,
   `columns`, `absent`, `impact` (`order_by`, `gap_weighted`, `estimate`, `primary_measure`,
   `primary_measure_reason`, and a `sample_hot` note for instruction scope), `remainder_last`,
-  `symbol_coverage` and `next`. The impact order is the mode's primary measure for process, module,
+  `symbol_coverage`, `next`, and, for a function-scoped line/instruction view, `function_scope`
+  (`module`, `function`, `range_kind` = `derived_range` or `uprof_function_id`, hex
+  `function_start`/`function_end`, `filter`, a `parent` object with its samples, shares and
+  `cpu_seconds` (its shares are of the scoped capture), the row columns' `denominators`,
+  `measurement` and `child_shares`). The impact order is the mode's primary measure for process, module,
   function, region and instruction; a sample-ordered instruction table's first row is sample-hot,
   while a time-ordered one is not. `--by function` also emits a `HOT_RVA` header field: the maximum
   `hot_samples` across all function rows, not the top row's `hot_rva`. `--by function` adds the full `function_ranges` object (`source`, `derived_modules`,
@@ -210,6 +243,7 @@ the UTC start is reported with its precision.
 | `sample_share` | fraction of samples; what a sample represents depends on the sampler (below) | **yes** |
 | `time_share` | share of time estimated from per-sample DeltaTick gaps, partitioned by CPU for a system-wide capture and by `(PID, TID)` for an attached one; an estimate, not unqualified impact. An attached gap includes off-CPU time; for a cycle-controlled capture `sample_share` is the CPU-cycle share and the better ranking | absent for PMC captures (the export aggregates PMC samples per window); the estimator still defines its meaning |
 | `tag_to_retire_share` | share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency | present only for an IBS OP dump with a usable `IbsTagToRetCtr` (at least one non-null value) |
+| `parent_sample_share`, `parent_time_share`, `parent_tag_to_retire_share` | the row's samples, gap weight or tag cycles as a share of the selected parent function, not the capture; emitted only for a function-scoped `instruction`/`line` view, and only for the measures the capture supplies | no |
 
 | capture | a sample represents | `sample_share` is | status |
 |---|---|---|---|

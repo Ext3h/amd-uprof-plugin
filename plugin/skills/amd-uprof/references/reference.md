@@ -286,12 +286,15 @@ derivation version. Bump `ARTIFACT_DERIVATION_VERSIONS[kind]` when that derivati
 semantics; `readobj` and `pdb-search` carry no derivation version, so
 `ARTIFACT_CACHE_FORMAT` is the control for their layout.
 
-A `symbols-no-pdb` key additionally carries the module name and spelling, the caller's PDB paths,
-the image's recorded CodeView PDB name, the file identity of that path and of the adjacent
-`<stem>.pdb`, and the per-scope listing (names, sizes, mtimes) of the search roots. A PDB that
-appears later at any of those paths changes the key, so a cached "no symbols" result is not served
-after its inputs changed. The key is not written when the image's debug directory could not be
-read, because that outcome cannot be keyed.
+A `symbols-no-pdb` key additionally carries the module name and spelling, the image's recorded
+CodeView PDB path (the raw `PDBFileName`, resolved against the image directory when relative,
+keyed even when absent, and joined to discovery's candidates when it exists), and the identities
+of the specific PDB paths discovery would accept: the
+caller's symbol files, each search root's `<name>` and its `<GUID><age>/<name>`, and the adjacent
+`<stem>.pdb`. An unrelated PDB in a root is not keyed; a PDB appearing at a candidate path changes
+the key, so a cached "no symbols" result is not served after its inputs changed. The readobj probe
+records the raw name, and its info shape is part of that artifact's key. The key is not written
+when the image's debug directory could not be read, because that outcome cannot be keyed.
 
 `meta.json` is written last and records every file's size and sha256. A hit is served only when
 the file and its recorded size and sha256 match; a malformed, truncated or old-format entry is

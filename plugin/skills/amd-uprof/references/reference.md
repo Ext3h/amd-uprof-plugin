@@ -277,19 +277,29 @@ function-range derivation cache finished artifacts across runs under
 `ARTIFACT_CACHE_ROOT` module value used by tests) overrides that base.
 
 Kinds and files: `symbols` (`symbols.parquet`, with the module's recorded stderr and evidence in
-`meta.json`), `publics` (`publics.csv`), `ranges` (`ranges.json`), `readobj` (`info.json`) and
-`pdb-search` (`search.json`). A key is the sha256 of the artifact's inputs: the file identity
-(normalized path, size, mtime) of the image, PDB and tool, the RVA list digest, the symbol and
-debug paths and, for `symbols`, `publics` and `ranges`, a derivation version. Bump
-`ARTIFACT_DERIVATION_VERSIONS[kind]` when that derivation changes semantics; `readobj` and
-`pdb-search` carry no derivation version, so `ARTIFACT_CACHE_FORMAT` is the control for their
-layout.
+`meta.json`), `symbols-no-pdb` (`symbols.parquet` plus the replayed stderr and evidence for a
+module that was symbolized without a PDB), `publics` (`publics.csv`), `ranges` (`ranges.json`),
+`readobj` (`info.json`) and `pdb-search` (`search.json`). A key is the sha256 of the artifact's
+inputs: the file identity (normalized path, size, mtime) of the image, PDB and tool, the RVA list
+digest, the symbol and debug paths and, for `symbols`, `publics`, `ranges` and `symbols-no-pdb`, a
+derivation version. Bump `ARTIFACT_DERIVATION_VERSIONS[kind]` when that derivation changes
+semantics; `readobj` and `pdb-search` carry no derivation version, so
+`ARTIFACT_CACHE_FORMAT` is the control for their layout.
+
+A `symbols-no-pdb` key additionally carries the module name and spelling, the caller's PDB paths,
+the image's recorded CodeView PDB name, the file identity of that path and of the adjacent
+`<stem>.pdb`, and the per-scope listing (names, sizes, mtimes) of the search roots. A PDB that
+appears later at any of those paths changes the key, so a cached "no symbols" result is not served
+after its inputs changed. The key is not written when the image's debug directory could not be
+read, because that outcome cannot be keyed.
 
 `meta.json` is written last and records every file's size and sha256. A hit is served only when
 the file and its recorded size and sha256 match; a malformed, truncated or old-format entry is
-deleted and recomputed, and a failed symbolization is never stored. On a warm `symbols` hit the
-recorded per-module output is replayed, so cold and warm stderr are byte-identical; a stream that
-cannot be replayed disables caching for that call. The cache has no eviction or TTL (open item),
+deleted and recomputed. A failed symbolizer outcome is never stored; no-debug and no-GUID outcomes
+are stored under `symbols-no-pdb` together with the search state that produced them, and are
+invalidated when that state changes. On a warm `symbols` or `symbols-no-pdb` hit the recorded
+per-module output is replayed, so cold and warm stderr are byte-identical; a stream that cannot be
+replayed disables caching for that call. The cache has no eviction or TTL (open item),
 so an upgrade that bumps a derivation version leaves the old entries beside the new ones. The
 first run after an upgrade rebuilds the artifacts.
 

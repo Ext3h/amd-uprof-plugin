@@ -27,6 +27,14 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- The profile pipeline is faster: the dump is parsed once into a `TEMP TABLE`, its time-share
+  columns are cached as a validated Parquet copy, line and instruction views bind only for their
+  own scopes, each mode loads only the views it reads, and symbolization runs in parallel and
+  reuses symbols, public symbols, PDB searches and ranges across runs. Output is unchanged: every
+  profile scope is byte-identical to the base. The first run after an upgrade rebuilds the
+  versioned symbol artifacts, and the artifact cache has no eviction yet. The performance work is
+  tracked in issue #19; measurements are recorded in the issue and PR records, not in the
+  repository.
 - Breaking: `profile` replaces `--pdb-file`, `--pdb-dir`, `--debug-file-dir` and
   `--fallback-debug-path` with repeatable `--symbol-path` (a symbol/debug file or a search
   directory, probed by the tool) and adds repeatable `--image-path` (a module image file or a

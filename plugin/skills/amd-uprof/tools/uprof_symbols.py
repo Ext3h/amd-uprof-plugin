@@ -1240,32 +1240,41 @@ def _search_root_state(roots: Iterable[str | Path]) -> list[str]:
     return list(dict.fromkeys(_normalized_path(path) for path in roots))
 
 
-def _implicit_pdb_state(recorded_pdb: Path | None) -> dict[str, object] | None:
+def _implicit_pdb_state(recorded_pdb: Path | None,
+                        keyable: bool) -> dict[str, object] | None:
     """The identity of the image's recorded CodeView path, keyed even when it is absent.
 
-    The adjacent <image stem>.pdb is already one of the candidate identities. None means the
-    debug directory could not be read, so the outcome cannot be keyed and must not be cached.
+    A readable debug directory with no recorded name is keyable without that identity. Only an
+    unreadable debug directory returns None, which disables the cache for the call.
     """
-    if recorded_pdb is None:
+    if not keyable:
         return None
-    return {"recorded": artifact_file_identity(recorded_pdb)}
+    return {"recorded": None if recorded_pdb is None
+            else artifact_file_identity(recorded_pdb)}
 
 
 def _no_pdb_candidates(exe_path: str, pdb_name: str, guid: str | None, age: int | None,
-                       roots: Iterable[str | Path], pdb_files: Iterable[str | Path]
-                       ) -> list[Path]:
-    """The PDB paths discovery would accept for this module, without listing the roots.
+                       roots: Iterable[str | Path], pdb_files: Iterable[str | Path],
+                       probe_paths: Iterable[str | Path] = ()) -> list[Path]:
+    """The PDB paths discovery would accept for this module.
 
     These are the identities a negative cache must watch: the caller's paths, each root's
-    <name> and its symbol-server <GUID><age>/<name>. An unrelated PDB in a root is not a
-    candidate and does not invalidate the entry.
+    <name> and its <GUID><age>/<name>, the adjacent <stem>.pdb, the deterministic symbol-server
+    cache paths, and any candidate a completed search probed. An unrelated PDB in a root is
+    not a candidate and does not invalidate the entry.
     """
     names = list(dict.fromkeys([pdb_name, Path(exe_path).stem + ".pdb"]))
     paths = [Path(path) for path in pdb_files]
+    paths.extend(Path(exe_path).parent / name for name in names)
     for root in roots:
         paths.extend(Path(root) / name for name in names)
         if guid and age is not None:
             paths.extend(Path(root) / f"{guid}{age:X}" / name for name in names)
+    for cache_root, _url in _symbol_server_entries():
+        cache_dir = cache_root / pdb_name
+        if guid and age is not None:
+            paths.append(cache_dir / f"{guid}{age:X}" / pdb_name)
+    paths.extend(Path(path) for path in probe_paths)
     return list(dict.fromkeys(paths))
 
 
@@ -1275,7 +1284,7 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
                       fallback_paths: list[str] | tuple[str, ...],
                       pdb_files: list[Path], pdb_name: str, recorded_pdb: Path | None,
                       search_state: list[str] | None, stream: TextIO,
-                      stream_start: int | None) -> SymbolizedModule:
+                      stream_start: int | None, keyable: bool = True) -> SymbolizedModule:
     """Symbolize without a PDB, caching the artifact and replaying its text on a hit.
 
     No-debug modules are a large share of a capture's modules; the cache avoids repeating their
@@ -1287,7 +1296,9 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
         rva_digest = artifact_file_digest(rva_path)
     except OSError:
         rva_digest = None
-    implicit = _implicit_pdb_state(recorded_pdb)
+    implicit = _implicit_pdb_state(recorded_pdb, keyable)
+    probe_paths = (() if evidence.search is None
+                   else [probe.path for probe in evidence.search.probes])
     cache_key = None
     if (stream_start is not None and rva_digest is not None and implicit is not None
             and search_state is not None
@@ -1306,7 +1317,8 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
             "implicit": implicit,
             "candidates": [artifact_file_identity(path) for path in _no_pdb_candidates(
                 exe_path, pdb_name, evidence.image_guid, evidence.image_age,
-                search_state, pdb_files)] if search_state is not None else None,
+                search_state or (), pdb_files, probe_paths)]
+            if search_state is not None else None,
             "found_debug_info": evidence.found_debug_info,
             "outcome": evidence.outcome,
         })
@@ -1343,7 +1355,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                      symbol_files: Iterable[str | Path] = (),
                      symbol_dirs: Iterable[str | Path] = (),
                      symbolizer: str | Path | None = None,
-                     search_state: list[dict[str, object]] | None = None) -> SymbolizedModule:
+                     search_state: list[str] | None = None) -> SymbolizedModule:
     """Symbolize the RVAs into out_dir; return the artifacts and the symbol-search evidence.
 
     The symbol file is found from the module's debug directory: each explicit symbol file, each
@@ -1399,11 +1411,12 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             if pdb_files:
                 evidence.note = ("--symbol-path file not found: "
                                  + ", ".join(os.fspath(path) for path in pdb_files))
-            recorded = recorded_pdb if readobj is not None and readobj_error is None else None
+            readable = readobj is not None and readobj_error is None
+            recorded = recorded_pdb if readable else None
             return _symbolize_no_pdb(exe_path, exe_input, rva_path, jsonl_file, parquet_file,
                                      symbolizer_path, evidence, debug_dirs, fallback_paths,
                                      pdb_files, pdb_name, recorded, search_state, stream,
-                                     stream_start)
+                                     stream_start, keyable=readable)
         if module_guid is None:
             # An explicit symbol file remains the caller's choice when the image carries no PDB
             # identity; it is used unverified rather than silently ignored.
@@ -1658,7 +1671,7 @@ def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list
                       image_files: Iterable[str | Path],
                       image_dirs: Iterable[str | Path],
                       symbolizer_path: str | Path | None = None,
-                      search_state: list[dict[str, object]] | None = None,
+                      search_state: list[str] | None = None,
                       ) -> _ModuleSymbolization:
     """Symbolize one module into its own directory; return its text instead of writing it."""
     output = io.StringIO()
@@ -1722,7 +1735,7 @@ def _symbolize_tasks(modules: list[tuple[str, str, list[str]]], out_path: Path,
                      image_files: Iterable[str | Path],
                      image_dirs: Iterable[str | Path],
                      symbolizer_path: str | Path | None = None,
-                     search_state: list[dict[str, object]] | None = None,
+                     search_state: list[str] | None = None,
                      ) -> list[_ModuleSymbolization]:
     """Symbolize modules in a bounded pool; write each module's text in module index order."""
     symbol_files, symbol_dirs = tuple(symbol_files), tuple(symbol_dirs)

@@ -1381,18 +1381,34 @@ class NoPdbCacheTest(unittest.TestCase):
         self.assertEqual(self.calls, 2)
         self.assertIn("PDB for another build", second.getvalue())
 
-    def test_the_adjacent_pdb_is_keyed_separately_from_the_recorded_path(self):
+    def test_a_wrong_build_adjacent_pdb_is_a_miss(self):
         recorded = self.root / "recorded" / "deep.pdb"
         recorded.parent.mkdir()
         info = ("deep.pdb", str(recorded), "ABCDEF0123456789ABCDEF0123456789", 1)
-        with self._patches(info=info):
+        rejection = uprof_symbols.PdbSearch(pdb=None, probes=[])
+
+        def finder(_path, name):
+            return self.pdbutil if name == "llvm-pdbutil" else self.readobj
+
+        with self._patches(info=info, finder=finder,
+                           chooser=lambda *_args, **_kwargs: rejection):
             self._run(stream=io.StringIO())
-            (self.root / "m.pdb").write_bytes(b"pdb")
+            (self.root / "m.pdb").write_bytes(b"wrong build")
             second = io.StringIO()
             self._run(stream=second)
 
-        self.assertEqual(self.calls, 3)
-        self.assertIn("PDB_MATCH=yes", second.getvalue())
+        self.assertEqual(self.calls, 2)
+        self.assertIn("PDB for another build", second.getvalue())
+
+    def test_an_empty_recorded_name_is_keyed_without_a_recorded_path(self):
+        info = ("m.pdb", None, "ABCDEF0123456789ABCDEF0123456789", 1)
+        with self._patches(info=info):
+            self._run(stream=io.StringIO())
+            self._run(stream=io.StringIO())
+            entries = list(Path(self.root).rglob("meta.json"))
+
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(len(entries), 1)
 
     def test_a_supplied_pdb_appearing_is_a_miss(self):
         supplied = self.root / "supplied.pdb"
@@ -1453,6 +1469,20 @@ class NoPdbCacheTest(unittest.TestCase):
                                            module_name="same.exe")
 
         self.assertEqual(self.calls, 2)
+
+
+class RecordedPdbPathTest(unittest.TestCase):
+    def test_relative_names_resolve_beside_the_image_and_absolute_names_stay(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-recorded-path-") as tmp:
+            root = Path(tmp)
+            exe = root / "images" / "m.exe"
+            absolute = root / "elsewhere" / "deep.pdb"
+
+            self.assertEqual(uprof_symbols._recorded_pdb_path(exe, "sub/deep.pdb"),
+                             exe.parent / "sub" / "deep.pdb")
+            self.assertEqual(uprof_symbols._recorded_pdb_path(exe, str(absolute)), absolute)
+
+        self.assertIsNone(uprof_symbols._recorded_pdb_path(exe, ""))
 
 
 class ParquetWriteThreadTest(unittest.TestCase):

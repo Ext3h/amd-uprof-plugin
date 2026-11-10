@@ -45,21 +45,29 @@ class ViewClosureTest(unittest.TestCase):
         self.assertIn("v_function_scope", created)
         self.assertIn("v_scope_measures", created)
 
-    def test_the_line_rows_query_materializes_the_function_scope_once(self):
+    def _rows_block(self, marker: str) -> str:
         text = (TOOLS_DIR / "views.sql").read_text(encoding="utf-8")
-        block = text.split("$line_rows$", 1)[1].split("$line_rows$", 1)[0]
+        return text.split(f"${marker}$", 1)[1].split(f"${marker}$", 1)[0]
+
+    def _assert_function_scope_readers(self, marker: str) -> None:
+        block = self._rows_block(marker)
 
         self.assertIn("WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope)", block)
         self.assertEqual(block.count("FROM v_function_scope"), 1)
-        self.assertGreaterEqual(block.count("FROM fs"), 2)
+        # The EXISTS test and the fs_one build are the only readers; a third reader of the
+        # materialized snapshot can stall the DuckDB 2.0.0 task scheduler again.
+        self.assertEqual(block.count("FROM fs"), 2)
+        self.assertEqual(block.count("FROM fs LIMIT 1"), 1)
+        self.assertEqual(block.count("FROM agg"), 1)
+        self.assertIn("FROM agg LEFT JOIN fs_one ON true", block)
+        for column in ("samples", "weight", "tag_cycles"):
+            self.assertNotIn(f"(SELECT {column} FROM fs LIMIT 1)", block)
 
-    def test_the_instruction_rows_query_materializes_the_function_scope_once(self):
-        text = (TOOLS_DIR / "views.sql").read_text(encoding="utf-8")
-        block = text.split("$instruction_rows$", 1)[1].split("$instruction_rows$", 1)[0]
+    def test_the_line_rows_query_keeps_two_function_scope_readers(self):
+        self._assert_function_scope_readers("line_rows")
 
-        self.assertIn("WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope)", block)
-        self.assertEqual(block.count("FROM v_function_scope"), 1)
-        self.assertGreaterEqual(block.count("FROM fs"), 2)
+    def test_the_instruction_rows_query_keeps_two_function_scope_readers(self):
+        self._assert_function_scope_readers("instruction_rows")
 
     def test_instruction_keeps_its_detail_view(self):
         _roots, _needed, created = _plan("instruction")

@@ -11,6 +11,8 @@ import os
 import shutil
 import sys
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
@@ -219,6 +221,63 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
     }, causes
 
 
+def _pool_workers(module_count: int) -> int | None:
+    """The process-pool size for this many modules, or None when the serial loop is the path.
+
+    Each child holds one parsed image; the cap bounds both CPU oversubscription and memory
+    (about 1.1 GiB per child on the largest capture module), so it does not scale with cores.
+    """
+    cpus = os.cpu_count() or 1
+    if module_count < 2 or cpus < 2:
+        return None
+    return max(1, min(8, cpus, module_count))
+
+
+def _readobj_for(module_count: int) -> str | None:
+    """Resolve llvm-readobj once, only when a process pool will consume it."""
+    return uprof_context.find_readobj() if _pool_workers(module_count) is not None else None
+
+
+def _derive_candidates(candidates: list[tuple[str, str]],
+                       publics_by_module: dict[str, list], readobj: str | None):
+    """Derive ranges in module order, in a process pool when more than one module needs it.
+
+    parse_image is Python/GIL-bound, so threads cannot help; a process pool keeps the per-module
+    cache and output order. A pool that cannot start, or whose workers die, falls back to the
+    sequential loop once so a crash cannot silently drop every range.
+    """
+    starts = {name: uprof_functions.public_starts_from_names(publics_by_module.get(name, []))
+              for name, _path in candidates}
+    workers = _pool_workers(len(candidates))
+    if workers is not None:
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(uprof_functions.derive_module_ranges, name, path,
+                                       starts[name], readobj)
+                           for name, path in candidates]
+                results = []
+                for future in futures:
+                    try:
+                        results.append(future.result())
+                    except Exception as exc:  # noqa: BLE001 - reported as the module's reason
+                        results.append(exc)
+                # A dead worker fails every queued future with BrokenProcessPool; one serial
+                # rerun recovers all modules instead of reporting each as an empty derivation.
+                if any(isinstance(result, BrokenProcessPool) for result in results):
+                    raise BrokenProcessPool("range derivation pool broke")
+                return results
+        except (OSError, RuntimeError):
+            pass
+    results = []
+    for name, path in candidates:
+        try:
+            results.append(uprof_functions.derive_module_ranges(name, path, starts[name],
+                                                               readobj=readobj))
+        except Exception as exc:  # noqa: BLE001 - reported as the module's reason
+            results.append(exc)
+    return results
+
+
 def _derive_scope_ranges(connection: object, artifacts: Path | None,
                          stream: TextIO) -> tuple[Path | None, dict[str, Any]]:
     """Derive function ranges for modules whose samples uProf did not name.
@@ -253,10 +312,14 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
             [name for name, _path in candidates]).fetchall()
         for module_name, rva, names in rows_publics:
             publics_by_module.setdefault(str(module_name), []).append((rva, names))
-    for name, path in candidates:
-        publics = publics_by_module.get(name, [])
-        result = uprof_functions.derive_module_ranges(
-            name, path, uprof_functions.public_starts_from_names(publics))
+    results = _derive_candidates(candidates, publics_by_module, _readobj_for(len(candidates)))
+    for (name, path), result in zip(candidates, results):
+        if isinstance(result, BaseException):
+            reason = f"range derivation failed: {result}"
+            info["absent_by_module"][name] = reason
+            print(f"WARNING: no function range derived for {name} ({path}): {reason}",
+                  file=stream)
+            continue
         if not result.ranges:
             reason = result.reason or "no function range"
             info["absent_by_module"][name] = reason

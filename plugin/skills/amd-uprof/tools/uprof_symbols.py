@@ -551,6 +551,9 @@ COPY (
         parameters = [str(absolute(out_file)), str(absolute(temp_file))]
     try:
         with duckdb.connect() as connection:
+            # One thread per symbolization worker: the per-module pass is small, and the default
+            # per-connection pool otherwise oversubscribes the host's logical CPUs.
+            connection.execute("SET threads = 1")
             connection.execute(sql, parameters)
         os.replace(temp_file, parquet_file)
         return parquet_file

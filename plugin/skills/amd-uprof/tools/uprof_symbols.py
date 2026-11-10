@@ -739,7 +739,8 @@ def load_cached_artifacts(kind: str, key: str,
                 shutil.rmtree(directory, ignore_errors=True)
                 return None
         except OSError:
-            shutil.rmtree(directory, ignore_errors=True)
+            # A transient stat or read error (a lock, a removable drive) is a miss; keep the
+            # entry so a later read can serve it.
             return None
     return directory, meta
 
@@ -773,11 +774,11 @@ def _copy_with_digest(source: Path, target: Path) -> dict[str, object]:
 def stage_cached_artifact(source: Path, target: Path) -> None:
     """Stage a cached artifact into the run directory, hard-linking when the volume allows.
 
-    The target may exist and is replaced atomically; staging never opens the source or a
-    pre-existing target, so a link cannot write through to the cache. A cross-volume link raises
-    OSError; the copy fallback writes the same bytes into a temp name. The run directory removes
-    only its own names, so a staged link cannot delete the cache, and a cache eviction cannot
-    remove the staged bytes.
+    The target may exist and is replaced atomically; staging never opens a pre-existing target,
+    so a link cannot write through to the cache. A cross-volume link raises OSError; the copy
+    fallback reads the source read-only and writes the same bytes into a temp name. The run
+    directory removes only its own names, so a staged link cannot delete the cache, and a cache
+    eviction cannot remove the staged bytes.
     """
     temporary = _temporary_beside(target.parent, target.name)
     # mkstemp creates the name; os.link needs it absent. The name stays unique to this stage.
@@ -1290,8 +1291,8 @@ def _no_pdb_candidates(exe_path: str, pdb_name: str, guid: str | None, age: int 
 
     These are the identities a negative cache must watch: the caller's paths, each root's
     <name> and its <GUID><age>/<name>, the adjacent <stem>.pdb, the deterministic symbol-server
-    cache paths, and any candidate a completed search probed. An unrelated PDB in a root is
-    not a candidate and does not invalidate the entry.
+    cache paths when the image records a PDB name, and any candidate a completed search probed.
+    An unrelated PDB in a root is not a candidate and does not invalidate the entry.
     """
     names = [name for name in dict.fromkeys([pdb_name, Path(exe_path).stem + ".pdb"]) if name]
     paths = [Path(path) for path in pdb_files]
@@ -1322,7 +1323,9 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
     """Symbolize without a PDB, caching the artifact and replaying its text on a hit.
 
     No-debug modules are a large share of a capture's modules; the cache avoids repeating their
-    symbolizer pass and parquet write on every run, including the filtered drill-downs.
+    symbolizer pass and parquet write on every run, including the filtered drill-downs. The key
+    carries the llvm-pdbutil identity because the replayed evidence names the pdbutil candidate
+    search, so a different build can change what the replay must say.
     """
     image_id = artifact_file_identity(exe_path)
     symbolizer_id = artifact_file_identity(symbolizer_path)
@@ -1665,8 +1668,9 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
     remedy = ("pass profile --symbol-path <file|dir> for a symbol or debug file or a search "
               "root, --image-path <file|dir> when the module image is not at its recorded path, "
               "or place the matching debug file beside the module or in a local srv* cache "
-              "(translate --symbol-path/--symbol-cache/--symbol-server can stage it), then re-run "
-              "profile; a third-party module with no symbols is a finding, not a blocker")
+              "(translate --symbol-path/--symbol-cache/--symbol-server can stage it; an image "
+              "that records no PDB name has no name to stage), then re-run profile; a "
+              "third-party module with no symbols is a finding, not a blocker")
     print(f"WARNING: no symbols resolved for {evidence.module_name} "
           f"({evidence.module_path}): {'; '.join(facts)}; {remedy}", file=stream)
 

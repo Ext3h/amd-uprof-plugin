@@ -220,7 +220,8 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
         if evidence.symbolizer and evidence.symbolizer.errors:
             return f"no PDB found; llvm-symbolizer: {evidence.symbolizer.errors[0][1]}"
         return ("no PDB found beside the module, at the recorded CodeView path or in a local "
-                "srv* cache; _NT_SYMBOL_PATH is not read by llvm-symbolizer")
+                "srv* cache; _NT_SYMBOL_PATH is not read by llvm-symbolizer; an image that "
+                "records no PDB name has no cache path to seed")
     if evidence.outcome == "readobj_failed":
         return f"llvm-readobj could not read the debug directory: {evidence.note or 'unknown'}"
     if evidence.outcome == "module_missing":
@@ -301,14 +302,22 @@ def _derive_candidates(candidates: list[tuple[str, str]],
                 return results
         except (OSError, RuntimeError):
             pass
-    return [uprof_functions.derive_module_ranges(
-        name, path, starts[name], readobj=readobj,
-        cache_key=None if keys is None else keys[name]) for name, path in candidates]
+    results = []
+    for name, path in candidates:
+        try:
+            results.append(uprof_functions.derive_module_ranges(
+                name, path, starts[name], readobj=readobj,
+                cache_key=None if keys is None else keys[name]))
+        except Exception as exc:  # noqa: BLE001 - reported as the module's reason
+            results.append(exc)
+    return results
 
 
-# Per-module reasons that name a tool failure which a later run may not repeat. Stable absences
-# (not_pe, no_code_section, no_boundary_source, a missing path) do not match.
-_TRANSIENT_RANGE_REASONS: Final = ("readobj_failed:", "range derivation failed:")
+# Per-module reasons that name a tool failure a later run may not repeat. A nonzero readobj
+# rejection (readobj_rejected) and the stable absences (not_pe, no_code_section,
+# no_boundary_source, a missing path) do not match.
+_TRANSIENT_RANGE_REASONS: Final = (uprof_functions.READOBJ_FAILED_PREFIX,
+                                   "range derivation failed:")
 
 
 def _transient_range_failure(reason: object) -> bool:
@@ -324,9 +333,10 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
     names each module that produced no range, so the function view's fallback is explained.
 
     The whole-scope assembly is cached under the module and RVA identity, which the filtered
-    drill-downs share. An entry whose evidence names a transient tool failure is never stored
-    and is rebuilt on a later call, so one failed run cannot suppress a module for the life of
-    the cache; the partial table is still returned for the current run.
+    drill-downs share. An entry whose evidence names a transient tool failure (a readobj timeout
+    or spawn failure) is never stored and is rebuilt on a later call, so one failed run cannot
+    suppress a module for the life of the cache; a deterministic nonzero rejection and a stable
+    absence are cached. The partial table is still returned for the current run.
     """
     info: dict[str, Any] = {"modules": 0, "ranges": 0, "absent_by_module": {}, "attempted": []}
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
@@ -382,16 +392,24 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
             cached_info, replay = meta.get("info"), meta.get("stream")
             cached_absent = (cached_info.get("absent_by_module")
                              if isinstance(cached_info, dict) else None)
+            cached_attempted = (cached_info.get("attempted")
+                                if isinstance(cached_info, dict) else None)
             if (not isinstance(cached_info, dict) or not isinstance(replay, str)
-                    or not isinstance(cached_absent, dict)):
+                    or not isinstance(cached_absent, dict)
+                    or not isinstance(cached_attempted, list)
+                    or not all(isinstance(item, str) for item in cached_attempted)):
                 shutil.rmtree(directory, ignore_errors=True)
             elif any(_transient_range_failure(reason) for reason in cached_absent.values()):
                 # An entry written while a tool was failing must not suppress the module on
                 # every later call; re-derive so the next store can heal it.
                 shutil.rmtree(directory, ignore_errors=True)
             else:
-                target = artifacts if artifacts is not None else Path(
-                    tempfile.mkdtemp(prefix="uprof-functions-"))
+                try:
+                    target = artifacts if artifacts is not None else Path(
+                        tempfile.mkdtemp(prefix="uprof-functions-"))
+                except OSError as exc:
+                    raise util.UprofError(
+                        f"cannot create the functions artifact directory: {exc}") from exc
                 try:
                     target.mkdir(parents=True, exist_ok=True)
                     staged = target / "functions.csv"
@@ -510,7 +528,8 @@ _SYMBOL_PATH_REMEDY: Final = (
     "; remedy: pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, "
     "or --image-path <file|dir> when the module image is not at its recorded path, or place the "
     "module's debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent "
-    "PDB, the recorded CodeView path or the skill's local srv* cache scan is searched")
+    "PDB, the recorded CodeView path or the skill's local srv* cache scan is searched; an image "
+    "that records no PDB name has no path to seed")
 # Report order is the caller-facing order of the repeatable path options.
 _SYMBOL_PATH_FLAGS: Final = (
     ("symbol_path", "--symbol-path"),

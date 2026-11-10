@@ -917,8 +917,8 @@ WHERE COALESCE(getvariable('uprof_function'), '') <> ''
 CREATE OR REPLACE TEMP VIEW v_line_rows AS
 SELECT * FROM query(CASE
   WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $line_rows$
--- One snapshot of the filtered scope: the EXISTS test and the parent measures read it, and an
--- inline view would re-run v_function_measured's aggregation per scoped row.
+-- With a function filter set, one snapshot of the parent scope: the EXISTS test and the parent
+-- measures read it, and an inline view would re-run v_function_measured per scoped row.
 WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope),
 scoped AS (
   SELECT w.*
@@ -1037,8 +1037,8 @@ HAVING count(*) > 0$line_rows$
 CREATE OR REPLACE TEMP VIEW v_instruction_rows AS
 SELECT * FROM query(CASE
   WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $instruction_rows$
--- One snapshot of the filtered scope: the EXISTS test and the parent measures read it, and an
--- inline view would re-run v_function_measured's aggregation per scoped row.
+-- With a function filter set, one snapshot of the parent scope: the EXISTS test and the parent
+-- measures read it, and an inline view would re-run v_function_measured per scoped row.
 WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope),
 scoped AS (
   SELECT w.*

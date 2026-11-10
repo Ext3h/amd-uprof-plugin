@@ -10,6 +10,7 @@ the boundaries carry; the SQL adds a visibly synthetic name when no source symbo
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass
@@ -24,9 +25,18 @@ from uprof_symbols import (artifact_file_identity, artifact_identity_present, ar
 from uprof_util import UprofError, tail_lines
 
 READOBJ_TIMEOUT: Final = 5 * 60
-# Bump when write_ranges_csv's columns or order change; the assembled-range cache carries this
-# version because its key only versions the derivation inputs, not the file layout.
-ASSEMBLED_RANGES_LAYOUT: Final = 1
+READOBJ_FAILED_PREFIX: Final = "readobj_failed:"
+READOBJ_REJECTED_PREFIX: Final = "readobj_rejected:"
+RANGES_CSV_COLUMNS: Final = ("module_name", "function_start", "function_end", "function_source",
+                             "function_name")
+
+
+def _layout_version(columns: Sequence[str]) -> str:
+    """The assembled-table layout identity; any column change changes the cache key."""
+    return hashlib.sha256("\x1f".join(columns).encode("utf-8")).hexdigest()
+
+
+ASSEMBLED_RANGES_LAYOUT: Final = _layout_version(RANGES_CSV_COLUMNS)
 # At one RVA an export is the most specific name, then a PDB public, then a .pdata start.
 SOURCE_PRIORITY: Final = {"export": 0, "pdb_public": 1, "pdata": 2, "none": 3}
 _PUBLIC_SEPARATOR: Final = " | "
@@ -185,10 +195,12 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
         completed = run([tool, "--file-headers", "--sections", "--unwind", "--coff-exports",
                          str(module_path)], timeout=READOBJ_TIMEOUT)
     except UprofError as exc:
-        return RangeDerivation([], f"readobj_failed: {exc}")
+        # A timeout or spawn failure may clear on the next run; the caller retries it.
+        return RangeDerivation([], f"{READOBJ_FAILED_PREFIX} {exc}")
     if completed.returncode != 0:
+        # A nonzero rejection is deterministic for this image identity, so the caller caches it.
         detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
-        return RangeDerivation([], f"readobj_failed: {detail or 'no output'}")
+        return RangeDerivation([], f"{READOBJ_REJECTED_PREFIX} {detail or 'no output'}")
     text = completed.stdout or ""
     try:
         image = uprof_context.parse_image(text)
@@ -219,8 +231,7 @@ def write_ranges_csv(path: Path, ranges: Sequence[FunctionRange]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
-        writer.writerow(["module_name", "function_start", "function_end", "function_source",
-                         "function_name"])
+        writer.writerow(RANGES_CSV_COLUMNS)
         for item in ranges:
             writer.writerow([item.module_name, item.start, item.end, item.source,
                              item.name or ""])

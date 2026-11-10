@@ -1008,7 +1008,8 @@ _CONTEXT_HELP_OMISSIONS: Final = {
                           "or --image-path <file|dir> when the module image is not at its "
                           "recorded path; llvm-symbolizer ignores _NT_SYMBOL_PATH, so only an "
                           "adjacent PDB, the recorded CodeView path or the skill's local srv* "
-                          "cache scan is searched"),
+                          "cache scan is searched; an image that records no PDB name has no path "
+                          "to seed"),
     "imports_failed": ("llvm-readobj could not read the import table; remedy: check the module "
                        "file is readable; the block is omitted rather than showing calls "
                        "without IAT targets"),

@@ -24,6 +24,7 @@ import uprof_functions
 import uprof_query
 import uprof_symbols
 from uprof_context import PeSection
+from uprof_util import UprofError
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
 READOBJ = uprof_context.find_readobj()
@@ -81,10 +82,19 @@ class BoundaryTest(unittest.TestCase):
         self.assertFalse(text.startswith(b"\xef\xbb\xbf"))
         self.assertNotIn(b"\r\n", text)
         lines = text.decode("utf-8").split("\n")
+        self.assertEqual(lines[0], ",".join(uprof_functions.RANGES_CSV_COLUMNS))
         self.assertEqual(lines[0], "module_name,function_start,function_end,function_source,"
                                    "function_name")
         self.assertEqual(lines[1], "m.dll,4096,4144,pdata,")
         self.assertEqual(lines[2], "m.dll,4144,4194,pdata,named")
+
+    def test_the_layout_version_is_derived_from_the_written_columns(self):
+        columns = uprof_functions.RANGES_CSV_COLUMNS
+
+        self.assertEqual(uprof_functions.ASSEMBLED_RANGES_LAYOUT,
+                         uprof_functions._layout_version(columns))
+        self.assertNotEqual(uprof_functions._layout_version(columns),
+                            uprof_functions._layout_version(columns[:-1]))
 
 
 @unittest.skipUnless(READOBJ, "llvm-readobj is required")
@@ -114,6 +124,23 @@ class FixtureDerivationTest(unittest.TestCase):
 
         self.assertEqual(result.ranges, [])
         self.assertEqual(result.reason, "readobj_missing")
+
+    def test_a_nonzero_readobj_rejection_is_a_stable_reason(self):
+        completed = subprocess.CompletedProcess([], 1, "", "corrupt image")
+        with mock.patch.object(uprof_functions, "run", return_value=completed):
+            result = uprof_functions.derive_module_ranges("m.dll", FIXTURE)
+
+        self.assertEqual(result.ranges, [])
+        self.assertTrue(result.reason.startswith("readobj_rejected:"))
+        self.assertFalse(uprof_query._transient_range_failure(result.reason))
+
+    def test_a_readobj_timeout_is_a_transient_reason(self):
+        with mock.patch.object(uprof_functions, "run", side_effect=UprofError("timed out")):
+            result = uprof_functions.derive_module_ranges("m.dll", FIXTURE)
+
+        self.assertEqual(result.ranges, [])
+        self.assertTrue(result.reason.startswith("readobj_failed:"))
+        self.assertTrue(uprof_query._transient_range_failure(result.reason))
 
     def test_a_malformed_ranges_entry_is_deleted_when_recompute_stores_nothing(self):
         uprof_functions.derive_module_ranges("fixture.exe", FIXTURE)
@@ -413,9 +440,11 @@ class AssembledRangesCacheTest(unittest.TestCase):
                 _FakeConnection(publics), artifacts, stream)
         return path, info, stream.getvalue()
 
-    def _run_rows(self, run_name, rows, publics):
-        artifacts = self.root / run_name
-        artifacts.mkdir(exist_ok=True)
+    def _run_rows(self, run_name, rows, publics, use_artifacts=True):
+        artifacts = None
+        if use_artifacts:
+            artifacts = self.root / run_name
+            artifacts.mkdir(exist_ok=True)
         stream = io.StringIO()
         with mock.patch.object(uprof_query.uprof_db, "fetch", return_value=([], rows)), \
                 mock.patch.object(uprof_query.uprof_context, "find_readobj",
@@ -528,6 +557,102 @@ class AssembledRangesCacheTest(unittest.TestCase):
 
         self.assertEqual(derive.call_count, 1)
 
+    def test_a_stable_readobj_rejection_is_cached(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2), ("b.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a"), ("b.exe", 0x1000, "b")]
+        rejection = uprof_functions.RangeDerivation(
+            [], f"{uprof_functions.READOBJ_REJECTED_PREFIX} corrupt image")
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe"), rejection]):
+            self._run_rows("run1", rows, publics)
+        self.assertEqual(len(self._entries()), 1)
+
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               side_effect=AssertionError("re-derived")):
+            path, info, _text = self._run_rows("run2", rows, publics)
+
+        self.assertIsNotNone(path)
+        self.assertIn("readobj_rejected", info["absent_by_module"]["b.exe"])
+
+    def test_a_readobj_timeout_is_not_cached(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2), ("b.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a"), ("b.exe", 0x1000, "b")]
+        timeout = uprof_functions.RangeDerivation(
+            [], f"{uprof_functions.READOBJ_FAILED_PREFIX} timed out")
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe"), timeout]):
+            self._run_rows("run1", rows, publics)
+        self.assertEqual(self._entries(), [])
+
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe"),
+                                             self._derivation("b.exe")]) as derive:
+            _path, info, _text = self._run_rows("run2", rows, publics)
+
+        self.assertEqual(derive.call_count, 1)
+        self.assertNotIn("b.exe", info["absent_by_module"])
+
+    def test_a_stable_absence_is_cached(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2), ("b.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a"), ("b.exe", 0x1000, "b")]
+        absence = uprof_functions.RangeDerivation([], "no_boundary_source")
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe"), absence]):
+            self._run_rows("run1", rows, publics)
+        self.assertEqual(len(self._entries()), 1)
+
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               side_effect=AssertionError("re-derived")):
+            _path, info, _text = self._run_rows("run2", rows, publics)
+
+        self.assertEqual(info["absent_by_module"]["b.exe"], "no_boundary_source")
+
+    def test_malformed_attempted_evidence_is_rebuilt(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a")]
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe")]):
+            self._run_rows("seed", rows, publics)
+
+        for index, bad in enumerate(("a.exe", ["a.exe", 1])):
+            with self.subTest(bad=bad):
+                entry = self._entries()[0].parent
+                meta = json.loads((entry / "meta.json").read_text(encoding="utf-8"))
+                meta["info"]["attempted"] = bad
+                (entry / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+                with mock.patch.object(uprof_query, "_derive_candidates",
+                                       return_value=[self._derivation("a.exe")]) as derive:
+                    _path, info, _text = self._run_rows(f"retry-{index}", rows, publics)
+
+                self.assertEqual(derive.call_count, 1)
+                self.assertEqual(info["attempted"], ["a.exe"])
+
+    def test_a_hit_path_mkdtemp_failure_is_a_clean_error(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a")]
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe")]):
+            self._run_rows("run1", rows, publics)
+
+        with mock.patch.object(uprof_query.tempfile, "mkdtemp",
+                               side_effect=OSError("no temp")), \
+                mock.patch.object(uprof_query, "_derive_candidates",
+                                  side_effect=AssertionError("re-derived")):
+            with self.assertRaises(UprofError):
+                self._run_rows("run2", rows, publics, use_artifacts=False)
+
+    def test_a_serial_derivation_exception_is_reported_per_module(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a")]
+        with mock.patch.object(uprof_query, "_pool_workers", return_value=None), \
+                mock.patch.object(uprof_functions, "derive_module_ranges",
+                                  side_effect=OSError("boom")):
+            path, info, _text = self._run_rows("run1", rows, publics)
+
+        self.assertIsNone(path)
+        self.assertIn("range derivation failed", info["absent_by_module"]["a.exe"])
+
     def test_a_staging_failure_keeps_the_cached_entry(self):
         rows = [("a.exe", str(FIXTURE), 1, 2)]
         publics = [("a.exe", 0x1000, "a")]
@@ -538,10 +663,14 @@ class AssembledRangesCacheTest(unittest.TestCase):
 
         with mock.patch.object(uprof_symbols, "stage_cached_artifact",
                                side_effect=OSError("no space")), \
-                mock.patch.object(uprof_query, "_derive_candidates", return_value=[]):
+                mock.patch.object(uprof_query, "_derive_candidates",
+                                  return_value=[self._derivation("a.exe")]) as derive:
             path, _info, _text = self._run_rows("run2", rows, publics)
 
-        self.assertIsNone(path)
+        self.assertIsNotNone(path)
+        self.assertEqual(derive.call_count, 1)
+        cached = self._entries()[0].parent / "functions.csv"
+        self.assertEqual(path.read_bytes(), cached.read_bytes())
         self.assertEqual(len(self._entries()), 1)
 
 

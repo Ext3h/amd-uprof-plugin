@@ -198,14 +198,15 @@ class PdbProbeTest(unittest.TestCase):
 
     def test_symbol_cache_discovery_is_sorted(self):
         cache = Path("C:/cache/x.pdb")
-        unsorted = [cache / "zz" / "x.pdb", cache / "aa" / "x.pdb"]
+        unsorted = [cache / name / "x.pdb" for name in ("zz", "aa", "mm", "bb")]
         with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": r"srv*C:\cache*https://example"}), \
                 mock.patch.object(Path, "rglob", return_value=iter(unsorted)):
             candidates = uprof_symbols._candidate_pdbs(
                 Path("C:/app/fixture.exe"), "x.pdb", None, None)
 
         discovered = [path for path in candidates if path in unsorted]
-        self.assertEqual(discovered, [cache / "aa" / "x.pdb", cache / "zz" / "x.pdb"])
+        self.assertEqual(discovered, [cache / name / "x.pdb"
+                                      for name in ("aa", "bb", "mm", "zz")])
 
     def test_debug_file_directories_reach_the_symbolizer(self):
         with tempfile.TemporaryDirectory(prefix="uprof-debug-dirs-") as directory:
@@ -660,6 +661,23 @@ class ArtifactCacheValidationTest(unittest.TestCase):
             self.assertIsNone(uprof_symbols.load_cached_artifacts("unit", key, ("a.bin",)))
         self.assertTrue(directory.exists())
 
+    def test_a_transient_artifact_read_error_is_a_miss_without_deleting(self):
+        source = self.root / "source.bin"
+        source.write_bytes(b"payload")
+        key = "2" * 64
+        uprof_symbols.store_cached_artifacts("unit", key, {"a.bin": source})
+        directory = self.root / f"v{uprof_symbols.ARTIFACT_CACHE_FORMAT}" / "unit" / key[:2] / key
+        original = uprof_symbols.artifact_file_digest
+
+        def digest(path):
+            if Path(path).name == "a.bin":
+                raise PermissionError("locked")
+            return original(path)
+
+        with mock.patch.object(uprof_symbols, "artifact_file_digest", side_effect=digest):
+            self.assertIsNone(uprof_symbols.load_cached_artifacts("unit", key, ("a.bin",)))
+        self.assertTrue(directory.exists())
+
     def test_the_store_does_not_re_read_the_source_for_its_digest(self):
         source = self.root / "source.bin"
         source.write_bytes(b"payload" * 1000)
@@ -817,6 +835,24 @@ class PublicSymbolsInvocationTest(unittest.TestCase):
         self.assertEqual(invoked.call_count, 0)
         self.assertTrue(os.path.samefile(result, entry / "publics.csv"))
 
+    def test_a_staging_failure_keeps_the_entry_and_recomputes(self):
+        root = Path(self.directory.name)
+        self.assertIsNotNone(self.invoke(self.SECTIONS + self.PUBLICS))
+        entry = next((root / "v1" / "publics").rglob("meta.json")).parent
+        uprof_symbols._PUBLICS_CACHE.reset()
+        failed = subprocess.CompletedProcess(["llvm-pdbutil"], 1, "", "boom")
+
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=self.pdbutil), \
+                mock.patch.object(uprof_symbols, "stage_cached_artifact",
+                                  side_effect=OSError("no space")), \
+                mock.patch.object(uprof_symbols, "run", return_value=failed) as invoked:
+            result = uprof_symbols._publics(self.pdb, self.out, Path("llvm-symbolizer.exe"),
+                                            self.stream)
+
+        self.assertIsNone(result)
+        self.assertEqual(invoked.call_count, 1)
+        self.assertTrue(entry.exists())
+
     def test_non_numeric_publics_metadata_is_deleted_and_recomputed(self):
         root = Path(self.directory.name)
         self.assertIsNotNone(self.invoke(self.SECTIONS + self.PUBLICS))
@@ -899,6 +935,33 @@ class SymbolCacheReplayTest(unittest.TestCase):
         entry = next((self.root / "v1" / "symbols").rglob("meta.json")).parent
         self.assertTrue(os.path.samefile(self.root / "out" / "symbols.parquet",
                                          entry / "symbols.parquet"))
+
+    def test_a_staging_failure_keeps_the_entry_and_recomputes(self):
+        search = uprof_symbols.PdbSearch(pdb=self.pdb, probes=[])
+        with mock.patch.object(uprof_symbols, "require_symbolizer",
+                               return_value=self.symbolizer), \
+                mock.patch.object(uprof_symbols, "find_sibling",
+                                  side_effect=lambda _path, name: (
+                                      self.pdbutil if name == "llvm-pdbutil" else self.readobj)), \
+                mock.patch.object(uprof_symbols, "_readobj_info",
+                                  return_value=("m.pdb", "m.pdb", "GUID", 1)), \
+                mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search), \
+                mock.patch.object(uprof_symbols, "_run_symbolizer",
+                                  side_effect=self._run_symbolizer), \
+                mock.patch.object(uprof_symbols, "_write_parquet",
+                                  side_effect=self._write_parquet), \
+                mock.patch.object(uprof_symbols, "_publics", side_effect=self._publics):
+            uprof_symbols.symbolize_module(str(self.exe), self.rva, self.root / "out",
+                                           stream=io.StringIO(), module_name="m")
+            entry = next((self.root / "v1" / "symbols").rglob("meta.json")).parent
+            with mock.patch.object(uprof_symbols, "stage_cached_artifact",
+                                   side_effect=OSError("no space")), \
+                    mock.patch.object(uprof_symbols, "_write_parquet", return_value=None):
+                uprof_symbols.symbolize_module(str(self.exe), self.rva, self.root / "out",
+                                               stream=io.StringIO(), module_name="m")
+            self.assertTrue(entry.exists())
+
+        self.assertEqual(self.calls, 4)
 
     def _failed_symbolizer(self, symbolizer, exe, pdb, rva_file, out_file, **kwargs):
         self.calls += 1
@@ -1208,6 +1271,18 @@ class NoPdbCacheTest(unittest.TestCase):
         self.assertEqual(output_parquet.read_bytes(), b"parquet")
         self.assertTrue(os.path.samefile(output_parquet, entry / "symbols.parquet"))
 
+    def test_a_staging_failure_keeps_the_entry_and_recomputes(self):
+        with self._patches():
+            self._run(stream=io.StringIO())
+            entry = next(Path(self.root).rglob("meta.json")).parent
+            with mock.patch.object(uprof_symbols, "stage_cached_artifact",
+                                   side_effect=OSError("no space")), \
+                    mock.patch.object(uprof_symbols, "_write_parquet", return_value=None):
+                self._run(stream=io.StringIO())
+            self.assertTrue(entry.exists())
+
+        self.assertEqual(self.calls, 2)
+
     def test_a_pdb_appearing_at_the_recorded_path_is_a_miss(self):
         with self._patches():
             self._run(stream=io.StringIO())
@@ -1473,6 +1548,58 @@ class NoPdbCacheTest(unittest.TestCase):
 
         self.assertEqual(self.calls, 2)
 
+    def test_an_empty_name_caches_one_entry_and_a_named_search_is_distinct(self):
+        guid = "ABCDEF0123456789ABCDEF0123456789"
+        with self._patches(info=("", "", guid, 1)):
+            self._run(stream=io.StringIO())
+            self._run(stream=io.StringIO())
+            self.assertEqual(self.calls, 1)
+            self.assertEqual(len(list(Path(self.root).rglob("meta.json"))), 1)
+
+        with self._patches(info=("m.pdb", "m.pdb", guid, 1)):
+            self._run(stream=io.StringIO())
+
+        self.assertEqual(self.calls, 2)
+        self.assertEqual(len(list(Path(self.root).rglob("meta.json"))), 2)
+
+    def test_an_empty_name_warning_omits_the_symbol_cache_scan(self):
+        srv = self.root / "srv"
+        decoy = srv / "decoy.pdb"
+        decoy.parent.mkdir(parents=True)
+        decoy.write_bytes(b"x")
+        info = ("", "", "ABCDEF0123456789ABCDEF0123456789", 1)
+
+        with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": f"srv*{srv}*https://example"}):
+            with self._patches(info=info), \
+                    mock.patch.object(Path, "rglob", return_value=iter([decoy])):
+                module = self._run(stream=io.StringIO())
+
+        warning = io.StringIO()
+        uprof_symbols._evidence_line(module.evidence, warning)
+        self.assertNotIn("decoy.pdb", warning.getvalue())
+        probes = [probe.path for probe in module.evidence.search.probes]
+        self.assertFalse(any(path.name == "decoy.pdb" for path in probes))
+
+    def test_a_changed_pdbutil_size_or_path_invalidates_the_no_pdb_entry(self):
+        info = ("m.pdb", "m.pdb", "ABCDEF0123456789ABCDEF0123456789", 1)
+        rejection = uprof_symbols.PdbSearch(pdb=None, probes=[])
+        current = [self.pdbutil]
+
+        def finder(_path, name):
+            return current[0] if name == "llvm-pdbutil" else self.readobj
+
+        with self._patches(info=info, finder=finder,
+                           chooser=lambda *_args, **_kwargs: rejection):
+            self._run(stream=io.StringIO())
+            current[0].write_bytes(b"a larger build")
+            self._run(stream=io.StringIO())
+            other = self.root / "other-pdbutil.exe"
+            other.write_bytes(b"")
+            current[0] = other
+            self._run(stream=io.StringIO())
+
+        self.assertEqual(self.calls, 3)
+
     def test_a_supplied_pdb_appearing_is_a_miss(self):
         supplied = self.root / "supplied.pdb"
         info = ("m.pdb", "m.pdb", "ABCDEF0123456789ABCDEF0123456789", 1)
@@ -1665,6 +1792,23 @@ class StagedArtifactTest(unittest.TestCase):
             self.assertEqual(first.read_bytes(), b"first")
             self.assertFalse(os.path.samefile(first, target))
             self.assertEqual(target.read_bytes(), b"second")
+
+    def test_a_failed_replace_removes_the_temp_and_leaves_both_files(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-stage-") as tmp:
+            root = Path(tmp)
+            source = root / "cache.bin"
+            target = root / "run.bin"
+            source.write_bytes(b"new")
+            target.write_bytes(b"old")
+
+            with mock.patch.object(uprof_symbols.os, "replace",
+                                   side_effect=OSError("locked")):
+                with self.assertRaises(OSError):
+                    uprof_symbols.stage_cached_artifact(source, target)
+
+            self.assertEqual(target.read_bytes(), b"old")
+            self.assertEqual(source.read_bytes(), b"new")
+            self.assertEqual(list(root.glob("*.tmp")), [])
 
 
 if __name__ == "__main__":

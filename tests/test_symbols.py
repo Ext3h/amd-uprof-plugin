@@ -4,6 +4,7 @@ Run from the repository root: python tests/run_tests.py test_symbols
 """
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -544,6 +545,18 @@ class ArtifactCacheValidationTest(unittest.TestCase):
 
         self.assertIsNone(uprof_symbols.load_cached_artifacts("unit", key, ("a.parquet",)))
         self.assertFalse(loaded[0].exists())
+
+    def test_the_stored_fingerprint_matches_the_written_bytes(self):
+        source = self.root / "source.bin"
+        payload = b"x" * 4096
+        source.write_bytes(payload)
+        key = "d" * 64
+        uprof_symbols.store_cached_artifacts("unit", key, {"a.bin": source})
+        directory = self.root / f"v{uprof_symbols.ARTIFACT_CACHE_FORMAT}" / "unit" / key[:2] / key
+        meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(meta["files"]["a.bin"]["size"], len(payload))
+        self.assertEqual(meta["files"]["a.bin"]["sha256"], hashlib.sha256(payload).hexdigest())
 
     def test_an_entry_without_file_fingerprints_is_a_miss(self):
         key = "b" * 64

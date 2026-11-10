@@ -690,9 +690,16 @@ def _remove_quietly(path: Path) -> None:
         pass
 
 
-def _fingerprint(path: Path) -> dict[str, object]:
-    """The stored file's size and digest, verified again before a cache hit is served."""
-    return {"size": path.stat().st_size, "sha256": artifact_file_digest(path)}
+def _copy_with_digest(source: Path, target: Path) -> dict[str, object]:
+    """Copy source to target while hashing, so the store reads the bytes only once."""
+    digest = hashlib.sha256()
+    size = 0
+    with open(source, "rb") as reader, open(target, "wb") as writer:
+        for block in iter(lambda: reader.read(1 << 20), b""):
+            writer.write(block)
+            digest.update(block)
+            size += len(block)
+    return {"size": size, "sha256": digest.hexdigest()}
 
 
 def _write_cache_meta(directory: Path, meta: dict[str, object]) -> None:
@@ -724,12 +731,11 @@ def store_cached_artifacts(kind: str, key: str, files: dict[str, Path],
         for name, source in files.items():
             temporary = _temporary_beside(directory, name)
             try:
-                shutil.copyfile(source, temporary)
+                fingerprints[name] = _copy_with_digest(source, temporary)
                 os.replace(temporary, directory / name)
             except OSError:
                 _remove_quietly(temporary)
                 raise
-            fingerprints[name] = _fingerprint(directory / name)
         _write_cache_meta(directory, {**(meta or {}), "files": fingerprints})
     except OSError:
         # Best-effort: recomputing next run is always correct, so a failed write is not an error.
@@ -746,15 +752,16 @@ def store_cached_text(kind: str, key: str, name: str, text: str,
     try:
         directory.mkdir(parents=True, exist_ok=True)
         temporary = _temporary_beside(directory, name)
+        data = text.encode("utf-8")
         try:
-            with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write(text)
+            with open(temporary, "wb") as handle:
+                handle.write(data)
             os.replace(temporary, directory / name)
         except OSError:
             _remove_quietly(temporary)
             raise
-        _write_cache_meta(directory, {**(meta or {}),
-                                      "files": {name: _fingerprint(directory / name)}})
+        _write_cache_meta(directory, {**(meta or {}), "files": {
+            name: {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}}})
     except OSError:
         # Best-effort: see store_cached_artifacts.
         return

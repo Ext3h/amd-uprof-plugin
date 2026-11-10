@@ -917,12 +917,15 @@ WHERE COALESCE(getvariable('uprof_function'), '') <> ''
 CREATE OR REPLACE TEMP VIEW v_line_rows AS
 SELECT * FROM query(CASE
   WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $line_rows$
-WITH scoped AS (
+-- One snapshot of the filtered scope: the EXISTS test and the parent measures read it, and an
+-- inline view would re-run v_function_measured's aggregation per scoped row.
+WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope),
+scoped AS (
   SELECT w.*
   FROM v_scoped w
   WHERE COALESCE(getvariable('uprof_function'), '') = ''
      OR EXISTS (
-       SELECT 1 FROM v_function_scope fs
+       SELECT 1 FROM fs
        WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
          AND ((fs.function_start IS NOT NULL
                AND w.rva >= fs.function_start AND w.rva < fs.function_end)
@@ -991,9 +994,9 @@ WITH scoped AS (
          (SELECT total_samples FROM v_scope_measures) AS total_samples,
          (SELECT total_weight FROM v_scope_measures) AS total_weight,
          (SELECT total_tag_cycles FROM v_scope_measures) AS total_tag_cycles,
-         (SELECT samples FROM v_function_scope LIMIT 1) AS parent_samples,
-         (SELECT weight FROM v_function_scope LIMIT 1) AS parent_weight,
-         (SELECT tag_cycles FROM v_function_scope LIMIT 1) AS parent_tag_cycles,
+         (SELECT samples FROM fs LIMIT 1) AS parent_samples,
+         (SELECT weight FROM fs LIMIT 1) AS parent_weight,
+         (SELECT tag_cycles FROM fs LIMIT 1) AS parent_tag_cycles,
          row_number() OVER (
            ORDER BY weight DESC NULLS LAST, samples DESC,
                     file_name, line_number, function_name, module_name) AS rn
@@ -1034,12 +1037,15 @@ HAVING count(*) > 0$line_rows$
 CREATE OR REPLACE TEMP VIEW v_instruction_rows AS
 SELECT * FROM query(CASE
   WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $instruction_rows$
-WITH scoped AS (
+-- One snapshot of the filtered scope: the EXISTS test and the parent measures read it, and an
+-- inline view would re-run v_function_measured's aggregation per scoped row.
+WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope),
+scoped AS (
   SELECT w.*
   FROM v_scoped w
   WHERE COALESCE(getvariable('uprof_function'), '') = ''
      OR EXISTS (
-       SELECT 1 FROM v_function_scope fs
+       SELECT 1 FROM fs
        WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
          AND ((fs.function_start IS NOT NULL
                AND w.rva >= fs.function_start AND w.rva < fs.function_end)
@@ -1080,9 +1086,9 @@ WITH scoped AS (
          (SELECT total_samples FROM v_scope_measures) AS total_samples,
          (SELECT total_weight FROM v_scope_measures) AS total_weight,
          (SELECT total_tag_cycles FROM v_scope_measures) AS total_tag_cycles,
-         (SELECT samples FROM v_function_scope LIMIT 1) AS parent_samples,
-         (SELECT weight FROM v_function_scope LIMIT 1) AS parent_weight,
-         (SELECT tag_cycles FROM v_function_scope LIMIT 1) AS parent_tag_cycles,
+         (SELECT samples FROM fs LIMIT 1) AS parent_samples,
+         (SELECT weight FROM fs LIMIT 1) AS parent_weight,
+         (SELECT tag_cycles FROM fs LIMIT 1) AS parent_tag_cycles,
          row_number() OVER (
            ORDER BY CASE getvariable('uprof_primary_measure')
                       WHEN 'time_share' THEN weight END DESC NULLS LAST,

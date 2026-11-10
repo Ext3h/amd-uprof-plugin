@@ -766,6 +766,29 @@ def _copy_with_digest(source: Path, target: Path) -> dict[str, object]:
     return {"size": size, "sha256": digest.hexdigest()}
 
 
+def stage_cached_artifact(source: Path, target: Path) -> None:
+    """Stage a cached artifact into the run directory, hard-linking when the volume allows.
+
+    The target may exist and is replaced atomically; staging never opens the source or a
+    pre-existing target, so a link cannot write through to the cache. A cross-volume link raises
+    OSError; the copy fallback writes the same bytes into a temp name. The run directory removes
+    only its own names, so a staged link cannot delete the cache, and a cache eviction cannot
+    remove the staged bytes.
+    """
+    temporary = _temporary_beside(target.parent, target.name)
+    # mkstemp creates the name; os.link needs it absent. The name stays unique to this stage.
+    _remove_quietly(temporary)
+    try:
+        try:
+            os.link(source, temporary)
+        except OSError:
+            shutil.copyfile(source, temporary)
+        os.replace(temporary, target)
+    except OSError:
+        _remove_quietly(temporary)
+        raise
+
+
 def _write_cache_meta(directory: Path, meta: dict[str, object]) -> None:
     temporary = _temporary_beside(directory, "meta.json")
     try:
@@ -1160,17 +1183,20 @@ def _publics(pdb: Path, out_file: Path, symbolizer: Path, stream: TextIO) -> Pat
             valid_meta = (isinstance(starts_meta, int) and not isinstance(starts_meta, bool)
                           and isinstance(shared_meta, int)
                           and not isinstance(shared_meta, bool))
-            try:
-                if not valid_meta:
-                    raise ValueError("malformed publics metadata")
-                shutil.copyfile(directory / "publics.csv", publics_file)
-            except (OSError, ValueError):
+            if not valid_meta:
                 # Delete the bad entry so the recompute below replaces it for good.
                 shutil.rmtree(directory, ignore_errors=True)
             else:
-                print(f"FOLDS: {shared_meta} shared starts of "
-                      f"{starts_meta} in {publics_file}", file=stream)
-                return publics_file
+                try:
+                    stage_cached_artifact(directory / "publics.csv", publics_file)
+                except OSError:
+                    # The run directory is unusable; the entry is intact and the recompute
+                    # below writes the file it needs.
+                    pass
+                else:
+                    print(f"FOLDS: {shared_meta} shared starts of "
+                          f"{starts_meta} in {publics_file}", file=stream)
+                    return publics_file
     try:
         starts, shared = public_symbols(publics_file, pdb_file=pdb, pdbutil=pdbutil)
     except UprofError as exc:
@@ -1327,15 +1353,17 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
             directory, meta = cached
             cached_evidence = _evidence_from_data(meta.get("evidence"))
             replay = meta.get("stream")
-            try:
-                if cached_evidence is None or not isinstance(replay, str):
-                    raise ValueError("malformed cached entry")
-                shutil.copyfile(directory / "symbols.parquet", parquet_file)
-            except (OSError, ValueError):
+            if cached_evidence is None or not isinstance(replay, str):
                 shutil.rmtree(directory, ignore_errors=True)
             else:
-                stream.write(replay)
-                return SymbolizedModule(parquet_file, None, None, cached_evidence)
+                try:
+                    stage_cached_artifact(directory / "symbols.parquet", parquet_file)
+                except OSError:
+                    # A run-directory failure must not delete a valid cache entry.
+                    pass
+                else:
+                    stream.write(replay)
+                    return SymbolizedModule(parquet_file, None, None, cached_evidence)
     evidence.symbolizer = _run_symbolizer(
         symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
         debug_dirs=debug_dirs, fallback_paths=fallback_paths, stream=stream)
@@ -1484,22 +1512,24 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             directory, meta = cached
             evidence_hit = _evidence_from_data(meta.get("evidence"))
             replay = meta.get("stream")
-            try:
-                if evidence_hit is None or not isinstance(replay, str):
-                    raise ValueError("malformed cached entry")
-                shutil.copyfile(directory / "symbols.parquet", parquet_file)
-            except (OSError, ValueError):
+            if evidence_hit is None or not isinstance(replay, str):
                 # A bad entry is a miss: delete it and recompute rather than fail the profile.
                 shutil.rmtree(directory, ignore_errors=True)
             else:
-                stream.write(replay)
-                if os.name == "nt" and pdb:
-                    publics = _publics(pdb, jsonl_file, symbolizer_path, stream)
+                try:
+                    stage_cached_artifact(directory / "symbols.parquet", parquet_file)
+                except OSError:
+                    # A run-directory failure must not delete a valid cache entry.
+                    pass
                 else:
-                    publics = None
-                    print("FOLDS: skipped (DWARF symbols; PDB public-symbol fold detection is "
-                          "Windows-only, unverified)", file=stream)
-                return SymbolizedModule(parquet_file, publics, pdb, evidence_hit)
+                    stream.write(replay)
+                    if os.name == "nt" and pdb:
+                        publics = _publics(pdb, jsonl_file, symbolizer_path, stream)
+                    else:
+                        publics = None
+                        print("FOLDS: skipped (DWARF symbols; PDB public-symbol fold detection is "
+                              "Windows-only, unverified)", file=stream)
+                    return SymbolizedModule(parquet_file, publics, pdb, evidence_hit)
 
     evidence.symbolizer = _run_symbolizer(
         symbolizer_path, exe_input, pdb, rva_path, jsonl_file, debug_dirs=debug_dirs,

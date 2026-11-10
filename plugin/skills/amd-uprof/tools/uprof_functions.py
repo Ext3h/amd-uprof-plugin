@@ -24,6 +24,9 @@ from uprof_symbols import (artifact_file_identity, artifact_identity_present, ar
 from uprof_util import UprofError, tail_lines
 
 READOBJ_TIMEOUT: Final = 5 * 60
+# Bump when write_ranges_csv's columns or order change; the assembled-range cache carries this
+# version because its key only versions the derivation inputs, not the file layout.
+ASSEMBLED_RANGES_LAYOUT: Final = 1
 # At one RVA an export is the most specific name, then a PDB public, then a .pdata start.
 SOURCE_PRIORITY: Final = {"export": 0, "pdb_public": 1, "pdata": 2, "none": 3}
 _PUBLIC_SEPARATOR: Final = " | "
@@ -133,13 +136,33 @@ def _ranges_cache_key(module_name: str, image_id: dict[str, object],
     })
 
 
+def range_dependency_key(module_name: str, module_path: str | Path,
+                         public_starts: Sequence[tuple[int, str | None]] = (),
+                         readobj: str | None = None) -> str | None:
+    """The per-module ranges cache key, or None when the inputs cannot be fingerprinted.
+
+    The assembled ranges cache keys on the same dependencies, so it is only used when every
+    module's image, public starts and readobj build can be identified.
+    """
+    tool = readobj or uprof_context.find_readobj()
+    if not tool:
+        return None
+    image_id = artifact_file_identity(module_path)
+    readobj_id = artifact_file_identity(tool)
+    if not (artifact_identity_present(image_id) and artifact_identity_present(readobj_id)):
+        return None
+    return _ranges_cache_key(module_name, image_id, readobj_id, public_starts)
+
+
 def derive_module_ranges(module_name: str, module_path: str | Path,
                          public_starts: Sequence[tuple[int, str | None]] = (),
-                         readobj: str | None = None) -> RangeDerivation:
+                         readobj: str | None = None,
+                         cache_key: str | None = None) -> RangeDerivation:
     """Read one module with llvm-readobj and derive its ranges; never guesses a boundary.
 
     A missing or unusable tool, a non-PE image or an image with no executable section yields no
     ranges and a stable reason, which the caller reports instead of failing the profile.
+    cache_key is passed when the caller already hashed the same inputs for the assembled key.
     """
     tool = readobj or uprof_context.find_readobj()
     if not tool:
@@ -148,11 +171,9 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
     # an entry serves every capture. Only the first name at an RVA can win, and sorting by RVA
     # makes the key independent of the row order the SQL returned. Failures are not stored: a
     # tool failure may be transient and an empty result carries its reason.
-    image_id = artifact_file_identity(module_path)
-    readobj_id = artifact_file_identity(tool)
-    cache_key = None
-    if artifact_identity_present(image_id) and artifact_identity_present(readobj_id):
-        cache_key = _ranges_cache_key(module_name, image_id, readobj_id, public_starts)
+    if cache_key is None:
+        cache_key = range_dependency_key(module_name, module_path, public_starts, tool)
+    if cache_key is not None:
         cached = load_cached_artifacts("ranges", cache_key, ("ranges.json",))
         if cached is not None:
             ranges = _ranges_from_cache(cached[0] / "ranges.json", module_name)
@@ -193,7 +214,7 @@ def write_ranges_csv(path: Path, ranges: Sequence[FunctionRange]) -> Path:
     """Write the range table the SQL view reads; UTF-8 without a BOM, LF newlines.
 
     function_name is empty for an unnamed boundary; the SQL supplies the synthetic name and
-    reports that it is derived.
+    reports that it is derived. The column set and order are part of ASSEMBLED_RANGES_LAYOUT.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as handle:

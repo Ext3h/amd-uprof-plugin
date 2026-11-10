@@ -265,27 +265,28 @@ def _pool_workers(module_count: int) -> int | None:
     return max(1, min(8, cpus, module_count))
 
 
-def _readobj_for(module_count: int) -> str | None:
-    """Resolve llvm-readobj once, only when a process pool will consume it."""
-    return uprof_context.find_readobj() if _pool_workers(module_count) is not None else None
-
-
 def _derive_candidates(candidates: list[tuple[str, str]],
-                       publics_by_module: dict[str, list], readobj: str | None):
+                       publics_by_module: dict[str, list], readobj: str | None,
+                       starts: dict[str, list[tuple[int, str | None]]] | None = None,
+                       keys: dict[str, str | None] | None = None):
     """Derive ranges in module order, in a process pool when more than one module needs it.
 
     parse_image is Python/GIL-bound, so threads cannot help; a process pool keeps the per-module
     cache and output order. A pool that cannot start, or whose workers die, falls back to the
-    sequential loop once so a crash cannot silently drop every range.
+    sequential loop once so a crash cannot silently drop every range. starts is passed when the
+    caller already built the effective public starts for the assembled-cache key; keys, when not
+    None, carries each module's precomputed range-dependency key.
     """
-    starts = {name: uprof_functions.public_starts_from_names(publics_by_module.get(name, []))
-              for name, _path in candidates}
+    if starts is None:
+        starts = {name: uprof_functions.public_starts_from_names(publics_by_module.get(name, []))
+                  for name, _path in candidates}
     workers = _pool_workers(len(candidates))
     if workers is not None:
         try:
             with ProcessPoolExecutor(max_workers=workers) as pool:
                 futures = [pool.submit(uprof_functions.derive_module_ranges, name, path,
-                                       starts[name], readobj)
+                                       starts[name], readobj,
+                                       None if keys is None else keys[name])
                            for name, path in candidates]
                 results = []
                 for future in futures:
@@ -300,8 +301,18 @@ def _derive_candidates(candidates: list[tuple[str, str]],
                 return results
         except (OSError, RuntimeError):
             pass
-    return [uprof_functions.derive_module_ranges(name, path, starts[name], readobj=readobj)
-            for name, path in candidates]
+    return [uprof_functions.derive_module_ranges(
+        name, path, starts[name], readobj=readobj,
+        cache_key=None if keys is None else keys[name]) for name, path in candidates]
+
+
+# Per-module reasons that name a tool failure which a later run may not repeat. Stable absences
+# (not_pe, no_code_section, no_boundary_source, a missing path) do not match.
+_TRANSIENT_RANGE_REASONS: Final = ("readobj_failed:", "range derivation failed:")
+
+
+def _transient_range_failure(reason: object) -> bool:
+    return isinstance(reason, str) and reason.startswith(_TRANSIENT_RANGE_REASONS)
 
 
 def _derive_scope_ranges(connection: object, artifacts: Path | None,
@@ -311,6 +322,11 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
     Only a module with at least one empty Function.name and an on-disk file is read; a fully
     named module keeps its Function.id rows and pays no llvm-readobj run. The returned evidence
     names each module that produced no range, so the function view's fallback is explained.
+
+    The whole-scope assembly is cached under the module and RVA identity, which the filtered
+    drill-downs share. An entry whose evidence names a transient tool failure is never stored
+    and is rebuilt on a later call, so one failed run cannot suppress a module for the life of
+    the cache; the partial table is still returned for the current run.
     """
     info: dict[str, Any] = {"modules": 0, "ranges": 0, "absent_by_module": {}, "attempted": []}
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
@@ -338,29 +354,91 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
             [name for name, _path in candidates]).fetchall()
         for module_name, rva, names in rows_publics:
             publics_by_module.setdefault(str(module_name), []).append((rva, names))
-    results = _derive_candidates(candidates, publics_by_module, _readobj_for(len(candidates)))
+    readobj = uprof_context.find_readobj() if candidates else None
+    starts = {name: uprof_functions.public_starts_from_names(publics_by_module.get(name, []))
+              for name, _path in candidates}
+    dependency_keys: list[list[str]] | None = []
+    for name, path in candidates:
+        key = uprof_functions.range_dependency_key(name, path, starts[name], readobj)
+        if key is None:
+            dependency_keys = None
+            break
+        dependency_keys.append([name, key])
+    assembled_key = None
+    if dependency_keys:
+        assembled_key = uprof_symbols.artifact_key({
+            "kind": "ranges-assembled",
+            "derivation": uprof_symbols.derivation_version("ranges"),
+            "layout": uprof_functions.ASSEMBLED_RANGES_LAYOUT,
+            "modules": dependency_keys,
+            # The replayed evidence describes these rows; a different attempted set is a miss.
+            "attempted": [[name, info["absent_by_module"].get(name)]
+                          for name in info["attempted"]],
+        })
+        cached = uprof_symbols.load_cached_artifacts(
+            "ranges-assembled", assembled_key, ("functions.csv",))
+        if cached is not None:
+            directory, meta = cached
+            cached_info, replay = meta.get("info"), meta.get("stream")
+            cached_absent = (cached_info.get("absent_by_module")
+                             if isinstance(cached_info, dict) else None)
+            if (not isinstance(cached_info, dict) or not isinstance(replay, str)
+                    or not isinstance(cached_absent, dict)):
+                shutil.rmtree(directory, ignore_errors=True)
+            elif any(_transient_range_failure(reason) for reason in cached_absent.values()):
+                # An entry written while a tool was failing must not suppress the module on
+                # every later call; re-derive so the next store can heal it.
+                shutil.rmtree(directory, ignore_errors=True)
+            else:
+                target = artifacts if artifacts is not None else Path(
+                    tempfile.mkdtemp(prefix="uprof-functions-"))
+                try:
+                    target.mkdir(parents=True, exist_ok=True)
+                    staged = target / "functions.csv"
+                    uprof_symbols.stage_cached_artifact(directory / "functions.csv", staged)
+                except OSError:
+                    # The run directory is unusable; the cache entry itself is intact.
+                    pass
+                else:
+                    stream.write(replay)
+                    return staged, cached_info
+
+    printed: list[str] = []
+
+    def emit(text: str) -> None:
+        print(text, file=stream)
+        printed.append(text)
+
+    keys_by_name = None if dependency_keys is None else {
+        name: key for name, key in dependency_keys}
+    results = _derive_candidates(candidates, publics_by_module, readobj, starts, keys_by_name)
     for (name, path), result in zip(candidates, results):
         if isinstance(result, BaseException):
             reason = f"range derivation failed: {result}"
             info["absent_by_module"][name] = reason
-            print(f"WARNING: no function range derived for {name} ({path}): {reason}",
-                  file=stream)
+            emit(f"WARNING: no function range derived for {name} ({path}): {reason}")
             continue
         if not result.ranges:
             reason = result.reason or "no function range"
             info["absent_by_module"][name] = reason
-            print(f"WARNING: no function range derived for {name} ({path}): {reason}",
-                  file=stream)
+            emit(f"WARNING: no function range derived for {name} ({path}): {reason}")
             continue
         ranges.extend(result.ranges)
         info["modules"] += 1
-        print(f"FUNCTION_RANGES: {name}: {len(result.ranges)} ranges from {path}", file=stream)
+        emit(f"FUNCTION_RANGES: {name}: {len(result.ranges)} ranges from {path}")
     info["ranges"] = len(ranges)
     if not ranges:
         return None, info
     target = artifacts if artifacts is not None else Path(
         tempfile.mkdtemp(prefix="uprof-functions-"))
-    return uprof_functions.write_ranges_csv(target / "functions.csv", ranges), info
+    written = uprof_functions.write_ranges_csv(target / "functions.csv", ranges)
+    transient_failure = any(_transient_range_failure(reason)
+                            for reason in info["absent_by_module"].values())
+    if assembled_key is not None and not transient_failure:
+        uprof_symbols.store_cached_artifacts(
+            "ranges-assembled", assembled_key, {"functions.csv": written},
+            {"info": info, "stream": "".join(line + "\n" for line in printed)})
+    return written, info
 
 
 def _dump_field(dump: uprof_dump.DumpInfo) -> str:

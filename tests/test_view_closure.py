@@ -45,6 +45,22 @@ class ViewClosureTest(unittest.TestCase):
         self.assertIn("v_function_scope", created)
         self.assertIn("v_scope_measures", created)
 
+    def test_the_line_rows_query_materializes_the_function_scope_once(self):
+        text = (TOOLS_DIR / "views.sql").read_text(encoding="utf-8")
+        block = text.split("$line_rows$", 1)[1].split("$line_rows$", 1)[0]
+
+        self.assertIn("WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope)", block)
+        self.assertEqual(block.count("FROM v_function_scope"), 1)
+        self.assertGreaterEqual(block.count("FROM fs"), 2)
+
+    def test_the_instruction_rows_query_materializes_the_function_scope_once(self):
+        text = (TOOLS_DIR / "views.sql").read_text(encoding="utf-8")
+        block = text.split("$instruction_rows$", 1)[1].split("$instruction_rows$", 1)[0]
+
+        self.assertIn("WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope)", block)
+        self.assertEqual(block.count("FROM v_function_scope"), 1)
+        self.assertGreaterEqual(block.count("FROM fs"), 2)
+
     def test_instruction_keeps_its_detail_view(self):
         _roots, _needed, created = _plan("instruction")
 

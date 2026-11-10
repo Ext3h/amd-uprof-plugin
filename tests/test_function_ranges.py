@@ -7,8 +7,10 @@ the boundary rule without a toolchain.
 Run from the repository root: python tests/run_tests.py test_function_ranges
 """
 
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -159,19 +161,19 @@ class FakePool:
     def __exit__(self, *exc):
         return False
 
-    def submit(self, fn, module_name, module_path, starts, readobj):
+    def submit(self, fn, module_name, module_path, starts, readobj, cache_key):
         if self.fail_submit is not None:
             raise self.fail_submit
         if module_name == self.crash:
             return FakeFuture(error=BrokenProcessPool("worker died"))
-        return FakeFuture(fn(module_name, module_path, starts, readobj))
+        return FakeFuture(fn(module_name, module_path, starts, readobj, cache_key))
 
 
 def fake_pool(created, **kwargs):
     return lambda max_workers=None: FakePool(created, max_workers=max_workers, **kwargs)
 
 
-def derive_sentinel(module_name, _module_path, _starts=(), readobj=None):
+def derive_sentinel(module_name, _module_path, _starts=(), readobj=None, cache_key=None):
     return uprof_functions.RangeDerivation(
         [uprof_functions.FunctionRange(module_name, 0x1000, 0x1010, "pdata", None)])
 
@@ -322,7 +324,7 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
             def __exit__(self, *exc):
                 return False
 
-            def submit(self, fn, module_name, module_path, starts, readobj):
+            def submit(self, fn, module_name, module_path, starts, readobj, cache_key):
                 if module_name == "b.dll":
                     return FakeFuture(error=ValueError("bad module"))
                 return FakeFuture(derive_sentinel(module_name, module_path))
@@ -371,15 +373,176 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
                                                "readobj")
 
 
-class ReadobjResolutionTest(unittest.TestCase):
-    def test_readobj_is_resolved_only_when_the_pool_is_used(self):
-        with mock.patch.object(uprof_query.os, "cpu_count", return_value=8), \
+class _FakeRows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class _FakeConnection:
+    def __init__(self, publics):
+        self.publics = publics
+
+    def execute(self, _sql, _params=None):
+        return _FakeRows(self.publics)
+
+
+@unittest.skipUnless(READOBJ, "llvm-readobj is required")
+class AssembledRangesCacheTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="uprof-assembled-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.cache = self.root / "cache"
+        self.cache.mkdir()
+        patcher = mock.patch.object(uprof_symbols, "ARTIFACT_CACHE_ROOT", self.cache)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run(self, run_name, publics):
+        artifacts = self.root / run_name
+        artifacts.mkdir(exist_ok=True)
+        stream = io.StringIO()
+        with mock.patch.object(uprof_query.uprof_db, "fetch",
+                               return_value=([], [("fixture.exe", str(FIXTURE), 1, 2)])), \
                 mock.patch.object(uprof_query.uprof_context, "find_readobj",
-                                  return_value="tool") as find:
-            self.assertIsNone(uprof_query._readobj_for(1))
-            self.assertEqual(find.call_count, 0)
-            self.assertEqual(uprof_query._readobj_for(2), "tool")
-            self.assertEqual(find.call_count, 1)
+                                  return_value=READOBJ):
+            path, info = uprof_query._derive_scope_ranges(
+                _FakeConnection(publics), artifacts, stream)
+        return path, info, stream.getvalue()
+
+    def _run_rows(self, run_name, rows, publics):
+        artifacts = self.root / run_name
+        artifacts.mkdir(exist_ok=True)
+        stream = io.StringIO()
+        with mock.patch.object(uprof_query.uprof_db, "fetch", return_value=([], rows)), \
+                mock.patch.object(uprof_query.uprof_context, "find_readobj",
+                                  return_value=READOBJ):
+            path, info = uprof_query._derive_scope_ranges(
+                _FakeConnection(publics), artifacts, stream)
+        return path, info, stream.getvalue()
+
+    @staticmethod
+    def _derivation(name):
+        return uprof_functions.RangeDerivation([
+            uprof_functions.FunctionRange(name, 0x1000, 0x1030, "pdata", name)])
+
+    def _entries(self):
+        return list((self.cache / "v1" / "ranges-assembled").rglob("meta.json"))
+
+    def test_the_second_assembly_is_staged_without_deriving(self):
+        first = self._run("run1", [("fixture.exe", 0x1000, "fixture_entry")])
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               side_effect=AssertionError("re-derived")):
+            second = self._run("run2", [("fixture.exe", 0x1000, "fixture_entry")])
+
+        self.assertEqual(first[0].read_bytes(), second[0].read_bytes())
+        self.assertEqual(first[2], second[2])
+        self.assertEqual(first[1], second[1])
+        entry = next((self.cache / "v1" / "ranges-assembled").rglob("meta.json")).parent
+        self.assertTrue(os.path.samefile(second[0], entry / "functions.csv"))
+        shutil.rmtree(entry)
+        self.assertEqual(second[0].read_bytes(), first[0].read_bytes())
+
+    def test_changed_public_starts_reassemble(self):
+        original = uprof_query._derive_candidates
+        calls = []
+
+        def counting(*args, **kwargs):
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        with mock.patch.object(uprof_query, "_derive_candidates", side_effect=counting):
+            self._run("run1", [("fixture.exe", 0x1000, "first_name")])
+            self._run("run2", [("fixture.exe", 0x1000, "second_name")])
+
+        self.assertEqual(len(calls), 2)
+
+    def test_a_transient_derivation_failure_is_not_cached(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2), ("b.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a"), ("b.exe", 0x1000, "b")]
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe"),
+                                             RuntimeError("readobj timed out")]):
+            _path, info, _text = self._run_rows("run1", rows, publics)
+        self.assertIn("range derivation failed", info["absent_by_module"]["b.exe"])
+        self.assertEqual(self._entries(), [])
+
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe"),
+                                             self._derivation("b.exe")]):
+            _path, info, _text = self._run_rows("run2", rows, publics)
+        self.assertNotIn("b.exe", info["absent_by_module"])
+        self.assertEqual(len(self._entries()), 1)
+
+    def test_a_cached_transient_failure_is_rebuilt(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2), ("b.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a"), ("b.exe", 0x1000, "b")]
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe"),
+                                             self._derivation("b.exe")]):
+            self._run_rows("run1", rows, publics)
+        entry = self._entries()[0].parent
+        meta = json.loads((entry / "meta.json").read_text(encoding="utf-8"))
+        meta["info"]["absent_by_module"]["b.exe"] = "readobj_failed: timed out"
+        (entry / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe"),
+                                             self._derivation("b.exe")]) as derive:
+            _path, info, _text = self._run_rows("run2", rows, publics)
+
+        self.assertEqual(derive.call_count, 1)
+        self.assertNotIn("b.exe", info["absent_by_module"])
+        healed = json.loads(self._entries()[0].read_text(encoding="utf-8"))
+        self.assertNotIn("b.exe", healed["info"]["absent_by_module"])
+
+    def test_a_changed_attempted_row_set_reassembles(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a")]
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe")]):
+            self._run_rows("run1", rows, publics)
+
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe")]) as derive:
+            _path, info, _text = self._run_rows(
+                "run2", rows + [("ghost.exe", "", 1, 2)], publics)
+
+        self.assertEqual(derive.call_count, 1)
+        self.assertIn("ghost.exe", info["absent_by_module"])
+
+    def test_a_layout_version_change_reassembles(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a")]
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe")]):
+            self._run_rows("run1", rows, publics)
+
+        with mock.patch.object(uprof_query.uprof_functions, "ASSEMBLED_RANGES_LAYOUT", 2), \
+                mock.patch.object(uprof_query, "_derive_candidates",
+                                  return_value=[self._derivation("a.exe")]) as derive:
+            self._run_rows("run2", rows, publics)
+
+        self.assertEqual(derive.call_count, 1)
+
+    def test_a_staging_failure_keeps_the_cached_entry(self):
+        rows = [("a.exe", str(FIXTURE), 1, 2)]
+        publics = [("a.exe", 0x1000, "a")]
+        with mock.patch.object(uprof_query, "_derive_candidates",
+                               return_value=[self._derivation("a.exe")]):
+            self._run_rows("run1", rows, publics)
+        self.assertEqual(len(self._entries()), 1)
+
+        with mock.patch.object(uprof_symbols, "stage_cached_artifact",
+                               side_effect=OSError("no space")), \
+                mock.patch.object(uprof_query, "_derive_candidates", return_value=[]):
+            path, _info, _text = self._run_rows("run2", rows, publics)
+
+        self.assertIsNone(path)
+        self.assertEqual(len(self._entries()), 1)
 
 
 if __name__ == "__main__":

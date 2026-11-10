@@ -775,6 +775,22 @@ class PublicSymbolsInvocationTest(unittest.TestCase):
         self.assertIsNotNone(self.invoke(self.SECTIONS + self.PUBLICS))
         self.assertIn("FOLDS: 0 shared starts of 1", self.stream.getvalue())
 
+    def test_a_warm_publics_hit_stages_the_entry_without_enumerating(self):
+        root = Path(self.directory.name)
+        self.assertIsNotNone(self.invoke(self.SECTIONS + self.PUBLICS))
+        entry = next((root / "v1" / "publics").rglob("meta.json")).parent
+        uprof_symbols._PUBLICS_CACHE.reset()
+        completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, "", "")
+
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=self.pdbutil), \
+                mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
+            result = uprof_symbols._publics(self.pdb, self.out, Path("llvm-symbolizer.exe"),
+                                            self.stream)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(invoked.call_count, 0)
+        self.assertTrue(os.path.samefile(result, entry / "publics.csv"))
+
     def test_non_numeric_publics_metadata_is_deleted_and_recomputed(self):
         root = Path(self.directory.name)
         self.assertIsNotNone(self.invoke(self.SECTIONS + self.PUBLICS))
@@ -854,6 +870,9 @@ class SymbolCacheReplayTest(unittest.TestCase):
 
         self.assertEqual(first.getvalue(), second.getvalue())
         self.assertEqual(self.calls, 2)
+        entry = next((self.root / "v1" / "symbols").rglob("meta.json")).parent
+        self.assertTrue(os.path.samefile(self.root / "out" / "symbols.parquet",
+                                         entry / "symbols.parquet"))
 
     def _failed_symbolizer(self, symbolizer, exe, pdb, rva_file, out_file, **kwargs):
         self.calls += 1
@@ -1152,13 +1171,16 @@ class NoPdbCacheTest(unittest.TestCase):
             first = io.StringIO()
             self._run(stream=first)
             output_parquet = self.root / "out" / "symbols.parquet"
-            output_parquet.unlink()
+            # Keep the first staged link in place: restaging must replace the target name,
+            # never open the inode it shares with the cache entry.
             second = io.StringIO()
             self._run(stream=second)
+            entry = next(Path(self.root).rglob("meta.json")).parent
 
         self.assertEqual(self.calls, 1)
         self.assertEqual(first.getvalue(), second.getvalue())
         self.assertEqual(output_parquet.read_bytes(), b"parquet")
+        self.assertTrue(os.path.samefile(output_parquet, entry / "symbols.parquet"))
 
     def test_a_pdb_appearing_at_the_recorded_path_is_a_miss(self):
         with self._patches():
@@ -1549,6 +1571,59 @@ class ParquetWriteThreadTest(unittest.TestCase):
         executed = self._executed(2, threshold=10, count_error=True)
 
         self.assertFalse(any("SET threads = 1" in sql for sql in executed))
+
+
+class StagedArtifactTest(unittest.TestCase):
+    def test_a_stage_is_a_hardlink_and_survives_cache_eviction(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-stage-") as tmp:
+            root = Path(tmp)
+            source = root / "cache.bin"
+            target = root / "run.bin"
+            source.write_bytes(b"payload")
+            uprof_symbols.stage_cached_artifact(source, target)
+
+            self.assertTrue(os.path.samefile(source, target))
+            source.unlink()
+            self.assertEqual(target.read_bytes(), b"payload")
+
+    def test_a_cross_volume_link_failure_falls_back_to_a_copy(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-stage-") as tmp:
+            root = Path(tmp)
+            source = root / "cache.bin"
+            target = root / "run.bin"
+            source.write_bytes(b"payload")
+            with mock.patch.object(uprof_symbols.os, "link", side_effect=OSError("EXDEV")):
+                uprof_symbols.stage_cached_artifact(source, target)
+
+            self.assertEqual(target.read_bytes(), b"payload")
+            self.assertFalse(os.path.samefile(source, target))
+
+    def test_staging_again_replaces_the_target_without_touching_the_source(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-stage-") as tmp:
+            root = Path(tmp)
+            source = root / "cache.bin"
+            target = root / "run.bin"
+            source.write_bytes(b"payload")
+            uprof_symbols.stage_cached_artifact(source, target)
+            uprof_symbols.stage_cached_artifact(source, target)
+
+            self.assertTrue(os.path.samefile(source, target))
+            self.assertEqual(source.read_bytes(), b"payload")
+
+    def test_staging_a_second_entry_over_a_linked_target_keeps_the_first_intact(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-stage-") as tmp:
+            root = Path(tmp)
+            first = root / "cache-one.bin"
+            second = root / "cache-two.bin"
+            target = root / "run.bin"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            uprof_symbols.stage_cached_artifact(first, target)
+            uprof_symbols.stage_cached_artifact(second, target)
+
+            self.assertEqual(first.read_bytes(), b"first")
+            self.assertFalse(os.path.samefile(first, target))
+            self.assertEqual(target.read_bytes(), b"second")
 
 
 if __name__ == "__main__":

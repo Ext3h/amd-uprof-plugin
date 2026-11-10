@@ -4,7 +4,7 @@ The fixture image supplies real exports and `.pdata` runtime-function starts, so
 cases read the same LLVM text a capture does. The page cases pin alignment, cross-module grouping,
 sampled_addresses and the hot RVA; the ordering cases pin the mode measure for --top.
 
-Run from this directory: python -m unittest test_function_region_profile -v
+Run from the repository root: python tests/run_tests.py test_function_region_profile
 """
 
 import csv
@@ -21,8 +21,8 @@ import duckdb
 import uprof_context
 import uprof_query
 
-TOOLS_DIR = Path(__file__).resolve().parent
-FIXTURE = TOOLS_DIR / "fixtures" / "fixture.exe"
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
 READOBJ = uprof_context.find_readobj()
 SKIP = "llvm-readobj is required"
 PAGE_MEANING = uprof_query._REGION_MEANING

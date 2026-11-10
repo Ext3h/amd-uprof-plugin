@@ -5,7 +5,7 @@ or the uProf Function.id, and every filtered query carries the parent function's
 and cpu_seconds next to the capture-level shares. The default, unscoped views keep their old
 stops: no instruction breakdown is offered unless one was asked for.
 
-Run from this directory: python -m unittest test_function_scope -v
+Run from the repository root: python tests/run_tests.py test_function_scope
 """
 
 import json
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from test_function_region_profile import FIXTURE, READOBJ, SKIP, Session, module_key
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 MODULE = module_key(FIXTURE)
 
 

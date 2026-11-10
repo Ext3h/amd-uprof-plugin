@@ -9,7 +9,7 @@ module (alpha) ends most of the thread's own gaps.
 The per-CPU estimator reports beta first and 40 s of weight over a 21 s span. Partitioning by the
 thread gives exactly the 21 s span, puts alpha first, and matches the fixed-cycle sample share.
 
-Run from this directory: python -m unittest test_attached_time_share -v
+Run from the repository root: python tests/run_tests.py test_attached_time_share
 """
 
 import json
@@ -24,7 +24,7 @@ import duckdb
 import uprof_db
 import uprof_session
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 SPAN_NS = 21_000_000_000
 ALPHA_OFFSET = 4096
 BETA_OFFSET = 8192

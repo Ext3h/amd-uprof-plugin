@@ -1,6 +1,6 @@
 """translate must start from a clean copy instead of appending to an earlier translation.
 
-Run from this directory: python -m unittest test_translate_out_dir -v
+Run from the repository root: python tests/run_tests.py test_translate_out_dir
 """
 
 import io

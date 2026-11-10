@@ -5,7 +5,7 @@ The line states the aggregate resolved share and the unresolved count per module
 module that is absent from UnifiedSampleSeries entirely (function_id NULL). Without it a user
 reconstructs PE function boundaries by hand, which is the detour issue #27 records.
 
-Run from this directory: python -m unittest test_symbol_coverage -v
+Run from the repository root: python tests/run_tests.py test_symbol_coverage
 """
 
 import json
@@ -19,7 +19,7 @@ import duckdb
 
 import uprof_query
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 
 GOOD = "good.dll"
 NO_STRINGS = "nostrings.dll"

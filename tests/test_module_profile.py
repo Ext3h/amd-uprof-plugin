@@ -5,7 +5,7 @@ rule and the absolute CPU time are read from supported output (issues #25, #26).
 carry the module's highest-sample RVA. The NEXT chain is the minimal path process -> module ->
 function rather than every granularity.
 
-Run from this directory: python -m unittest test_module_profile -v
+Run from the repository root: python tests/run_tests.py test_module_profile
 """
 
 import json
@@ -20,7 +20,7 @@ import duckdb
 import uprof_db
 import uprof_session
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 
 WORKLOAD = "c:\\app\\workload.exe"
 NTDLL = "c:\\windows\\system32\\ntdll.dll"

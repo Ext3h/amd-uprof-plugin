@@ -3,7 +3,7 @@
 The dump-wide late-coverage check cannot see that a --pid/--image scope stops sampling before
 the capture does; these fixtures make one process stop early while another samples near the end.
 
-Run from this directory: python -m unittest test_sanity_scope -v
+Run from the repository root: python tests/run_tests.py test_sanity_scope
 """
 
 import json
@@ -18,7 +18,7 @@ import duckdb
 import uprof_db
 import uprof_query
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 ELAPSED_MS = 10_000
 # 100 samples on the late CPU, so the dump-wide cadence estimate is 0.1 s.
 LATE_SPACING_NS = 100_909_090

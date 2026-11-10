@@ -1,6 +1,6 @@
 """JSON context assembly: deterministic block shape, row cap and omission paths.
 
-Run from this directory: python -m unittest test_context_json -v
+Run from the repository root: python tests/run_tests.py test_context_json
 """
 
 import argparse

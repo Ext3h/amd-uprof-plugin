@@ -2,7 +2,7 @@
 
 The unit suites replace the LLVM calls; these tests run them on fixtures/fixture.exe so the
 readobj, objdump and symbolizer text formats stay exercised. Build commands and provenance are
-in fixtures/README.md. Run from this directory: python -m unittest test_context_fixture -v
+in fixtures/README.md. Run from the repository root: python tests/run_tests.py test_context_fixture
 """
 
 import unittest
@@ -14,7 +14,14 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
 READOBJ = uprof_context.find_readobj()
 OBJDUMP = uprof_context.find_objdump()
 SYMBOLIZER = uprof_context.find_symbolizer()
-SKIP = "llvm-readobj, llvm-objdump and llvm-symbolizer are required"
+SKIP = ("llvm-readobj, llvm-objdump and llvm-symbolizer are required, "
+        "and llvm-objdump must support --no-symbolize-operands")
+
+
+def _objdump_supports_flag() -> bool:
+    if not OBJDUMP:
+        return False
+    return "--no-symbolize-operands" in uprof_context.run([OBJDUMP, "--help"]).stdout
 HOT_RVA = 0x101B
 TEXT_RVA = 0x1000
 SECOND_RVA = 0x1030
@@ -68,7 +75,7 @@ class FakeResult:
         return self._rows
 
 
-@unittest.skipUnless(READOBJ and OBJDUMP and SYMBOLIZER, SKIP)
+@unittest.skipUnless(READOBJ and OBJDUMP and SYMBOLIZER and _objdump_supports_flag(), SKIP)
 class FixtureTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

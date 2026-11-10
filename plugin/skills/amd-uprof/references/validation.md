@@ -195,9 +195,9 @@ Validated 2026-11-08 on Windows 11 with LLVM 23.1.4 on `PATH`, using the in-repo
 the unit suite. No live capture is needed: the block is built from PE headers plus the capture's
 own rows, and the fixture is a real linked image.
 
-`python -m unittest discover -s skills/amd-uprof/tools -p "test_*.py"` → 208 tests, OK.
-`python -m unittest test_context_fixture -v` runs `llvm-readobj`, `llvm-objdump` and
-`llvm-symbolizer` end to end against `tools/fixtures/fixture.exe` (2560 bytes, nonzero `CheckSum`,
+`python tests/run_tests.py` runs the full suite.
+`python tests/run_tests.py test_context_fixture` runs `llvm-readobj`, `llvm-objdump` and
+`llvm-symbolizer` end to end against `tests/fixtures/fixture.exe` (2560 bytes, nonzero `CheckSum`,
 `.text` at 0x1000, `.pdata` at 0x3000, hot boundary 0x101B, IAT slot 0x20A0 for
 `KERNEL32.dll!ExitProcess`).
 

@@ -9,16 +9,23 @@ Run from the repository root: python tests/run_tests.py test_function_scope
 """
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import uprof_symbols
 from test_function_region_profile import FIXTURE, READOBJ, SKIP, Session, module_key
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 MODULE = module_key(FIXTURE)
+
+
+def _real_cache_entries() -> int:
+    root = uprof_symbols._cache_root("ranges")
+    return len(list(root.rglob("meta.json"))) if root is not None and root.exists() else 0
 
 
 @unittest.skipUnless(READOBJ, SKIP)
@@ -27,12 +34,23 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.artifacts = self.root / "artifacts"
+        self.artifacts.mkdir()
+        self.real_before = _real_cache_entries()
+
+    def tearDown(self):
+        self.assertEqual(_real_cache_entries(), self.real_before,
+                         "the test wrote into the user artifact cache")
+
+    def _env(self):
+        return {**os.environ, "UPROF_ARTIFACT_CACHE_ROOT": str(self.artifacts)}
 
     def run_profile(self, session, *extra, by="instruction"):
+        environment = self._env()
         result = subprocess.run(
             [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
              str(session.path if isinstance(session, Session) else session), "--by", by, *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            capture_output=True, text=True, encoding="utf-8", env=environment)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
@@ -186,7 +204,7 @@ class FunctionScopeProfileTest(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
                      str(derived), "--by", "instruction", *extra],
-                    capture_output=True, text=True, encoding="utf-8")
+                    capture_output=True, text=True, encoding="utf-8", env=self._env())
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertIn(expected, result.stderr)
 
@@ -197,7 +215,7 @@ class FunctionScopeProfileTest(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
              str(session.write()), "--by", "instruction", "--function", "dup", "--module", MODULE],
-            capture_output=True, text=True, encoding="utf-8")
+            capture_output=True, text=True, encoding="utf-8", env=self._env())
         self.assertEqual(result.returncode, 2)
         self.assertIn("--function-start cannot separate them", result.stderr)
 

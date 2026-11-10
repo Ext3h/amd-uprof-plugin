@@ -63,6 +63,49 @@ class PdbProbeTest(unittest.TestCase):
         self.assertEqual(invoked.call_args.kwargs["timeout"],
                          uprof_symbols.PDB_PROBE_TIMEOUT)
 
+    def test_a_multisegment_recorded_name_keeps_its_raw_path(self):
+        completed = subprocess.CompletedProcess(
+            ["llvm-readobj"], 0, "PDBFileName: recorded\\deep.pdb\n", "")
+        with tempfile.TemporaryDirectory(prefix="uprof-readobj-raw-") as tmp:
+            root = Path(tmp)
+            exe = root / "m.exe"
+            exe.write_bytes(b"MZ")
+            tool = root / "llvm-readobj.exe"
+            tool.write_bytes(b"")
+            cache = root / "cache"
+            cache.mkdir()
+            with mock.patch.object(uprof_symbols, "ARTIFACT_CACHE_ROOT", cache), \
+                    mock.patch.object(uprof_symbols, "run", return_value=completed):
+                name, raw, _guid, _age = uprof_symbols._readobj_info(str(exe), tool)
+
+        self.assertEqual(name, "deep.pdb")
+        self.assertEqual(raw, "recorded\\deep.pdb")
+
+    def test_the_readobj_key_carries_the_info_shape(self):
+        completed = subprocess.CompletedProcess(["llvm-readobj"], 0,
+                                                "PDBFileName: sub/deep.pdb\n", "")
+        captured = {}
+        original = uprof_symbols.artifact_key
+
+        def key(payload):
+            captured.update(payload)
+            return original(payload)
+
+        with tempfile.TemporaryDirectory(prefix="uprof-readobj-shape-") as tmp:
+            root = Path(tmp)
+            exe = root / "m.exe"
+            exe.write_bytes(b"MZ")
+            tool = root / "llvm-readobj.exe"
+            tool.write_bytes(b"")
+            cache = root / "cache"
+            cache.mkdir()
+            with mock.patch.object(uprof_symbols, "ARTIFACT_CACHE_ROOT", cache), \
+                    mock.patch.object(uprof_symbols, "run", return_value=completed), \
+                    mock.patch.object(uprof_symbols, "artifact_key", side_effect=key):
+                uprof_symbols._readobj_info(str(exe), tool)
+
+        self.assertEqual(captured["shape"], uprof_symbols.READOBJ_INFO_SHAPE)
+
     def test_the_pdbutil_probe_has_a_timeout(self):
         completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0,
                                                 "GUID: ABCD\nAge: 1\n", "")
@@ -232,7 +275,7 @@ class NoPdbEvidenceTest(unittest.TestCase):
                     mock.patch.object(uprof_symbols, "find_sibling",
                                       side_effect=lambda _tool, name: Path(name + ".exe")), \
                     mock.patch.object(uprof_symbols, "_readobj_info",
-                                      return_value=("fixture.pdb", "ABCD", 1)), \
+                                      return_value=("fixture.pdb", "fixture.pdb", "ABCD", 1)), \
                     mock.patch.object(uprof_symbols, "_choose_pdb",
                                       return_value=search), \
                     mock.patch.object(uprof_symbols, "_run_symbolizer",
@@ -570,6 +613,27 @@ class ArtifactCacheValidationTest(unittest.TestCase):
         self.assertIsNone(uprof_symbols.load_cached_artifacts("unit", key, ("a.bin",)))
         self.assertFalse(directory.exists())
 
+    def test_a_directory_shaped_meta_file_is_deleted(self):
+        key = "f" * 64
+        directory = self.root / f"v{uprof_symbols.ARTIFACT_CACHE_FORMAT}" / "unit" / key[:2] / key
+        directory.mkdir(parents=True)
+        (directory / "a.bin").write_bytes(b"payload")
+        (directory / "meta.json").mkdir()
+
+        self.assertIsNone(uprof_symbols.load_cached_artifacts("unit", key, ("a.bin",)))
+        self.assertFalse(directory.exists())
+
+    def test_a_transient_meta_read_error_is_a_miss_without_deleting(self):
+        source = self.root / "source.bin"
+        source.write_bytes(b"payload")
+        key = "1" * 64
+        uprof_symbols.store_cached_artifacts("unit", key, {"a.bin": source})
+        directory = self.root / f"v{uprof_symbols.ARTIFACT_CACHE_FORMAT}" / "unit" / key[:2] / key
+
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError("locked")):
+            self.assertIsNone(uprof_symbols.load_cached_artifacts("unit", key, ("a.bin",)))
+        self.assertTrue(directory.exists())
+
     def test_the_store_does_not_re_read_the_source_for_its_digest(self):
         source = self.root / "source.bin"
         source.write_bytes(b"payload" * 1000)
@@ -774,7 +838,7 @@ class SymbolCacheReplayTest(unittest.TestCase):
                                   side_effect=lambda _path, name: (
                                       self.pdbutil if name == "llvm-pdbutil" else self.readobj)), \
                 mock.patch.object(uprof_symbols, "_readobj_info",
-                                  return_value=("m.pdb", "GUID", 1)), \
+                                  return_value=("m.pdb", "m.pdb", "GUID", 1)), \
                 mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search), \
                 mock.patch.object(uprof_symbols, "_run_symbolizer",
                                   side_effect=self._run_symbolizer), \
@@ -804,7 +868,7 @@ class SymbolCacheReplayTest(unittest.TestCase):
                                   side_effect=lambda _path, name: (
                                       self.pdbutil if name == "llvm-pdbutil" else self.readobj)), \
                 mock.patch.object(uprof_symbols, "_readobj_info",
-                                  return_value=("m.pdb", "GUID", 1)), \
+                                  return_value=("m.pdb", "m.pdb", "GUID", 1)), \
                 mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search), \
                 mock.patch.object(uprof_symbols, "_run_symbolizer",
                                   side_effect=side_effect), \
@@ -972,7 +1036,7 @@ class SymbolizerResolutionTest(unittest.TestCase):
                                       side_effect=lambda path, _what: str(path)), \
                     mock.patch.object(uprof_symbols, "find_sibling", return_value=None), \
                     mock.patch.object(uprof_symbols, "_readobj_info",
-                                      return_value=("m.pdb", None, None)), \
+                                      return_value=("m.pdb", "m.pdb", None, None)), \
                     mock.patch.object(uprof_symbols, "_symbolize_no_pdb",
                                       return_value=result) as helper:
                 uprof_symbols.symbolize_module(str(exe), str(rva), root / "out",
@@ -1005,6 +1069,21 @@ class SymbolizerResolutionTest(unittest.TestCase):
         self.assertEqual(captured["symbolizer"], fake)
         self.assertEqual(captured["search_state"], state)
 
+    def test_the_task_pool_submits_the_symbolizer_and_search_state(self):
+        captured = []
+
+        def worker(*args):
+            captured.append(args)
+            return uprof_symbols._ModuleSymbolization("m.exe", "")
+
+        with tempfile.TemporaryDirectory(prefix="uprof-symbolizer-submit-") as tmp:
+            with mock.patch.object(uprof_symbols, "_symbolize_worker", side_effect=worker):
+                uprof_symbols._symbolize_tasks(
+                    [("m.exe", "p", ["0x1"])], Path(tmp), io.StringIO(), None,
+                    (), (), (), (), "symbolizer", ["root"])
+
+        self.assertEqual(captured[0][-2:], ("symbolizer", ["root"]))
+
 
 class NoPdbCacheTest(unittest.TestCase):
     def setUp(self):
@@ -1022,6 +1101,8 @@ class NoPdbCacheTest(unittest.TestCase):
         self.symbolizer.write_bytes(b"")
         self.readobj = self.root / "llvm-readobj.exe"
         self.readobj.write_bytes(b"")
+        self.pdbutil = self.root / "llvm-pdbutil.exe"
+        self.pdbutil.write_bytes(b"")
         self.calls = 0
 
     def _find_sibling(self, _path, name):
@@ -1032,7 +1113,7 @@ class NoPdbCacheTest(unittest.TestCase):
         stream = kwargs.get("stream")
         if stream is not None:
             print("WARNING: no symbols", file=stream)
-            if (self.root / "symbols" / "wrong.pdb").exists():
+            if any(self.root.rglob("*.pdb")):
                 print("WARNING: PDB for another build", file=stream)
         Path(out_file).write_text("{}\n", encoding="utf-8")
         return uprof_symbols.SymbolizerRun(0, [], "", 0, 0)
@@ -1042,14 +1123,23 @@ class NoPdbCacheTest(unittest.TestCase):
         return Path(parquet_file)
 
     @contextlib.contextmanager
-    def _patches(self, info=("m.pdb", None, None), finder=None, writer=None):
-        with mock.patch.object(uprof_symbols, "find_sibling",
-                               side_effect=finder or self._find_sibling), \
-                mock.patch.object(uprof_symbols, "_readobj_info", return_value=info), \
-                mock.patch.object(uprof_symbols, "_run_symbolizer",
-                                  side_effect=self._run_symbolizer), \
-                mock.patch.object(uprof_symbols, "_write_parquet",
-                                  side_effect=writer or self._write_parquet):
+    def _patches(self, info=("m.pdb", "m.pdb", None, None), finder=None, writer=None,
+                 chooser=None):
+        patches = [
+            mock.patch.object(uprof_symbols, "find_sibling",
+                              side_effect=finder or self._find_sibling),
+            mock.patch.object(uprof_symbols, "_readobj_info", return_value=info),
+            mock.patch.object(uprof_symbols, "_run_symbolizer",
+                              side_effect=self._run_symbolizer),
+            mock.patch.object(uprof_symbols, "_write_parquet",
+                              side_effect=writer or self._write_parquet),
+        ]
+        if chooser is not None:
+            patches.append(mock.patch.object(uprof_symbols, "_choose_pdb",
+                                             side_effect=chooser))
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
             yield
 
     def _run(self, **kwargs):
@@ -1083,7 +1173,7 @@ class NoPdbCacheTest(unittest.TestCase):
         root.mkdir()
         with self._patches():
             self._run(stream=io.StringIO(), symbol_dirs=[root])
-            (root / "wrong.pdb").write_bytes(b"wrong")
+            (root / "m.pdb").write_bytes(b"wrong")
             second = io.StringIO()
             self._run(stream=second, symbol_dirs=[root])
 
@@ -1210,11 +1300,11 @@ class NoPdbCacheTest(unittest.TestCase):
             uprof_symbols._symbolize_no_pdb(
                 str(self.exe), str(self.exe), self.rva, first_jsonl,
                 self.root / "first.parquet", self.symbolizer, evidence(None), [], [], [],
-                "m.pdb", [], io.StringIO(), 0)
+                "m.pdb", self.root / "m.pdb", [], io.StringIO(), 0)
             uprof_symbols._symbolize_no_pdb(
                 str(self.exe), str(self.exe), self.rva, second_jsonl,
                 self.root / "second.parquet", self.symbolizer, evidence(False), [], [], [],
-                "m.pdb", [], io.StringIO(), 0)
+                "m.pdb", self.root / "m.pdb", [], io.StringIO(), 0)
 
         self.assertEqual(self.calls, 2)
 
@@ -1244,17 +1334,129 @@ class NoPdbCacheTest(unittest.TestCase):
             uprof_symbols._symbolize_no_pdb(
                 str(self.exe), str(self.exe), self.rva, first_jsonl,
                 self.root / "first.parquet", self.symbolizer, evidence("no_pdb"), [], [],
-                [], "m.pdb", [], io.StringIO(), 0)
+                [], "m.pdb", self.root / "m.pdb", [], io.StringIO(), 0)
             uprof_symbols._symbolize_no_pdb(
                 str(self.exe), str(self.exe), self.rva, second_jsonl,
                 self.root / "second.parquet", self.symbolizer, evidence("readobj_failed"),
-                [], [], [], "m.pdb", [], io.StringIO(), 0)
+                [], [], [], "m.pdb", self.root / "m.pdb", [], io.StringIO(), 0)
+
+        self.assertEqual(self.calls, 2)
+
+    def test_a_multisegment_recorded_path_is_cached_absent_and_resolved_later(self):
+        recorded = self.root / "recorded" / "deep.pdb"
+        recorded.parent.mkdir()
+        info = ("deep.pdb", str(recorded), "ABCDEF0123456789ABCDEF0123456789", 1)
+        with self._patches(info=info):
+            self._run(stream=io.StringIO())
+            self._run(stream=io.StringIO())
+            self.assertEqual(self.calls, 1)
+            recorded.write_bytes(b"pdb")
+            second = io.StringIO()
+            result = self._run(stream=second)
+            self.assertEqual(self.calls, 3)
+            self.assertIn("PDB_MATCH=yes", second.getvalue())
+            self.assertEqual(result.evidence.outcome, "resolved")
+            recorded.unlink()
+            third = io.StringIO()
+            self._run(stream=third)
+            self.assertEqual(self.calls, 3)
+            self.assertNotIn("PDB_MATCH=yes", third.getvalue())
+
+    def test_a_recorded_path_appearing_with_a_wrong_build_is_a_miss(self):
+        recorded = self.root / "recorded" / "deep.pdb"
+        recorded.parent.mkdir()
+        info = ("deep.pdb", str(recorded), "ABCDEF0123456789ABCDEF0123456789", 1)
+        rejection = uprof_symbols.PdbSearch(pdb=None, probes=[])
+
+        def finder(_path, name):
+            return self.pdbutil if name == "llvm-pdbutil" else self.readobj
+
+        with self._patches(info=info, finder=finder,
+                           chooser=lambda *_args, **_kwargs: rejection):
+            self._run(stream=io.StringIO())
+            recorded.write_bytes(b"wrong build")
+            second = io.StringIO()
+            self._run(stream=second)
+
+        self.assertEqual(self.calls, 2)
+        self.assertIn("PDB for another build", second.getvalue())
+
+    def test_the_adjacent_pdb_is_keyed_separately_from_the_recorded_path(self):
+        recorded = self.root / "recorded" / "deep.pdb"
+        recorded.parent.mkdir()
+        info = ("deep.pdb", str(recorded), "ABCDEF0123456789ABCDEF0123456789", 1)
+        with self._patches(info=info):
+            self._run(stream=io.StringIO())
+            (self.root / "m.pdb").write_bytes(b"pdb")
+            second = io.StringIO()
+            self._run(stream=second)
+
+        self.assertEqual(self.calls, 3)
+        self.assertIn("PDB_MATCH=yes", second.getvalue())
+
+    def test_a_supplied_pdb_appearing_is_a_miss(self):
+        supplied = self.root / "supplied.pdb"
+        info = ("m.pdb", "m.pdb", "ABCDEF0123456789ABCDEF0123456789", 1)
+        rejection = uprof_symbols.PdbSearch(pdb=None, probes=[])
+
+        def finder(_path, name):
+            return self.pdbutil if name == "llvm-pdbutil" else self.readobj
+
+        with self._patches(info=info, finder=finder,
+                           chooser=lambda *_args, **_kwargs: rejection):
+            self._run(stream=io.StringIO(), symbol_files=[supplied])
+            supplied.write_bytes(b"wrong build")
+            second = io.StringIO()
+            self._run(stream=second, symbol_files=[supplied])
+
+        self.assertEqual(self.calls, 2)
+        self.assertIn("PDB for another build", second.getvalue())
+
+    def test_an_unrelated_pdb_in_a_root_does_not_invalidate(self):
+        root = self.root / "symbols"
+        root.mkdir()
+        with self._patches():
+            self._run(stream=io.StringIO(), symbol_dirs=[root])
+            (root / "unrelated.pdb").write_bytes(b"x")
+            self._run(stream=io.StringIO(), symbol_dirs=[root])
+
+        self.assertEqual(self.calls, 1)
+
+    def test_a_nested_guid_candidate_is_keyed(self):
+        root = self.root / "symbols"
+        root.mkdir()
+        guid = "ABCDEF0123456789ABCDEF0123456789"
+        info = ("m.pdb", "m.pdb", guid, 1)
+        nested = root / f"{guid}{1:X}" / "m.pdb"
+        nested.parent.mkdir()
+        rejection = uprof_symbols.PdbSearch(pdb=None, probes=[])
+
+        def finder(_path, name):
+            return self.pdbutil if name == "llvm-pdbutil" else self.readobj
+
+        with self._patches(info=info, finder=finder,
+                           chooser=lambda *_args, **_kwargs: rejection):
+            self._run(stream=io.StringIO(), symbol_dirs=[root])
+            nested.write_bytes(b"pdb")
+            second = io.StringIO()
+            self._run(stream=second, symbol_dirs=[root])
+
+        self.assertEqual(self.calls, 2)
+        self.assertIn("PDB for another build", second.getvalue())
+
+    def test_the_module_spelling_alone_is_keyed_with_an_explicit_module_name(self):
+        spelled = str(self.exe).replace("\\", "/")
+        with self._patches():
+            self._run(stream=io.StringIO(), module_name="same.exe")
+            uprof_symbols.symbolize_module(spelled, str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer,
+                                           module_name="same.exe")
 
         self.assertEqual(self.calls, 2)
 
 
 class ParquetWriteThreadTest(unittest.TestCase):
-    def _executed(self, rows, threshold):
+    def _executed(self, rows, threshold, count_error=False):
         executed = []
 
         class FakeConnection:
@@ -1280,8 +1482,16 @@ class ParquetWriteThreadTest(unittest.TestCase):
             root = Path(tmp)
             jsonl = root / "symbols.jsonl"
             jsonl.write_text('{"Address":"0x1","Symbol":null}\n' * rows, encoding="utf-8")
-            with mock.patch.object(uprof_symbols, "PARQUET_SINGLE_THREAD_MAX_ROWS", threshold), \
-                    mock.patch.dict(sys.modules, {"duckdb": FakeDuckDB}):
+            patches = [
+                mock.patch.object(uprof_symbols, "PARQUET_SINGLE_THREAD_MAX_ROWS", threshold),
+                mock.patch.dict(sys.modules, {"duckdb": FakeDuckDB}),
+            ]
+            if count_error:
+                patches.append(mock.patch.object(uprof_symbols, "_jsonl_row_count",
+                                                 side_effect=OSError("gone")))
+            with contextlib.ExitStack() as stack:
+                for patcher in patches:
+                    stack.enter_context(patcher)
                 uprof_symbols._write_parquet(jsonl, root / "out.parquet")
         return executed
 
@@ -1295,8 +1505,20 @@ class ParquetWriteThreadTest(unittest.TestCase):
 
         self.assertFalse(any("SET threads = 1" in sql for sql in executed))
 
-    def test_the_threshold_leaves_room_above_the_largest_observed_module(self):
-        self.assertGreaterEqual(uprof_symbols.PARQUET_SINGLE_THREAD_MAX_ROWS, 19_730)
+    def test_the_threshold_is_pinned(self):
+        self.assertEqual(uprof_symbols.PARQUET_SINGLE_THREAD_MAX_ROWS, 100_000)
+
+    def test_the_threshold_boundary_uses_one_thread(self):
+        at_boundary = self._executed(10, threshold=10)
+        above = self._executed(11, threshold=10)
+
+        self.assertTrue(any("SET threads = 1" in sql for sql in at_boundary))
+        self.assertFalse(any("SET threads = 1" in sql for sql in above))
+
+    def test_a_row_count_read_error_keeps_the_default_pool(self):
+        executed = self._executed(2, threshold=10, count_error=True)
+
+        self.assertFalse(any("SET threads = 1" in sql for sql in executed))
 
 
 if __name__ == "__main__":

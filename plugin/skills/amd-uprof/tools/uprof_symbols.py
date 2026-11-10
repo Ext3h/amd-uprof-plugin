@@ -210,23 +210,32 @@ def _as_int(value: object) -> int | None:
         return None
 
 
-def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int | None]:
+# Bump when info.json's shape changes so an old probe result is re-derived instead of read.
+READOBJ_INFO_SHAPE: Final = 2
+
+
+def _readobj_info(exe: str, readobj: Path | None
+                  ) -> tuple[str, str | None, str | None, int | None]:
     pdb_name = Path(exe).stem + ".pdb"
+    raw_name = None
     guid = age = None
     if not readobj:
-        return pdb_name, guid, age
+        return pdb_name, raw_name, guid, age
     # The debug directory belongs to the image bytes, so the probe result is keyed on the image
     # and readobj build and survives until either changes.
     image_id = artifact_file_identity(exe)
     readobj_id = artifact_file_identity(readobj)
     cache_key = None
     if artifact_identity_present(image_id) and artifact_identity_present(readobj_id):
-        cache_key = artifact_key({"kind": "readobj", "image": image_id, "readobj": readobj_id})
+        cache_key = artifact_key({"kind": "readobj", "shape": READOBJ_INFO_SHAPE,
+                                  "image": image_id, "readobj": readobj_id})
         cached = load_cached_artifacts("readobj", cache_key, ("info.json",))
         if cached is not None:
             try:
                 data = json.loads((cached[0] / "info.json").read_text(encoding="utf-8"))
+                raw = data["raw_name"]
                 return (str(data["pdb_name"]),
+                        None if raw is None else str(raw),
                         None if data.get("guid") is None else str(data["guid"]),
                         None if data.get("age") is None else int(data["age"]))
             except (OSError, ValueError, KeyError, TypeError):
@@ -244,6 +253,7 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
                 continue
             value = match.group(1).strip()
             if key == "name":
+                raw_name = value
                 pdb_name = Path(value).name
             elif key == "guid":
                 guid = _normalize_guid(value)
@@ -251,9 +261,19 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
                 age = _as_int(value)
     if cache_key is not None:
         store_cached_text("readobj", cache_key, "info.json",
-                          json.dumps({"pdb_name": pdb_name, "guid": guid, "age": age},
-                                     sort_keys=True) + "\n")
-    return pdb_name, guid, age
+                          json.dumps({"pdb_name": pdb_name, "raw_name": raw_name,
+                                      "guid": guid, "age": age}, sort_keys=True) + "\n")
+    return pdb_name, raw_name, guid, age
+
+
+def _recorded_pdb_path(exe_path: str | Path, raw_name: str | None) -> Path | None:
+    """The image's recorded CodeView PDB path; a relative name is resolved beside the image."""
+    if not raw_name:
+        return None
+    recorded = Path(raw_name)
+    if not recorded.is_absolute():
+        recorded = Path(exe_path).parent / recorded
+    return recorded
 
 
 def _pdb_signature(pdbutil: Path | None, path: Path
@@ -325,12 +345,18 @@ def _symbol_server_entries() -> list[tuple[Path, str]]:
 
 def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
                     age: int | None, symbol_dirs: Iterable[str | Path] = (),
-                    symbol_files: Iterable[str | Path] = ()) -> list[Path]:
+                    symbol_files: Iterable[str | Path] = (),
+                    recorded_pdb: Path | None = None) -> list[Path]:
     module_name = exe.stem
     names = list(dict.fromkeys([pdb_name, module_name + ".pdb"]))
     candidates: list[Path] = []
-    # Caller-supplied symbol files are the caller's choice, so they are probed first; search
-    # roots come before the module's own directory and its keyed <GUID><age> subdirectory.
+    # The image's own recorded CodeView path is the strongest candidate when it exists; its
+    # absence is keyed by the no-debug state, so an appearance triggers a recompute. Probing an
+    # absent path here would add a redundant "not found" probe to every no-debug module's
+    # evidence. Caller-supplied symbol files come next, then the search roots before the
+    # module's own directory and its keyed <GUID><age> subdirectory.
+    if recorded_pdb is not None and recorded_pdb.is_file():
+        candidates.append(recorded_pdb)
     candidates.extend(Path(path) for path in symbol_files)
     for directory in symbol_dirs:
         root = Path(directory)
@@ -354,14 +380,15 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
 def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str,
                 module_age: int | None,
                 symbol_dirs: Iterable[str | Path] = (),
-                symbol_files: Iterable[str | Path] = ()) -> PdbSearch:
+                symbol_files: Iterable[str | Path] = (),
+                recorded_pdb: Path | None = None) -> PdbSearch:
     """Probe every candidate once; the search carries each rejection as evidence.
 
     The result is cached on the pdbutil build and every candidate's identity, so a PDB that
     appears, disappears or is rebuilt changes the key. A tool-level probe failure is not stored.
     """
     candidates = list(dict.fromkeys(_candidate_pdbs(
-        exe_path, pdb_name, module_guid, module_age, symbol_dirs, symbol_files)))
+        exe_path, pdb_name, module_guid, module_age, symbol_dirs, symbol_files, recorded_pdb)))
     urls = [url for _root, url in _symbol_server_entries()]
     pdbutil_id = artifact_file_identity(pdbutil)
     cache_key = None
@@ -377,6 +404,7 @@ def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str,
             "symbol_files": [os.path.normcase(os.path.abspath(os.fspath(path)))
                              for path in symbol_files],
             "urls": urls,
+            "recorded_pdb": None if recorded_pdb is None else _normalized_path(recorded_pdb),
             "candidates": [[os.path.normcase(os.path.abspath(os.fspath(path))),
                             artifact_file_identity(path)] for path in candidates],
         })
@@ -671,14 +699,21 @@ def load_cached_artifacts(kind: str, key: str,
     if root is None:
         return None
     directory = root / key[:2] / key
+    meta_path = directory / "meta.json"
+    if meta_path.is_dir():
+        # A directory where the metadata file belongs can never be read; remove the entry so a
+        # recompute can replace it.
+        shutil.rmtree(directory, ignore_errors=True)
+        return None
     try:
-        meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
-    except ValueError:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (ValueError, IsADirectoryError):
         # A corrupt metadata file cannot be repaired in place; remove it so a recompute can
         # replace the entry instead of leaving a directory that misses forever.
         shutil.rmtree(directory, ignore_errors=True)
         return None
     except OSError:
+        # A transient read error (a lock, a removable drive) is a miss; keep the entry.
         return None
     if not isinstance(meta, dict) or meta.get("format") != ARTIFACT_CACHE_FORMAT:
         shutil.rmtree(directory, ignore_errors=True)
@@ -1200,47 +1235,46 @@ def _normalized_path(path: str | Path) -> str:
     return _forward_slash(Path(os.path.normcase(os.path.abspath(os.fspath(path)))))
 
 
-def _search_root_state(roots: Iterable[str | Path]) -> list[dict[str, object]]:
-    """The PDB listing of each search root, used to invalidate a negative symbol cache.
-
-    A PDB that appears in a root changes the entry list or its mtime, so a cached "no PDB"
-    result is not served after the inputs that produced it have changed.
-    """
-    state = []
-    for root in dict.fromkeys(_normalized_path(path) for path in roots):
-        try:
-            entries = sorted((entry.name.lower(), entry.stat().st_size, entry.stat().st_mtime_ns)
-                             for entry in Path(root).iterdir()
-                             if entry.is_file() and entry.suffix.lower() == ".pdb")
-        except OSError:
-            entries = None
-        state.append({"root": root, "pdbs": entries})
-    return state
+def _search_root_state(roots: Iterable[str | Path]) -> list[str]:
+    """The normalized, deduplicated search roots; the per-module candidate paths are cheap."""
+    return list(dict.fromkeys(_normalized_path(path) for path in roots))
 
 
-def _implicit_pdb_state(exe_path: str, recorded_pdb: str | None) -> dict[str, object] | None:
-    """The state of the PDB paths a module could gain without a symbol-path change.
+def _implicit_pdb_state(recorded_pdb: Path | None) -> dict[str, object] | None:
+    """The identity of the image's recorded CodeView path, keyed even when it is absent.
 
-    The image's recorded CodeView name (even when the file is absent) and the adjacent
-    <image stem>.pdb are the two implicit sources; their file identities make a later
-    appearance a cache miss. None means the image's debug directory could not be read, so
-    the outcome cannot be keyed and must not be cached.
+    The adjacent <image stem>.pdb is already one of the candidate identities. None means the
+    debug directory could not be read, so the outcome cannot be keyed and must not be cached.
     """
     if recorded_pdb is None:
         return None
-    recorded = Path(recorded_pdb)
-    if not recorded.is_absolute():
-        recorded = Path(exe_path).parent / recorded
-    return {"recorded": artifact_file_identity(recorded),
-            "adjacent": artifact_file_identity(Path(exe_path).with_suffix(".pdb"))}
+    return {"recorded": artifact_file_identity(recorded_pdb)}
+
+
+def _no_pdb_candidates(exe_path: str, pdb_name: str, guid: str | None, age: int | None,
+                       roots: Iterable[str | Path], pdb_files: Iterable[str | Path]
+                       ) -> list[Path]:
+    """The PDB paths discovery would accept for this module, without listing the roots.
+
+    These are the identities a negative cache must watch: the caller's paths, each root's
+    <name> and its symbol-server <GUID><age>/<name>. An unrelated PDB in a root is not a
+    candidate and does not invalidate the entry.
+    """
+    names = list(dict.fromkeys([pdb_name, Path(exe_path).stem + ".pdb"]))
+    paths = [Path(path) for path in pdb_files]
+    for root in roots:
+        paths.extend(Path(root) / name for name in names)
+        if guid and age is not None:
+            paths.extend(Path(root) / f"{guid}{age:X}" / name for name in names)
+    return list(dict.fromkeys(paths))
 
 
 def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file: Path,
                       parquet_file: Path, symbolizer_path: Path, evidence: ModuleEvidence,
                       debug_dirs: list[str] | tuple[str, ...],
                       fallback_paths: list[str] | tuple[str, ...],
-                      pdb_files: list[Path], recorded_pdb: str | None,
-                      search_state: list[dict[str, object]] | None, stream: TextIO,
+                      pdb_files: list[Path], pdb_name: str, recorded_pdb: Path | None,
+                      search_state: list[str] | None, stream: TextIO,
                       stream_start: int | None) -> SymbolizedModule:
     """Symbolize without a PDB, caching the artifact and replaying its text on a hit.
 
@@ -1253,7 +1287,7 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
         rva_digest = artifact_file_digest(rva_path)
     except OSError:
         rva_digest = None
-    implicit = _implicit_pdb_state(exe_path, recorded_pdb)
+    implicit = _implicit_pdb_state(recorded_pdb)
     cache_key = None
     if (stream_start is not None and rva_digest is not None and implicit is not None
             and search_state is not None
@@ -1269,9 +1303,10 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
             # the caller-supplied PDB paths named in a missing-file note.
             "debug_dirs": [_normalized_path(path) for path in debug_dirs],
             "fallback_paths": [_normalized_path(path) for path in fallback_paths],
-            "pdb_files": [_normalized_path(path) for path in pdb_files],
             "implicit": implicit,
-            "search_roots": search_state,
+            "candidates": [artifact_file_identity(path) for path in _no_pdb_candidates(
+                exe_path, pdb_name, evidence.image_guid, evidence.image_age,
+                search_state, pdb_files)] if search_state is not None else None,
             "found_debug_info": evidence.found_debug_info,
             "outcome": evidence.outcome,
         })
@@ -1344,11 +1379,13 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
         readobj_error = None
         explicit = next((path for path in pdb_files if path.is_file()), None)
         try:
-            pdb_name, module_guid, module_age = _readobj_info(exe_input, readobj)
+            pdb_name, raw_pdb_name, module_guid, module_age = _readobj_info(exe_input, readobj)
         except (UprofError, OSError) as exc:
             pdb_name = Path(exe_input).stem + ".pdb"
+            raw_pdb_name = None
             module_guid = module_age = None
             readobj_error = str(exc)
+        recorded_pdb = _recorded_pdb_path(exe_path, raw_pdb_name)
         evidence.image_guid, evidence.image_age = module_guid, module_age
         if module_guid is None and explicit is None:
             if readobj is None:
@@ -1362,10 +1399,11 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             if pdb_files:
                 evidence.note = ("--symbol-path file not found: "
                                  + ", ".join(os.fspath(path) for path in pdb_files))
-            recorded = pdb_name if readobj is not None and readobj_error is None else None
+            recorded = recorded_pdb if readobj is not None and readobj_error is None else None
             return _symbolize_no_pdb(exe_path, exe_input, rva_path, jsonl_file, parquet_file,
                                      symbolizer_path, evidence, debug_dirs, fallback_paths,
-                                     pdb_files, recorded, search_state, stream, stream_start)
+                                     pdb_files, pdb_name, recorded, search_state, stream,
+                                     stream_start)
         if module_guid is None:
             # An explicit symbol file remains the caller's choice when the image carries no PDB
             # identity; it is used unverified rather than silently ignored.
@@ -1377,7 +1415,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                   "without GUID verification", file=stream)
         elif pdbutil:
             evidence.search = _choose_pdb(pdbutil, exe_path, pdb_name, module_guid, module_age,
-                                          search_dirs, pdb_files)
+                                          search_dirs, pdb_files, recorded_pdb)
             pdb = evidence.search.pdb
         else:
             probes = [
@@ -1386,7 +1424,8 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                                  "verification"
                                  if path in pdb_files else "used without GUID verification"))
                 for path in dict.fromkeys(_candidate_pdbs(
-                    exe_path, pdb_name, module_guid, module_age, search_dirs, pdb_files))]
+                    exe_path, pdb_name, module_guid, module_age, search_dirs, pdb_files,
+                    recorded_pdb))]
             pdb = next((probe.path for probe in probes if probe.status == "accepted"), None)
             evidence.search = PdbSearch(pdb=pdb, probes=probes)
             if pdb:
@@ -1396,7 +1435,8 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             evidence.outcome = ("no_debug_info" if found_debug_info is False else "no_pdb")
             return _symbolize_no_pdb(exe_path, exe_input, rva_path, jsonl_file, parquet_file,
                                      symbolizer_path, evidence, debug_dirs, fallback_paths,
-                                     pdb_files, pdb_name, search_state, stream, stream_start)
+                                     pdb_files, pdb_name, recorded_pdb, search_state, stream,
+                                     stream_start)
         print("PDB_MATCH=yes", file=stream)
         evidence.pdb = str(pdb)
 

@@ -885,7 +885,7 @@ class ArtifactCacheConcurrencyTest(unittest.TestCase):
 class SymbolizeTasksErrorReplayTest(unittest.TestCase):
     def test_an_error_stops_replay_before_later_modules(self):
         def worker(index, name, path, rvas, out_path, debug_info, symbol_files,
-                   symbol_dirs, image_files, image_dirs):
+                   symbol_dirs, image_files, image_dirs, symbolizer_path=None):
             if name == "b.exe":
                 return uprof_symbols._ModuleSymbolization(
                     name, "MODULE: b.exe\nFAILURE DETAIL\n", error=RuntimeError("boom"))
@@ -902,6 +902,173 @@ class SymbolizeTasksErrorReplayTest(unittest.TestCase):
         self.assertIn("MODULE: a.exe", output)
         self.assertIn("FAILURE DETAIL", output)
         self.assertNotIn("MODULE: c.exe", output)
+
+
+class SymbolizerResolutionTest(unittest.TestCase):
+    def test_symbolize_modules_resolves_the_symbolizer_once_and_passes_it(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-symbolizer-once-") as tmp:
+            root = Path(tmp)
+            fake = root / "llvm-symbolizer.exe"
+            fake.write_bytes(b"")
+            captured = {}
+
+            def fake_tasks(modules, out_path, stream, debug_info, symbol_files, symbol_dirs,
+                           image_files, image_dirs, symbolizer_path=None):
+                captured["symbolizer"] = symbolizer_path
+                return []
+
+            with mock.patch.object(uprof_symbols, "require_symbolizer",
+                                   return_value=fake) as resolve, \
+                    mock.patch.object(uprof_symbols, "_symbolize_tasks", side_effect=fake_tasks):
+                uprof_symbols.symbolize_modules([("a.exe", "", ["0x1"])], root / "out",
+                                                stream=io.StringIO())
+
+        self.assertEqual(resolve.call_count, 1)
+        self.assertEqual(captured["symbolizer"], fake)
+
+    def test_an_explicit_symbolizer_is_not_resolved_again(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-symbolizer-explicit-") as tmp:
+            root = Path(tmp)
+            fake = root / "llvm-symbolizer.exe"
+            fake.write_bytes(b"")
+            exe = root / "m.exe"
+            exe.write_bytes(b"MZ")
+            rva = root / "rvas.txt"
+            rva.write_text("0x1000\n", encoding="utf-8")
+            result = uprof_symbols.SymbolizedModule(
+                None, None, None, uprof_symbols.ModuleEvidence("m", "m"))
+            with mock.patch.object(uprof_symbols, "require_symbolizer",
+                                   side_effect=AssertionError("resolved")) as resolve, \
+                    mock.patch.object(uprof_symbols, "require_file",
+                                      side_effect=lambda path, _what: str(path)), \
+                    mock.patch.object(uprof_symbols, "find_sibling", return_value=None), \
+                    mock.patch.object(uprof_symbols, "_readobj_info",
+                                      return_value=("m.pdb", None, None)), \
+                    mock.patch.object(uprof_symbols, "_symbolize_no_pdb",
+                                      return_value=result) as helper:
+                uprof_symbols.symbolize_module(str(exe), str(rva), root / "out",
+                                               stream=io.StringIO(), symbolizer=fake)
+
+        self.assertEqual(resolve.call_count, 0)
+        helper.assert_called_once()
+
+
+class NoPdbCacheTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="uprof-no-pdb-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        patcher = mock.patch.object(uprof_symbols, "ARTIFACT_CACHE_ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.exe = self.root / "m.exe"
+        self.exe.write_bytes(b"MZ")
+        self.rva = self.root / "rvas.txt"
+        self.rva.write_text("0x1000\n", encoding="utf-8")
+        self.symbolizer = self.root / "llvm-symbolizer.exe"
+        self.symbolizer.write_bytes(b"")
+        self.calls = 0
+
+    def _run_symbolizer(self, symbolizer, exe, pdb, rva_file, out_file, **kwargs):
+        self.calls += 1
+        stream = kwargs.get("stream")
+        if stream is not None:
+            print("WARNING: no symbols", file=stream)
+        Path(out_file).write_text("{}\n", encoding="utf-8")
+        return uprof_symbols.SymbolizerRun(0, [], "", 0, 0)
+
+    def _write_parquet(self, out_file, parquet_file, short_file=None, stream=None):
+        Path(parquet_file).write_bytes(b"parquet")
+        return Path(parquet_file)
+
+    def test_a_no_pdb_module_is_cached_and_its_output_replayed(self):
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=None), \
+                mock.patch.object(uprof_symbols, "_readobj_info",
+                                  return_value=("m.pdb", None, None)), \
+                mock.patch.object(uprof_symbols, "_run_symbolizer",
+                                  side_effect=self._run_symbolizer), \
+                mock.patch.object(uprof_symbols, "_write_parquet",
+                                  side_effect=self._write_parquet):
+            first = io.StringIO()
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=first, symbolizer=self.symbolizer)
+            second = io.StringIO()
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=second, symbolizer=self.symbolizer)
+
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(first.getvalue(), second.getvalue())
+
+    def test_a_different_debug_search_root_is_a_miss(self):
+        first_root = self.root / "symbols-a"
+        second_root = self.root / "symbols-b"
+        first_root.mkdir()
+        second_root.mkdir()
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=None), \
+                mock.patch.object(uprof_symbols, "_readobj_info",
+                                  return_value=("m.pdb", None, None)), \
+                mock.patch.object(uprof_symbols, "_run_symbolizer",
+                                  side_effect=self._run_symbolizer), \
+                mock.patch.object(uprof_symbols, "_write_parquet",
+                                  side_effect=self._write_parquet):
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer,
+                                           symbol_dirs=[first_root])
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer,
+                                           symbol_dirs=[second_root])
+
+        self.assertEqual(self.calls, 2)
+
+    def test_the_module_spelling_is_part_of_the_cache_key(self):
+        spelled = str(self.exe).replace("\\", "/")
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=None), \
+                mock.patch.object(uprof_symbols, "_readobj_info",
+                                  return_value=("m.pdb", None, None)), \
+                mock.patch.object(uprof_symbols, "_run_symbolizer",
+                                  side_effect=self._run_symbolizer), \
+                mock.patch.object(uprof_symbols, "_write_parquet",
+                                  side_effect=self._write_parquet):
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer)
+            uprof_symbols.symbolize_module(spelled, str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer)
+
+        self.assertEqual(self.calls, 2)
+
+    def test_a_different_missing_pdb_is_a_miss(self):
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=None), \
+                mock.patch.object(uprof_symbols, "_readobj_info",
+                                  return_value=("m.pdb", None, None)), \
+                mock.patch.object(uprof_symbols, "_run_symbolizer",
+                                  side_effect=self._run_symbolizer), \
+                mock.patch.object(uprof_symbols, "_write_parquet",
+                                  side_effect=self._write_parquet):
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer,
+                                           symbol_files=[self.root / "first.pdb"])
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer,
+                                           symbol_files=[self.root / "second.pdb"])
+
+        self.assertEqual(self.calls, 2)
+
+    def test_the_module_name_is_part_of_the_cache_key(self):
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=None), \
+                mock.patch.object(uprof_symbols, "_readobj_info",
+                                  return_value=("m.pdb", None, None)), \
+                mock.patch.object(uprof_symbols, "_run_symbolizer",
+                                  side_effect=self._run_symbolizer), \
+                mock.patch.object(uprof_symbols, "_write_parquet",
+                                  side_effect=self._write_parquet):
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer,
+                                           module_name="first.exe")
+            uprof_symbols.symbolize_module(str(self.exe), str(self.rva), self.root / "out",
+                                           stream=io.StringIO(), symbolizer=self.symbolizer,
+                                           module_name="second.exe")
+
+        self.assertEqual(self.calls, 2)
 
 
 if __name__ == "__main__":

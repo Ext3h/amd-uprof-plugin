@@ -1161,11 +1161,76 @@ def _symbols_cache_key(image_id: dict[str, object], module_spelling: str,
     })
 
 
+def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file: Path,
+                      parquet_file: Path, symbolizer_path: Path, evidence: ModuleEvidence,
+                      debug_dirs: list[str] | tuple[str, ...],
+                      fallback_paths: list[str] | tuple[str, ...],
+                      pdb_files: list[Path], stream: TextIO,
+                      stream_start: int | None) -> SymbolizedModule:
+    """Symbolize without a PDB, caching the artifact and replaying its text on a hit.
+
+    No-debug modules are a large share of a capture's modules; the cache avoids repeating their
+    symbolizer pass and parquet write on every run, including the filtered drill-downs.
+    """
+    image_id = artifact_file_identity(exe_path)
+    symbolizer_id = artifact_file_identity(symbolizer_path)
+    try:
+        rva_digest = artifact_file_digest(rva_path)
+    except OSError:
+        rva_digest = None
+    cache_key = None
+    if (stream_start is not None and rva_digest is not None
+            and artifact_identity_present(image_id) and artifact_identity_present(symbolizer_id)):
+        cache_key = artifact_key({
+            "kind": "symbols-no-pdb",
+            "derivation": derivation_version("symbols"),
+            "image": image_id,
+            "rva_sha256": rva_digest,
+            "symbolizer": symbolizer_id,
+            "module": exe_input,
+            "module_name": evidence.module_name,
+            # The symbolizer searches these roots, so a different set can resolve symbols without
+            # a PDB; the spellings are keyed because the cached evidence replays them, including
+            # the caller-supplied PDB paths named in a missing-file note.
+            "debug_dirs": [_forward_slash(Path(path)) for path in debug_dirs],
+            "fallback_paths": [_forward_slash(Path(path)) for path in fallback_paths],
+            "pdb_files": [_forward_slash(path) for path in pdb_files],
+            "found_debug_info": evidence.found_debug_info,
+            "outcome": evidence.outcome,
+        })
+        cached = load_cached_artifacts("symbols-no-pdb", cache_key, ("symbols.parquet",))
+        if cached is not None:
+            directory, meta = cached
+            cached_evidence = _evidence_from_data(meta.get("evidence"))
+            replay = meta.get("stream")
+            try:
+                if cached_evidence is None or not isinstance(replay, str):
+                    raise ValueError("malformed cached entry")
+                shutil.copyfile(directory / "symbols.parquet", parquet_file)
+            except (OSError, ValueError):
+                shutil.rmtree(directory, ignore_errors=True)
+            else:
+                stream.write(replay)
+                return SymbolizedModule(parquet_file, None, None, cached_evidence)
+    evidence.symbolizer = _run_symbolizer(
+        symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
+        debug_dirs=debug_dirs, fallback_paths=fallback_paths, stream=stream)
+    print("PDB=none", file=stream)
+    parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
+    print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
+    if cache_key is not None and parquet is not None:
+        store_cached_artifacts("symbols-no-pdb", cache_key, {"symbols.parquet": parquet},
+                               {"evidence": _evidence_data(evidence),
+                                "stream": _stream_since(stream, stream_start)})
+    return SymbolizedModule(parquet, None, None, evidence)
+
+
 def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                      stream: TextIO = sys.stdout, module_name: str | None = None,
                      found_debug_info: bool | None = None,
                      symbol_files: Iterable[str | Path] = (),
-                     symbol_dirs: Iterable[str | Path] = ()) -> SymbolizedModule:
+                     symbol_dirs: Iterable[str | Path] = (),
+                     symbolizer: str | Path | None = None) -> SymbolizedModule:
     """Symbolize the RVAs into out_dir; return the artifacts and the symbol-search evidence.
 
     The symbol file is found from the module's debug directory: each explicit symbol file, each
@@ -1181,10 +1246,11 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
     rva_path = require_file(rva_file, "RVA file")
     out_path = absolute(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
+    stream_start = _stream_mark(stream)
     jsonl_file = out_path / "symbols.jsonl"
     parquet_file = out_path / "symbols.parquet"
     publics_file = out_path / "symbols.publics.csv"
-    symbolizer_path = require_symbolizer()
+    symbolizer_path = Path(symbolizer) if symbolizer is not None else require_symbolizer()
     evidence = ModuleEvidence(module_name or exe, exe, found_debug_info=found_debug_info)
     pdb: Path | None = None
     pdb_files = [Path(path) for path in symbol_files
@@ -1216,13 +1282,9 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             if pdb_files:
                 evidence.note = ("--symbol-path file not found: "
                                  + ", ".join(os.fspath(path) for path in pdb_files))
-            evidence.symbolizer = _run_symbolizer(
-                symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
-                debug_dirs=debug_dirs, fallback_paths=fallback_paths, stream=stream)
-            print("PDB=none", file=stream)
-            parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
-            print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
-            return SymbolizedModule(parquet, None, None, evidence)
+            return _symbolize_no_pdb(exe_path, exe_input, rva_path, jsonl_file, parquet_file,
+                                     symbolizer_path, evidence, debug_dirs, fallback_paths,
+                                     pdb_files, stream, stream_start)
         if module_guid is None:
             # An explicit symbol file remains the caller's choice when the image carries no PDB
             # identity; it is used unverified rather than silently ignored.
@@ -1251,13 +1313,9 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                       "verification", file=stream)
         if not pdb:
             evidence.outcome = ("no_debug_info" if found_debug_info is False else "no_pdb")
-            evidence.symbolizer = _run_symbolizer(
-                symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
-                debug_dirs=debug_dirs, fallback_paths=fallback_paths, stream=stream)
-            print("PDB=none", file=stream)
-            parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
-            print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
-            return SymbolizedModule(parquet, None, None, evidence)
+            return _symbolize_no_pdb(exe_path, exe_input, rva_path, jsonl_file, parquet_file,
+                                     symbolizer_path, evidence, debug_dirs, fallback_paths,
+                                     pdb_files, stream, stream_start)
         print("PDB_MATCH=yes", file=stream)
         evidence.pdb = str(pdb)
 
@@ -1477,7 +1535,8 @@ def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list
                       symbol_files: Iterable[str | Path],
                       symbol_dirs: Iterable[str | Path],
                       image_files: Iterable[str | Path],
-                      image_dirs: Iterable[str | Path]) -> _ModuleSymbolization:
+                      image_dirs: Iterable[str | Path],
+                      symbolizer_path: str | Path | None = None) -> _ModuleSymbolization:
     """Symbolize one module into its own directory; return its text instead of writing it."""
     output = io.StringIO()
     evidence: ModuleEvidence | None = None
@@ -1513,7 +1572,8 @@ def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list
             result = symbolize_module(
                 module_path, rva_file, module_dir, stream=output, module_name=module_name,
                 found_debug_info=(debug_info or {}).get(module_name),
-                symbol_files=symbol_files, symbol_dirs=symbol_dirs)
+                symbol_files=symbol_files, symbol_dirs=symbol_dirs,
+                symbolizer=symbolizer_path)
         except UprofError as exc:
             evidence = ModuleEvidence(module_name, module_path,
                                       found_debug_info=(debug_info or {}).get(module_name),
@@ -1537,7 +1597,9 @@ def _symbolize_tasks(modules: list[tuple[str, str, list[str]]], out_path: Path,
                      symbol_files: Iterable[str | Path],
                      symbol_dirs: Iterable[str | Path],
                      image_files: Iterable[str | Path],
-                     image_dirs: Iterable[str | Path]) -> list[_ModuleSymbolization]:
+                     image_dirs: Iterable[str | Path],
+                     symbolizer_path: str | Path | None = None
+                     ) -> list[_ModuleSymbolization]:
     """Symbolize modules in a bounded pool; write each module's text in module index order."""
     symbol_files, symbol_dirs = tuple(symbol_files), tuple(symbol_dirs)
     image_files, image_dirs = tuple(image_files), tuple(image_dirs)
@@ -1546,7 +1608,8 @@ def _symbolize_tasks(modules: list[tuple[str, str, list[str]]], out_path: Path,
     try:
         futures = [
             pool.submit(_symbolize_worker, index, module_name, module_path, rvas, out_path,
-                        debug_info, symbol_files, symbol_dirs, image_files, image_dirs)
+                        debug_info, symbol_files, symbol_dirs, image_files, image_dirs,
+                        symbolizer_path)
             for index, (module_name, module_path, rvas) in enumerate(modules)
         ]
         outcomes: list[_ModuleSymbolization] = []
@@ -1584,7 +1647,7 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     """
     out_path = absolute(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-    require_symbolizer()
+    symbolizer_path = require_symbolizer()
     parquet_inputs: list[tuple[str, Path]] = []
     public_inputs: list[tuple[str, Path]] = []
     pdb_inputs: list[tuple[str, str]] = []
@@ -1595,7 +1658,7 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     _PUBLICS_CACHE.reset()
     try:
         outcomes = _symbolize_tasks(modules, out_path, stream, debug_info, symbol_files,
-                                    symbol_dirs, image_files, image_dirs)
+                                    symbol_dirs, image_files, image_dirs, symbolizer_path)
         for outcome in outcomes:
             if outcome.evidence is not None:
                 evidence.append(outcome.evidence)

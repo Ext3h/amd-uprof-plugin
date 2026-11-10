@@ -348,7 +348,7 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
                     symbol_files: Iterable[str | Path] = (),
                     recorded_pdb: Path | None = None) -> list[Path]:
     module_name = exe.stem
-    names = list(dict.fromkeys([pdb_name, module_name + ".pdb"]))
+    names = [name for name in dict.fromkeys([pdb_name, module_name + ".pdb"]) if name]
     candidates: list[Path] = []
     # The image's own recorded CodeView path is the strongest candidate when it exists; its
     # absence is keyed by the no-debug state, so an appearance triggers a recompute. Probing an
@@ -365,11 +365,15 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
             candidates.extend(root / f"{module_guid}{age:X}" / name for name in names)
     candidates.extend(exe.parent / name for name in names)
     for cache_root, _url in _symbol_server_entries():
+        if not pdb_name:
+            # An empty recorded name cannot address the cache layout; scanning its root would
+            # probe thousands of unrelated PDBs.
+            continue
         cache_dir = cache_root / pdb_name
         if module_guid and age is not None:
             candidates.append(cache_dir / f"{module_guid}{age:X}" / pdb_name)
         try:
-            discovered = list(cache_dir.rglob(pdb_name))
+            discovered = sorted(cache_dir.rglob(pdb_name))
         except OSError:
             # An unreachable or unreadable cache path contributes nothing.
             continue
@@ -1289,7 +1293,7 @@ def _no_pdb_candidates(exe_path: str, pdb_name: str, guid: str | None, age: int 
     cache paths, and any candidate a completed search probed. An unrelated PDB in a root is
     not a candidate and does not invalidate the entry.
     """
-    names = list(dict.fromkeys([pdb_name, Path(exe_path).stem + ".pdb"]))
+    names = [name for name in dict.fromkeys([pdb_name, Path(exe_path).stem + ".pdb"]) if name]
     paths = [Path(path) for path in pdb_files]
     paths.extend(Path(exe_path).parent / name for name in names)
     for root in roots:
@@ -1297,6 +1301,9 @@ def _no_pdb_candidates(exe_path: str, pdb_name: str, guid: str | None, age: int 
         if guid and age is not None:
             paths.extend(Path(root) / f"{guid}{age:X}" / name for name in names)
     for cache_root, _url in _symbol_server_entries():
+        if not pdb_name:
+            # An empty name does not address the cache layout; see _candidate_pdbs.
+            continue
         cache_dir = cache_root / pdb_name
         if guid and age is not None:
             paths.append(cache_dir / f"{guid}{age:X}" / pdb_name)
@@ -1310,7 +1317,8 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
                       fallback_paths: list[str] | tuple[str, ...],
                       pdb_files: list[Path], pdb_name: str, recorded_pdb: Path | None,
                       search_state: list[str] | None, stream: TextIO,
-                      stream_start: int | None, keyable: bool = True) -> SymbolizedModule:
+                      stream_start: int | None, keyable: bool = True,
+                      pdbutil: Path | None = None) -> SymbolizedModule:
     """Symbolize without a PDB, caching the artifact and replaying its text on a hit.
 
     No-debug modules are a large share of a capture's modules; the cache avoids repeating their
@@ -1333,6 +1341,7 @@ def _symbolize_no_pdb(exe_path: str, exe_input: str, rva_path: Path, jsonl_file:
             "image": image_id,
             "rva_sha256": rva_digest,
             "symbolizer": symbolizer_id,
+            "pdbutil": None if pdbutil is None else artifact_file_identity(pdbutil),
             "module": exe_input,
             "module_name": evidence.module_name,
             # The symbolizer searches these roots, so a different set can resolve symbols without
@@ -1444,7 +1453,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             return _symbolize_no_pdb(exe_path, exe_input, rva_path, jsonl_file, parquet_file,
                                      symbolizer_path, evidence, debug_dirs, fallback_paths,
                                      pdb_files, pdb_name, recorded, search_state, stream,
-                                     stream_start, keyable=readable)
+                                     stream_start, keyable=readable, pdbutil=pdbutil)
         if module_guid is None:
             # An explicit symbol file remains the caller's choice when the image carries no PDB
             # identity; it is used unverified rather than silently ignored.
@@ -1477,7 +1486,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             return _symbolize_no_pdb(exe_path, exe_input, rva_path, jsonl_file, parquet_file,
                                      symbolizer_path, evidence, debug_dirs, fallback_paths,
                                      pdb_files, pdb_name, recorded_pdb, search_state, stream,
-                                     stream_start)
+                                     stream_start, pdbutil=pdbutil)
         print("PDB_MATCH=yes", file=stream)
         evidence.pdb = str(pdb)
 

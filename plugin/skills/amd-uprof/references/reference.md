@@ -289,20 +289,28 @@ semantics; `readobj` and `pdb-search` carry no derivation version, so
 
 A `symbols-no-pdb` key additionally carries the module name and spelling, the image's recorded
 CodeView PDB path (the raw `PDBFileName`, resolved against the image directory when relative,
-keyed even when absent, and joined to discovery's candidates when it exists), and the identities
-of the specific PDB paths discovery would accept: the caller's symbol files, each search root's
-`<name>` and its `<GUID><age>/<name>`, the adjacent `<stem>.pdb`, the deterministic symbol-server
-cache paths, and any candidate a completed search probed. An unrelated PDB in a root is not
-keyed; a PDB appearing at a candidate path changes the key, so a cached "no symbols" result is
-not served after its inputs changed. The readobj probe records the raw name, and its info shape
-is part of that artifact's key. A readable debug directory with no recorded name is keyed
-without that identity; only an unreadable directory disables the key.
+keyed even when absent, and joined to discovery's candidates when it exists), the `llvm-pdbutil`
+build, and the identities of the specific PDB paths discovery would accept: the caller's symbol
+files, each search root's `<name>` and its `<GUID><age>/<name>`, the adjacent `<stem>.pdb`, the
+deterministic symbol-server cache paths, and any candidate a completed search probed. An
+unrelated PDB in a root is not keyed; a PDB appearing at a candidate path changes the key, so a
+cached "no symbols" result is not served after its inputs changed. The readobj probe records the
+raw name, and its info shape is part of that artifact's key. A readable debug directory with no
+recorded name is keyed without that identity; only an unreadable directory disables the key. An
+empty recorded name cannot address the symbol-server cache layout, so discovery probes only the
+deterministic candidates instead of scanning that root, and the discovered candidates are
+ordered.
 
 The `ranges-assembled` key carries the ordered per-module ranges dependency keys (image, public
-starts and readobj build) and the ranges derivation version, so one entry serves every call with
-the same module set and inputs. A cache hit stages the artifact into the run directory by hard
-link when both share a volume, falling back to a copy on a cross-volume error; the run directory
-removes only its own links, so cleanup and cache eviction do not affect each other.
+starts and readobj build), the ranges derivation version, the assembled-table layout version and
+the attempted-module evidence, so one entry serves every call with the same whole-scope inputs
+and its replayed evidence describes that scope. A cache hit stages the artifact into the run
+directory by hard link when both share a volume, falling back to a copy on a cross-volume error;
+the target is replaced atomically, so restaging never writes through a link to the cache. The
+run directory removes only its own links, so cleanup and cache eviction do not affect each other.
+An assembly whose evidence names a transient tool failure is not stored, and an entry that
+already carries one is rebuilt on the next call; a stable absence (not a PE image, no code
+section, no boundary source) is cached.
 
 `meta.json` is written last and records every file's size and sha256. A hit is served only when
 the file and its recorded size and sha256 match; a malformed, truncated or old-format entry is

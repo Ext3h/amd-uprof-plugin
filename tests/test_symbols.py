@@ -181,6 +181,32 @@ class PdbProbeTest(unittest.TestCase):
                                       Path(r"C:\symbols\ABCD1\fixture.pdb"),
                                       Path("C:/app/fixture.pdb")])
 
+    def test_an_empty_recorded_name_does_not_scan_the_symbol_cache_root(self):
+        with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": r"srv*C:\cache*https://example"}):
+            with mock.patch.object(Path, "rglob") as scan:
+                candidates = uprof_symbols._candidate_pdbs(
+                    Path("C:/app/fixture.exe"), "", "ABCD", 1)
+
+        scan.assert_not_called()
+        self.assertEqual(candidates, [Path("C:/app/fixture.pdb")])
+
+    def test_an_empty_recorded_name_adds_no_symbol_cache_candidates(self):
+        with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": r"srv*C:\cache*https://example"}):
+            paths = uprof_symbols._no_pdb_candidates("C:/app/fixture.exe", "", "ABCD", 1, [], [])
+
+        self.assertEqual(paths, [Path("C:/app/fixture.pdb")])
+
+    def test_symbol_cache_discovery_is_sorted(self):
+        cache = Path("C:/cache/x.pdb")
+        unsorted = [cache / "zz" / "x.pdb", cache / "aa" / "x.pdb"]
+        with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": r"srv*C:\cache*https://example"}), \
+                mock.patch.object(Path, "rglob", return_value=iter(unsorted)):
+            candidates = uprof_symbols._candidate_pdbs(
+                Path("C:/app/fixture.exe"), "x.pdb", None, None)
+
+        discovered = [path for path in candidates if path in unsorted]
+        self.assertEqual(discovered, [cache / "aa" / "x.pdb", cache / "zz" / "x.pdb"])
+
     def test_debug_file_directories_reach_the_symbolizer(self):
         with tempfile.TemporaryDirectory(prefix="uprof-debug-dirs-") as directory:
             root = Path(directory)
@@ -1431,6 +1457,21 @@ class NoPdbCacheTest(unittest.TestCase):
 
         self.assertEqual(self.calls, 1)
         self.assertEqual(len(entries), 1)
+
+    def test_a_changed_pdbutil_build_invalidates_the_no_pdb_entry(self):
+        info = ("m.pdb", "m.pdb", "ABCDEF0123456789ABCDEF0123456789", 1)
+        rejection = uprof_symbols.PdbSearch(pdb=None, probes=[])
+
+        def finder(_path, name):
+            return self.pdbutil if name == "llvm-pdbutil" else self.readobj
+
+        with self._patches(info=info, finder=finder,
+                           chooser=lambda *_args, **_kwargs: rejection):
+            self._run(stream=io.StringIO())
+            os.utime(self.pdbutil, ns=(10**9, 10**9))
+            self._run(stream=io.StringIO())
+
+        self.assertEqual(self.calls, 2)
 
     def test_a_supplied_pdb_appearing_is_a_miss(self):
         supplied = self.root / "supplied.pdb"

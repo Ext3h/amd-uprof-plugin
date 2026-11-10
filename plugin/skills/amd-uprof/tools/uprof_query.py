@@ -11,6 +11,7 @@ import os
 import shutil
 import sys
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
@@ -251,6 +252,34 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
     }, causes
 
 
+def _derive_candidates(candidates: list[tuple[str, str]],
+                       publics_by_module: dict[str, list], readobj: str | None):
+    """Derive ranges in module order, in a process pool when more than one module needs it.
+
+    parse_image is Python/GIL-bound, so threads cannot help; a process pool keeps the per-module
+    cache and output order. A pool failure falls back to the sequential loop.
+    """
+    starts = {name: uprof_functions.public_starts_from_names(publics_by_module.get(name, []))
+              for name, _path in candidates}
+    if len(candidates) > 1 and (os.cpu_count() or 1) > 1:
+        try:
+            with ProcessPoolExecutor(max_workers=min(8, len(candidates))) as pool:
+                futures = [pool.submit(uprof_functions.derive_module_ranges, name, path,
+                                       starts[name], readobj)
+                           for name, path in candidates]
+                results = []
+                for future in futures:
+                    try:
+                        results.append(future.result())
+                    except Exception as exc:  # noqa: BLE001 - reported as the module's reason
+                        results.append(exc)
+                return results
+        except (OSError, RuntimeError):
+            pass
+    return [uprof_functions.derive_module_ranges(name, path, starts[name], readobj=readobj)
+            for name, path in candidates]
+
+
 def _derive_scope_ranges(connection: object, artifacts: Path | None,
                          stream: TextIO) -> tuple[Path | None, dict[str, Any]]:
     """Derive function ranges for modules whose samples uProf did not name.
@@ -285,10 +314,14 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
             [name for name, _path in candidates]).fetchall()
         for module_name, rva, names in rows_publics:
             publics_by_module.setdefault(str(module_name), []).append((rva, names))
-    for name, path in candidates:
-        publics = publics_by_module.get(name, [])
-        result = uprof_functions.derive_module_ranges(
-            name, path, uprof_functions.public_starts_from_names(publics))
+    results = _derive_candidates(candidates, publics_by_module, uprof_context.find_readobj())
+    for (name, path), result in zip(candidates, results):
+        if isinstance(result, BaseException):
+            reason = f"range derivation failed: {result}"
+            info["absent_by_module"][name] = reason
+            print(f"WARNING: no function range derived for {name} ({path}): {reason}",
+                  file=stream)
+            continue
         if not result.ranges:
             reason = result.reason or "no function range"
             info["absent_by_module"][name] = reason

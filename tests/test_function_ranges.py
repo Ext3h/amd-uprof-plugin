@@ -16,6 +16,7 @@ from unittest import mock
 
 import uprof_context
 import uprof_functions
+import uprof_query
 import uprof_symbols
 from uprof_context import PeSection
 
@@ -126,6 +127,62 @@ class FixtureDerivationTest(unittest.TestCase):
 
         self.assertIsNotNone(result.reason)
         self.assertFalse(entry.exists())
+
+
+@unittest.skipUnless(READOBJ, "llvm-readobj is required")
+class DeriveCandidatesTest(unittest.TestCase):
+    def test_parallel_results_keep_module_order_and_fall_back_for_a_missing_module(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-derive-pool-") as tmp:
+            root = Path(tmp)
+            fixture = root / "fixture.exe"
+            fixture.write_bytes(FIXTURE.read_bytes())
+            missing = root / "missing.exe"
+            candidates = [("fixture.exe", str(fixture)), ("missing.exe", str(missing))]
+
+            results = uprof_query._derive_candidates(candidates, {}, READOBJ)
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(results[0].ranges)
+        self.assertEqual(results[1].ranges, [])
+        self.assertIsNotNone(results[1].reason)
+
+
+class DeriveCandidatesPoolTest(unittest.TestCase):
+    def test_the_pool_derives_each_candidate_and_keeps_submission_order(self):
+        candidates = [("a.dll", "a"), ("b.dll", "b")]
+        created = []
+
+        class FakeFuture:
+            def __init__(self, value):
+                self.value = value
+
+            def result(self):
+                return self.value
+
+        class FakePool:
+            def __init__(self, max_workers=None):
+                created.append(max_workers)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def submit(self, fn, module_name, module_path, starts, readobj):
+                return FakeFuture(fn(module_name, module_path, starts, readobj))
+
+        def derive(module_name, _module_path, _starts=(), _readobj=None):
+            return uprof_functions.RangeDerivation(
+                [uprof_functions.FunctionRange(module_name, 0x1000, 0x1010, "pdata", None)])
+
+        with mock.patch.object(uprof_query.uprof_functions, "derive_module_ranges",
+                               side_effect=derive), \
+                mock.patch.object(uprof_query, "ProcessPoolExecutor", FakePool):
+            results = uprof_query._derive_candidates(candidates, {}, "readobj")
+
+        self.assertEqual(len(created), 1)
+        self.assertEqual([r.ranges[0].module_name for r in results], ["a.dll", "b.dll"])
 
 
 if __name__ == "__main__":

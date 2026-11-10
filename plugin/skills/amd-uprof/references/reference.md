@@ -279,7 +279,8 @@ function-range derivation cache finished artifacts across runs under
 Kinds and files: `symbols` (`symbols.parquet`, with the module's recorded stderr and evidence in
 `meta.json`), `symbols-no-pdb` (`symbols.parquet` plus the replayed stderr and evidence for a
 module that was symbolized without a PDB), `publics` (`publics.csv`), `ranges` (`ranges.json`),
-`readobj` (`info.json`) and `pdb-search` (`search.json`). A key is the sha256 of the artifact's
+`ranges-assembled` (`functions.csv` with the replayed range evidence and range counts in
+`meta.json`), `readobj` (`info.json`) and `pdb-search` (`search.json`). A key is the sha256 of the artifact's
 inputs: the file identity (normalized path, size, mtime) of the image, PDB and tool, the RVA list
 digest, the symbol and debug paths and, for `symbols`, `publics`, `ranges` and `symbols-no-pdb`, a
 derivation version. Bump `ARTIFACT_DERIVATION_VERSIONS[kind]` when that derivation changes
@@ -296,6 +297,12 @@ keyed; a PDB appearing at a candidate path changes the key, so a cached "no symb
 not served after its inputs changed. The readobj probe records the raw name, and its info shape
 is part of that artifact's key. A readable debug directory with no recorded name is keyed
 without that identity; only an unreadable directory disables the key.
+
+The `ranges-assembled` key carries the ordered per-module ranges dependency keys (image, public
+starts and readobj build) and the ranges derivation version, so one entry serves every call with
+the same module set and inputs. A cache hit stages the artifact into the run directory by hard
+link when both share a volume, falling back to a copy on a cross-volume error; the run directory
+removes only its own links, so cleanup and cache eviction do not affect each other.
 
 `meta.json` is written last and records every file's size and sha256. A hit is served only when
 the file and its recorded size and sha256 match; a malformed, truncated or old-format entry is

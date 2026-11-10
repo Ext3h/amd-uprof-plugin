@@ -1,6 +1,6 @@
 """The ACHIEVED cadence summary over synthetic per-context statistics.
 
-Run from this directory: python -m unittest test_achieved_cadence -v
+Run from the repository root: python tests/run_tests.py test_achieved_cadence
 """
 
 import tempfile

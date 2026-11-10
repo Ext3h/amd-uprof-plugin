@@ -1,6 +1,6 @@
 """Kernel-coverage detection: an OS-mode request must not silently lose kernel samples.
 
-Run from this directory: python -m unittest test_kernel_coverage -v
+Run from the repository root: python tests/run_tests.py test_kernel_coverage
 """
 
 import contextlib

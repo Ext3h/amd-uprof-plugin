@@ -4,7 +4,7 @@ Two installed copies can share a version and still differ, so the line carries b
 from the nearest plugin.json and the skill directory. A loose copy has no manifest; it reports
 the version built into the code instead. This is the output-side half of issue #28.
 
-Run from this directory: python -m unittest test_version_header -v
+Run from the repository root: python tests/run_tests.py test_version_header
 """
 
 import json
@@ -18,7 +18,7 @@ import duckdb
 
 import uprof_util
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 EVENT_COLUMN = "event#0x3000076"
 
 

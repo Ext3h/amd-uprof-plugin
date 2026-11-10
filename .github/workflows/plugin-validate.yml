@@ -22,4 +22,22 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Validate plugin
+        run: claude plugin validate ./plugin
+
+      - name: Validate marketplace
         run: claude plugin validate .
+
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install DuckDB
+        run: python -m pip install duckdb
+
+      - name: Run tests
+        run: python tests/run_tests.py

@@ -4,7 +4,7 @@
 `.pdata` by hand. The checked-in fixture supplies the real LLVM text formats; the unit cases pin
 the boundary rule without a toolchain.
 
-Run from this directory: python -m unittest test_function_ranges -v
+Run from the repository root: python tests/run_tests.py test_function_ranges
 """
 
 import tempfile

@@ -1,6 +1,6 @@
 """Anchor selection: nearest function start from every PE source, section fallback, cap.
 
-Run from this directory: python -m unittest test_context_anchor -v
+Run from the repository root: python tests/run_tests.py test_context_anchor
 """
 
 import unittest

@@ -1,6 +1,6 @@
 """Disassembly windows: objdump parsing, boundary selection and raw sample shares.
 
-Run from this directory: python -m unittest test_context_window -v
+Run from the repository root: python tests/run_tests.py test_context_window
 """
 
 import subprocess

@@ -1,6 +1,6 @@
 """IAT annotation: parse llvm-readobj --coff-imports and resolve indirect call slots.
 
-Run from this directory: python -m unittest test_context_iat -v
+Run from the repository root: python tests/run_tests.py test_context_iat
 """
 
 import subprocess

@@ -71,16 +71,18 @@ The skill runs `tools/uprof.py`:
 | `schema` | print the live DuckDB schema for drift checks |
 | `tools` | print resolved tool paths and versions |
 
-`SKILL.md` in `skills/amd-uprof/` is the entry point and the full contract; `references/`
-carries the derivation notes and measured validation figures.
+`SKILL.md` in `plugin/skills/amd-uprof/` is the entry point and the full contract; `references/`
+carries the derivation notes and validation records.
 
 ## Layout
 
-- `skills/amd-uprof/` — the skill, its tools and references.
-- `.claude-plugin/` — manifest, marketplace entry, and the icon (`icon.svg` master, `icon.png`
-  raster).
+- `plugin/` — the plugin source: `.claude-plugin/plugin.json` and `skills/amd-uprof/` (the
+  skill, its tools and references).
+- `tests/` — maintainer-only test suite and fixtures; run with `python tests/run_tests.py`.
+- `bench/` — maintainer-only timing harness (added by #40).
+- `.claude-plugin/` — marketplace entry and the icon (`icon.svg` master, `icon.png` raster).
 
-Validate a change with `claude plugin validate .`.
+Validate a change with `claude plugin validate ./plugin`.
 
 Drives the AMD uProf CLI; not affiliated with or endorsed by Advanced Micro Devices.
 The icon's micro sign is set in Open Sans (Apache-2.0), the typeface uProf ships.

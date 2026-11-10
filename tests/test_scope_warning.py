@@ -4,7 +4,7 @@ A JSON or `--out-file` run whose filter matched nothing otherwise looks successf
 also names what `--image` selects when the pattern looks like a module file, so the next call is
 the module or function scope rather than another empty rerun.
 
-Run from this directory: python -m unittest test_scope_warning -v
+Run from the repository root: python tests/run_tests.py test_scope_warning
 """
 
 import json
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from test_function_region_profile import FIXTURE, Session
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 MODULE_HINT = ("the pattern looks like a module name: --image scopes process image names, not "
                "modules; use --by module or --function ... --module")
 

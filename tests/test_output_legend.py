@@ -5,7 +5,7 @@ cycles, an unsupported PMC event, IBS OP cycle-controlled, IBS OP op-count, IBS 
 without a tag column and IBS OP with an all-blank tag column. Two more fixtures check the row
 order, the remainder row and the runnable NEXT calls. No capture or external tool is used.
 
-Run from this directory: python -m unittest test_output_legend -v
+Run from the repository root: python tests/run_tests.py test_output_legend
 """
 
 import json
@@ -20,7 +20,7 @@ import duckdb
 
 import uprof_db
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 EVENT_COLUMN = "event#0x3000076"
 
 SAMPLE_PMC = "busy core-cycle share (fixed cycles per sample; halted excluded)"

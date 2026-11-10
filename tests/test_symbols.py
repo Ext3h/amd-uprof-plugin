@@ -1,6 +1,6 @@
 """Public-symbol cache aggregation and PDB discovery guards.
 
-Run from this directory: python -m unittest test_symbols -v
+Run from the repository root: python tests/run_tests.py test_symbols
 """
 
 import csv

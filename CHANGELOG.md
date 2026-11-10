@@ -45,6 +45,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   `isSystemModule` and `cpu_seconds`, `SYMBOL_COVERAGE`, hot RVA), names `VERSION` as
   authoritative, defines third-party as `Module.isSystemModule = false` and reports the dominant
   non-workload dependency separately, and points the quickstart at `profile --by process` first.
+- Repository layout: the plugin source is now `plugin/` (the marketplace entry points at it);
+  maintainer-only tests, fixtures and the timing harness live under `tests/` and `bench/`,
+  outside the plugin source. No runtime behavior changes (issue #42).
 
 ## 2.1.0 — 2026-11-08
 

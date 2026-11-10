@@ -1,6 +1,6 @@
 """Symbolizer names/lines and IBS hardware labels for instruction context.
 
-Run from this directory: python -m unittest test_context_annotate -v
+Run from the repository root: python tests/run_tests.py test_context_annotate
 """
 
 import json

@@ -7,13 +7,13 @@ derived function (the tool builds it with LLVM) and fall back to `--by region` o
 boundary source exists. They also pin the VERSION and SYMBOL_COVERAGE header rows. Wording may
 change; the load-bearing claims may not.
 
-Run from this directory: python -m unittest test_docs_guidance -v
+Run from the repository root: python tests/run_tests.py test_docs_guidance
 """
 
 import unittest
 from pathlib import Path
 
-TOOLS_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encoding="utf-8")
 SPEC = (TOOLS_DIR.parent / "references" / "spec.md").read_text(encoding="utf-8")

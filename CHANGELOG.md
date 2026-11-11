@@ -6,6 +6,13 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Added
 
+- Session symbol cache: `profile` keeps the symbol, public-symbol, PDB-choice and derived
+  function-range artifacts in a per-session DuckDB database keyed by the capture's module
+  identity, the queried RVAs, the on-disk image state, the tool builds and the search
+  configuration. Repeated symbolizing scopes in one session reuse the cached tables with the
+  original evidence text replayed; a changed binary, PDB, tool or scope misses and re-derives.
+  The capture database stays read-only, the cache degrades to the uncached path on a lock or
+  error, and there is no cross-session reuse or eviction yet (issue #45).
 - `profile --by module [--json]`: one row per normalized module path with `samples`,
   `sample_share`, `time_share` (mode-dependent), `tag_to_retire_share` (dump with a non-null tag
   column), `Module.isSystemModule` and `cpu_seconds` (`samples × interval / core_frequency` for a

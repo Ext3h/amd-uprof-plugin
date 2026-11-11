@@ -157,6 +157,11 @@ Never return output that is wrong, incomplete or unrepresentative without saying
 condition — incompatible capture, unusable sampler, missing tooling, an output path colliding with
 an input — is reported with the fix and exits nonzero; no degraded result is papered over.
 
+Symbolization artifacts may be cached per capture session. The cache must never change the result
+a cold run would produce: transient failures are not stored, the resolved PDBs and the symbol
+search state are validated, and a module the capture maps to more than one image version is not
+served from it. A cache failure leaves `profile` working, uncached, and is opt-out.
+
 ## 6. Shared addresses
 
 When several function names share one address, a per-name share is not attributable: report it as

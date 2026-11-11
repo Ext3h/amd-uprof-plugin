@@ -123,6 +123,28 @@ class ModuleProfileTest(unittest.TestCase):
     def document(self, session, by="module", *extra):
         return json.loads(self.profile(session, by, "--json", *extra))
 
+    def document_at_frequency(self, session, frequency_hz, by="module"):
+        """The JSON document with the core frequency pinned inside the CLI process.
+
+        Linux reads the current frequency from /proc/cpuinfo, which changes between reads, so
+        an interval checked against a second read of it is not stable there.
+        """
+        import contextlib
+        import io
+        from unittest import mock
+
+        import uprof
+        import uprof_collect
+
+        out = io.StringIO()
+        with mock.patch.object(uprof_collect, "_core_frequency",
+                               return_value=(frequency_hz, f"{frequency_hz / 1e6:g} MHz",
+                                             "test")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(uprof.main(["profile", "--session", str(session), "--by", by,
+                                         "--json"]), 0)
+        return json.loads(out.getvalue())
+
     def test_module_rows_carry_shares_classification_and_cpu_seconds(self):
         columns, rows = self.run_sql(self.session())
         self.assertEqual(columns, COLUMNS)
@@ -189,11 +211,12 @@ class ModuleProfileTest(unittest.TestCase):
 
     def test_cycle_controlled_module_output_matches_the_interval_math(self):
         session = self.session()
-        document = self.document(session)
+        frequency_hz = 4_700_000_000
+        document = self.document_at_frequency(session, frequency_hz)
         self.assertEqual(list(document["rows"][0]), COLUMNS)
         legend = document["legend"]
         sampler = uprof_session.derive_sampler(session)
-        interval_s, _, _ = uprof_session.requested_interval(sampler)
+        interval_s, _, _ = uprof_session.requested_interval(sampler, frequency_hz)
         if interval_s is None:
             self.assertNotIn("cpu_seconds", legend["columns"])
             self.assertIn("cpu_seconds", legend["absent"])

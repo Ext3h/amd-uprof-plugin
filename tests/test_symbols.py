@@ -3,11 +3,13 @@
 Run from the repository root: python tests/run_tests.py test_symbols
 """
 
+import contextlib
 import csv
 import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -708,6 +710,73 @@ class PublicSymbolsInvocationTest(unittest.TestCase):
     def test_a_complete_invocation_aggregates(self):
         self.assertIsNotNone(self.invoke(self.SECTIONS + self.PUBLICS))
         self.assertIn("FOLDS: 0 shared starts of 1", self.stream.getvalue())
+
+
+class ParquetWriteThreadTest(unittest.TestCase):
+    def _executed(self, rows, threshold, count_error=False):
+        executed = []
+
+        class FakeConnection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, sql, parameters=None):
+                executed.append(sql)
+                if parameters:
+                    Path(parameters[-1]).write_bytes(b"parquet")
+
+        class FakeDuckDB:
+            Error = Exception
+
+            @staticmethod
+            def connect():
+                return FakeConnection()
+
+        with tempfile.TemporaryDirectory(prefix="uprof-parquet-thread-") as tmp:
+            root = Path(tmp)
+            jsonl = root / "symbols.jsonl"
+            jsonl.write_text('{"Address":"0x1","Symbol":null}\n' * rows, encoding="utf-8")
+            patches = [
+                mock.patch.object(uprof_symbols, "PARQUET_SINGLE_THREAD_MAX_ROWS", threshold),
+                mock.patch.dict(sys.modules, {"duckdb": FakeDuckDB}),
+            ]
+            if count_error:
+                patches.append(mock.patch.object(uprof_symbols, "_jsonl_row_count",
+                                                 side_effect=OSError("gone")))
+            with contextlib.ExitStack() as stack:
+                for patcher in patches:
+                    stack.enter_context(patcher)
+                result = uprof_symbols._write_parquet(jsonl, root / "out.parquet")
+        return executed, result
+
+    def test_a_small_write_uses_one_thread(self):
+        executed, _result = self._executed(2, threshold=10)
+
+        self.assertTrue(any("SET threads = 1" in sql for sql in executed))
+
+    def test_a_large_write_keeps_the_default_pool(self):
+        executed, _result = self._executed(11, threshold=10)
+
+        self.assertFalse(any("SET threads = 1" in sql for sql in executed))
+
+    def test_the_threshold_is_pinned(self):
+        self.assertEqual(uprof_symbols.PARQUET_SINGLE_THREAD_MAX_ROWS, 100_000)
+
+    def test_the_threshold_boundary_uses_one_thread(self):
+        at_boundary, _result = self._executed(10, threshold=10)
+        above, _result = self._executed(11, threshold=10)
+
+        self.assertTrue(any("SET threads = 1" in sql for sql in at_boundary))
+        self.assertFalse(any("SET threads = 1" in sql for sql in above))
+
+    def test_a_row_count_read_error_keeps_the_default_pool(self):
+        executed, result = self._executed(2, threshold=10, count_error=True)
+
+        self.assertIsNotNone(result)
+        self.assertFalse(any("SET threads = 1" in sql for sql in executed))
 
 
 if __name__ == "__main__":

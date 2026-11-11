@@ -9,9 +9,14 @@ Run from the repository root:
     python tests/run_tests.py test_symbols     # named modules
 """
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+os.environ.setdefault("UPROF_SESSION_CACHE_ROOT",
+                      tempfile.mkdtemp(prefix="uprof-suite-cache-"))
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent / "plugin" / "skills" / "amd-uprof" / "tools"

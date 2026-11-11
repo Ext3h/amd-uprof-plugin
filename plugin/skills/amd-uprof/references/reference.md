@@ -112,6 +112,16 @@ The former `D × count / Σ count over windowId` estimator was removed; do not r
 
 The cache holds no database: every `.db`/`.duckdb` (and its WAL/SHM) is removed before a cached dump is handed back, because a dump-only translate writes a degraded `cpu.db` with far fewer `Function` rows; if the removal fails it prints `WARNING: could not remove <path>: <reason>; the cache copy still contains a database`. `cpu.db` must always come from the original session. `DUMP:` prints the path, size, cache directory and the reuse/regeneration reason; `DB:` is added when the dump directory differs from the session directory.
 
+The cache also holds a Parquet copy of the seven columns `time_share` reads:
+`IbsOpDump.samples.parquet` (the dump stem plus `.samples.parquet`) with a `.json` sidecar beside
+it in the same directory. The sidecar records the format version, the column list, the normalized
+source path, the source size, mtime and sha256, and the copy's size and sha256. The copy is reused
+only when the source size and mtime match and the copy still matches its recorded size and digest;
+when the source's size or mtime changes, its sha256 decides whether the copy is reused, and a
+changed dump rebuilds it. A dump without one of the seven columns (for example a fetch dump,
+which has no tag column) falls back to the CSV; the failed build is recorded and not retried until
+the source changes. Any failure, including no DuckDB, falls back to the ASCII dump.
+
 ### Sanity check
 
 `v_dump_sanity` runs over the whole dump, unfiltered, and its coverage verdict is dump-wide
@@ -387,7 +397,7 @@ The help is JSON-only. Markdown output has no `context_help` and is byte-identic
 
 ## SQL schema — `tools/views.sql`
 
-One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds sixteen inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection.
+One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twenty-one inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection. The table below is the full bound set: the twenty `uprof_*` keys of `uprof_query._variables` plus `uprof_ibs_parquet`, which the profile call binds after locating the dump's Parquet copy; `views.sql`'s header lists eighteen of the twenty-one.
 
 | Bound input | Meaning |
 |---|---|
@@ -396,6 +406,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_top` | row cap bound from `--top`: a positive `N`, or `0` for `--top all` (no cap) |
 | `uprof_time_start`, `uprof_time_end` | window in ns; `[start, end)` |
 | `uprof_ibs_dump` | absolute dump path; empty for PMC |
+| `uprof_ibs_parquet` | absolute path of the cached Parquet copy of the dump's sample columns; empty when absent, so the views read the ASCII dump |
 | `uprof_event_column` | PMC sample column in `UnifiedSampleSeries`; empty for a dump capture |
 | `uprof_session_meta` | `session.uprof` path when it exists, else empty |
 | `uprof_tag_available` | `true` only for an IBS OP dump whose `IbsTagToRetCtr` exists and has a non-null value, so a fetch dump cannot enable `tag_to_retire_share` even with the column; Python derives it from the sampler kind and `v_dump_sanity` and rebinds it before the projection |
@@ -405,7 +416,11 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_functions` | derived function ranges CSV (`module_name,function_start,function_end,function_source,function_name`); empty when no module in scope needs derivation |
 | `uprof_range_attempted` | chr(2)-joined modules for which derivation ran; a fully named module is absent, so `function_reason` says the derivation was skipped rather than failed |
 | `uprof_primary_measure` | `sample_share` or `time_share`, the mode measure that orders the row views and selects their `--top` and hot RVA |
+| `uprof_detail_views` | `'true'` binds the full `v_line_rows` and `v_instruction_rows` bodies (line and instruction scopes); `'false'` binds them as an empty typed relation, so every other mode skips that bind cost |
 | `uprof_sample_interval_s` | requested cycle interval in seconds, bound for `--by module|function|region`; empty when the interval is a work/fetch count or the core frequency is unavailable, which hides `cpu_seconds` |
+| `uprof_function` | parent function name selected by `--function` for a line or instruction view; empty otherwise, which leaves `v_function_scope` empty |
+| `uprof_function_module` | module name of that parent, from `--module`; matched exactly alongside the name |
+| `uprof_function_start` | optional RVA from `--function-start` as decimal text, disambiguating same-named functions; empty matches the name and module only |
 
 | Macro | Definition |
 |---|---|
@@ -423,11 +438,12 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `has_system_module` | `Module` has an `isSystemModule` column; older exports leave the module classification NULL |
 | `top_n`, `time_start`, `time_end` | typed row cap and window |
 
-The 24 views:
+The 24 views and the materialized `v_dump` TEMP TABLE:
 
 | View | Role |
 |---|---|
-| `v_dump` | typed dump rows (`delta_tick`, `cpu`, `pid`, `rva`, `module_name`, `tag_cycles`); tagged/untagged branch; an empty typed relation for PMC |
+| `v_dump_source` | the dump's raw text columns: the cached Parquet copy (`uprof_ibs_parquet`) when bound and validated, else `read_csv` with `sample_size = 1`; an empty typed relation for PMC |
+| `v_dump` | `CREATE OR REPLACE TEMP TABLE`: typed dump rows (`delta_tick`, `cpu`, `tid`, `pid`, `rva`, `module_name`, `tag_cycles`); tagged/untagged branch; materialized once per run and scanned by every downstream view; an empty typed relation for PMC |
 | `v_dump_context` | `v_dump` plus the weighting context: `context_pid` 0 and `context` = `cpu` for a system-wide capture, `context_pid` = `pid` and `context` = `tid` for an attached one; defined once so weighting and the sanity check cannot disagree |
 | `v_dump_weighted` | applies `[time_start, time_end)` then adds `weight = delta_tick - lag(delta_tick) OVER (PARTITION BY context_pid, context ORDER BY delta_tick)` from `v_dump_context`; the helper columns are excluded |
 | `v_capture_span` | the span recorded in `session.uprof`: the translate `--time-filter` window when recorded, else `collection.schedule.elapsed`, else `profileDuration`; `start_ns`/`end_ns`/`expected_ns`/`span_label`/`system_wide`, shared by the dump-wide and scoped sanity views |
@@ -449,11 +465,11 @@ The 24 views:
 | `v_function_rows` | `v_function_measured` with `--top` applied and one `<other functions>` remainder |
 | `v_function_scope` | the single parent row selected by `uprof_function`/`uprof_function_module`/`uprof_function_start`; empty unless a function-scoped line or instruction view was requested |
 | `v_region_rows` | one row per module and 4 KiB address page; `page_start`/`page_end`, `sampled_addresses`, hot RVA and the function that owns it; attribution `unique`/`shared`/`derived`/`unresolved`; `<other regions>` |
-| `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; filtered to `v_function_scope` when `--function` is set; `<other lines>` |
-| `v_instruction_rows` | one row per module + RVA with innermost annotation, ordered by the mode's primary measure; filtered to `v_function_scope` when `--function` is set; `<other instructions>` |
+| `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels; filtered to `v_function_scope` when `--function` is set; `<other lines>`; full body only when `uprof_detail_views` is `'true'`, else an empty typed relation |
+| `v_instruction_rows` | one row per module + RVA with innermost annotation, ordered by the mode's primary measure; filtered to `v_function_scope` when `--function` is set; `<other instructions>`; full body only when `uprof_detail_views` is `'true'`, else an empty typed relation |
 
 - **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-module.sql`, `profile-function.sql`, `profile-region.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `profile-function-modules.sql` names the modules whose samples need derived ranges, `agreement.sql` computes the metric, `coverage.sql` reports per-module symbol coverage, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
-- **Load order.** Bind all inputs, load `views.sql`, then (for `function`/`region`/`line`/`instruction`) run `profile-rvas.sql` on the same connection, symbolize, rebind `uprof_symbols`/`uprof_aliases`; for `function`/`region`, and for `line`/`instruction` with `--function`, run `profile-function-modules.sql`, derive ranges from the binary with LLVM and rebind `uprof_functions` (the filter may name a derived range); then run the projection. `query(CASE ...)` re-binds per query, so the symbol and range inputs may be bound after the views are created. A hand run writes a UTF-8 `SET VARIABLE` file, `.read`s `views.sql`, then the projection, and always uses the original session's `cpu.db`.
+- **Load order.** Bind all inputs, load `views.sql` (which materializes `v_dump` once), then (for `function`/`region`/`line`/`instruction`) run `profile-rvas.sql` on the same connection, symbolize, rebind `uprof_symbols`/`uprof_aliases`; for `function`/`region`, and for `line`/`instruction` with `--function`, run `profile-function-modules.sql`, derive ranges from the binary with LLVM and rebind `uprof_functions` (the filter may name a derived range); then run the projection. `query(CASE ...)` re-binds per query, so the symbol and range inputs may be bound after the views are created. A hand run writes a UTF-8 `SET VARIABLE` file, `.read`s `views.sql`, then the projection, and always uses the original session's `cpu.db`.
 - **Guard order.** The schema and dump guards run while `views.sql` loads, before any query, so an incomplete export or dump fails once with the missing item names. The schema guards read the bound path strings (empty means absent) so no identifier is spliced; the dump guard checks that the dump exists. A conditional `query(CASE ...)` avoids binder-eager branch evaluation.
 
 ## Reproducibility and tie order

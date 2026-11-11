@@ -1,0 +1,47 @@
+# fixture: pe/fixture_coff.exe
+# COFF symbol table, no PDB record
+## readobj
+format=COFF-x86-64
+pointer_to_symbol_table=0xA00
+sections=.text,.rdata,.pdata
+## symbols
+symbol fixture_helper rva=0x1000
+symbol fixture_entry rva=0x1010
+## objdump
+
+<FIXTURES>\pe\fixture_coff.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <fixture_helper>:
+140001000:     	pushq	%rax
+140001001:     	movl	%ecx, 0x4(%rsp)
+140001005:     	movl	0x4(%rsp), %eax
+140001009:     	addl	$0x3, %eax
+14000100c:     	popq	%rcx
+14000100d:     	retq
+14000100e:     	nop
+
+0000000140001010 <fixture_entry>:
+140001010:     	subq	$0x28, %rsp
+140001014:     	movl	%ecx, 0x24(%rsp)
+140001018:     	movl	0x24(%rsp), %ecx
+14000101c:     	callq	0x140001000 <fixture_helper>
+140001021:     	shll	%eax
+140001023:     	movl	%eax, 0x20(%rsp)
+140001027:     	movl	0x20(%rsp), %eax
+14000102b:     	addq	$0x28, %rsp
+14000102f:     	retq
+## symbolizer
+0x1000 fixture_helper <no file>:0
+0x1010 fixture_entry <no file>:0
+## production
+pdb=none
+outcome=readobj_failed
+0x1000 fixture_helper <no file>:0
+0x1010 fixture_entry <no file>:0
+## profile.line
+line module=fixture_coff.exe function=fixture_entry file=<no source line> line=0 samples=1 attribution=unique
+line module=fixture_coff.exe function=fixture_helper file=<no source line> line=0 samples=1 attribution=unique
+## profile.function
+function module=fixture_coff.exe function=<unresolved> start=none end=none source=none samples=2 attribution=unresolved

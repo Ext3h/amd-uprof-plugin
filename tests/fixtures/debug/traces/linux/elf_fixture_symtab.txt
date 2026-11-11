@@ -1,0 +1,53 @@
+# fixture: elf/fixture_symtab
+# .symtab only: names without lines
+## readobj
+format=elf64-x86-64
+entry=0x1380
+type=SharedObject (0x3)
+sections=.interp,.note.gnu.build-id,.dynsym,.gnu.hash,.dynstr,.eh_frame_hdr,.eh_frame,.text,.dynamic,.relro_padding,.comment,.symtab,.shstrtab,.strtab,_DYNAMIC,fixture_helper,fixture_entry
+build_id=a07350ae6f157c05928a524a0d3e042c583f0a0d
+## symbols
+symbol fixture_helper rva=0x1370
+symbol fixture_entry rva=0x1380
+## objdump
+
+<FIXTURES>/elf/fixture_symtab:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+0000000000001370 <fixture_helper>:
+    1370:      	pushq	%rbp
+    1371:      	movq	%rsp, %rbp
+    1374:      	movl	%edi, -0x4(%rbp)
+    1377:      	movl	-0x4(%rbp), %eax
+    137a:      	addl	$0x3, %eax
+    137d:      	popq	%rbp
+    137e:      	retq
+    137f:      	nop
+
+0000000000001380 <fixture_entry>:
+    1380:      	pushq	%rbp
+    1381:      	movq	%rsp, %rbp
+    1384:      	subq	$0x10, %rsp
+    1388:      	movl	%edi, -0x4(%rbp)
+    138b:      	movl	-0x4(%rbp), %edi
+    138e:      	callq	0x1370 <fixture_helper>
+    1393:      	shll	%eax
+    1395:      	movl	%eax, -0x8(%rbp)
+    1398:      	movl	-0x8(%rbp), %eax
+    139b:      	addq	$0x10, %rsp
+    139f:      	popq	%rbp
+    13a0:      	retq
+## symbolizer
+0x1370 fixture_helper <no file>:0
+0x1380 fixture_entry <no file>:0
+## production
+pdb=none
+outcome=resolved
+0x1370 fixture_helper <no file>:0
+0x1380 fixture_entry <no file>:0
+## profile.line
+line module=fixture_symtab function=fixture_entry file=<no source line> line=0 samples=1 attribution=unique
+line module=fixture_symtab function=fixture_helper file=<no source line> line=0 samples=1 attribution=unique
+## profile.function
+function module=fixture_symtab function=<unresolved> start=none end=none source=none samples=2 attribution=unresolved

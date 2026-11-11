@@ -423,6 +423,38 @@ END AS message,
 CAST(tag_values AS BIGINT) AS tag_values
 FROM measured;
 
+-- Artifact sources: file-backed by default, so views.sql is usable on its own (a hand-run
+-- query with the artifact variables set); a cache hit replaces these TEMP views with table
+-- reads. The empty branch keeps the columns typed when the variable is empty.
+CREATE OR REPLACE TEMP VIEW uprof_symbols_source AS
+SELECT * FROM query(CASE WHEN getvariable('uprof_symbols') <> ''
+  THEN $s1$SELECT * FROM read_parquet(getvariable('uprof_symbols'))$s1$
+  ELSE $s1$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS address,
+                   NULL::VARCHAR AS function, NULL::VARCHAR AS function_short,
+                   NULL::VARCHAR AS containing_function, NULL::VARCHAR AS file,
+                   NULL::INTEGER AS line WHERE false$s1$ END);
+
+CREATE OR REPLACE TEMP VIEW uprof_aliases_source AS
+SELECT * FROM query(CASE WHEN getvariable('uprof_aliases') <> ''
+  THEN $s2$SELECT * FROM read_csv(getvariable('uprof_aliases'), header = true,
+                                  all_varchar = true)$s2$
+  ELSE $s2$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS rva,
+                   NULL::INTEGER AS name_count, NULL::VARCHAR AS names WHERE false$s2$ END);
+
+CREATE OR REPLACE TEMP VIEW uprof_functions_source AS
+SELECT * FROM query(CASE WHEN getvariable('uprof_functions') <> ''
+  THEN $s3$SELECT * FROM read_csv(getvariable('uprof_functions'), header = true,
+                                  all_varchar = true)$s3$
+  ELSE $s3$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS function_start,
+                   NULL::VARCHAR AS function_end, NULL::VARCHAR AS function_source,
+                   NULL::VARCHAR AS function_name WHERE false$s3$ END);
+
+CREATE OR REPLACE TEMP VIEW uprof_pdbs_source AS
+SELECT * FROM query(CASE WHEN getvariable('uprof_pdbs') <> ''
+  THEN $s4$SELECT * FROM read_csv(getvariable('uprof_pdbs'), header = true,
+                                  all_varchar = true)$s4$
+  ELSE $s4$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS pdb WHERE false$s4$ END);
+
 -- Symbol artifact: one combined Parquet with a module_name column, else an empty typed view.
 -- function/file/line are the innermost frame (the executed source position); function_short is
 -- the same frame's short spelling, one identity per function across inline and out-of-line
@@ -435,7 +467,7 @@ SELECT module_name, CAST(address AS BIGINT) AS rva, function, function_short,
 FROM query(CASE WHEN getvariable('uprof_symbols') <> ''
   THEN $sym$SELECT module_name, address, function, function_short,
                    containing_function, file, line
-            FROM read_parquet(getvariable('uprof_symbols'))$sym$
+            FROM uprof_symbols_source$sym$
   ELSE $sym$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS address,
                    NULL::VARCHAR AS function, NULL::VARCHAR AS function_short,
                    NULL::VARCHAR AS containing_function, NULL::VARCHAR AS file,
@@ -446,7 +478,7 @@ FROM query(CASE WHEN getvariable('uprof_symbols') <> ''
 CREATE OR REPLACE TEMP VIEW v_public_starts AS
 SELECT * FROM query(CASE WHEN getvariable('uprof_aliases') <> ''
   THEN $pub$SELECT module_name, CAST(rva AS BIGINT) AS rva, CAST(name_count AS INTEGER) AS name_count, names
-            FROM read_csv(getvariable('uprof_aliases'), header = true, all_varchar = true)$pub$
+            FROM uprof_aliases_source$pub$
   ELSE $pub$SELECT NULL::VARCHAR AS module_name, NULL::BIGINT AS rva, NULL::INTEGER AS name_count,
                    NULL::VARCHAR AS names WHERE false$pub$ END);
 
@@ -461,7 +493,7 @@ SELECT * FROM query(CASE WHEN getvariable('uprof_functions') <> ''
                       CAST(function_end AS BIGINT) AS function_end,
                       function_source,
                       NULLIF(function_name, '') AS function_name
-               FROM read_csv(getvariable('uprof_functions'), header = true, all_varchar = true)$ranges$
+               FROM uprof_functions_source$ranges$
   ELSE $ranges$SELECT NULL::VARCHAR AS module_name, NULL::BIGINT AS function_start,
                        NULL::BIGINT AS function_end, NULL::VARCHAR AS function_source,
                        NULL::VARCHAR AS function_name WHERE false$ranges$ END);
@@ -472,7 +504,7 @@ CREATE OR REPLACE TEMP VIEW v_pdbs AS
 SELECT module_name, NULLIF(pdb, '') AS pdb
 FROM query(CASE WHEN getvariable('uprof_pdbs') <> ''
   THEN $pdbs$SELECT module_name, pdb
-              FROM read_csv(getvariable('uprof_pdbs'), header = true, all_varchar = true)$pdbs$
+              FROM uprof_pdbs_source$pdbs$
   ELSE $pdbs$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS pdb WHERE false$pdbs$ END);
 
 -- Scope is every process image matching --image and, when given, the one PID named by --pid.

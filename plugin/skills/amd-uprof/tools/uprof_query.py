@@ -7,6 +7,8 @@ validation, session.uprof parsing, symbolization, temp files and output formatti
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import os
 import shutil
 import sys
@@ -18,6 +20,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final, TextIO
 
+import uprof_cache
 import uprof_db
 import uprof_context
 import uprof_dump
@@ -160,6 +163,76 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
     }
 
 
+class _Tee(io.TextIOBase):
+    """Forward a stream while recording it; a cache hit replays the cold run's text."""
+
+    def __init__(self, target: TextIO):
+        self.target = target
+        self.buffer = io.StringIO()
+
+    @property
+    def text(self) -> str:
+        return self.buffer.getvalue()
+
+    def write(self, text: str) -> int:
+        self.target.write(text)
+        self.buffer.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        self.target.flush()
+
+
+def _create_file_views(connection: object, variables: dict[str, str]) -> None:
+    """Create the artifact source views over the per-run files that exist."""
+    sources = (
+        ("uprof_symbols", "uprof_symbols_source",
+         "SELECT * FROM read_parquet(getvariable('uprof_symbols'))"),
+        ("uprof_aliases", "uprof_aliases_source",
+         "SELECT * FROM read_csv(getvariable('uprof_aliases'), header = true, all_varchar = true)"),
+        ("uprof_pdbs", "uprof_pdbs_source",
+         "SELECT * FROM read_csv(getvariable('uprof_pdbs'), header = true, all_varchar = true)"),
+        ("uprof_functions", "uprof_functions_source",
+         "SELECT * FROM read_csv(getvariable('uprof_functions'), header = true, all_varchar = true)"),
+    )
+    for variable, view, select in sources:
+        if variables.get(variable):
+            connection.execute(f"CREATE OR REPLACE TEMP VIEW {view} AS {select}")
+
+
+def _apply_symbol_hit(cache: object, connection: object, key: str,
+                      variables: dict[str, str], stream: TextIO) -> tuple[bool, dict[str, str]]:
+    """Apply a symbol cache hit; any read failure disables the cache and returns False."""
+    try:
+        causes, replay = cache.symbol_meta(key)
+        cache.create_symbol_views(key)
+        cached = {"uprof_symbols": "cache", "uprof_aliases": "cache", "uprof_pdbs": "cache"}
+        variables.update(cached)
+        uprof_db.set_variables(connection, cached)
+        if replay:
+            stream.write(replay)
+        return True, causes
+    except Exception as exc:  # noqa: BLE001 - fall back to the uncached path
+        cache.disable(exc)
+        return False, {}
+
+
+def _apply_range_hit(cache: object, connection: object, key: str,
+                     variables: dict[str, str], stream: TextIO):
+    """Apply a range cache hit; any read failure disables the cache and returns False."""
+    try:
+        info, replay = cache.range_meta(key)
+        cache.create_range_view(key)
+        variables["uprof_functions"] = "cache"
+        uprof_db.set_variables(connection, {"uprof_functions": "cache"})
+        if replay:
+            stream.write(replay)
+        return True, info
+    except Exception as exc:  # noqa: BLE001
+        cache.disable(exc)
+        return False, None
+
+
 def _module_debug_info(connection: object) -> dict[str, bool]:
     """Module.foundDebugInfo keyed by the full normalized path and its basename, when present."""
     columns = {str(row[0]).lower() for row in connection.execute(
@@ -196,12 +269,59 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
     return f"symbolization failed: {evidence.note or evidence.outcome}"
 
 
+def _artifact_dir(stream: TextIO) -> Path:
+    try:
+        path = Path(tempfile.mkdtemp(prefix="uprof-symbols-"))
+    except OSError as exc:
+        raise util.UprofError(
+            f"cannot create the symbol artifact directory in {tempfile.gettempdir()}: {exc}; "
+            "check free space and permissions on the temp directory") from exc
+    print(f"ARTIFACTS={path}", file=stream)
+    return path
+
+
+def _pdb_identities(pdbs: Path | None, evidence: list) -> list[dict[str, object]]:
+    """The resolved PDB files and their image-matching GUID/age, for hit validation."""
+    if pdbs is None:
+        return []
+    by_module = {item.module_name: item for item in evidence}
+    result: list[dict[str, object]] = []
+    try:
+        with open(pdbs, "r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                module = row.get("module_name") or ""
+                path = row.get("pdb") or ""
+                if not path:
+                    continue
+                try:
+                    stat = Path(path).stat()
+                except OSError:
+                    continue
+                item = by_module.get(module)
+                result.append({"module": module, "path": str(Path(path).resolve()),
+                               "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+                               "guid": getattr(item, "image_guid", None),
+                               "age": getattr(item, "image_age", None)})
+    except OSError:
+        return []
+    return result
+
+
 def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
-                     args: argparse.Namespace) -> tuple[dict[str, str], dict[str, str]]:
-    """Symbolize every module in scope; return the artifact variables and per-module causes."""
+                     args: argparse.Namespace):
+    """Symbolize every module in scope.
+
+    Returns the artifact variables, per-module causes, whether a transient tool failure
+    occurred, and the resolved PDB identities. A module name the capture maps to more than one
+    image version is not symbolized: IBS dump rows carry the name, not Module.id, so their
+    samples cannot be attributed to one build.
+    """
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-rvas.sql")
+    ambiguous = set(uprof_cache.ambiguous_modules(connection, [str(row[0]) for row in rows]))
     modules: dict[str, list] = {}
     for module_name, module_path, rva in rows:
+        if module_name in ambiguous:
+            continue
         if module_name not in modules:
             modules[module_name] = [module_path, []]
         modules[module_name][1].append(rva)
@@ -214,11 +334,39 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
         image_files=paths.image_files, image_dirs=paths.image_dirs)
     causes = {item.module_name: _evidence_cause(item) for item in evidence
               if item.outcome != "resolved"}
+    for name in ambiguous:
+        causes[name] = ("image version is ambiguous in the capture; the IBS dump rows carry "
+                        "the module name, not Module.id, so it was not symbolized")
+
+    def transient(item) -> bool:
+        if item.outcome in ("module_missing", "readobj_failed"):
+            return True
+        if item.outcome == "failed":
+            note = (item.note or "").lower()
+            return not ("another build" in note or "resolved no address" in note)
+        return False
+
+    transient_failure = any(transient(item) for item in evidence)
+    probes: dict[str, dict[str, object]] = {}
+    for item in evidence:
+        search = getattr(item, "search", None)
+        for probe in getattr(search, "probes", ()) or ():
+            path = str(getattr(probe, "path", "") or "")
+            if not path or path in probes:
+                continue
+            try:
+                stat = Path(path).stat()
+                probes[path] = {"path": path, "exists": True, "size": stat.st_size,
+                                "mtime_ns": stat.st_mtime_ns}
+            except OSError:
+                probes[path] = {"path": path, "exists": False}
+            if len(probes) >= 4096:
+                break
     return {
         "uprof_symbols": str(symbols) if symbols else "",
         "uprof_aliases": str(publics) if publics else "",
         "uprof_pdbs": str(pdbs) if pdbs else "",
-    }, causes
+    }, causes, transient_failure, _pdb_identities(pdbs, evidence), list(probes.values())
 
 
 def _pool_workers(module_count: int) -> int | None:
@@ -288,11 +436,17 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
     """
     info: dict[str, Any] = {"modules": 0, "ranges": 0, "absent_by_module": {}, "attempted": []}
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
+    ambiguous = set(uprof_cache.ambiguous_modules(connection, [str(row[0]) for row in rows]))
     ranges: list[uprof_functions.FunctionRange] = []
     candidates: list[tuple[str, str]] = []
     for module_name, module_path, _unresolved, _samples in rows:
         name = str(module_name)
         info["attempted"].append(name)
+        if name in ambiguous:
+            info["absent_by_module"][name] = (
+                "image version is ambiguous in the capture; the IBS dump rows carry the "
+                "module name, not Module.id, so no range was derived")
+            continue
         path = str(module_path or "")
         if not path:
             info["absent_by_module"][name] = "the capture records no module path"
@@ -1690,52 +1844,104 @@ def run_query_command(args: argparse.Namespace) -> None:
                            sample_interval_s, primary_measure)
     variables["uprof_ibs_parquet"] = "" if samples is None else str(samples)
     artifacts: Path | None = None
+    cache: uprof_cache.SessionCache | None = None
     success = False
     try:
         with uprof_db.open_query(cpu_db, [TOOLS_DIR / "views.sql"], variables) as connection:
             causes: dict[str, str] = {}
             symbolizer: dict[str, Any] | None = None
             symbolized = False
+            symbol_hit = False
+            range_hit = False
+            symbol_transient = False
+            cache_symbol_key: str | None = None
+            cache_range_key: str | None = None
             if args.by in SYMBOLIZED:
-                try:
-                    artifacts = Path(tempfile.mkdtemp(prefix="uprof-symbols-"))
-                except OSError as exc:
-                    raise util.UprofError(
-                        f"cannot create the symbol artifact directory in "
-                        f"{tempfile.gettempdir()}: {exc}; check free space and permissions on "
-                        "the temp directory") from exc
-                print(f"ARTIFACTS={artifacts}", file=stream)
-                symbols, causes = _symbolize_scope(connection, artifacts, stream, args)
-                variables.update(symbols)
-                uprof_db.set_variables(connection, symbols)
-                symbolized = bool(symbols.get("uprof_symbols"))
-                symbolizer = _agreement_values(connection)
+                cache = uprof_cache.SessionCache(connection, session, stream)
+                range_needed = args.by in RANGE_SCOPES or function_scoped
+                if not cache.disabled:
+                    try:
+                        cache_symbol_key, _ = uprof_cache.build_symbols_key(connection, args)
+                    except Exception as exc:  # noqa: BLE001 - the cache must not fail the profile
+                        cache.disable(exc)
+                        cache_symbol_key = ""
+                    symbol_hit = cache.lookup("symbol_runs", cache_symbol_key)
+                    if symbol_hit and not cache.symbols_valid(cache_symbol_key):
+                        symbol_hit = False
+                    if range_needed:
+                        try:
+                            cache_range_key = uprof_cache.build_ranges_key(connection,
+                                                                           cache_symbol_key)
+                        except Exception as exc:  # noqa: BLE001
+                            cache.disable(exc)
+                            cache_range_key = ""
+                        range_hit = cache.lookup("range_runs", cache_range_key) and symbol_hit
+                if (not symbol_hit or (range_needed and not range_hit)) and not cache.ensure_write():
+                    symbol_hit = False
+                    range_hit = False
+                if symbol_hit:
+                    symbol_hit, causes = _apply_symbol_hit(
+                        cache, connection, cache_symbol_key, variables, stream)
+                    if symbol_hit:
+                        symbolized = True
+                        symbolizer = _agreement_values(connection)
+                    else:
+                        range_hit = False
+                if not symbol_hit:
+                    range_hit = False
+                    if artifacts is None:
+                        artifacts = _artifact_dir(stream)
+                    symbol_stream = _Tee(stream)
+                    symbols, causes, symbol_transient, pdb_identity, probe_identity = (
+                        _symbolize_scope(connection, artifacts, symbol_stream, args))
+                    variables.update(symbols)
+                    uprof_db.set_variables(connection, symbols)
+                    _create_file_views(connection, symbols)
+                    symbolized = bool(symbols.get("uprof_symbols"))
+                    symbolizer = _agreement_values(connection)
+                    if symbols.get("uprof_symbols") and not symbol_transient:
+                        cache.store_symbols(
+                            cache_symbol_key, Path(symbols["uprof_symbols"]),
+                            Path(symbols["uprof_aliases"])
+                            if symbols.get("uprof_aliases") else None,
+                            Path(symbols["uprof_pdbs"])
+                            if symbols.get("uprof_pdbs") else None,
+                            causes, symbol_stream.text, symbol_transient, pdb_identity,
+                            probe_identity)
 
             range_info: dict[str, Any] | None = None
             row_attribution: dict[str, int] | None = None
             function_scope: dict[str, Any] | None = None
-            if args.by in RANGE_SCOPES:
-                functions_path, range_info = _derive_scope_ranges(connection, artifacts, stream)
-                if functions_path is not None:
-                    variables["uprof_functions"] = str(functions_path)
-                    uprof_db.set_variables(connection,
+            if args.by in RANGE_SCOPES or function_scoped:
+                if range_hit:
+                    range_hit, range_info = _apply_range_hit(
+                        cache, connection, cache_range_key, variables, stream)
+                if not range_hit:
+                    if artifacts is None:
+                        artifacts = _artifact_dir(stream)
+                    range_stream = _Tee(stream)
+                    functions_path, range_info = _derive_scope_ranges(
+                        connection, artifacts, range_stream)
+                    if functions_path is not None:
+                        variables["uprof_functions"] = str(functions_path)
+                        uprof_db.set_variables(connection,
+                                               {"uprof_functions": str(functions_path)})
+                        _create_file_views(connection,
                                            {"uprof_functions": str(functions_path)})
+                    if not symbol_transient:
+                        cache.store_ranges(cache_range_key, functions_path, range_info,
+                                           range_stream.text)
                 attempted = chr(2).join(range_info.get("attempted", []))
                 variables["uprof_range_attempted"] = attempted
                 uprof_db.set_variables(connection, {"uprof_range_attempted": attempted})
-                row_attribution = _row_attribution(connection, args.by)
-            elif function_scoped:
-                # A function filter can name a derived range, so the instruction/line scope needs
-                # the same boundary derivation the function scope performs.
-                functions_path, range_info = _derive_scope_ranges(connection, artifacts, stream)
-                if functions_path is not None:
-                    variables["uprof_functions"] = str(functions_path)
-                    uprof_db.set_variables(connection,
-                                           {"uprof_functions": str(functions_path)})
-                attempted = chr(2).join(range_info.get("attempted", []))
-                variables["uprof_range_attempted"] = attempted
-                uprof_db.set_variables(connection, {"uprof_range_attempted": attempted})
-                function_scope = _function_scope(connection, args)
+                if args.by in RANGE_SCOPES:
+                    row_attribution = _row_attribution(connection, args.by)
+                else:
+                    # A function filter can name a derived range, so the instruction/line scope
+                    # needs the same boundary derivation the function scope performs.
+                    function_scope = _function_scope(connection, args)
+                if not symbol_hit:
+                    cache.release()
 
             sanity_message, tag_values = _dump_sanity(
                 connection, dump is not None,

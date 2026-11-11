@@ -409,6 +409,15 @@ class CacheTest(unittest.TestCase):
             self.assertEqual(uprof_cache._env_float("UPROF_PROBE", 5.0), 7.0)
 
 
+    def test_files_in_only_stats_matching_names(self):
+        directory = self.root / "scan"
+        directory.mkdir()
+        (directory / "match.dll").write_bytes(b"1")
+        (directory / "other.txt").write_bytes(b"2")
+        entries = uprof_cache._files_in(directory, {"match.dll"})
+        self.assertEqual([Path(entry[0]).name for entry in entries], ["match.dll"])
+
+
 class _FailingCache:
     def __init__(self):
         self.disabled = []
@@ -444,6 +453,82 @@ class HitGuardTest(unittest.TestCase):
         self.assertIsNone(info)
         self.assertTrue(cache.disabled)
 
+
+
+class EndToEndHitTest(unittest.TestCase):
+    """Two CLI runs on one synthesized session: store then hit, and a PDB touch misses."""
+
+    def setUp(self):
+        from test_function_region_profile import FIXTURE, Session
+        self.tmp = tempfile.TemporaryDirectory(prefix="uprof-e2e-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.cache_root = self.root / "cache"
+        self.env = mock.patch.dict(os.environ, {
+            "UPROF_SESSION_CACHE_ROOT": str(self.cache_root),
+            "_NT_SYMBOL_PATH": f"srv*{self.root / 'srv'}*https://example.invalid"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.pdb = self.root / "fixture.pdb"
+        self.pdb.write_bytes(b"fake pdb")
+        session = Session(self.root, "e2e")
+        session.module(1, FIXTURE).function(10, 1, "fixture_hot")
+        session.sample(1, 10, 0x101B, 2)
+        self.session = session.write()
+        stat = FIXTURE.stat()
+        connection = duckdb.connect(str(self.session / "cpu.db"))
+        for column, kind in (("size", "UBIGINT"), ("checksum", "UBIGINT"),
+                             ("is32Bit", "BOOLEAN"), ("foundDebugInfo", "BOOLEAN")):
+            connection.execute(f"ALTER TABLE Module ADD COLUMN {column} {kind}")
+        connection.execute("UPDATE Module SET size = ?, checksum = 7, is32Bit = false, "
+                           "foundDebugInfo = true", [stat.st_size])
+        connection.close()
+        self.module_name = str(FIXTURE).replace("\\", "/").lower()
+        self.calls = 0
+
+    def fake_symbolize(self, modules, out_dir, **kwargs):
+        self.calls += 1
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        symbols = out / "symbols.parquet"
+        connection = duckdb.connect()
+        connection.execute(
+            "COPY (SELECT ? AS module_name, '0x101B' AS address, 'fixture_hot' AS function, "
+            "'fixture_hot' AS function_short, 'fixture_hot' AS containing_function, "
+            "'fixture.s' AS file, 27 AS line) TO ? (FORMAT parquet)",
+            [self.module_name, str(symbols)])
+        connection.close()
+        publics = out / "symbols.publics.csv"
+        publics.write_text("module_name,rva,name_count,names\n", encoding="utf-8")
+        pdbs = out / "symbols.pdbs.csv"
+        pdbs.write_text(f"module_name,pdb\n{self.module_name},{self.pdb}\n", encoding="utf-8")
+        return symbols, publics, pdbs, []
+
+    def run_cli(self):
+        import contextlib
+        import io
+        import uprof
+        import uprof_query
+        args = uprof.build_parser().parse_args(
+            ["profile", "--session", str(self.session), "--by", "line"])
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(uprof_query.uprof_symbols, "symbolize_modules",
+                               side_effect=self.fake_symbolize), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            uprof_query.run_query_command(args)
+        return out.getvalue(), err.getvalue()
+
+    def test_second_run_hits_and_a_pdb_touch_rederives(self):
+        first_out, first_err = self.run_cli()
+        self.assertIn("ARTIFACTS=", first_err)
+        second_out, second_err = self.run_cli()
+        self.assertEqual(second_out, first_out)
+        self.assertNotIn("ARTIFACTS=", second_err)
+        self.assertEqual(self.calls, 1)
+        self.pdb.write_bytes(b"replaced pdb content")
+        third_out, third_err = self.run_cli()
+        self.assertIn("ARTIFACTS=", third_err)
+        self.assertEqual(self.calls, 2)
 
 
 if __name__ == "__main__":

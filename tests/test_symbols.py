@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest import mock
 
 import uprof_symbols
@@ -89,8 +89,11 @@ class PdbProbeTest(unittest.TestCase):
             with mock.patch.object(Path, "rglob", side_effect=OSError("network path")):
                 candidates = uprof_symbols._candidate_pdbs(exe, "fixture.pdb", "ABCD", 1)
 
-        self.assertEqual(candidates, [Path("C:/app/fixture.pdb"),
-                                      Path("C:/cache/fixture.pdb/ABCD1/fixture.pdb")])
+        # These are Windows PDB search roots, so compare as Windows paths: Path() would keep
+        # the backslashes as literal POSIX filename characters rather than separators.
+        self.assertEqual([PureWindowsPath(path) for path in candidates],
+                         [PureWindowsPath("C:/app/fixture.pdb"),
+                          PureWindowsPath(r"C:\cache\fixture.pdb\ABCD1\fixture.pdb")])
 
     def test_a_failing_signature_probe_rejects_only_that_candidate(self):
         with mock.patch.object(uprof_symbols, "_candidate_pdbs",
@@ -132,9 +135,10 @@ class PdbProbeTest(unittest.TestCase):
                 Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1,
                 symbol_dirs=[r"C:\symbols"])
 
-        self.assertEqual(candidates, [Path(r"C:\symbols\fixture.pdb"),
-                                      Path(r"C:\symbols\ABCD1\fixture.pdb"),
-                                      Path("C:/app/fixture.pdb")])
+        self.assertEqual([PureWindowsPath(path) for path in candidates],
+                         [PureWindowsPath(r"C:\symbols\fixture.pdb"),
+                          PureWindowsPath(r"C:\symbols\ABCD1\fixture.pdb"),
+                          PureWindowsPath("C:/app/fixture.pdb")])
 
     def test_debug_file_directories_reach_the_symbolizer(self):
         with tempfile.TemporaryDirectory(prefix="uprof-debug-dirs-") as directory:
@@ -254,8 +258,8 @@ class ExplicitPdbTest(unittest.TestCase):
                 symbol_dirs=[r"C:\symbols"],
                 symbol_files=[Path(r"C:\choice\other.pdb")])
 
-        self.assertEqual(candidates[0], Path(r"C:\choice\other.pdb"))
-        self.assertEqual(candidates[1], Path(r"C:\symbols\fixture.pdb"))
+        self.assertEqual(PureWindowsPath(candidates[0]), PureWindowsPath(r"C:\choice\other.pdb"))
+        self.assertEqual(PureWindowsPath(candidates[1]), PureWindowsPath(r"C:\symbols\fixture.pdb"))
 
     def test_fallback_debug_paths_reach_the_symbolizer(self):
         with tempfile.TemporaryDirectory(prefix="uprof-fallback-") as directory:

@@ -946,12 +946,21 @@ WHERE COALESCE(getvariable('uprof_function'), '') <> ''
 CREATE OR REPLACE TEMP VIEW v_line_rows AS
 SELECT * FROM query(CASE
   WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $line_rows$
-WITH scoped AS (
+-- Keep fs to two readers, the EXISTS test and the fs_one build: extra scalar reads of the
+-- materialized snapshot stall DuckDB 2.0.0's task scheduler. MATERIALIZED still prevents
+-- re-running v_function_measured per scoped row.
+WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope),
+fs_one AS MATERIALIZED (
+  SELECT samples AS parent_samples, weight AS parent_weight,
+         tag_cycles AS parent_tag_cycles
+  FROM fs LIMIT 1
+),
+scoped AS (
   SELECT w.*
   FROM v_scoped w
   WHERE COALESCE(getvariable('uprof_function'), '') = ''
      OR EXISTS (
-       SELECT 1 FROM v_function_scope fs
+       SELECT 1 FROM fs
        WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
          AND ((fs.function_start IS NOT NULL
                AND w.rva >= fs.function_start AND w.rva < fs.function_end)
@@ -1020,13 +1029,10 @@ WITH scoped AS (
          (SELECT total_samples FROM v_scope_measures) AS total_samples,
          (SELECT total_weight FROM v_scope_measures) AS total_weight,
          (SELECT total_tag_cycles FROM v_scope_measures) AS total_tag_cycles,
-         (SELECT samples FROM v_function_scope LIMIT 1) AS parent_samples,
-         (SELECT weight FROM v_function_scope LIMIT 1) AS parent_weight,
-         (SELECT tag_cycles FROM v_function_scope LIMIT 1) AS parent_tag_cycles,
          row_number() OVER (
            ORDER BY weight DESC NULLS LAST, samples DESC,
                     file_name, line_number, function_name, module_name) AS rn
-  FROM agg
+  FROM agg LEFT JOIN fs_one ON true
 )
 SELECT file_name AS "file", line_number AS line, function_name AS "function",
        module_name AS module, attribution, samples, weight, tag_cycles,
@@ -1063,12 +1069,21 @@ HAVING count(*) > 0$line_rows$
 CREATE OR REPLACE TEMP VIEW v_instruction_rows AS
 SELECT * FROM query(CASE
   WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $instruction_rows$
-WITH scoped AS (
+-- Keep fs to two readers, the EXISTS test and the fs_one build: extra scalar reads of the
+-- materialized snapshot stall DuckDB 2.0.0's task scheduler. MATERIALIZED still prevents
+-- re-running v_function_measured per scoped row.
+WITH fs AS MATERIALIZED (SELECT * FROM v_function_scope),
+fs_one AS MATERIALIZED (
+  SELECT samples AS parent_samples, weight AS parent_weight,
+         tag_cycles AS parent_tag_cycles
+  FROM fs LIMIT 1
+),
+scoped AS (
   SELECT w.*
   FROM v_scoped w
   WHERE COALESCE(getvariable('uprof_function'), '') = ''
      OR EXISTS (
-       SELECT 1 FROM v_function_scope fs
+       SELECT 1 FROM fs
        WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
          AND ((fs.function_start IS NOT NULL
                AND w.rva >= fs.function_start AND w.rva < fs.function_end)
@@ -1109,15 +1124,12 @@ WITH scoped AS (
          (SELECT total_samples FROM v_scope_measures) AS total_samples,
          (SELECT total_weight FROM v_scope_measures) AS total_weight,
          (SELECT total_tag_cycles FROM v_scope_measures) AS total_tag_cycles,
-         (SELECT samples FROM v_function_scope LIMIT 1) AS parent_samples,
-         (SELECT weight FROM v_function_scope LIMIT 1) AS parent_weight,
-         (SELECT tag_cycles FROM v_function_scope LIMIT 1) AS parent_tag_cycles,
          row_number() OVER (
            ORDER BY CASE getvariable('uprof_primary_measure')
                       WHEN 'time_share' THEN weight END DESC NULLS LAST,
                     samples DESC,
                     module_name, rva NULLS LAST, function_name) AS rn
-  FROM agg
+  FROM agg LEFT JOIN fs_one ON true
 )
 SELECT module_name AS module,
        CASE WHEN rva IS NULL THEN NULL ELSE printf('0x%X', rva) END AS rva,

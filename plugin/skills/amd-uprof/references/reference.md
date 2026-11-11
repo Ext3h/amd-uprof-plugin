@@ -122,6 +122,54 @@ changed dump rebuilds it. A dump without one of the seven columns (for example a
 which has no tag column) falls back to the CSV; the failed build is recorded and not retried until
 the source changes. Any failure, including no DuckDB, falls back to the ASCII dump.
 
+### Session cache
+
+`profile` may store the symbolization artifacts — symbols, public symbols, PDB choices and
+derived function ranges — in one DuckDB database per capture session. On Windows it lives under
+`%LOCALAPPDATA%\Symbols\uprof-session-cache`, elsewhere under
+`$XDG_CACHE_HOME/amd-uprof/session-cache` (or `~/.cache/...`); the file name is a digest of the
+session path and `cpu.db` size/mtime. `UPROF_SESSION_CACHE_ROOT` relocates the root,
+`UPROF_SESSION_CACHE_DISABLE=1` (also `true`/`yes`/`on`) opts out, `UPROF_SESSION_CACHE_MAX_MB`
+(default 1024) caps a database, `UPROF_SESSION_CACHE_TTL_DAYS` (default 7) ages orphan cleanup,
+and `UPROF_SESSION_CACHE_TIMEOUT` (default 30 s) bounds attach/store retries.
+
+The capture `cpu.db` stays read-only. The cache is attached read-only for lookups and read-write
+for a run that stores; DuckDB permits one writer per file, so a busy cache is waited for up to
+the timeout and then the run continues uncached without disabling it. A file that cannot be
+opened is moved aside as `.corrupt` and recreated once; a missing table left by an interrupted
+store is repaired. Any remaining cache error disables the cache for the run and the profile
+continues uncached; a cache error must not fail the profile.
+
+Artifacts are tables, not files. A run is keyed by the capture-side module identity (path, size,
+checksum, 32/64-bit and the debug-info flag when recorded), the queried RVA set, the on-disk
+image state, the symbolizer/pdbutil/readobj builds, the symbol and image search state (explicit
+files and directories, the module directories, the symbol cache root) and the cache version. A
+changed binary, tool, scope or search state misses. The resolved PDB files are fingerprinted by
+size/mtime and validated on every hit, so a changed PDB misses. A run with a transient tool
+failure (a missing module image, a failed readobj, or a symbolizer failure other than a
+wrong-build PDB) is not stored. A stable no-symbols outcome (no recorded debug info, no PDB, or
+a wrong-build PDB) is stored together with the search state, so a PDB appearing in a searched
+location changes the key. A module name the capture maps to more than one image version is not
+symbolized or cached: IBS dump rows carry the module name, not `Module.id`, so per-version
+attribution is unavailable; the run warns and the module is reported unresolved. Function
+ranges are bound to the symbolization key they consume.
+
+On a hit the run reads the cached tables through the same artifact views and replays the
+symbolization and range text, so stdout is identical to the cold run. The replayed text carries
+the cold run's temporary paths and the artifact lines are not reprinted, so stderr is not
+byte-identical. `views.sql` defines file-backed source views itself, so a hand-run query with the
+artifact variables set works; a cache hit replaces them with table reads.
+
+The cache is per session and never shared across sessions. A database over the size cap refuses
+to store the run and warns; there is no LRU eviction. Orphaned databases whose recorded session
+directory is gone are removed on startup, and a rewritten `cpu.db` (a new digest) removes the
+stale sibling databases for the same live session rather than waiting for the TTL; unreadable
+databases are removed only after `UPROF_SESSION_CACHE_TTL_DAYS`. There are no leases or
+checkpoint policy yet. If a wrong-build PDB is overwritten in place in a location whose
+directory identity does not change, delete `<root>/<digest>.duckdb` or set
+`UPROF_SESSION_CACHE_DISABLE=1`; probe candidates are fingerprinted, which covers the normal
+staging paths. The dump cache above is separate and unchanged.
+
 ### Sanity check
 
 `v_dump_sanity` runs over the whole dump, unfiltered, and its coverage verdict is dump-wide

@@ -1,0 +1,57 @@
+# fixture: elf/fixture_compressed
+# compressed DWARF: SHF_COMPRESSED .debug_info and .debug_str
+## readobj
+format=elf64-x86-64
+entry=0x1320
+type=SharedObject (0x3)
+sections=.interp,.dynsym,.gnu.hash,.dynstr,.eh_frame_hdr,.eh_frame,.text,.dynamic,.relro_padding,.debug_abbrev,.debug_info,.debug_str_offsets,.debug_str,.debug_addr,.comment,.debug_line,.debug_line_str,.symtab,.shstrtab,.strtab,fixture_debug.c,_DYNAMIC,fixture_helper,fixture_entry
+compressed=.debug_info,.debug_str
+## symbols
+symbol fixture_debug.c rva=0x0
+symbol fixture_helper rva=0x1310
+symbol fixture_entry rva=0x1320
+## objdump
+
+<FIXTURES>\elf\fixture_compressed:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+0000000000001310 <fixture_helper>:
+    1310:      	pushq	%rbp
+    1311:      	movq	%rsp, %rbp
+    1314:      	movl	%edi, -0x4(%rbp)
+    1317:      	movl	-0x4(%rbp), %eax
+    131a:      	addl	$0x3, %eax
+    131d:      	popq	%rbp
+    131e:      	retq
+    131f:      	nop
+
+0000000000001320 <fixture_entry>:
+    1320:      	pushq	%rbp
+    1321:      	movq	%rsp, %rbp
+    1324:      	subq	$0x10, %rsp
+    1328:      	movl	%edi, -0x4(%rbp)
+    132b:      	movl	-0x4(%rbp), %edi
+    132e:      	callq	0x1310 <fixture_helper>
+    1333:      	shll	%eax
+    1335:      	movl	%eax, -0x8(%rbp)
+    1338:      	movl	-0x8(%rbp), %eax
+    133b:      	addq	$0x10, %rsp
+    133f:      	popq	%rbp
+    1340:      	retq
+## symbolizer
+0x1310 fixture_helper /build\fixture_debug.c:2
+0x1320 fixture_entry /build\fixture_debug.c:6
+0x132E fixture_entry /build\fixture_debug.c:7
+## production
+pdb=none
+outcome=readobj_failed
+0x1310 fixture_helper /build\fixture_debug.c:2
+0x1320 fixture_entry /build\fixture_debug.c:6
+0x132E fixture_entry /build\fixture_debug.c:7
+## profile.line
+line module=fixture_compressed function=fixture_entry file=/build\fixture_debug.c line=6 samples=1 attribution=unique
+line module=fixture_compressed function=fixture_entry file=/build\fixture_debug.c line=7 samples=1 attribution=unique
+line module=fixture_compressed function=fixture_helper file=/build\fixture_debug.c line=2 samples=1 attribution=unique
+## profile.function
+function module=fixture_compressed function=<unresolved> start=none end=none source=none samples=3 attribution=unresolved

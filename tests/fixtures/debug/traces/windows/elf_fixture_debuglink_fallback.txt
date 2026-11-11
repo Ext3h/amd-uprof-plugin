@@ -1,0 +1,6 @@
+# fixture: elf/fixture_debuglink (moved to another directory)
+# production fallback-root layout
+## production
+pdb=none
+outcome=readobj_failed
+0x1380 fixture_entry /build\fixture_debug.c:6

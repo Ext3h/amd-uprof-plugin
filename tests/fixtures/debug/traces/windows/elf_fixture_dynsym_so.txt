@@ -1,0 +1,65 @@
+# fixture: elf/fixture_dynsym.so
+# .dynsym only: names without lines
+## readobj
+format=elf64-x86-64
+entry=0x0
+type=SharedObject (0x3)
+sections=.note.gnu.build-id,.dynsym,.gnu.hash,.dynstr,.rela.plt,.eh_frame_hdr,.eh_frame,.text,.plt,.dynamic,.relro_padding,.got.plt,.shstrtab,fixture_helper,fixture_entry
+build_id=8178c262010d82e0ae10e881166255cd2e0ff01b
+## symbols
+symbol fixture_helper rva=0x13D0
+symbol fixture_entry rva=0x13E0
+## objdump
+
+<FIXTURES>\elf\fixture_dynsym.so:	file format elf64-x86-64
+
+Disassembly of section .text:
+
+00000000000013d0 <fixture_helper>:
+    13d0:      	pushq	%rbp
+    13d1:      	movq	%rsp, %rbp
+    13d4:      	movl	%edi, -0x4(%rbp)
+    13d7:      	movl	-0x4(%rbp), %eax
+    13da:      	addl	$0x3, %eax
+    13dd:      	popq	%rbp
+    13de:      	retq
+    13df:      	nop
+
+00000000000013e0 <fixture_entry>:
+    13e0:      	pushq	%rbp
+    13e1:      	movq	%rsp, %rbp
+    13e4:      	subq	$0x10, %rsp
+    13e8:      	movl	%edi, -0x4(%rbp)
+    13eb:      	movl	-0x4(%rbp), %edi
+    13ee:      	callq	0x1420 <fixture_helper@plt>
+    13f3:      	shll	%eax
+    13f5:      	movl	%eax, -0x8(%rbp)
+    13f8:      	movl	-0x8(%rbp), %eax
+    13fb:      	addq	$0x10, %rsp
+    13ff:      	popq	%rbp
+    1400:      	retq
+
+Disassembly of section .plt:
+
+0000000000001410 <.plt>:
+    1410:      	pushq	0x20d2(%rip)            # 0x34e8
+    1416:      	jmpq	*0x20d4(%rip)           # 0x34f0
+    141c:      	nopl	(%rax)
+
+0000000000001420 <fixture_helper@plt>:
+    1420:      	jmpq	*0x20d2(%rip)           # 0x34f8
+    1426:      	pushq	$0x0
+    142b:      	jmp	0x1410 <.plt>
+## symbolizer
+0x13D0 fixture_helper <no file>:0
+0x13E0 fixture_entry <no file>:0
+## production
+pdb=none
+outcome=readobj_failed
+0x13D0 fixture_helper <no file>:0
+0x13E0 fixture_entry <no file>:0
+## profile.line
+line module=fixture_dynsym.so function=fixture_entry file=<no source line> line=0 samples=1 attribution=unique
+line module=fixture_dynsym.so function=fixture_helper file=<no source line> line=0 samples=1 attribution=unique
+## profile.function
+function module=fixture_dynsym.so function=<unresolved> start=none end=none source=none samples=2 attribution=unresolved

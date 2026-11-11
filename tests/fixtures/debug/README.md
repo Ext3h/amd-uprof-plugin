@@ -208,7 +208,7 @@ The unsupported notes above describe the current tool, not a missing input forma
   `fixture_helper T 1370 f` and `fixture_entry T 1380 21`. A future ELF range source could use
   FDE starts with the synthetic `sub_0x<start>` names the docs already allow, or symtab names
   and sizes. `derive_module_ranges` uses neither, so the tested behavior stays `not_pe`.
-- Split DWARF: replacing the `.dwo` with an eight-byte corrupt file still resolves lines 2, 6
+- Split DWARF: replacing the `.dwo` with a seven-byte corrupt file still resolves lines 2, 6
   and 7 from the skeleton. The checked-in `.dwo` has valid `.debug_info.dwo`/`.debug_str.dwo`
   sections, but this source has no inlined functions, so no test forces the symbolizer to load
   the `.dwo`.

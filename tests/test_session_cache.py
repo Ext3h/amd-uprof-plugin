@@ -469,6 +469,12 @@ class EndToEndHitTest(unittest.TestCase):
             "_NT_SYMBOL_PATH": f"srv*{self.root / 'srv'}*https://example.invalid"})
         self.env.start()
         self.addCleanup(self.env.stop)
+        # The replay comparison is exact, and Linux re-reads the current core frequency from
+        # /proc/cpuinfo on every run, so pin it for both runs.
+        self.frequency = mock.patch("uprof_collect._core_frequency",
+                                    return_value=(4_700_000_000, "4700 MHz", "test"))
+        self.frequency.start()
+        self.addCleanup(self.frequency.stop)
         self.pdb = self.root / "fixture.pdb"
         self.pdb.write_bytes(b"fake pdb")
         session = Session(self.root, "e2e")

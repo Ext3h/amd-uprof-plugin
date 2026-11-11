@@ -39,6 +39,10 @@ PDB_PROBE_TIMEOUT: Final = 5 * 60
 # Module work is native-tool and DuckDB bound and releases the GIL, so a small fixed pool stops
 # short of oversubscribing instead of scaling with the module count.
 MAX_SYMBOLIZATION_WORKERS: Final = 8
+# Per-module symbol parquet writes at or below this row count use one DuckDB thread; a larger
+# write keeps the default pool, whose startup cost is then repaid. The threshold sits above the
+# largest per-module symbol tables seen in normal captures.
+PARQUET_SINGLE_THREAD_MAX_ROWS: Final = 100_000
 
 
 def symbolizer_search_paths(symbol_files: Iterable[str | Path],
@@ -440,6 +444,17 @@ def _run_symbolizer(symbolizer: Path, exe: str, pdb: Path | None, rva_file: Path
     return run_result
 
 
+def _jsonl_row_count(path: Path) -> int:
+    """Count newline-delimited records without parsing them."""
+    rows = 0
+    last = b"\n"
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            rows += block.count(b"\n")
+            last = block[-1:]
+    return rows + (0 if last == b"\n" else 1)
+
+
 def _write_parquet(out_file: Path, parquet_file: Path,
                    short_file: Path | None = None, stream: TextIO | None = None) -> Path | None:
     if stream is None:
@@ -499,6 +514,14 @@ COPY (
         parameters = [str(absolute(out_file)), str(absolute(temp_file))]
     try:
         with duckdb.connect() as connection:
+            # One thread for a small write: it avoids starting a full pool in every symbolization
+            # worker. A large write keeps the default because the pool then pays for itself.
+            try:
+                small = _jsonl_row_count(out_file) <= PARQUET_SINGLE_THREAD_MAX_ROWS
+            except OSError:
+                small = False
+            if small:
+                connection.execute("SET threads = 1")
             connection.execute(sql, parameters)
         os.replace(temp_file, parquet_file)
         return parquet_file

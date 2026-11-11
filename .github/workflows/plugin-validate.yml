@@ -36,8 +36,36 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install LLVM 23
+        shell: pwsh
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'LLVM-23.1.4-win64.msi'
+          Invoke-WebRequest -Uri 'https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.4/LLVM-23.1.4-win64.msi' -OutFile $msi
+          $log = Join-Path $env:RUNNER_TEMP 'llvm-install.log'
+          $process = Start-Process -FilePath msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', $msi, '/qn', '/norestart', '/l*v', $log)
+          if ($process.ExitCode -notin @(0, 3010)) {
+            Get-Content $log -Tail 100
+            throw "LLVM MSI exited $($process.ExitCode)"
+          }
+          $bin = Join-Path $env:ProgramFiles 'LLVM\bin'
+          if (-not (Test-Path (Join-Path $bin 'llvm-objdump.exe'))) {
+            throw "LLVM was not installed at $bin"
+          }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify LLVM toolchain
+        shell: bash
+        run: |
+          for tool in llvm-symbolizer llvm-objdump llvm-readobj llvm-pdbutil; do
+            command -v "$tool"
+          done
+          llvm-objdump --version | head -n 2
+          llvm-objdump --help | grep -q -- '--no-symbolize-operands' \
+            || { echo 'llvm-objdump lacks --no-symbolize-operands' >&2; exit 1; }
+
       - name: Install DuckDB
-        run: python -m pip install duckdb
+        run: python -m pip install --disable-pip-version-check 'duckdb==2.0.0'
 
       - name: Run tests
         run: python tests/run_tests.py

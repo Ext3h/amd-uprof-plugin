@@ -1,0 +1,92 @@
+name: Capture debug traces
+
+# Refresh the committed debug-format traces. Push a tag such as trace-capture-2026-11-11, or
+# run this workflow manually; download the artifacts and copy <artifact>/<os>/*.txt into
+# tests/fixtures/debug/traces/<os>/. The normal test workflows compare their own capture with
+# those goldens. The runners have no AMD PMU: these traces cover the LLVM symbol/debug-format
+# layer and the production pipeline over synthetic sessions, never hardware profiling.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'trace-capture-*'
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install LLVM 23
+        shell: pwsh
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'LLVM-23.1.4-win64.msi'
+          Invoke-WebRequest -Uri 'https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.4/LLVM-23.1.4-win64.msi' -OutFile $msi
+          $log = Join-Path $env:RUNNER_TEMP 'llvm-install.log'
+          $process = Start-Process -FilePath msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', $msi, '/qn', '/norestart', '/l*v', $log)
+          if ($process.ExitCode -notin @(0, 3010)) {
+            Get-Content $log -Tail 100
+            throw "LLVM MSI exited $($process.ExitCode)"
+          }
+          $bin = Join-Path $env:ProgramFiles 'LLVM\bin'
+          if (-not (Test-Path (Join-Path $bin 'llvm-objdump.exe'))) {
+            throw "LLVM was not installed at $bin"
+          }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install DuckDB
+        run: python -m pip install --disable-pip-version-check 'duckdb==2.0.0'
+
+      - name: Capture traces
+        run: python tests/capture_debug_traces.py --out-dir "$env:RUNNER_TEMP\debug-traces"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debug-traces-windows
+          path: ${{ runner.temp }}/debug-traces
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install DuckDB
+        run: python -m pip install duckdb==2.0.0
+
+      - name: Install LLVM
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 23
+          sudo apt-get install -y llvm-23
+          for tool in llvm-symbolizer llvm-objdump llvm-readobj llvm-pdbutil; do
+            if [ ! -x "/usr/lib/llvm-23/bin/$tool" ]; then
+              echo "::error::$tool is missing from the llvm-23 package"
+              exit 1
+            fi
+            sudo ln -sf "/usr/lib/llvm-23/bin/$tool" "/usr/local/bin/$tool"
+          done
+          llvm-objdump --version
+
+      - name: Capture traces
+        run: python tests/capture_debug_traces.py --out-dir "$RUNNER_TEMP/debug-traces"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debug-traces-linux
+          path: ${{ runner.temp }}/debug-traces
+          if-no-files-found: error

@@ -27,6 +27,16 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- The profile pipeline is faster: the dump is parsed once into a `TEMP TABLE`, its time-share
+  columns are cached as a validated Parquet copy, line and instruction views bind only for their
+  own scopes, symbolization runs in parallel, function ranges are derived in a process pool, and
+  public-symbol enumeration is reused within a run. Output is unchanged on the supported paths,
+  with one deliberate stricter behavior: a nonzero `llvm-pdbutil` exit is treated as an
+  enumeration failure even when it printed a valid Public Symbols section (the base ignored the
+  exit code), so fold labels can be unavailable where the base emitted them. The first run on a
+  capture pays the one-time Parquet copy build; later runs reuse it. The performance work is
+  tracked in issue #19; measurements are recorded in the issue and PR records, not in the
+  repository.
 - Breaking: `profile` replaces `--pdb-file`, `--pdb-dir`, `--debug-file-dir` and
   `--fallback-debug-path` with repeatable `--symbol-path` (a symbol/debug file or a search
   directory, probed by the tool) and adds repeatable `--image-path` (a module image file or a

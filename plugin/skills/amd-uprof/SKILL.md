@@ -275,9 +275,10 @@ Run `uprof.py tools` only when a command reports `MISSING`; each row is `<NAME>=
 - A system-wide capture ranks whatever is busy, often the shell or agent that ran it; use `--process` for one program and omit it for whole-machine questions.
 - The sample count is far below `duration × cores × clock / interval`: halted and idle cores emit no samples, so do not size a capture from that product.
 - `AMDuProfCLI --help` can block on "Press any key" on Windows; read the installed `Help/text/*.txt` instead.
+- The first run on a capture pays a one-time cache build (the dump's Parquet copy); later runs reuse it, with unchanged output.
 - `Srcfile` is empty; AMD's `report --detail --disasm` is a report, not a joinable table.
 - On Linux, `_NT_SYMBOL_PATH`, `llvm-pdbutil` and `llvm-readobj` are not part of the flow: symbolization reads DWARF from the binary. The Linux branch is kept but unverified on the reference host.
 
 ## References
 
-`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, derived function ranges, the 24 SQL views, the `tag_to_retire_share` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).
+`references/reference.md`: metadata keys, estimator derivation, dump cache, symbolizer invocations and artifact schemas, derived function ranges, the 24 SQL views and the materialized dump table, the `tag_to_retire_share` formula, known limitations, tie order and troubleshooting. `references/validation.md`: measured acceptance figures (do not restate them here).

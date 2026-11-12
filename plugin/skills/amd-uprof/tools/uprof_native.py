@@ -85,7 +85,7 @@ def find_symbolizer() -> Path | None:
 
 
 def find_sibling(symbolizer: Path | None, name: str) -> Path | None:
-    """llvm-pdbutil and llvm-readobj usually sit next to llvm-symbolizer."""
+    """llvm-pdbutil, llvm-readobj and llvm-objdump usually sit next to llvm-symbolizer."""
     candidates: list[str | os.PathLike[str] | None] = [_which(name)]
     if symbolizer:
         candidates.insert(0, symbolizer.parent / (name + (".exe" if IS_WINDOWS else "")))
@@ -280,6 +280,7 @@ def tool_report() -> None:
     symbolizer = find_symbolizer()
     pdbutil = find_sibling(symbolizer, "llvm-pdbutil")
     readobj = find_sibling(symbolizer, "llvm-readobj")
+    objdump = find_sibling(symbolizer, "llvm-objdump")
     try:
         import duckdb
         version = duckdb.__version__
@@ -308,6 +309,8 @@ def tool_report() -> None:
                     _first_version_line(pdbutil, "--version") if pdbutil else None))
     print(_tool_row("READOBJ", readobj,
                     _first_version_line(readobj, "--version") if readobj else None))
+    print(_tool_row("OBJDUMP", objdump,
+                    _first_version_line(objdump, "--version") if objdump else None))
     missing = []
     if not uprof:
         missing.append("uProf CLI (install AMD uProf or set AMDUPROF_CLI)")

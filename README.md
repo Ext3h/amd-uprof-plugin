@@ -48,6 +48,7 @@ where the cycles go — with shares by process, function, source line or instruc
 - AMD uProf CLI (`AMDuProfCLI`).
 - DuckDB 2.x Python package.
 - llvm-symbolizer; on Windows, llvm-pdbutil and llvm-readobj enable shared-address labelling.
+- llvm-objdump for instruction context.
 
 `tools/uprof.py tools` prints every resolved path and version, and fails only when a required
 tool is missing. Windows is the verified host; the Linux branch is kept but unverified on the

@@ -24,6 +24,25 @@ SEARCH = {"symbol_files": [], "symbol_dirs": [], "image_files": [], "image_dirs"
           "nt_symbol_path": "", "symbol_servers": []}
 
 
+_STORAGE_ERROR = ("Trying to read a database file with storage version number 99, but we can "
+                  "only read storage versions between 64 and 70.")
+
+
+class _StorageMismatch:
+    """A capture connection whose cache ATTACH fails as a newer DuckDB file would."""
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, sql, *args):
+        if sql.startswith("ATTACH"):
+            raise duckdb.IOException(_STORAGE_ERROR)
+        return self._connection.execute(sql, *args)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+
 class KeyTest(unittest.TestCase):
     def test_the_symbol_key_is_stable_and_covers_each_identity_input(self):
         base = uprof_cache.symbol_key(RVAS, MODULES, DISK, TOOLS, SEARCH)
@@ -266,7 +285,7 @@ class CacheTest(unittest.TestCase):
     def test_orphan_cleanup_removes_gone_sessions(self):
         root = self.root / "orphans"
         root.mkdir()
-        path = root / "orphan.duckdb"
+        path = root / ("0" * 32 + ".duckdb")
         connection = duckdb.connect(str(path))
         connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
         connection.execute("INSERT INTO cache_meta VALUES (2, ?)",
@@ -277,6 +296,103 @@ class CacheTest(unittest.TestCase):
         with mock.patch.object(uprof_cache, "_CLEANED", False):
             uprof_cache.cleanup_orphans(root)
         self.assertFalse(path.exists())
+
+    def _old(self, path):
+        old = time.time() - 8 * 86400
+        os.utime(path, (old, old))
+
+    def _cleanup(self, root):
+        with mock.patch.object(uprof_cache, "_CLEANED", False):
+            uprof_cache.cleanup_orphans(root)
+
+    def test_orphan_cleanup_leaves_files_without_a_digest_name(self):
+        root = self.root / "shared"
+        root.mkdir()
+        foreign = root / "user-data.duckdb"
+        foreign.write_bytes(b"not ours")
+        quarantined = root / "user-data.duckdb.corrupt"
+        quarantined.write_bytes(b"not ours either")
+        readable = root / "Analysis.duckdb"
+        connection = duckdb.connect(str(readable))
+        connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
+        connection.execute("INSERT INTO cache_meta VALUES (3, ?)",
+                           [str(self.root / "gone-session")])
+        connection.close()
+        for path in (foreign, quarantined, readable):
+            self._old(path)
+        self._cleanup(root)
+        self.assertTrue(foreign.is_file())
+        self.assertTrue(quarantined.is_file())
+        self.assertTrue(readable.is_file())
+
+    def test_orphan_cleanup_still_removes_an_old_unreadable_digest_file(self):
+        root = self.root / "own"
+        root.mkdir()
+        path = root / ("2" * 32 + ".duckdb")
+        path.write_bytes(b"truncated cache")
+        self._old(path)
+        self._cleanup(root)
+        self.assertFalse(path.exists())
+
+    def test_orphan_cleanup_skips_a_newer_schema_version(self):
+        root = self.root / "newer"
+        root.mkdir()
+        path = root / ("3" * 32 + ".duckdb")
+        connection = duckdb.connect(str(path))
+        connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
+        connection.execute("INSERT INTO cache_meta VALUES (?, ?)",
+                           [uprof_cache.SCHEMA_VERSION + 1, str(self.root / "gone-session")])
+        connection.close()
+        self._cleanup(root)
+        self.assertTrue(path.is_file())
+
+    def test_orphan_cleanup_skips_another_duckdb_storage_version(self):
+        root = self.root / "storage"
+        root.mkdir()
+        path = root / ("4" * 32 + ".duckdb")
+        path.write_bytes(b"written by another duckdb")
+        self._old(path)
+
+        def newer(*_args, **_kwargs):
+            raise duckdb.IOException(_STORAGE_ERROR)
+
+        with mock.patch.object(duckdb, "connect", newer):
+            self._cleanup(root)
+        self.assertTrue(path.is_file())
+
+    def test_another_duckdb_storage_version_is_skipped_not_moved_aside(self):
+        path = uprof_cache.cache_db_path(self.session)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"written by another duckdb")
+        capture = _StorageMismatch(duckdb.connect())
+        stream = io.StringIO()
+        cache = uprof_cache.SessionCache(capture, self.session, stream, timeout=0.2)
+        self.assertFalse(cache.ensure_write())
+        self.assertEqual(path.read_bytes(), b"written by another duckdb")
+        self.assertFalse(path.with_name(path.name + ".corrupt").exists())
+        self.assertIn("storage version", stream.getvalue())
+        capture.close()
+
+    def test_a_newer_schema_version_is_skipped_not_rebuilt(self):
+        path = uprof_cache.cache_db_path(self.session)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        connection = duckdb.connect(str(path))
+        connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
+        connection.execute("INSERT INTO cache_meta VALUES (?, ?)",
+                           [uprof_cache.SCHEMA_VERSION + 1, str(self.session)])
+        connection.execute("CREATE TABLE symbol_runs(run_key VARCHAR, future VARCHAR)")
+        connection.execute("INSERT INTO symbol_runs VALUES ('k', 'kept')")
+        connection.close()
+        capture = duckdb.connect()
+        cache = uprof_cache.SessionCache(capture, self.session, io.StringIO(), timeout=0.2)
+        self.assertFalse(cache.ensure_write())
+        capture.close()
+        connection = duckdb.connect(str(path), read_only=True)
+        self.assertEqual(connection.execute("SELECT future FROM symbol_runs").fetchall(),
+                         [("kept",)])
+        self.assertEqual(connection.execute("SELECT max(version) FROM cache_meta").fetchall(),
+                         [(uprof_cache.SCHEMA_VERSION + 1,)])
+        connection.close()
 
     def test_views_sql_can_run_without_the_tool_created_source_views(self):
         connection = duckdb.connect()
@@ -391,7 +507,7 @@ class CacheTest(unittest.TestCase):
     def test_a_rewritten_cpu_db_removes_the_stale_sibling(self):
         root = self.root / "orphans2"
         root.mkdir()
-        sibling = root / "sibling.duckdb"
+        sibling = root / ("1" * 32 + ".duckdb")
         connection = duckdb.connect(str(sibling))
         connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
         connection.execute("INSERT INTO cache_meta VALUES (3, ?)", [str(self.session)])

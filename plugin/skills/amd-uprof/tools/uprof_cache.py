@@ -268,7 +268,7 @@ def ambiguous_modules(connection: object, names: list[str]) -> list[str]:
         return []
     columns = {str(row[0]).lower() for row in connection.execute(
         "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'").fetchall()}
-    keys = [name for name in ("size", "checksum", "is32Bit") if name in columns]
+    keys = [name for name in ("size", "checksum", "is32Bit") if name.lower() in columns]
     distinct = (f"count(DISTINCT ({', '.join(keys)}))" if keys
                 else "count(DISTINCT path)")
     placeholders = ", ".join("?" for _ in names)

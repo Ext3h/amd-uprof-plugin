@@ -18,11 +18,9 @@ SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encoding="utf-8")
 SPEC = (TOOLS_DIR.parent / "references" / "spec.md").read_text(encoding="utf-8")
 
-READ_FIRST = ("**Read this file before running any command. The first tool call of the task is "
-              "the Read of this file; wait for it to complete before any other tool call. Do not "
-              "issue any other tool call (no `ls`, `source`, environment check or other command) "
-              "in the same turn as this read; the next tool call is `profile --by process`. Do "
-              "not list the skill tree, session directory, references or metadata.**")
+FIRST_CALL = ("**Choose the first `profile` call from the question; each output's `NEXT` line "
+              "names the following call. Do not list the skill tree, session directory, "
+              "references or metadata.**")
 REGION_MEANING = ("region = 4 KiB address page; samples are grouped by address, not by control "
                   "flow; a page may span unrelated code; the hot RVA is the precise attribution "
                   "and the page is the coarse bucket")
@@ -33,21 +31,16 @@ def _flat(text):
     return " ".join(text.split())
 
 SKILL_FRAGMENTS = (
-    READ_FIRST,
-    "The first tool call of the task is the Read of this file",
-    "wait for it to complete before any other tool call",
-    "Do not issue any other tool call",
-    "in the same turn as this read",
-    "the next tool call is `profile --by process`",
+    FIRST_CALL,
     "Python 3.9 or newer",
     "do not add `-I`",
     "No environment or version preflight",
     "## Quickstart",
-    "`profile --by process` first",
-    "do not list the skill tree, the session directory, its references or its metadata, "
-    "and run `tools` only if a command reports `MISSING`",
-    "one `profile --by module` text call",
-    "carrying the module's `hot_rva`",
+    "run `tools` only if a command reports `MISSING`",
+    "First call by question",
+    "where CPU time went, or mine versus the rest: `--by module`",
+    "a system-wide capture with no process named: `--by process`",
+    "An unscoped view of a system-wide capture names `--by process` first in `NEXT`",
     "do not re-run `--by module --json` to sum",
     "Parse a `--json` document once",
     "do not re-query a row or legend",
@@ -73,7 +66,7 @@ SKILL_FRAGMENTS = (
     "do not spend calls removing temp files",
     "one `CONTEXT:` line",
     "do not read `uprof_context.py` or `context_help`",
-    "profile --by module",
+    "--by module",
     "profile --by instruction --json",
     "## Worked example: where did CPU time go?",
     "attached, cycle-controlled IBS",
@@ -209,15 +202,17 @@ class DocsGuidanceTest(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, REFERENCE)
 
-    def test_the_read_first_sentence_precedes_the_quickstart(self):
-        self.assertLess(SKILL.index("# AMD uProf profile"), SKILL.index(READ_FIRST))
-        self.assertLess(SKILL.index(READ_FIRST), SKILL.index("## Quickstart"))
+    def test_the_first_call_sentence_precedes_the_quickstart(self):
+        self.assertLess(SKILL.index("# AMD uProf profile"), SKILL.index(FIRST_CALL))
+        self.assertLess(SKILL.index(FIRST_CALL), SKILL.index("## Quickstart"))
 
-    def test_the_read_and_the_first_command_are_separate_turns(self):
-        self.assertLess(SKILL.index(READ_FIRST), SKILL.index("## Quickstart"))
-        quickstart = SKILL[SKILL.index("## Quickstart"):SKILL.index("## Commands")]
-        self.assertIn("do not issue any other tool call in that turn", quickstart)
-        self.assertIn("Then run `profile --by process`", quickstart)
+    def test_no_fixed_first_call_or_self_read_is_mandated(self):
+        # A loaded skill needs no Read of itself, and an attached capture goes straight to the
+        # lens the question needs; only a system-wide capture starts with the process ranking.
+        for fragment in ("the Read of this file", "`profile --by process` first",
+                         "Then run `profile --by process`", "1. **Rank the processes.**"):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, SKILL)
 
     def test_the_invocation_states_the_interpreter_and_keeps_sibling_imports(self):
         start = SKILL.index("One entry point")

@@ -14,13 +14,11 @@ then fails instead of passing green.
 """
 
 import os
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-
-os.environ.setdefault("UPROF_SESSION_CACHE_ROOT",
-                      tempfile.mkdtemp(prefix="uprof-suite-cache-"))
 
 HERE = Path(__file__).resolve().parent
 TOOLS = HERE.parent / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -51,14 +49,31 @@ def run(suite: unittest.TestSuite, require_tools: bool, stream=None) -> bool:
     return runner.run(suite).wasSuccessful()
 
 
+def isolate(root: Path) -> None:
+    """Point the session cache and every temp directory of this process and its children
+    below root, overriding the caller's settings so a run never touches their cache."""
+    cache, temp = root / "cache", root / "tmp"
+    cache.mkdir()
+    temp.mkdir()
+    os.environ["UPROF_SESSION_CACHE_ROOT"] = str(cache)
+    for name in ("TMPDIR", "TEMP", "TMP"):
+        os.environ[name] = str(temp)
+    tempfile.tempdir = str(temp)
+
+
 def main(argv: list[str]) -> int:
-    for entry in (str(TOOLS), str(HERE)):
-        if entry not in sys.path:
-            sys.path.insert(0, entry)
-    loader = unittest.TestLoader()
-    suite = loader.loadTestsFromNames(argv) if argv else loader.discover(str(HERE), pattern="test_*.py")
-    require_tools = os.environ.get("UPROF_REQUIRE_TOOLS") == "1"
-    return 0 if run(suite, require_tools) else 1
+    root = Path(tempfile.mkdtemp(prefix="uprof-suite-"))
+    try:
+        isolate(root)
+        for entry in (str(TOOLS), str(HERE)):
+            if entry not in sys.path:
+                sys.path.insert(0, entry)
+        loader = unittest.TestLoader()
+        suite = loader.loadTestsFromNames(argv) if argv else loader.discover(str(HERE), pattern="test_*.py")
+        require_tools = os.environ.get("UPROF_REQUIRE_TOOLS") == "1"
+        return 0 if run(suite, require_tools) else 1
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 if __name__ == "__main__":

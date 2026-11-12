@@ -49,9 +49,10 @@ and carry line 0, so the tests use the start addresses only.
 
 ## Building
 
-The checked-in bytes were built with LLVM 23.1.4 on Windows. Run the commands from one neutral
-build directory that contains a copy of `fixture_debug.c`; the recipes use relative source and
-output paths so no user or checkout path enters the DWARF. `-fdebug-compilation-dir=/build`
+The checked-in ELF fixtures were built with LLVM 23.1.4 and the PE fixtures with LLVM 22.1.6,
+both on Windows. Run the commands from one neutral build directory that contains a copy of
+`fixture_debug.c`; the recipes use relative source and output paths so no user or checkout path
+enters the DWARF. `-fdebug-compilation-dir=/build`
 makes CodeView and DWARF record `/build/fixture_debug.c`. The PE debug directory does embed the
 absolute PDB path of whichever directory built it; only its basename is used at lookup time.
 
@@ -74,6 +75,10 @@ lld-link /nodefaultlib /subsystem:console /entry:fixture_entry /release /debug /
 clang --target=x86_64-pc-windows-msvc -g -gcodeview -fdebug-compilation-dir=/other -c fixture_debug.c -o pe/other.obj
 lld-link /nodefaultlib /subsystem:console /entry:fixture_entry /release /debug /pdb:pe/fixture_other.pdb /out:pe/fixture_other.exe pe/other.obj
 ```
+
+Every PE link uses `/release`, so each image carries a nonzero `CheckSum` that build-identity
+checks can compare with a capture's `Module.checksum`; `PeChecksumTest` asserts that every
+checked-in PE image has the `CheckSum` its bytes compute to.
 
 `fixture_coff.exe` has a COFF symbol table because of `/debug:symtab` and no PDB because there
 is no `/debug` link. `fixture_public.exe` is compiled without `-g`, so its PDB has public
@@ -171,9 +176,10 @@ sidecar is found at `<fallback-root>/<binary-directory-without-its-root>/<debugl
 
 The ELF fixtures reproduce byte for byte with the commands above and LLVM 23.1.4 when the
 commands run from the neutral build directory with forward slashes in `-o` paths (a backslash
-in the split output path is recorded in the `.dwo` name). PE timestamps change on every link,
-and the PDB GUID depends on the absolute PDB output path, so the tests read the image GUID and
-age from the checked-in image and compare the PDB against that instead of hardcoding values.
+in the split output path is recorded in the `.dwo` name). PE timestamps, and with them the
+`CheckSum`, change on every link, and the PDB GUID depends on the absolute PDB output path, so
+the tests read the image GUID and age from the checked-in image and compare the PDB against that
+instead of hardcoding values.
 The PE addresses and the DWARF line table are stable.
 
 ## Known limits recorded by the tests

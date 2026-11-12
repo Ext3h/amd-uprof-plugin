@@ -63,9 +63,17 @@ class TranslateFailureTest(unittest.TestCase):
         message = self.translate(NO_CATEGORY_LOG)
 
         self.assertNotIn("\n", message)
-        for part in ("no translatable sample category", "No categories to translate",
-                     "0xC0000005", "uprof.py collect", "--event ibs-op"):
+        for part in ("no translatable sample category", "0xC0000005"):
             self.assertIn(part, message)
+        # Both alternatives are complete commands: no placeholder, an absolute script path and
+        # an output directory derived from the session.
+        self.assertNotIn("<", message)
+        self.assertNotIn(">", message)
+        script = Path(uprof_native.__file__).resolve().with_name("uprof.py")
+        out_dir = f"{self.session}-recapture"
+        cycles = f'python "{script}" collect --out-dir "{out_dir}" --seconds 60'
+        self.assertIn(cycles, message)
+        self.assertIn(cycles + " --event ibs-op", message)
 
     def test_an_earlier_run_in_the_log_is_not_blamed(self):
         self.log.write_text(NO_CATEGORY_LOG, encoding="utf-8")

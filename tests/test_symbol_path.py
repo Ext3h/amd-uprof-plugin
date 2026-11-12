@@ -22,26 +22,32 @@ class ParseTest(unittest.TestCase):
         parsed = self.parse(r"srv* C:\sym *https://msdl.microsoft.com/download/symbols ")
 
         self.assertEqual(parsed.caches, (r"C:\sym",))
-        self.assertEqual(parsed.urls, ("https://msdl.microsoft.com/download/symbols",))
+        self.assertEqual(parsed.upstreams, ("https://msdl.microsoft.com/download/symbols",))
         self.assertEqual(parsed.dirs, ())
 
     def test_a_url_only_srv_entry_names_no_local_cache(self):
         parsed = self.parse("srv*https://symbols.example/store")
 
         self.assertEqual(parsed.caches, ())
-        self.assertEqual(parsed.urls, ("https://symbols.example/store",))
+        self.assertEqual(parsed.upstreams, ("https://symbols.example/store",))
 
     def test_chained_stores_are_all_local_caches(self):
         parsed = self.parse(r"srv*C:\near*\\share\far*https://symbols.example/store")
 
         self.assertEqual(parsed.caches, (r"C:\near", r"\\share\far"))
-        self.assertEqual(parsed.urls, ("https://symbols.example/store",))
+        self.assertEqual(parsed.upstreams, ("https://symbols.example/store",))
+
+    def test_a_share_as_the_upstream_store_is_never_a_local_root(self):
+        parsed = self.parse(r"srv*C:\sym*\\storage\symbols\index;srv*\\storage\only")
+
+        self.assertEqual(parsed.caches, (r"C:\sym",))
+        self.assertEqual(parsed.upstreams, (r"\\storage\symbols\index", r"\\storage\only"))
 
     def test_symsrv_skips_the_dll_name(self):
         parsed = self.parse(r"symsrv*symsrv.dll*C:\sym*https://symbols.example/store")
 
         self.assertEqual(parsed.caches, (r"C:\sym",))
-        self.assertEqual(parsed.urls, ("https://symbols.example/store",))
+        self.assertEqual(parsed.upstreams, ("https://symbols.example/store",))
         self.assertEqual(parsed.servers, ())
         self.assertIsNone(parsed.download_cache)
 

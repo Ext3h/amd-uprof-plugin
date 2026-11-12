@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Final, TextIO
 
 from uprof_native import (SymbolizerUnsupported, find_sibling,
-                          require_symbolizer, run)
+                          require_symbolizer, run, symbol_cache_dir)
 from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
 
 _GUID = re.compile(r"^\s*GUID:\s*(.+)$")
@@ -345,9 +345,38 @@ def _symbol_server_entries() -> list[tuple[Path, str]]:
     return entries
 
 
+# translate records the command it ran in session.uprof as space-joined, unquoted arguments.
+_RECORDED_SYMBOL_CACHE = re.compile(r"--symbol-cache-dir\s+(.+?)(?=\s+--|\s*$)")
+
+
+def _unique_dirs(paths: Iterable[str | Path]) -> list[Path]:
+    result: dict[str, Path] = {}
+    for path in paths:
+        full = absolute(path)
+        if full.is_dir():
+            result.setdefault(os.path.normcase(os.fspath(full)), full)
+    return list(result.values())
+
+
+def symbol_stores(session: str | Path) -> list[Path]:
+    """The symbol stores translate may have staged this session's PDBs into, besides srv* caches.
+
+    translate stages a PDB as <store>/<pdb>/<GUID><age>/<pdb> under the --symbol-cache-dir it
+    recorded in session.uprof, by default the user's symbol cache. Existing directories only.
+    """
+    try:
+        meta = json.loads(read_text(Path(session) / "session.uprof"))
+    except (UprofError, ValueError):
+        meta = None
+    command = str(meta.get("translateCommand") or "") if isinstance(meta, dict) else ""
+    match = _RECORDED_SYMBOL_CACHE.search(command)
+    return _unique_dirs([*([match.group(1)] if match else []), symbol_cache_dir()])
+
+
 def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
                     age: int | None, symbol_dirs: Iterable[str | Path] = (),
-                    symbol_files: Iterable[str | Path] = ()) -> list[Path]:
+                    symbol_files: Iterable[str | Path] = (),
+                    symbol_stores: Iterable[str | Path] = ()) -> list[Path]:
     module_name = exe.stem
     names = list(dict.fromkeys([pdb_name, module_name + ".pdb"]))
     candidates: list[Path] = []
@@ -360,7 +389,17 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
         if module_guid and age is not None:
             candidates.extend(root / f"{module_guid}{age:X}" / name for name in names)
     candidates.extend(exe.parent / name for name in names)
-    for cache_root, _url in _symbol_server_entries():
+    # Stores in the <store>/<pdb>/<GUID><age>/<pdb> layout: srv* caches and translate's stores
+    # always name their keyed path; a --symbol-path directory only once it holds a <pdb> folder.
+    stores = [cache_root for cache_root, _url in _symbol_server_entries()]
+    stores += [Path(path) for path in symbol_stores]
+    stores += [Path(path) for path in symbol_dirs if (Path(path) / pdb_name).is_dir()]
+    seen: set[str] = set()
+    for cache_root in stores:
+        key = os.path.normcase(os.fspath(absolute(cache_root)))
+        if key in seen:
+            continue
+        seen.add(key)
         cache_dir = cache_root / pdb_name
         if module_guid and age is not None:
             candidates.append(cache_dir / f"{module_guid}{age:X}" / pdb_name)
@@ -376,12 +415,13 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
 def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str,
                 module_age: int | None,
                 symbol_dirs: Iterable[str | Path] = (),
-                symbol_files: Iterable[str | Path] = ()) -> PdbSearch:
+                symbol_files: Iterable[str | Path] = (),
+                symbol_stores: Iterable[str | Path] = ()) -> PdbSearch:
     """Probe every candidate once; the search carries each rejection as evidence."""
     search = PdbSearch(urls=[url for _root, url in _symbol_server_entries()])
     for path in dict.fromkeys(
             _candidate_pdbs(exe_path, pdb_name, module_guid, module_age, symbol_dirs,
-                            symbol_files)):
+                            symbol_files, symbol_stores)):
         probe = _probe_pdb(pdbutil, path, module_guid, module_age)
         search.probes.append(probe)
         if probe.status == "accepted":
@@ -774,7 +814,8 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                      stream: TextIO = sys.stdout, module_name: str | None = None,
                      found_debug_info: bool | None = None,
                      symbol_files: Iterable[str | Path] = (),
-                     symbol_dirs: Iterable[str | Path] = ()) -> SymbolizedModule:
+                     symbol_dirs: Iterable[str | Path] = (),
+                     symbol_stores: Iterable[str | Path] = ()) -> SymbolizedModule:
     """Symbolize the RVAs into out_dir; return the artifacts and the symbol-search evidence.
 
     The symbol file is found from the module's debug directory: each explicit symbol file, each
@@ -843,7 +884,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                   "without GUID verification", file=stream)
         elif pdbutil:
             evidence.search = _choose_pdb(pdbutil, exe_path, pdb_name, module_guid, module_age,
-                                          search_dirs, pdb_files)
+                                          search_dirs, pdb_files, symbol_stores)
             pdb = evidence.search.pdb
         else:
             probes = [
@@ -852,7 +893,8 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                                  "verification"
                                  if path in pdb_files else "used without GUID verification"))
                 for path in dict.fromkeys(_candidate_pdbs(
-                    exe_path, pdb_name, module_guid, module_age, search_dirs, pdb_files))]
+                    exe_path, pdb_name, module_guid, module_age, search_dirs, pdb_files,
+                    symbol_stores))]
             pdb = next((probe.path for probe in probes if probe.status == "accepted"), None)
             evidence.search = PdbSearch(pdb=pdb, probes=probes)
             if pdb:
@@ -983,11 +1025,20 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
         if evidence.search.urls:
             facts.append("symbol-server URLs not consulted: "
                          + ", ".join(evidence.search.urls))
-    remedy = ("pass profile --symbol-path <file|dir> for a symbol or debug file or a search "
-              "root, --image-path <file|dir> when the module image is not at its recorded path, "
-              "or place the matching debug file beside the module or in a local srv* cache "
-              "(translate --symbol-path/--symbol-cache/--symbol-server can stage it), then re-run "
-              "profile; a third-party module with no symbols is a finding, not a blocker")
+    if evidence.outcome == "no_pdb" and evidence.image_guid and evidence.search:
+        # The searched paths are concrete targets; the module's identity names the file needed.
+        remedy = (f"copy the PDB with GUID {evidence.image_guid} age {evidence.image_age} to one "
+                  "of the searched paths, or re-run profile with --symbol-path set to the "
+                  "directory or file holding it (translate --symbol-server stages it from a "
+                  "symbol server into a searched store); a third-party module with no symbols "
+                  "is a finding, not a blocker")
+    else:
+        remedy = ("pass profile --symbol-path <file|dir> for a symbol or debug file or a search "
+                  "root, --image-path <file|dir> when the module image is not at its recorded "
+                  "path, or place the matching debug file beside the module or in a local srv* "
+                  "cache (translate --symbol-path/--symbol-cache/--symbol-server can stage it), "
+                  "then re-run profile; a third-party module with no symbols is a finding, not a "
+                  "blocker")
     if evidence.toolchain:
         remedy = None
     if evidence.outcome == "wrong_build":
@@ -1039,7 +1090,8 @@ def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list
                       symbol_dirs: Iterable[str | Path],
                       image_files: Iterable[str | Path],
                       image_dirs: Iterable[str | Path],
-                      identity: tuple[object, object] | None = None) -> _ModuleSymbolization:
+                      identity: tuple[object, object] | None = None,
+                      symbol_stores: Iterable[str | Path] = ()) -> _ModuleSymbolization:
     """Symbolize one module into its own directory; return its text instead of writing it.
 
     identity is the capture's (Module.checksum, Module.size); an image that disagrees is
@@ -1089,7 +1141,8 @@ def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list
             result = symbolize_module(
                 module_path, rva_file, module_dir, stream=output, module_name=module_name,
                 found_debug_info=(debug_info or {}).get(module_name),
-                symbol_files=symbol_files, symbol_dirs=symbol_dirs)
+                symbol_files=symbol_files, symbol_dirs=symbol_dirs,
+                symbol_stores=symbol_stores)
         except UprofError as exc:
             evidence = ModuleEvidence(module_name, module_path,
                                       found_debug_info=(debug_info or {}).get(module_name),
@@ -1115,18 +1168,20 @@ def _symbolize_tasks(modules: list[tuple[str, str, list[str]]], out_path: Path,
                      symbol_dirs: Iterable[str | Path],
                      image_files: Iterable[str | Path],
                      image_dirs: Iterable[str | Path],
-                     identities: dict[str, tuple[object, object]] | None = None
+                     identities: dict[str, tuple[object, object]] | None = None,
+                     symbol_stores: Iterable[str | Path] = ()
                      ) -> list[_ModuleSymbolization]:
     """Symbolize modules in a bounded pool; write each module's text in module index order."""
     symbol_files, symbol_dirs = tuple(symbol_files), tuple(symbol_dirs)
     image_files, image_dirs = tuple(image_files), tuple(image_dirs)
+    symbol_stores = tuple(symbol_stores)
     workers = max(1, min(len(modules), MAX_SYMBOLIZATION_WORKERS, os.cpu_count() or 1))
     pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="uprof-symbol")
     try:
         futures = [
             pool.submit(_symbolize_worker, index, module_name, module_path, rvas, out_path,
                         debug_info, symbol_files, symbol_dirs, image_files, image_dirs,
-                        (identities or {}).get(module_name))
+                        (identities or {}).get(module_name), symbol_stores)
             for index, (module_name, module_path, rvas) in enumerate(modules)
         ]
         outcomes: list[_ModuleSymbolization] = []
@@ -1150,7 +1205,8 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
                       symbol_dirs: Iterable[str | Path] = (),
                       image_files: Iterable[str | Path] = (),
                       image_dirs: Iterable[str | Path] = (),
-                      identities: dict[str, tuple[object, object]] | None = None
+                      identities: dict[str, tuple[object, object]] | None = None,
+                      symbol_stores: Iterable[str | Path] = ()
                       ) -> tuple[Path | None, Path | None, Path | None, list[ModuleEvidence]]:
     """Symbolize every module in scope and combine the artifacts.
 
@@ -1160,7 +1216,8 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     image_files are explicit module images and image_dirs are searched by the module's basename;
     the caller probes --symbol-path and --image-path once with probe_paths. identities maps a
     module key to the capture's (Module.checksum, Module.size); an image that disagrees is
-    another build and gets no names. Modules are symbolized
+    another build and gets no names. symbol_stores are the stores translate staged into
+    (symbol_stores()). Modules are symbolized
     concurrently, but their stream text and the combined artifacts keep module order. Returns
     (symbols.parquet, symbols.publics.csv, symbols.pdbs.csv, evidence); the parquet is None when
     no module could be symbolized, in which case the SQL reports every address as '<no symbol>'.
@@ -1178,7 +1235,8 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     _PUBLICS_CACHE.reset()
     try:
         outcomes = _symbolize_tasks(modules, out_path, stream, debug_info, symbol_files,
-                                    symbol_dirs, image_files, image_dirs, identities)
+                                    symbol_dirs, image_files, image_dirs, identities,
+                                    symbol_stores)
         for outcome in outcomes:
             if outcome.evidence is not None:
                 evidence.append(outcome.evidence)

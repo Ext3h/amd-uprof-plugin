@@ -398,7 +398,8 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
         stream=stream, debug_info=_module_debug_info(connection),
         symbol_files=paths.symbol_files, symbol_dirs=paths.symbol_dirs,
         image_files=paths.image_files, image_dirs=paths.image_dirs,
-        identities=_module_identities(connection))
+        identities=_module_identities(connection),
+        symbol_stores=uprof_symbols.symbol_stores(args.session))
     causes = {item.module_name: _evidence_cause(item) for item in evidence
               if item.outcome != "resolved"}
     for name in ambiguous:

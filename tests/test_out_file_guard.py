@@ -1,6 +1,7 @@
 """--out-file must never name a file the command reads or derives from its inputs."""
 
 import contextlib
+import os
 import tempfile
 import types
 import unittest
@@ -13,16 +14,21 @@ import uprof_query
 import uprof_session
 import uprof_util
 
+import debug_fixtures as F
+
 _OVERWRITE = "--out-file would overwrite"
+_REMEDY = "choose a different --out-file path"
 
 
 class _Reached(Exception):
     """The command got past every guard."""
 
 
+@unittest.skipIf(F.duckdb_skip(), F.duckdb_skip())
 class OutFileGuardTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="uprof-outguard-")
+        self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.session = self.root / "session"
         self.session.mkdir()
@@ -40,9 +46,6 @@ class OutFileGuardTest(unittest.TestCase):
         self.dump.write_text("DeltaTick\n1\n", encoding="utf-8")
         self.cache = self.root / "dump-cache"
         self.cache.mkdir()
-
-    def tearDown(self):
-        self._tmp.cleanup()
 
     def _run(self, *extra):
         args = uprof.build_parser().parse_args(
@@ -76,11 +79,30 @@ class OutFileGuardTest(unittest.TestCase):
                 mock.patch.object(uprof_query.uprof_db, "open_query", real_connection):
             uprof_query.run_query_command(args)
 
-    def _assert_refused(self, target, *extra):
+    def _assert_refused(self, target, *extra, out_file=None):
         before = target.read_bytes()
-        with self.assertRaisesRegex(uprof_util.UprofError, _OVERWRITE):
-            self._run(*extra, "--out-file", str(target))
+        with self.assertRaisesRegex(uprof_util.UprofError, _OVERWRITE) as raised:
+            self._run(*extra, "--out-file", str(target) if out_file is None else out_file)
+        self.assertIn(_REMEDY, str(raised.exception))
         self.assertEqual(target.read_bytes(), before)
+
+    def test_the_capture_database_refusal_names_the_remedy(self):
+        self._assert_refused(self.session / "cpu.db")
+
+    def test_relative_paths_are_compared_as_absolute_paths(self):
+        pdb = self.root / "app.pdb"
+        pdb.write_bytes(b"pdb")
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, cwd)
+        self._assert_refused(pdb, "--symbol-path", "app.pdb",
+                             out_file=os.path.join("session", "..", "app.pdb"))
+
+    @unittest.skipUnless(os.name == "nt", "host: case-insensitive paths need Windows")
+    def test_a_differently_cased_path_is_the_same_file_on_windows(self):
+        pdb = self.root / "app.pdb"
+        pdb.write_bytes(b"pdb")
+        self._assert_refused(pdb, "--symbol-path", str(pdb), out_file=str(pdb).upper())
 
     def test_an_explicit_symbol_file_is_protected(self):
         pdb = self.root / "app.pdb"
@@ -111,6 +133,11 @@ class OutFileGuardTest(unittest.TestCase):
         sidecar = self.cache / "IbsOpDump.samples.parquet.json"
         sidecar.write_text("{}", encoding="utf-8")
         self._assert_refused(sidecar)
+
+    def test_the_parquet_unsupported_marker_is_protected(self):
+        marker = self.cache / "IbsOpDump.samples.parquet.unsupported.json"
+        marker.write_text("{}", encoding="utf-8")
+        self._assert_refused(marker)
 
     def test_an_unrelated_out_file_passes_every_guard(self):
         with self.assertRaises(_Reached):

@@ -5,6 +5,7 @@ Run from the repository root: python tests/run_tests.py test_dump_identity
 
 import contextlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -17,7 +18,7 @@ from unittest import mock
 import uprof_dump
 import uprof_util
 from uprof_session import Sampler
-from uprof_util import DUMP_FILENAMES
+from uprof_util import DUMP_FILENAMES, UprofError
 
 KIND = "ibsop-event-dump"
 DAY = 24 * 60 * 60
@@ -93,6 +94,33 @@ class DumpIdentityTest(unittest.TestCase):
         os.utime(self.session / "cpu" / "capture.prd", (later, later))
 
         self.assertEqual(self.resolve(), ("reused", b"capture A"))
+        self.assertEqual(self.translations, 1)
+        with mock.patch.object(uprof_util, "sha256_file", side_effect=AssertionError("hashed")):
+            self.assertEqual(self.resolve(), ("reused", b"capture A"))
+
+    def test_a_cache_without_a_recorded_capture_regenerates(self):
+        self.make_capture(self.session, b"capture A")
+        self.resolve()
+        meta_path = self.root / "cache" / "k" / "cache.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        del meta["capture"]
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+        self.assertEqual(self.resolve()[0], "generated")
+        self.assertEqual(self.translations, 2)
+
+    def test_a_session_without_raw_files_never_reuses(self):
+        self.make_capture(self.session, b"capture A")
+        (self.session / "cpu" / "capture.prd").unlink()
+        cache = self.root / "cache" / "k"
+        cache.mkdir(parents=True)
+        (cache / DUMP_FILENAMES[KIND]).write_bytes(b"other")
+        (cache / "cache.json").write_text(json.dumps(
+            {"kind": KIND, "timeFilter": "", "capture": []}), encoding="utf-8")
+
+        # Not reused: generation runs, and the fake translates no raw file into an empty dump.
+        with self.assertRaisesRegex(UprofError, "empty"):
+            self.resolve()
         self.assertEqual(self.translations, 1)
 
 

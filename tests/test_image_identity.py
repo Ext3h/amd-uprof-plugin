@@ -42,7 +42,7 @@ def _names(document: dict) -> set[str]:
 @unittest.skipIf(SKIP, SKIP or "")
 @unittest.skipUnless(os.name == "nt", NT_ONLY)
 class SymbolizedImageIdentityTest(unittest.TestCase):
-    def profile(self, checksum, size):
+    def profile(self, checksum, size, by="line"):
         import duckdb
 
         with tempfile.TemporaryDirectory() as root:
@@ -54,7 +54,7 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
                 connection.execute("UPDATE Module SET checksum = ?, size = ?", [checksum, size])
             finally:
                 connection.close()
-            return F.profile_with_stderr(session, "line")
+            return F.profile_with_stderr(session, by)
 
     def test_the_captured_build_is_symbolized(self):
         checksum, size = _pe_identity(IMAGE)
@@ -82,6 +82,25 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
     def test_missing_identity_evidence_keeps_the_names(self):
         document, _ = self.profile(0, 0)
         self.assertIn("fixture_entry", _names(document))
+
+    def test_the_captured_build_derives_function_ranges(self):
+        checksum, size = _pe_identity(IMAGE)
+        document, _ = self.profile(checksum, size, by="function")
+        self.assertIn("fixture_entry", _names(document))
+        self.assertEqual(document["legend"]["function_ranges"]["absent_by_module"], {})
+
+    def test_a_different_build_derives_no_function_ranges(self):
+        checksum, size = _pe_identity(IMAGE)
+        document, stderr = self.profile(checksum + 1, size, by="function")
+        sources = {row.get("function_source") for row in document["rows"]}
+        self.assertFalse(sources & {"pdata", "export", "pdb_public"}, document["rows"])
+        absent = document["legend"]["function_ranges"]["absent_by_module"]
+        self.assertEqual(len(absent), 1, absent)
+        self.assertTrue(next(iter(absent.values())).startswith("wrong_build: "), absent)
+        lines = [line for line in stderr.splitlines()
+                 if line.startswith("WARNING: no function range derived")]
+        self.assertEqual(len(lines), 1, stderr)
+        self.assertIn("wrong_build: ", lines[0])
 
 
 if __name__ == "__main__":

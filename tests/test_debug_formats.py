@@ -15,8 +15,10 @@ from pathlib import Path
 import debug_fixtures as F
 import uprof_context
 import uprof_functions
+import uprof_native
 import uprof_symbols
 from run_tests import HOST_SKIP
+from test_symbols import write_stub_symbolizer
 
 NT_ONLY = HOST_SKIP + "production PDB discovery runs only on Windows (os.name == 'nt')"
 
@@ -97,6 +99,47 @@ class PeChecksumTest(unittest.TestCase):
                 recorded, computed = pe_checksum(image.read_bytes())
                 self.assertNotEqual(recorded, 0)
                 self.assertEqual(recorded, computed)
+
+
+class LlvmFeatureGateTest(unittest.TestCase):
+    """An LLVM without a feature a fixture needs is a skip that names the cause.
+
+    The skip is not a host skip: installing a current LLVM removes it, so a job that requires
+    the toolchain still fails on it.
+    """
+
+    def setUp(self):
+        uprof_native.pdb_option_cause.cache_clear()
+        self.addCleanup(uprof_native.pdb_option_cause.cache_clear)
+        directory = tempfile.TemporaryDirectory(prefix="uprof-llvm-gate-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def test_a_symbolizer_without_pdb_is_a_tool_skip_naming_llvm_23(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=False)
+
+        reason = F.pdb_option_skip(stub)
+
+        self.assertFalse(reason.startswith(HOST_SKIP), reason)
+        self.assertIn("LLVM >= 23", reason)
+
+    def test_a_symbolizer_with_pdb_does_not_skip(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=True)
+
+        self.assertIsNone(F.pdb_option_skip(stub))
+
+    def test_a_symbolizer_without_zlib_is_a_tool_skip_naming_zlib(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=True, zlib=False)
+
+        reason = F.zlib_skip(stub)
+
+        self.assertFalse(reason.startswith(HOST_SKIP), reason)
+        self.assertIn("zlib", reason)
+
+    def test_a_symbolizer_with_zlib_does_not_skip(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=True)
+
+        self.assertIsNone(F.zlib_skip(stub))
 
 
 @unittest.skipIf(F.tool_skip(), F.tool_skip() or "")

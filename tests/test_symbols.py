@@ -17,6 +17,7 @@ from pathlib import Path, PureWindowsPath
 from unittest import mock
 
 import uprof_symbols
+from run_tests import HOST_SKIP
 from uprof_util import UprofError
 
 
@@ -217,7 +218,7 @@ class PdbManifestTest(unittest.TestCase):
 
 
 class NoPdbEvidenceTest(unittest.TestCase):
-    @unittest.skipUnless(os.name == "nt", "the PDB search runs on Windows")
+    @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
     def test_the_no_pdb_branch_keeps_the_symbolizer_error(self):
         with tempfile.TemporaryDirectory(prefix="uprof-no-pdb-") as directory:
             root = Path(directory)
@@ -532,7 +533,8 @@ class ParallelSymbolizationTest(unittest.TestCase):
     def test_concurrent_modules_keep_output_and_artifact_order(self):
         cpu_count = os.cpu_count() or 1
         if cpu_count < 2:
-            self.skipTest("a thread pool needs at least two CPUs to run modules together")
+            self.skipTest(HOST_SKIP + "a thread pool needs at least two CPUs to run modules "
+                          "together")
         count = min(4, cpu_count)
         with tempfile.TemporaryDirectory(prefix="uprof-parallel-") as directory:
             root = Path(directory)

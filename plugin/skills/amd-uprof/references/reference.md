@@ -585,5 +585,5 @@ The failure table in `SKILL.md` covers dump sanity, missing `session.uprof`/`cpu
 | `error: argument --image: not allowed with argument --pid` | both scope flags given | pass one |
 | `WARNING: no samples in the selected scope` with exit 0 | the scope filter matched no sample; the empty document is still written | read the warning's `Process.name` list; `--image` matches process base images, not modules, so use `--by module` or `--function ... --module`; on a single-process attached capture omit `--image` |
 | capture directory locked during `translate` | open in the GUI | close it and retry |
-| `--out-dir already holds a previous translation` | a reused output directory still has `cpu.db`, `callstack.db` or an ASCII dump | pass `--force` to replace the generated files and copied inputs, or choose another `--out-dir` |
+| `--out-dir already holds a previous translation` | a reused output directory still has files translate copied or generated | pass `--force` to replace the generated files and copied inputs, or choose another `--out-dir` |
 | `SAMPLER: falling back ...` | VBS or hypervisor blocks IBS counters | disable VBS/Hyper-V, or accept cycle sampling |

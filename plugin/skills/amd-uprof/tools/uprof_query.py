@@ -126,25 +126,26 @@ def _out_path(args: argparse.Namespace, cpu_db: Path, session: Path) -> Path | N
         raise util.UprofError(f"output path is a directory: {out_path}")
     paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
                                       getattr(args, "image_path", None))
-    _guard_out_file(out_path, [("", cpu_db), ("", session / "session.uprof"),
-                               *(("", path) for path in paths.symbol_files),
-                               *(("", path) for path in paths.image_files)])
+    _guard_out_file(out_path, [cpu_db, session / "session.uprof", *paths.symbol_files,
+                               *paths.image_files])
     return out_path
 
 
-def _guard_out_file(out_path: Path | None, protected: list[tuple[str, Path | str]]) -> None:
-    """Refuse an --out-file that names a protected input; each entry is (label, path).
+def _guard_out_file(out_path: Path | None, protected: list[Path | str], label: str = "") -> None:
+    """Refuse an --out-file that names a protected input; label prefixes the path in the error.
 
     Paths are compared as normalized absolute paths, so the output can never replace a file the
-    command reads.
+    command reads. The error names the remedy.
     """
     if out_path is None:
         return
     target = os.path.normcase(os.fspath(util.absolute(out_path)))
-    for label, path in protected:
+    for path in protected:
         full = util.absolute(path)
         if os.path.normcase(os.fspath(full)) == target:
-            raise util.UprofError(f"--out-file would overwrite {label}{full}")
+            raise util.UprofError(
+                f"--out-file would overwrite {label}{full}, an input of this command; choose a "
+                "different --out-file path (for example a new file in the output directory)")
 
 
 def _guard_out_file_images(out_path: Path | None, connection: object,
@@ -160,8 +161,8 @@ def _guard_out_file_images(out_path: Path | None, connection: object,
         image, _ = uprof_symbols.resolve_image(Path(str(module_path)).name, str(module_path),
                                                paths.image_files, paths.image_dirs)
         if image is not None:
-            images.append(("the module image ", image))
-    _guard_out_file(out_path, images)
+            images.append(image)
+    _guard_out_file(out_path, images, "the module image ")
 
 
 def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: int,
@@ -1859,9 +1860,9 @@ def run_query_command(args: argparse.Namespace) -> None:
     # A Parquet copy of the dump's time_share columns removes the ASCII parse from every run.
     # None keeps the CSV path, so a missing column or a write failure still reaches the views.
     if dump is not None:
-        _guard_out_file(out_path, [("the IBS dump ", dump.path),
-                                   *(("the Parquet dump copy ", path) for path in
-                                     uprof_dump.samples_parquet_files(dump, session))])
+        _guard_out_file(out_path, [dump.path], "the IBS dump ")
+        _guard_out_file(out_path, list(uprof_dump.samples_parquet_files(dump, session)),
+                        "the Parquet dump copy ")
     samples = uprof_dump.samples_parquet(dump, session) if dump is not None else None
     # The resolved dump may have been produced by the recorded translate window, so the
     # whole-capture claim cannot be made from it.

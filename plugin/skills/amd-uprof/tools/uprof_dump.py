@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from uprof_native import TRANSLATE_TIMEOUT, require_uprof, run, translate_command
+from uprof_native import (TRANSLATE_TIMEOUT, CliLog, require_uprof, run, translate_command,
+                          translate_failure)
 from uprof_session import Sampler
 from uprof_util import (DUMP_FILENAMES, UprofError, absolute, capture_identity, copy_session,
                         read_text, same_capture, sha256_file, tail_lines)
@@ -330,11 +331,12 @@ def _make_dump(session_dir: Path | str, kind: str, time_filter: str | None, cach
     try:
         copy_session(session_dir, staging)
         command = translate_command(uprof, staging, time_filter=time_filter, ascii_kind=kind)
+        log = CliLog()
         completed = run(command, timeout=TRANSLATE_TIMEOUT)
         detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
         if completed.returncode != 0:
-            raise UprofError(f"AMDuProfCLI translate --ascii {kind} failed with "
-                             f"{completed.returncode} on the cache copy {staging}: {detail}")
+            raise UprofError(translate_failure(
+                f"AMDuProfCLI translate --ascii {kind} on the cache copy {staging}", completed, log))
         dump = staging / dump_name
         if not dump.is_file():
             raise UprofError(f"translate --ascii did not produce {dump_name} in {staging}; "

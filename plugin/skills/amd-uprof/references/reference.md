@@ -481,7 +481,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 |---|---|
 | `has_dump` | `uprof_ibs_dump` is non-empty |
 | `schema_check` | fails once, naming every missing table/column and a bad `event#` column |
-| `schema_check_pid` | PMC only: requires `UnifiedSampleSeries.processId`; dump captures do not |
+| `schema_check_pid` | PMC only: requires `UnifiedSampleSeries.processId` and `coreId`; dump captures do not |
 | `dump_guard` | the dump exists and `time_start < time_end` |
 | `dump_columns_guard` | one `DESCRIBE`; names missing required dump columns (`DeltaTick`, `CPU_Number`, `PID`, `Offset`, `ModuleName`) |
 | `has_tag` | the dump header carries `IbsTagToRetCtr`; `v_dump_sanity.tag_values` counts non-null values |

@@ -21,7 +21,7 @@ DISK = [["c:/a.dll", True, 10, 20]]
 MODULES = [["c:/a.dll", 10, 1, False, True]]
 TOOLS = {"symbolizer": ["s", 1, 1], "pdbutil": ["p", 1, 1], "readobj": ["r", 1, 1]}
 SEARCH = {"symbol_files": [], "symbol_dirs": [], "image_files": [], "image_dirs": [],
-          "nt_symbol_path": "", "symbol_servers": []}
+          "nt_symbol_roots": {"caches": [], "dirs": []}, "symbol_servers": []}
 
 
 _STORAGE_ERROR = ("Trying to read a database file with storage version number 99, but we can "
@@ -53,7 +53,7 @@ class KeyTest(unittest.TestCase):
         self.assertNotEqual(base, uprof_cache.symbol_key(rvas, MODULES, DISK, TOOLS, SEARCH))
         tools = dict(TOOLS, readobj=["r2", 1, 1])
         self.assertNotEqual(base, uprof_cache.symbol_key(RVAS, MODULES, DISK, tools, SEARCH))
-        search = dict(SEARCH, nt_symbol_path="srv*c:/symbols*https://example.invalid")
+        search = dict(SEARCH, nt_symbol_roots={"caches": ["c:/symbols"], "dirs": []})
         self.assertNotEqual(base, uprof_cache.symbol_key(RVAS, MODULES, DISK, TOOLS, search))
         disk = [["c:/a.dll", True, 11, 20]]
         self.assertNotEqual(base, uprof_cache.symbol_key(RVAS, MODULES, disk, TOOLS, SEARCH))

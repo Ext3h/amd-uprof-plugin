@@ -28,8 +28,8 @@ from typing import Any, Final, TextIO
 import uprof_db
 import uprof_symbols
 from uprof_context import find_readobj
-from uprof_native import (IS_WINDOWS, default_symbol_servers, find_sibling, find_symbolizer,
-                          symbol_cache_dir)
+from uprof_native import (IS_WINDOWS, NtSymbolPath, default_symbol_servers, find_sibling,
+                          find_symbolizer, parse_nt_symbol_path, symbol_cache_dir)
 from uprof_util import contains, same_path
 
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
@@ -147,25 +147,28 @@ def _dir_listing(path: Path, limit: int = 1024, holds_own: bool = False,
         return [str(path), None, []]
 
 
-def _srv_caches() -> list[list[object]]:
-    """Every local root PDB discovery reads from _NT_SYMBOL_PATH, with its child listings.
+def _srv_caches(nt_symbol_path: NtSymbolPath) -> list[list[object]]:
+    """Every local root PDB discovery reads from _NT_SYMBOL_PATH, listed as discovery reads it.
 
-    The roots come from the same parser discovery uses, so a PDB staged where discovery looks
-    always changes the key.
+    A store cache is searched below <cache>/<pdb name>, so its child listings are included; a
+    plain directory is searched only for <dir>/<pdb name>, so its own listing suffices.
     """
-    nt_symbol_path = uprof_symbols._nt_symbol_path()
     result: list[list[object]] = []
-    for directory in (*nt_symbol_path.caches, *nt_symbol_path.dirs):
+    for directory in nt_symbol_path.caches:
         result.extend(_store_listings(Path(directory)))
+    for directory in nt_symbol_path.dirs:
+        result.extend(_store_listings(Path(directory), children=False))
     return result
 
 
-def _store_listings(root: Path, pdb_only: bool = False) -> list[list[object]]:
+def _store_listings(root: Path, pdb_only: bool = False,
+                    children: bool = True) -> list[list[object]]:
     """A symbol store's listing and its child directories' listings; staging a PDB changes them.
 
-    pdb_only lists only <pdb> children, the folders a store-layout PDB lives in. The session
-    cache root may lie inside a store (the default one does); the root and the session cache's
-    files are left out, so creating or filling it never changes the key.
+    pdb_only lists only <pdb> children, the folders a store-layout PDB lives in; children=False
+    lists the root alone. The session cache root may lie inside a store (the default one does);
+    the root and the session cache's files are left out, so creating or filling it never
+    changes the key.
     """
     own = cache_root()
     try:
@@ -177,6 +180,8 @@ def _store_listings(root: Path, pdb_only: bool = False) -> list[list[object]]:
     own_name = (os.path.normcase(own.name)
                 if not root_is_own and same_path(root, own.parent) else None)
     result = [_dir_listing(root, holds_own=root_is_own, own_name=own_name)]
+    if not children:
+        return result
     try:
         children = sorted(child for child in root.iterdir()
                           if not pdb_only or child.name.lower().endswith(".pdb"))
@@ -207,9 +212,12 @@ def search_identity(symbol_path: list[str] | None, image_path: list[str] | None,
     """The symbol/image search state a hit must be validated against.
 
     Explicit files and directories are fingerprinted, a directory's own mtime catches files
-    appearing beside a module, and the srv* caches, translate's symbol stores and the <pdb>
-    folders of --symbol-path directories catch a newly staged PDB.
+    appearing beside a module, and the _NT_SYMBOL_PATH roots, translate's symbol stores and the
+    <pdb> folders of --symbol-path directories catch a newly staged PDB. The variable enters
+    only as its parsed roots, so a respelling or a URL change (profile never contacts a URL)
+    keeps the key.
     """
+    nt_symbol_path = parse_nt_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
     paths = uprof_symbols.probe_paths(symbol_path, image_path)
     names = {Path(name).name.lower() for name in module_names if name}
     names |= {Path(name).stem.lower() + ".pdb" for name in module_names if name}
@@ -225,10 +233,11 @@ def search_identity(symbol_path: list[str] | None, image_path: list[str] | None,
         "image_dir_files": [entry for path in paths.image_dirs
                             for entry in _files_in(path, names)],
         "module_dirs": [_dir_identity(Path(path)) for path in module_dirs],
-        "srv_caches": _srv_caches(),
+        "srv_caches": _srv_caches(nt_symbol_path),
         "symbol_stores": [entry for root in [*symbol_stores, *paths.symbol_dirs]
                           for entry in _store_listings(Path(root), pdb_only=True)],
-        "nt_symbol_path": os.environ.get("_NT_SYMBOL_PATH", ""),
+        "nt_symbol_roots": {"caches": list(nt_symbol_path.caches),
+                            "dirs": list(nt_symbol_path.dirs)},
         "symbol_servers": list(default_symbol_servers()),
     }
 

@@ -371,9 +371,9 @@ class NtSymbolPath:
 
     caches are local symbol-store roots: the non-URL stores of srv*/symsrv* entries and cache*
     directories. urls are the remote stores of srv*/symsrv* entries. dirs are plain directory
-    entries. servers are the srv*/symsrv* entries that name a downstream store slot and an
-    upstream store, as written; uProf translate receives them as symbol servers and
-    download_cache, the first server's downstream store, as its symbol cache.
+    entries. servers are the srv* entries that name a downstream store slot and an upstream
+    store, rejoined from their stripped elements; uProf translate receives them as symbol
+    servers and download_cache, the first server's local downstream store, as its symbol cache.
     """
 
     caches: tuple[str, ...] = ()
@@ -410,8 +410,8 @@ def parse_nt_symbol_path(value: str | None) -> NtSymbolPath:
             local = [store for store in slots if store and not _is_url(store)]
             caches += local
             urls += [store for store in slots if _is_url(store)]
-            if len(slots) >= 2:
-                servers.append(entry)
+            if kind == "srv" and len(slots) >= 2:
+                servers.append("*".join(parts))
                 if download_cache is None and slots[0] and not _is_url(slots[0]):
                     download_cache = slots[0]
         elif kind == "cache":

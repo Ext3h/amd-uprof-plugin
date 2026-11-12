@@ -653,5 +653,18 @@ class EndToEndHitTest(unittest.TestCase):
         self.assertEqual(self.calls, 2)
 
 
+
+class EndToEndHitInsideSrvCacheTest(EndToEndHitTest):
+    """The default layout: the session cache root, not yet created, inside the srv* cache."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "srv").mkdir()
+        self.cache_root = self.root / "srv" / "uprof-session-cache"
+        env = mock.patch.dict(os.environ, {"UPROF_SESSION_CACHE_ROOT": str(self.cache_root)})
+        env.start()
+        self.addCleanup(env.stop)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ Run from the repository root: python tests/run_tests.py test_output_legend
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -381,9 +382,17 @@ class OutputLegendTest(unittest.TestCase):
         return result.stdout
 
     def run_next(self, command):
-        """Run one emitted NEXT command through the shell, as an agent would."""
-        return subprocess.run(command, shell=True, capture_output=True, text=True,
-                              encoding="utf-8")
+        """Run one emitted NEXT command through the shell, as an agent would.
+
+        The leading bare "python" is replaced by the interpreter running the tests, which is
+        the one known to have DuckDB; the rest of the command runs unchanged.
+        """
+        prefix = "python "
+        self.assertTrue(command.startswith(prefix), command)
+        interpreter = (f'"{sys.executable}"' if os.name == "nt"
+                       else shlex.quote(sys.executable))
+        return subprocess.run(interpreter + " " + command[len(prefix):], shell=True,
+                              capture_output=True, text=True, encoding="utf-8")
 
     def test_markdown_legend_per_mode(self):
         for mode in MODES:

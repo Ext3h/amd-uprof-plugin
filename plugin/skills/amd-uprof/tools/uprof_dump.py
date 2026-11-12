@@ -24,7 +24,8 @@ from typing import Final
 
 from uprof_native import TRANSLATE_TIMEOUT, require_uprof, run, translate_command
 from uprof_session import Sampler
-from uprof_util import DUMP_FILENAMES, UprofError, absolute, copy_session, read_text, tail_lines
+from uprof_util import (DUMP_FILENAMES, UprofError, absolute, capture_identity, copy_session,
+                        read_text, same_capture, sha256_file, tail_lines)
 
 _TIME_FILTER = re.compile(r"--time-filter[ =]+(\d+(?:\.\d+)?:\d+(?:\.\d+)?)")
 
@@ -75,14 +76,7 @@ def _file_key(path: Path) -> tuple[int, int] | None:
 
 
 def _sha256_file(path: Path) -> str | None:
-    digest = hashlib.sha256()
-    try:
-        with open(path, "rb") as handle:
-            for block in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(block)
-    except OSError:
-        return None
-    return digest.hexdigest()
+    return sha256_file(path)
 
 
 def _read_samples_meta(path: Path) -> dict[str, object] | None:
@@ -283,15 +277,6 @@ def remove_databases(directory: Path) -> None:
                       "a database", file=sys.stderr)
 
 
-def newest_raw_prd(session_dir: Path | str) -> float | None:
-    cpu_dir = Path(session_dir) / "cpu"
-    if not cpu_dir.is_dir():
-        return None
-    times = [path.stat().st_mtime
-             for path in cpu_dir.iterdir() if path.name.lower().endswith(".prd")]
-    return max(times) if times else None
-
-
 def recorded_time_filter(session_dir: Path | str) -> str | None:
     """The T1:T2 window of the session's recorded translate --time-filter, or None.
 
@@ -307,9 +292,9 @@ def recorded_time_filter(session_dir: Path | str) -> str | None:
 
 
 def _write_cache_meta(path: Path, session_dir: Path | str, kind: str, time_filter: str | None,
-                      dump: Path) -> None:
+                      dump: Path, capture: list[dict[str, object]] | None) -> None:
     meta = {"sessionPath": str(session_dir), "kind": kind, "timeFilter": time_filter or "",
-            "dump": str(dump)}
+            "dump": str(dump), "capture": capture}
     try:
         with open(path, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(meta, handle, indent=2)
@@ -318,7 +303,8 @@ def _write_cache_meta(path: Path, session_dir: Path | str, kind: str, time_filte
                          "dump cache") from exc
 
 
-def _make_dump(session_dir: Path | str, kind: str, time_filter: str | None, cache: Path) -> Path:
+def _make_dump(session_dir: Path | str, kind: str, time_filter: str | None, cache: Path,
+               capture: list[dict[str, object]] | None) -> Path:
     dump_name = DUMP_FILENAMES[kind]
     final_dump = cache / dump_name
     uprof = require_uprof()
@@ -355,7 +341,8 @@ def _make_dump(session_dir: Path | str, kind: str, time_filter: str | None, cach
             raise UprofError(f"translate --ascii produced an empty {dump_name} in {staging}; "
                              f"output: {detail}")
         remove_databases(staging)
-        _write_cache_meta(staging / "cache.json", session_dir, kind, time_filter, final_dump)
+        _write_cache_meta(staging / "cache.json", session_dir, kind, time_filter, final_dump,
+                          capture)
         try:
             if cache.is_dir():
                 shutil.rmtree(cache)
@@ -368,7 +355,8 @@ def _make_dump(session_dir: Path | str, kind: str, time_filter: str | None, cach
             except (UprofError, json.JSONDecodeError):
                 meta = {}
             current = (final_dump.is_file() and str(meta.get("kind")) == kind
-                       and str(meta.get("timeFilter") or "") == str(time_filter or ""))
+                       and str(meta.get("timeFilter") or "") == str(time_filter or "")
+                       and same_capture(meta.get("capture"), capture))
             if not current:
                 raise UprofError(f"cannot install the dump cache at {cache}: {exc}; remove the "
                                  "path or fix its permissions and retry") from exc
@@ -398,8 +386,10 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
     cache = cache_dir(session_dir)
     cached_dump = cache / dump_name
     cache_meta = cache / "cache.json"
-    newest_raw = newest_raw_prd(session_dir)
 
+    # The cache directory is named after the session path, but only the raw content decides
+    # whether its dump belongs to this capture.
+    meta = None
     reuse = False
     reason = "no cached dump for this session"
     if cache_meta.is_file():
@@ -407,22 +397,34 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
             meta = json.loads(read_text(cache_meta))
         except (UprofError, json.JSONDecodeError):
             meta = None
+        meta = meta if isinstance(meta, dict) else None
+    capture = capture_identity(session_dir, meta.get("capture") if meta else None)
+    if cache_meta.is_file():
         if not meta or not cached_dump.is_file():
             reason = "cached dump or its metadata is missing"
         elif str(meta.get("kind")) != sampler.ibs_dump_kind:
             reason = f"cached dump is for {meta.get('kind')}, not {sampler.ibs_dump_kind}"
         elif str(meta.get("timeFilter") or "") != str(time_filter or ""):
             reason = "cached dump was made with a different time filter"
-        elif newest_raw and cached_dump.stat().st_mtime < newest_raw:
-            reason = "cached dump is older than the session's raw cpu/*.prd"
+        elif capture is None:
+            reason = "the session's raw cpu/*.prd cannot be read to check the cached dump"
+        elif not same_capture(meta.get("capture"), capture):
+            reason = "cached dump was made from other raw cpu/*.prd content"
         else:
             reuse = True
     if reuse:
+        if meta.get("capture") != capture:
+            # Same content in new files (a copy): record their IDs so the next run skips hashing.
+            try:
+                _write_cache_meta(cache_meta, session_dir, sampler.ibs_dump_kind, time_filter,
+                                  cached_dump, capture)
+            except UprofError:
+                pass
         remove_databases(cache)
         return DumpInfo(absolute(cached_dump), "reused", cache_dir=cache,
-                        reason="dump is at least as new as the session's raw cpu/*.prd",
+                        reason="dump was made from the same raw cpu/*.prd content",
                         time_filter=time_filter)
 
-    dump = _make_dump(session_dir, sampler.ibs_dump_kind, time_filter, cache)
+    dump = _make_dump(session_dir, sampler.ibs_dump_kind, time_filter, cache, capture)
     return DumpInfo(absolute(dump), "generated", cache_dir=cache, reason=reason,
                     time_filter=time_filter)

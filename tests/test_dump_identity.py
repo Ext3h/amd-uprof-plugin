@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import uprof_dump
+import uprof_util
 from uprof_session import Sampler
 from uprof_util import DUMP_FILENAMES
 
@@ -77,7 +78,8 @@ class DumpIdentityTest(unittest.TestCase):
         self.make_capture(self.session, b"capture A")
         self.resolve()
 
-        self.assertEqual(self.resolve(), ("reused", b"capture A"))
+        with mock.patch.object(uprof_util, "sha256_file", side_effect=AssertionError("hashed")):
+            self.assertEqual(self.resolve(), ("reused", b"capture A"))
         self.assertEqual(self.translations, 1)
 
     def test_a_copy_of_the_same_capture_reuses_the_dump(self):

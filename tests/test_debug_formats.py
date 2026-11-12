@@ -16,8 +16,9 @@ import debug_fixtures as F
 import uprof_context
 import uprof_functions
 import uprof_symbols
+from run_tests import HOST_SKIP
 
-NT_ONLY = "production PDB discovery runs only on Windows (os.name == 'nt')"
+NT_ONLY = HOST_SKIP + "production PDB discovery runs only on Windows (os.name == 'nt')"
 
 
 def frames(records):

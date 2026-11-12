@@ -295,10 +295,17 @@ def _write_cache_meta(path: Path, session_dir: Path | str, kind: str, time_filte
                       dump: Path, capture: list[dict[str, object]] | None) -> None:
     meta = {"sessionPath": str(session_dir), "kind": kind, "timeFilter": time_filter or "",
             "dump": str(dump), "capture": capture}
+    # Written beside and renamed over it, so a concurrent reader never sees a partial file.
+    partial = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
-        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        with open(partial, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(meta, handle, indent=2)
+        os.replace(partial, path)
     except OSError as exc:
+        try:
+            partial.unlink()
+        except OSError:
+            pass
         raise UprofError(f"cannot write {path}: {exc}; check free space and permissions on the "
                          "dump cache") from exc
 
@@ -389,29 +396,29 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
 
     # The cache directory is named after the session path, but only the raw content decides
     # whether its dump belongs to this capture.
-    meta = None
-    reuse = False
-    reason = "no cached dump for this session"
-    if cache_meta.is_file():
-        try:
-            meta = json.loads(read_text(cache_meta))
-        except (UprofError, json.JSONDecodeError):
-            meta = None
-        meta = meta if isinstance(meta, dict) else None
+    try:
+        meta = json.loads(read_text(cache_meta)) if cache_meta.is_file() else None
+    except (UprofError, json.JSONDecodeError):
+        meta = None
+    meta = meta if isinstance(meta, dict) else None
     capture = capture_identity(session_dir, meta.get("capture") if meta else None)
-    if cache_meta.is_file():
-        if not meta or not cached_dump.is_file():
-            reason = "cached dump or its metadata is missing"
-        elif str(meta.get("kind")) != sampler.ibs_dump_kind:
-            reason = f"cached dump is for {meta.get('kind')}, not {sampler.ibs_dump_kind}"
-        elif str(meta.get("timeFilter") or "") != str(time_filter or ""):
-            reason = "cached dump was made with a different time filter"
-        elif capture is None:
-            reason = "the session's raw cpu/*.prd cannot be read to check the cached dump"
-        elif not same_capture(meta.get("capture"), capture):
-            reason = "cached dump was made from other raw cpu/*.prd content"
-        else:
-            reuse = True
+    reuse = False
+    if not cache_meta.is_file():
+        reason = "no cached dump for this session"
+    elif not meta or not cached_dump.is_file():
+        reason = "cached dump or its metadata is missing"
+    elif str(meta.get("kind")) != sampler.ibs_dump_kind:
+        reason = f"cached dump is for {meta.get('kind')}, not {sampler.ibs_dump_kind}"
+    elif str(meta.get("timeFilter") or "") != str(time_filter or ""):
+        reason = "cached dump was made with a different time filter"
+    elif capture is None:
+        reason = "the session's raw cpu/*.prd cannot be read to check the cached dump"
+    elif not capture:
+        reason = "the session has no raw cpu/*.prd to check the cached dump against"
+    elif not same_capture(meta.get("capture"), capture):
+        reason = "cached dump was made from other raw cpu/*.prd content"
+    else:
+        reuse = True
     if reuse:
         if meta.get("capture") != capture:
             # Same content in new files (a copy): record their IDs so the next run skips hashing.

@@ -107,7 +107,7 @@ The former `D × count / Σ count over windowId` estimator was removed; do not r
 ### Dump resolution and cache
 
 1. A dump beside the session (preferred).
-2. A current cached dump under `<OS temp>/uprof-dump-cache/<sha256(normcase(abspath(session)))[:16]>/`. It is reused only when `cache.json` records the same kind and the same `translateCommand --time-filter`, and the same name, size and SHA-256 of every raw `cpu/*.prd`.
+2. A current cached dump under `<OS temp>/uprof-dump-cache/<sha256(normcase(abspath(session)))[:16]>/`. It is reused only when `cache.json` records the same kind and the same `translateCommand --time-filter`, and the same name, size and SHA-256 of every raw `cpu/*.prd` (a digest is kept unhashed while file ID, size and mtime match).
 3. Otherwise a copy of the raw session is translated with `--ascii` in a unique staging directory, renamed into place when complete; `GENERATING DUMP:` precedes it.
 
 The cache holds no database: every `.db`/`.duckdb` (and its WAL/SHM) is removed before a cached dump is handed back, because a dump-only translate writes a degraded `cpu.db` with far fewer `Function` rows; if the removal fails it prints `WARNING: could not remove <path>: <reason>; the cache copy still contains a database`. `cpu.db` must always come from the original session. `DUMP:` prints the path, size, cache directory and the reuse/regeneration reason; `DB:` is added when the dump directory differs from the session directory.

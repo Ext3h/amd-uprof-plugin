@@ -205,6 +205,41 @@ class OutFileGuardTest(unittest.TestCase):
     def test_a_parquet_copy_not_built_yet_through_a_unc_path_is_protected(self):
         self._assert_new_copy_refused(self._unc(self.cache / "IbsOpDump.samples.parquet"))
 
+    def _subst(self, directory):
+        """A free drive letter mapped to directory with subst, which needs no admin rights."""
+        if os.name != "nt":
+            self.skipTest("host: subst drives exist on Windows only")
+        import string
+        import subprocess
+        for letter in reversed(string.ascii_uppercase[3:]):
+            drive = f"{letter}:"
+            if os.path.exists(drive + "\\"):
+                continue
+            completed = subprocess.run(["subst", drive, str(directory)], capture_output=True)
+            if completed.returncode == 0:
+                self.addCleanup(subprocess.run, ["subst", drive, "/d"], capture_output=True)
+                return Path(drive + "\\")
+        self.skipTest("host: no free drive letter for subst")
+
+    def test_a_parquet_copy_not_built_yet_through_a_subst_drive_is_protected(self):
+        self._assert_new_copy_refused(str(self._subst(self.cache) / "IbsOpDump.samples.parquet"))
+
+    def test_missing_files_below_an_aliased_parent_are_the_same_path(self):
+        # A UNC or mapped spelling survives canonicalisation; keeping every spelling as typed
+        # reaches the same fallback with a link any user can create.
+        if os.name == "nt":
+            link = self._junction(self.cache)
+        else:
+            link = self.root / "link"
+            link.symlink_to(self.cache, target_is_directory=True)
+        with mock.patch.object(uprof_util, "canonical", side_effect=uprof_util.absolute):
+            self.assertTrue(uprof_util.same_path(link / "new" / "a.parquet",
+                                                 self.cache / "new" / "a.parquet"))
+            self.assertFalse(uprof_util.same_path(link / "new" / "a.parquet",
+                                                  self.cache / "new" / "b.parquet"))
+            self.assertFalse(uprof_util.same_path(link / "new" / "a.parquet",
+                                                  self.root / "new" / "a.parquet"))
+
     def test_the_parquet_unsupported_marker_is_protected(self):
         marker = self.cache / "IbsOpDump.samples.parquet.unsupported.json"
         marker.write_text("{}", encoding="utf-8")

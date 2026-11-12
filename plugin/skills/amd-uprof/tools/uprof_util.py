@@ -177,14 +177,17 @@ def capture_identity(session_dir: os.PathLike[str] | str,
 
 
 def same_capture(first: object, second: object) -> bool:
-    """Whether two capture_identity results describe the same raw content."""
+    """Whether two capture_identity results describe the same raw content.
+
+    An empty identity (no raw file) never matches: it cannot tell two captures apart.
+    """
     def content(identity: object) -> list[tuple[object, ...]] | None:
         if not isinstance(identity, list):
             return None
         return [(entry.get("name"), entry.get("size"), entry.get("sha256"))
                 for entry in identity if isinstance(entry, dict)]
     left = content(first)
-    return left is not None and left == content(second)
+    return bool(left) and left == content(second)
 
 
 def tail_lines(text: str, count: int = 6) -> str:

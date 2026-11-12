@@ -57,6 +57,9 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
+    env:
+      # Same release as the Windows MSI; the trace goldens hold verbatim LLVM tool output.
+      LLVM_VERSION: '23.1.4'
     steps:
       - uses: actions/checkout@v4
 
@@ -81,6 +84,16 @@ jobs:
             sudo ln -sf "/usr/lib/llvm-23/bin/$tool" "/usr/local/bin/$tool"
           done
           llvm-objdump --version
+
+      - name: Require the pinned LLVM version
+        run: |
+          for tool in llvm-symbolizer llvm-objdump llvm-readobj llvm-pdbutil; do
+            found=$("$tool" --version | awk '/LLVM version/ {print $NF; exit}')
+            if [ "$found" != "$LLVM_VERSION" ]; then
+              echo "::error::$tool reports LLVM $found, expected $LLVM_VERSION; the trace goldens hold its verbatim output"
+              exit 1
+            fi
+          done
 
       - name: Capture traces
         run: python tests/capture_debug_traces.py --out-dir "$RUNNER_TEMP/debug-traces"

@@ -189,7 +189,8 @@ class ModuleEvidence:
     search: PdbSearch | None = None
     symbolizer: SymbolizerRun | None = None
     pdb: str | None = None
-    outcome: str = "resolved"  # resolved, no_debug_info, no_pdb, readobj_failed, module_missing, failed
+    # resolved, no_debug_info, no_pdb, readobj_failed, module_missing, wrong_build, failed
+    outcome: str = "resolved"
     note: str | None = None
     # A toolchain cause carries its own remedy in note; the symbol-path remedy would mislead.
     toolchain: bool = False
@@ -214,6 +215,42 @@ def _as_int(value: object) -> int | None:
         return int(str(value).strip(), 0)
     except (TypeError, ValueError):
         return None
+
+
+_HEADER_CHECKSUM = re.compile(r"^\s*CheckSum:\s*(0x[0-9A-Fa-f]+)\s*$")
+_HEADER_SIZE_OF_IMAGE = re.compile(r"^\s*SizeOfImage:\s*(\d+)\s*$")
+
+
+def image_build_mismatch(image: str, capture_checksum: object, capture_size: object,
+                         readobj: Path | None) -> str | None:
+    """Why the image on disk is not the build the capture recorded, or None.
+
+    A nonzero PE CheckSum pair that differs proves another build; without that pair, a nonzero
+    SizeOfImage pair that differs does. Missing evidence (no Module column, CheckSum 0, an image
+    without PE headers, no llvm-readobj) is not a mismatch, so such modules are symbolized as
+    before.
+    """
+    recorded, recorded_size = _as_int(capture_checksum), _as_int(capture_size)
+    if not (recorded or recorded_size) or not readobj:
+        return None
+    completed = run([str(readobj), "--file-headers", image], timeout=PDB_PROBE_TIMEOUT)
+    if completed.returncode != 0:
+        return None
+    checksum = size = None
+    for line in (completed.stdout or "").splitlines():
+        if checksum is None and (match := _HEADER_CHECKSUM.match(line)):
+            checksum = int(match.group(1), 16)
+        elif size is None and (match := _HEADER_SIZE_OF_IMAGE.match(line)):
+            size = int(match.group(1), 10)
+    if recorded and checksum:
+        if recorded != checksum:
+            return (f"the image is a different build than the capture recorded: CheckSum "
+                    f"0x{checksum:X}, capture 0x{recorded:X}")
+        return None
+    if recorded_size and size and recorded_size != size:
+        return (f"the image is a different build than the capture recorded: SizeOfImage "
+                f"0x{size:X}, capture 0x{recorded_size:X}")
+    return None
 
 
 def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int | None]:
@@ -953,6 +990,12 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
               "profile; a third-party module with no symbols is a finding, not a blocker")
     if evidence.toolchain:
         remedy = None
+    if evidence.outcome == "wrong_build":
+        # The debug directory of another build is not evidence for the captured one.
+        facts = [evidence.note or "the image is a different build than the capture recorded"]
+        remedy = ("pass profile --image-path <file|dir> naming the captured build (from that "
+                  "build's output or a symbol server), then re-run profile; or run profile --by "
+                  "module, which needs no image")
     print(f"WARNING: no symbols resolved for {evidence.module_name} "
           f"({evidence.module_path}): {'; '.join(facts)}"
           + (f"; {remedy}" if remedy else ""), file=stream)
@@ -995,8 +1038,13 @@ def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list
                       symbol_files: Iterable[str | Path],
                       symbol_dirs: Iterable[str | Path],
                       image_files: Iterable[str | Path],
-                      image_dirs: Iterable[str | Path]) -> _ModuleSymbolization:
-    """Symbolize one module into its own directory; return its text instead of writing it."""
+                      image_dirs: Iterable[str | Path],
+                      identity: tuple[object, object] | None = None) -> _ModuleSymbolization:
+    """Symbolize one module into its own directory; return its text instead of writing it.
+
+    identity is the capture's (Module.checksum, Module.size); an image that disagrees is
+    another build and is not symbolized.
+    """
     output = io.StringIO()
     evidence: ModuleEvidence | None = None
     try:
@@ -1017,6 +1065,16 @@ def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list
             _evidence_line(evidence, output)
             return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence)
         module_path = os.fspath(resolved)
+        if identity is not None:
+            mismatch = image_build_mismatch(
+                module_path, identity[0], identity[1],
+                find_sibling(require_symbolizer(), "llvm-readobj"))
+            if mismatch:
+                evidence = ModuleEvidence(module_name, module_path,
+                                          found_debug_info=(debug_info or {}).get(module_name),
+                                          outcome="wrong_build", note=mismatch)
+                _evidence_line(evidence, output)
+                return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence)
         module_dir = out_path / f"module-{index:04d}"
         rva_file = module_dir / "rvas.txt"
         try:
@@ -1056,7 +1114,9 @@ def _symbolize_tasks(modules: list[tuple[str, str, list[str]]], out_path: Path,
                      symbol_files: Iterable[str | Path],
                      symbol_dirs: Iterable[str | Path],
                      image_files: Iterable[str | Path],
-                     image_dirs: Iterable[str | Path]) -> list[_ModuleSymbolization]:
+                     image_dirs: Iterable[str | Path],
+                     identities: dict[str, tuple[object, object]] | None = None
+                     ) -> list[_ModuleSymbolization]:
     """Symbolize modules in a bounded pool; write each module's text in module index order."""
     symbol_files, symbol_dirs = tuple(symbol_files), tuple(symbol_dirs)
     image_files, image_dirs = tuple(image_files), tuple(image_dirs)
@@ -1065,7 +1125,8 @@ def _symbolize_tasks(modules: list[tuple[str, str, list[str]]], out_path: Path,
     try:
         futures = [
             pool.submit(_symbolize_worker, index, module_name, module_path, rvas, out_path,
-                        debug_info, symbol_files, symbol_dirs, image_files, image_dirs)
+                        debug_info, symbol_files, symbol_dirs, image_files, image_dirs,
+                        (identities or {}).get(module_name))
             for index, (module_name, module_path, rvas) in enumerate(modules)
         ]
         outcomes: list[_ModuleSymbolization] = []
@@ -1088,7 +1149,8 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
                       symbol_files: Iterable[str | Path] = (),
                       symbol_dirs: Iterable[str | Path] = (),
                       image_files: Iterable[str | Path] = (),
-                      image_dirs: Iterable[str | Path] = ()
+                      image_dirs: Iterable[str | Path] = (),
+                      identities: dict[str, tuple[object, object]] | None = None
                       ) -> tuple[Path | None, Path | None, Path | None, list[ModuleEvidence]]:
     """Symbolize every module in scope and combine the artifacts.
 
@@ -1096,7 +1158,9 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     to Module.foundDebugInfo so the evidence separates "no debug info recorded" from "symbol file
     missing". symbol_files are explicit symbol/debug files and symbol_dirs are search roots.
     image_files are explicit module images and image_dirs are searched by the module's basename;
-    the caller probes --symbol-path and --image-path once with probe_paths. Modules are symbolized
+    the caller probes --symbol-path and --image-path once with probe_paths. identities maps a
+    module key to the capture's (Module.checksum, Module.size); an image that disagrees is
+    another build and gets no names. Modules are symbolized
     concurrently, but their stream text and the combined artifacts keep module order. Returns
     (symbols.parquet, symbols.publics.csv, symbols.pdbs.csv, evidence); the parquet is None when
     no module could be symbolized, in which case the SQL reports every address as '<no symbol>'.
@@ -1114,7 +1178,7 @@ def symbolize_modules(modules: list[tuple[str, str, list[str]]], out_dir: str | 
     _PUBLICS_CACHE.reset()
     try:
         outcomes = _symbolize_tasks(modules, out_path, stream, debug_info, symbol_files,
-                                    symbol_dirs, image_files, image_dirs)
+                                    symbol_dirs, image_files, image_dirs, identities)
         for outcome in outcomes:
             if outcome.evidence is not None:
                 evidence.append(outcome.evidence)

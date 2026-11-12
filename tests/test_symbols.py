@@ -729,7 +729,7 @@ class ParallelSymbolizationTest(unittest.TestCase):
 class SymbolizeTasksErrorReplayTest(unittest.TestCase):
     def test_an_error_stops_replay_before_later_modules(self):
         def worker(index, name, path, rvas, out_path, debug_info, symbol_files,
-                   symbol_dirs, image_files, image_dirs):
+                   symbol_dirs, image_files, image_dirs, identity=None):
             if name == "b.exe":
                 return uprof_symbols._ModuleSymbolization(
                     name, "MODULE: b.exe\nFAILURE DETAIL\n", error=RuntimeError("boom"))

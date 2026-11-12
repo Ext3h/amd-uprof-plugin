@@ -302,6 +302,20 @@ def _module_debug_info(connection: object) -> dict[str, bool]:
     return {str(key): bool(found) for key, found in rows}
 
 
+def _module_identities(connection: object) -> dict[str, tuple[object, object]]:
+    """Module.checksum and Module.size keyed by module key, for the columns the capture has."""
+    columns = {str(row[0]).lower() for row in connection.execute(
+        "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'").fetchall()}
+    if "checksum" not in columns and "size" not in columns:
+        return {}
+    checksum = "max(checksum)" if "checksum" in columns else "NULL"
+    size = "max(size)" if "size" in columns else "NULL"
+    rows = connection.execute(
+        f"SELECT module_key(path), {checksum}, {size} FROM Module "
+        "WHERE COALESCE(path, '') <> '' GROUP BY 1").fetchall()
+    return {str(key): (value, image_size) for key, value, image_size in rows}
+
+
 def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
     """One-line per-module cause for SYMBOL_COVERAGE; the stderr evidence line has the detail."""
     if evidence.outcome == "no_debug_info":
@@ -315,6 +329,8 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
         return f"llvm-readobj could not read the debug directory: {evidence.note or 'unknown'}"
     if evidence.outcome == "module_missing":
         return f"module file not available: {evidence.note or 'no recorded path'}"
+    if evidence.outcome == "wrong_build":
+        return evidence.note or "the image is a different build than the capture recorded"
     return f"symbolization failed: {evidence.note or evidence.outcome}"
 
 
@@ -380,7 +396,8 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
         [(name, path, rvas) for name, (path, rvas) in modules.items()], artifacts,
         stream=stream, debug_info=_module_debug_info(connection),
         symbol_files=paths.symbol_files, symbol_dirs=paths.symbol_dirs,
-        image_files=paths.image_files, image_dirs=paths.image_dirs)
+        image_files=paths.image_files, image_dirs=paths.image_dirs,
+        identities=_module_identities(connection))
     causes = {item.module_name: _evidence_cause(item) for item in evidence
               if item.outcome != "resolved"}
     for name in ambiguous:

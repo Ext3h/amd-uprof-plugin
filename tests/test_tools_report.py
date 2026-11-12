@@ -36,9 +36,11 @@ class ToolsReportTest(unittest.TestCase):
         rows = report({"llvm-objdump": objdump})
         self.assertIn(f"OBJDUMP={objdump}; version=LLVM version 23.1.4", rows)
 
-    def test_a_missing_objdump_prints_missing_without_failing(self):
+    def test_a_missing_objdump_prints_the_cause_and_remedy_without_failing(self):
         rows = report({})
-        self.assertIn("OBJDUMP=; version=MISSING (not found)", rows)
+        self.assertIn("OBJDUMP=; version=MISSING (llvm-objdump is not beside llvm-symbolizer or "
+                      "on PATH; instruction context is omitted; remedy: install LLVM or add its "
+                      "bin directory to PATH; module/RVA rows still work)", rows)
 
 
 if __name__ == "__main__":

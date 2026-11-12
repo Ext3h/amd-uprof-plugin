@@ -151,6 +151,11 @@ def write_session(root, module_path, addresses, function_name="") -> Path:
 
 def profile(session, by="line", extra=()) -> dict:
     """Run the production profile path on a synthetic session and return its JSON document."""
+    return profile_with_stderr(session, by, extra)[0]
+
+
+def profile_with_stderr(session, by="line", extra=()) -> tuple[dict, str]:
+    """Like profile(), and also return the run's stderr (WARNING lines and progress)."""
     import sys
 
     completed = subprocess.run(
@@ -160,7 +165,7 @@ def profile(session, by="line", extra=()) -> dict:
     if completed.returncode != 0:
         raise AssertionError(f"uprof.py profile exited {completed.returncode}: "
                              f"{completed.stderr.strip()}")
-    return json.loads(completed.stdout)
+    return json.loads(completed.stdout), completed.stderr
 
 
 def relative_path_for_fallback(path) -> Path:

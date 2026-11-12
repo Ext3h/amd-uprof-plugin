@@ -3,7 +3,8 @@
 Goldens for `tests/test_debug_traces.py`. Each file records one fixture from
 `tests/capture_debug_traces.py`: the direct `llvm-readobj`, symbol, `llvm-objdump`,
 `llvm-pdbutil` and `llvm-symbolizer` output, the production `symbolize_module` outcome and
-probe evidence, and a `profile --by line` / `--by function` render over a synthetic session.
+probe evidence, and a `profile --by line` / `--by function` render over a synthetic session:
+its `SYMBOL_COVERAGE` line, its stderr `WARNING:` lines and its rows.
 
 ## Provenance
 
@@ -32,6 +33,7 @@ may be used to refresh the goldens.
 ## Normalization
 
 - The fixture root is replaced with `<FIXTURES>` in both slash styles.
+- The temporary root of the synthetic session is replaced with `<SESSION_ROOT>`.
 - An embedded PDB path is reduced to its basename, since the absolute build directory is local
   to whoever built the fixture.
 - Tool locations, version banners, timestamps and durations are absent. Profile rows are

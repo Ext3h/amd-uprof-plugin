@@ -407,6 +407,30 @@ def _dump_window_s(session: Path, time_filter: str | None) -> float | None:
         return None
 
 
+def _shown(path: Path) -> str:
+    """path, followed by where it resolves when that differs from how it was given."""
+    try:
+        resolved = os.path.realpath(path)
+    except (OSError, ValueError):
+        return os.fspath(path)
+    if os.path.normcase(resolved) == os.path.normcase(os.fspath(path)):
+        return os.fspath(path)
+    return f"{path} (resolves to {resolved})"
+
+
+def _refuse_overlap(out: Path, session: Path) -> None:
+    """Refuse an out-dir that is the session or nests with it, however either is spelled.
+
+    Run it again directly before anything in out is removed or copied, so a path swapped for a
+    link after the first check is still caught.
+    """
+    if contains(out, session) or contains(session, out):
+        raise UprofError(f"--out-dir {_shown(out)} overlaps --session {_shown(session)} (the "
+                         "same directory under another name, or one inside the other): "
+                         "translate rewrites cpu.db, callstack.db and session.uprof, so it works "
+                         "on a copy. Choose an --out-dir outside the session")
+
+
 def _clear_translate_outputs(out: Path) -> None:
     """Remove what an earlier translate copied and generated in out.
 
@@ -470,11 +494,7 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     if out.exists() and not out.is_dir():
         raise UprofError(f"output path exists and is not a directory: {out}; choose another "
                          "--out-dir")
-    if contains(out, session) or contains(session, out):
-        raise UprofError(f"--out-dir {out} overlaps --session {session} (the same directory "
-                         "under another name, or one inside the other): translate rewrites "
-                         "cpu.db, callstack.db and session.uprof, so it works on a copy. Choose an "
-                         "--out-dir outside the session")
+    _refuse_overlap(out, session)
     conflicts = [out / name for name in TRANSLATE_OUTPUTS if (out / name).exists()]
     if conflicts and not force:
         shown = ", ".join(os.fspath(path) for path in conflicts)
@@ -497,6 +517,7 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     print(f"SYMBOL_SERVERS={' | '.join(servers)}")
 
     uprof = require_uprof()
+    _refuse_overlap(out, session)
     if force:
         _clear_translate_outputs(out)
     copy_session(session, out)

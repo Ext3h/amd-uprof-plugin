@@ -696,7 +696,9 @@ def public_symbols(out_file: str | Path, pdb_file: str | Path,
 
     # One invocation supplies both records; the run-scoped cache gives each call its own pairs
     # file in the shared scratch directory.
-    combined = run([str(pdbutil_path), "dump", "-section-headers", "-publics", str(pdb_path)])
+    # A timeout raises, which the caller reports as skipped fold labelling.
+    combined = run([str(pdbutil_path), "dump", "-section-headers", "-publics", str(pdb_path)],
+                   timeout=PDB_PROBE_TIMEOUT)
     if combined.returncode != 0:
         detail = tail_lines((combined.stdout or "") + "\n" + (combined.stderr or ""))
         raise UprofError(f"llvm-pdbutil exited {combined.returncode}: {detail or 'no output'}")

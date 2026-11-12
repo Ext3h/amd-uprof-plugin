@@ -1924,14 +1924,14 @@ def _row_attribution(connection: object, by: str) -> dict[str, int]:
     """
     view = "v_function_rows" if by == "function" else "v_region_rows"
     previous = connection.execute("SELECT getvariable('top_n')").fetchall()
-    previous = previous[0][0] if previous else 0
+    previous = int(previous[0][0]) if previous and previous[0][0] is not None else 0
     try:
-        connection.execute("SET VARIABLE top_n = ?", ["0"])
+        connection.execute("SET VARIABLE top_n = ?", [0])
         rows = connection.execute(
             f"SELECT attribution, CAST(sum(samples) AS BIGINT) FROM {view} "
             "GROUP BY attribution").fetchall()
     finally:
-        connection.execute("SET VARIABLE top_n = ?", [str(previous)])
+        connection.execute("SET VARIABLE top_n = ?", [previous])
     counts = {"named": 0, "derived": 0, "unresolved": 0}
     for attribution, samples in rows:
         value = int(samples or 0)
@@ -1953,16 +1953,16 @@ def _hot_rva_field(connection: object) -> list[tuple[str, str]]:
     Query the view uncapped so --top cannot hide it; restore the cap before the projection.
     """
     previous = connection.execute("SELECT getvariable('top_n')").fetchall()
-    previous = previous[0][0] if previous else 0
+    previous = int(previous[0][0]) if previous and previous[0][0] is not None else 0
     try:
-        connection.execute("SET VARIABLE top_n = ?", ["0"])
+        connection.execute("SET VARIABLE top_n = ?", [0])
         rows = connection.execute(
             "SELECT function, module, hot_rva, hot_samples, samples, total_samples "
             "FROM v_function_rows WHERE hot_samples IS NOT NULL "
             "ORDER BY hot_samples DESC, hot_rva LIMIT 1"
         ).fetchall()
     finally:
-        connection.execute("SET VARIABLE top_n = ?", [str(previous)])
+        connection.execute("SET VARIABLE top_n = ?", [previous])
     if not rows:
         return []
     function, module, hot_rva, hot_samples, samples, total_samples = rows[0]

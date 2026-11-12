@@ -112,17 +112,20 @@ SET VARIABLE schema_check = (
   ) AS missing
 );
 
--- The PMC branch reads processId; a dump capture reads only PID from the ASCII dump, so an export
--- without that column still works with a dump.
+-- The PMC branch reads processId and coreId; a dump capture reads only PID from the ASCII dump,
+-- so an export without those columns still works with a dump.
 SET VARIABLE schema_check_pid = CASE WHEN NOT getvariable('has_dump') THEN (
-  SELECT CASE WHEN count(*) = 0
-              THEN error('uProf export incomplete: missing column UnifiedSampleSeries.processId; '
-                         'the capture probably comes from a uProf version with a different export')
+  SELECT CASE WHEN count(*) > 0
+              THEN error('uProf export incomplete: missing ' ||
+                         string_agg('column UnifiedSampleSeries.' || column_name, ', ' ORDER BY column_name) ||
+                         '; the capture probably comes from a uProf version with a different export')
               ELSE 1 END
-  FROM duckdb_columns() AS c
-  WHERE lower(c.schema_name) = 'main' AND lower(c.table_name) = 'unifiedsampleseries'
-    AND lower(c.column_name) = 'processid')
-ELSE 1 END;
+  FROM (VALUES ('processId'), ('coreId')) AS pmc_columns(column_name)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM duckdb_columns() AS c
+    WHERE lower(c.schema_name) = 'main' AND lower(c.table_name) = 'unifiedsampleseries'
+      AND lower(c.column_name) = lower(pmc_columns.column_name))
+) ELSE 1 END;
 
 SET VARIABLE dump_guard = CASE
   WHEN NOT getvariable('has_dump') THEN 1

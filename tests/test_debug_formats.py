@@ -21,6 +21,8 @@ from run_tests import HOST_SKIP
 from test_symbols import write_stub_symbolizer
 
 NT_ONLY = HOST_SKIP + "production PDB discovery runs only on Windows (os.name == 'nt')"
+NO_PDB_OPTION = F.pdb_option_skip()
+NO_ZLIB = F.zlib_skip()
 
 
 def frames(records):
@@ -238,6 +240,7 @@ class PeFullPdbTest(FixtureTestCase):
         self.assertEqual(rows, {F.PE_HELPER: "fixture_helper",
                                 F.PE_ENTRY: "fixture_entry"})
 
+    @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_symbolizer_resolves_both_functions_and_the_body_line(self):
         resolved = frames(F.symbolizer_records(
             F.PE / "fixture_full.exe",
@@ -248,6 +251,7 @@ class PeFullPdbTest(FixtureTestCase):
         self.assert_names_line(resolved[F.PE_ENTRY_BODY], "fixture_entry", 7)
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
+    @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_accepts_the_adjacent_pdb_and_reports_folds(self):
         module, records, stream = F.production(
             F.PE / "fixture_full.exe",
@@ -261,6 +265,7 @@ class PeFullPdbTest(FixtureTestCase):
         self.assert_names_line(resolved[F.PE_ENTRY_BODY], "fixture_entry", 7)
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
+    @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_searches_a_symbol_directory_for_the_pdb(self):
         exe = self.temporary_copy(F.PE / "fixture_full.exe")
         module, records, stream = F.production(exe, [F.PE_ENTRY],
@@ -270,6 +275,7 @@ class PeFullPdbTest(FixtureTestCase):
         self.assert_names_line(frames(records)[F.PE_ENTRY], "fixture_entry", 6)
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
+    @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_accepts_a_guid_age_cache_key_directory(self):
         exe = self.temporary_copy(F.PE / "fixture_full.exe")
         _, guid, age = uprof_symbols._readobj_info(
@@ -356,6 +362,7 @@ class PePublicOnlyPdbTest(FixtureTestCase):
         self.assertEqual(rows, {F.PE_HELPER: "fixture_helper",
                                 F.PE_ENTRY: "fixture_entry"})
 
+    @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_symbolizer_names_both_starts_without_lines(self):
         resolved = frames(F.symbolizer_records(
             F.PE / "fixture_public.exe", [F.PE_HELPER, F.PE_ENTRY],
@@ -364,6 +371,7 @@ class PePublicOnlyPdbTest(FixtureTestCase):
         self.assert_names_no_line(resolved[F.PE_ENTRY], "fixture_entry")
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
+    @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_accepts_the_public_pdb(self):
         module, records, stream = F.production(
             F.PE / "fixture_public.exe", [F.PE_HELPER, F.PE_ENTRY])
@@ -633,6 +641,7 @@ class CompressedAndSplitDwarfTest(FixtureTestCase):
         self.assertIn(".debug_info", output)
         self.assertIn("SHF_COMPRESSED", output)
 
+    @unittest.skipIf(NO_ZLIB, NO_ZLIB or "")
     def test_symbolizer_decompresses_and_resolves_lines(self):
         resolved = frames(F.symbolizer_records(
             F.ELF / "fixture_compressed",
@@ -659,6 +668,8 @@ class CompressedAndSplitDwarfTest(FixtureTestCase):
     def test_production_symbolizes_compressed_and_split_dwarf(self):
         for image in (F.ELF / "fixture_compressed", F.ELF / "fixture_split"):
             with self.subTest(image=image.name):
+                if NO_ZLIB and image.name == "fixture_compressed":
+                    self.skipTest(NO_ZLIB)
                 module, records, _ = F.production(
                     image, [F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY,
                             F.ELF_COMPRESSED_BODY])

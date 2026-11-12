@@ -23,9 +23,11 @@ GOLDENS = F.DEBUG / "traces" / OS_NAME
 
 
 SKIP = F.tool_skip() or F.duckdb_skip()
+# The goldens hold the output of an LLVM that reads PDBs and compressed DWARF.
+TRACE_SKIP = SKIP or F.pdb_option_skip() or F.zlib_skip()
 
 
-@unittest.skipIf(SKIP, SKIP or "")
+@unittest.skipIf(TRACE_SKIP, TRACE_SKIP or "")
 class DebugTraceTest(unittest.TestCase):
     def test_capture_matches_the_committed_goldens(self):
         if not GOLDENS.is_dir():

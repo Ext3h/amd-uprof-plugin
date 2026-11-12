@@ -4,6 +4,7 @@ The binaries and their exact builds are documented in fixtures/debug/README.md.
 """
 
 import csv
+import functools
 import json
 import os
 import subprocess
@@ -46,6 +47,28 @@ def tool_skip() -> str | None:
                                        ("llvm-objdump", OBJDUMP),
                                        ("llvm-pdbutil", PDBUTIL)) if not path]
     return ("missing " + ", ".join(missing) + "; install LLVM") if missing else None
+
+
+def pdb_option_skip(symbolizer=None) -> str | None:
+    """A skip reason when llvm-symbolizer lacks --pdb (LLVM before 23), or None."""
+    symbolizer = symbolizer or SYMBOLIZER
+    return uprof_native.pdb_option_cause(os.fspath(symbolizer)) if symbolizer else None
+
+
+@functools.lru_cache(maxsize=None)
+def _zlib_skip(symbolizer: str) -> str | None:
+    completed = run(symbolizer, f"--obj={ELF / 'fixture_compressed'}", "--output-style=JSON",
+                    input_text=f"0x{ELF_COMPRESSED_HELPER:X}\n")
+    if "LLVM_ENABLE_ZLIB" not in (completed.stderr or ""):
+        return None
+    return (f"{symbolizer} was built without zlib and cannot read compressed DWARF; "
+            "install an LLVM built with zlib, such as the official LLVM 23.1.4 release the CI jobs install")
+
+
+def zlib_skip(symbolizer=None) -> str | None:
+    """A skip reason when llvm-symbolizer cannot decompress zlib DWARF sections, or None."""
+    symbolizer = symbolizer or SYMBOLIZER
+    return _zlib_skip(os.fspath(symbolizer)) if symbolizer else None
 
 
 def duckdb_skip() -> str | None:

@@ -231,5 +231,10 @@ The unsupported notes above describe the current tool, not a missing input forma
 python tests/run_tests.py test_debug_formats
 ```
 
-The tests skip when one of `llvm-symbolizer`, `llvm-readobj`, `llvm-objdump` or
-`llvm-pdbutil` is missing; the PDB production tests additionally skip off Windows.
+The tests need LLVM >= 23 built with zlib; CI installs the official LLVM 23.1.4 release. They
+skip when one of `llvm-symbolizer`, `llvm-readobj`, `llvm-objdump` or `llvm-pdbutil` is
+missing, the tests that pass a PDB skip when `llvm-symbolizer --help` lists no `--pdb` (LLVM
+before 23), and the compressed-DWARF tests skip when the symbolizer was built without zlib. The
+trace comparison skips in either case, because the goldens hold that toolchain's output. These
+are tool skips, so `UPROF_REQUIRE_TOOLS=1` turns them into failures. The PDB production tests
+additionally skip off Windows.

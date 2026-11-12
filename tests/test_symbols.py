@@ -640,6 +640,44 @@ class PublicsMemoTest(unittest.TestCase):
             self.assertGreater(invoked.call_count, calls)
 
 
+class PublicsTimeoutTest(unittest.TestCase):
+    """The publics dump is bounded like every native call; a timeout skips fold labelling."""
+
+    def setUp(self):
+        uprof_symbols._PUBLICS_CACHE.reset()
+        self.addCleanup(uprof_symbols._PUBLICS_CACHE.reset)
+        directory = tempfile.TemporaryDirectory(prefix="uprof-publics-timeout-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.pdb = self.root / "x.pdb"
+        self.pdb.write_bytes(b"pdb")
+        self.pdbutil = self.root / "llvm-pdbutil.exe"
+        self.pdbutil.write_bytes(b"")
+
+    def test_the_publics_dump_runs_with_the_pdb_probe_timeout(self):
+        stdout = ("SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
+                  "1 | S_PUB32 [size = 8] `foo`\n"
+                  "        flags = function, addr = 0001:10\n")
+        completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, stdout, "")
+        with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
+            uprof_symbols.public_symbols(self.root / "one.csv", self.pdb, self.pdbutil)
+
+        self.assertEqual(invoked.call_args.kwargs.get("timeout"),
+                         uprof_symbols.PDB_PROBE_TIMEOUT)
+
+    def test_a_timed_out_dump_is_a_fold_warning_not_a_failure(self):
+        stream = io.StringIO()
+        timeout = UprofError("llvm-pdbutil.exe timed out after 300s")
+        with mock.patch.object(uprof_symbols, "find_sibling", return_value=self.pdbutil), \
+                mock.patch.object(uprof_symbols, "run", side_effect=timeout):
+            result = uprof_symbols._publics(self.pdb, self.root / "symbols.jsonl",
+                                            self.root / "llvm-symbolizer.exe", stream)
+
+        self.assertIsNone(result)
+        self.assertIn("timed out after 300s", stream.getvalue())
+        self.assertIn("FOLDS: skipped", stream.getvalue())
+
+
 class ParallelSymbolizationTest(unittest.TestCase):
     """Modules symbolize concurrently, but stream text and artifacts keep module order."""
 

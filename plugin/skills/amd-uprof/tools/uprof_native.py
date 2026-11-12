@@ -15,6 +15,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Final
@@ -232,6 +233,70 @@ def print_output(completed: subprocess.CompletedProcess[str]) -> None:
 
 def failure_detail(completed: subprocess.CompletedProcess[str]) -> str:
     return tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
+
+
+# Windows NTSTATUS of an access violation, as a signed and an unsigned process exit code.
+ACCESS_VIOLATION_EXITS: Final = (-1073741819, 0xC0000005)
+# The CLI log line AMDuProfCLI writes when a session holds no sample category it can translate.
+NO_CATEGORY_LOG: Final = "No categories to translate"
+CLI_LOG_TAIL: Final = 64 * 1024
+
+
+class CliLog:
+    """What AMDuProfCLI appends to its <temp>/<user>-AMDuProfCLI.log during one run.
+
+    The CLI names some failures only in that log, so the sizes are taken before the run and
+    only the bytes added afterwards count; an earlier run's lines are never blamed.
+    """
+
+    def __init__(self) -> None:
+        self.sizes: dict[Path, int] = {}
+        for path in self._logs():
+            try:
+                self.sizes[path] = path.stat().st_size
+            except OSError:
+                pass
+
+    @staticmethod
+    def _logs() -> list[Path]:
+        roots = dict.fromkeys(Path(root) for root in (os.environ.get("TMP"),
+                                                      os.environ.get("TEMP"),
+                                                      tempfile.gettempdir()) if root)
+        return sorted({path for root in roots for path in root.glob("*-AMDuProfCLI.log")})
+
+    def appended(self) -> tuple[Path | None, str]:
+        """The log that grew during the run and the text it gained (bounded to its tail)."""
+        for path in self._logs():
+            try:
+                size = path.stat().st_size
+                start = self.sizes.get(path, 0)
+                if size <= start:
+                    continue
+                with open(path, "rb") as handle:
+                    handle.seek(max(start, size - CLI_LOG_TAIL))
+                    return path, handle.read().decode("utf-8", errors="replace")
+            except OSError:
+                continue
+        return None, ""
+
+
+def translate_failure(what: str, completed: subprocess.CompletedProcess[str],
+                      log: CliLog) -> str:
+    """One line for a failed AMDuProfCLI translate, naming the cause the CLI log gives."""
+    detail = failure_detail(completed)
+    code = completed.returncode
+    crash = " (AMDuProfCLI crashed: access violation (0xC0000005))" \
+        if code in ACCESS_VIOLATION_EXITS else ""
+    log_path, log_text = log.appended()
+    if NO_CATEGORY_LOG in log_text:
+        return (f"{what} failed with {code}{crash}: the session has no translatable sample "
+                f"category (AMDuProfCLI log {log_path}: \"{NO_CATEGORY_LOG}\"), so it holds no "
+                "samples to translate; remedy: capture again with `uprof.py collect --out-dir "
+                "<new dir> --seconds 60` (cycles) or add `--event ibs-op` for IBS, then translate "
+                "that session")
+    if crash and log_path:
+        return f"{what} failed with {code}{crash}: {detail}; AMDuProfCLI log: {log_path}"
+    return f"{what} failed with {code}{crash}: {detail}"
 
 
 def symbol_cache_dir() -> Path:
@@ -627,11 +692,11 @@ def translate(session_dir: Path | str, out_dir: Path | str,
         symbol_paths=[absolute(path) for path in symbol_paths or ()],
         time_filter=time_filter, ascii_kind=ascii_kind)
 
+    log = CliLog()
     completed = run(command, timeout=TRANSLATE_TIMEOUT)
     print_output(completed)
     if completed.returncode != 0:
-        raise UprofError(f"translate failed with {completed.returncode}: "
-                         f"{failure_detail(completed)}")
+        raise UprofError(translate_failure("translate", completed, log))
 
     cpu_db = out / "cpu.db"
     if not cpu_db.is_file():

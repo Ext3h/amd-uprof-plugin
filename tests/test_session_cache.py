@@ -106,9 +106,10 @@ class KeyTest(unittest.TestCase):
         connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR, size UBIGINT, "
                            "checksum UBIGINT, is32Bit BOOLEAN)")
         connection.execute("INSERT INTO Module VALUES (1, 'C:/a.dll', 10, 1, false), "
-                           "(2, 'C:/a.dll', 10, 2, false), (3, 'C:/b.dll', 10, 1, false)")
+                           "(2, 'C:/a.dll', 10, 2, false), (3, 'C:/b.dll', 10, 1, false), "
+                           "(4, 'C:/b.dll', 10, 1, true)")
         self.assertEqual(uprof_cache.ambiguous_modules(connection, ["c:/a.dll", "c:/b.dll"]),
-                         ["c:/a.dll"])
+                         ["c:/a.dll", "c:/b.dll"])
         connection.close()
 
 

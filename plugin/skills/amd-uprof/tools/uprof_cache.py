@@ -148,37 +148,45 @@ def _dir_listing(path: Path, limit: int = 1024, holds_own: bool = False,
 
 
 def _srv_caches() -> list[list[object]]:
-    """The cache directories named by _NT_SYMBOL_PATH srv* entries and their child listings.
+    """The cache directories named by _NT_SYMBOL_PATH srv* entries and their child listings."""
+    result: list[list[object]] = []
+    for entry in os.environ.get("_NT_SYMBOL_PATH", "").split(";"):
+        parts = entry.split("*")
+        if len(parts) < 2 or parts[0].strip().lower() != "srv" or not parts[1].strip():
+            continue
+        result.extend(_store_listings(Path(parts[1].strip())))
+    return result
 
-    The session cache root may lie inside such a cache (the default one does); the root and the
-    session cache's files are left out, so creating or filling it never changes the key.
+
+def _store_listings(root: Path, pdb_only: bool = False) -> list[list[object]]:
+    """A symbol store's listing and its child directories' listings; staging a PDB changes them.
+
+    pdb_only lists only <pdb> children, the folders a store-layout PDB lives in. The session
+    cache root may lie inside a store (the default one does); the root and the session cache's
+    files are left out, so creating or filling it never changes the key.
     """
     own = cache_root()
     try:
         own_stat = own.stat()
     except OSError:
         own_stat = None
-    result: list[list[object]] = []
-    for entry in os.environ.get("_NT_SYMBOL_PATH", "").split(";"):
-        parts = entry.split("*")
-        if len(parts) < 2 or parts[0].strip().lower() != "srv" or not parts[1].strip():
-            continue
-        root = Path(parts[1].strip())
-        root_is_own = own_stat is not None and contains(own, root)
-        # The root may not exist yet: creating it must not change the key either.
-        own_name = (os.path.normcase(own.name)
-                    if not root_is_own and same_path(root, own.parent) else None)
-        result.append(_dir_listing(root, holds_own=root_is_own, own_name=own_name))
-        try:
-            for child in sorted(root.iterdir())[:256]:
-                if root_is_own and _OWN_ENTRY.fullmatch(child.name):
-                    continue
-                if _same_dir(child, own_stat):
-                    continue
-                if child.is_dir():
-                    result.append(_dir_listing(child, 64, holds_own=root_is_own))
-        except OSError:
-            pass
+    root_is_own = own_stat is not None and contains(own, root)
+    # The root may not exist yet: creating it must not change the key either.
+    own_name = (os.path.normcase(own.name)
+                if not root_is_own and same_path(root, own.parent) else None)
+    result = [_dir_listing(root, holds_own=root_is_own, own_name=own_name)]
+    try:
+        for child in sorted(root.iterdir())[:256]:
+            if root_is_own and _OWN_ENTRY.fullmatch(child.name):
+                continue
+            if pdb_only and not child.name.lower().endswith(".pdb"):
+                continue
+            if _same_dir(child, own_stat):
+                continue
+            if child.is_dir():
+                result.append(_dir_listing(child, 64, holds_own=root_is_own))
+    except OSError:
+        pass
     return result
 
 
@@ -192,12 +200,13 @@ def _same_dir(path: Path, other: os.stat_result | None) -> bool:
 
 
 def search_identity(symbol_path: list[str] | None, image_path: list[str] | None,
-                    module_names: list[str] = ()) -> dict[str, object]:
+                    module_names: list[str] = (),
+                    symbol_stores: list[Path] = ()) -> dict[str, object]:
     """The symbol/image search state a hit must be validated against.
 
     Explicit files and directories are fingerprinted, a directory's own mtime catches files
-    appearing beside a module, and the symbol cache root and any srv* cache directories catch a
-    newly staged PDB.
+    appearing beside a module, and the srv* caches, translate's symbol stores and the <pdb>
+    folders of --symbol-path directories catch a newly staged PDB.
     """
     paths = uprof_symbols.probe_paths(symbol_path, image_path)
     names = {Path(name).name.lower() for name in module_names if name}
@@ -215,6 +224,8 @@ def search_identity(symbol_path: list[str] | None, image_path: list[str] | None,
                             for entry in _files_in(path, names)],
         "module_dirs": [_dir_identity(Path(path)) for path in module_dirs],
         "srv_caches": _srv_caches(),
+        "symbol_stores": [entry for root in [*symbol_stores, *paths.symbol_dirs]
+                          for entry in _store_listings(Path(root), pdb_only=True)],
         "nt_symbol_path": os.environ.get("_NT_SYMBOL_PATH", ""),
         "symbol_servers": list(default_symbol_servers()),
     }
@@ -319,7 +330,7 @@ def build_symbols_key(connection: object, args: Any) -> tuple[str, list[tuple[st
         rvas, module_identity_rows(connection, names), _disk_identity(paths),
         tool_identities(),
         search_identity(getattr(args, "symbol_path", None), getattr(args, "image_path", None),
-                        names))
+                        names, uprof_symbols.symbol_stores(args.session)))
     return key, rvas
 
 

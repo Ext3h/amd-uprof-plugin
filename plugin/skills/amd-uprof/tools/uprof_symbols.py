@@ -416,7 +416,7 @@ def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str,
                 symbol_files: Iterable[str | Path] = (),
                 symbol_stores: Iterable[str | Path] = ()) -> PdbSearch:
     """Probe every candidate once; the search carries each rejection as evidence."""
-    search = PdbSearch(urls=list(_nt_symbol_path().urls))
+    search = PdbSearch(urls=list(_nt_symbol_path().upstreams))
     for path in dict.fromkeys(
             _candidate_pdbs(exe_path, pdb_name, module_guid, module_age, symbol_dirs,
                             symbol_files, symbol_stores)):

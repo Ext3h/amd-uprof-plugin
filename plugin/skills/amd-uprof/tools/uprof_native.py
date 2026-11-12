@@ -369,15 +369,16 @@ def default_symbol_servers() -> list[str]:
 class NtSymbolPath:
     """The parts of a Windows-style _NT_SYMBOL_PATH, each element stripped of padding.
 
-    caches are local symbol-store roots: the non-URL stores of srv*/symsrv* entries and cache*
-    directories. urls are the remote stores of srv*/symsrv* entries. dirs are plain directory
-    entries. servers are the srv* entries that name a downstream store slot and an upstream
+    caches are local symbol-store roots: the downstream stores of srv*/symsrv* entries (every
+    element before the last) and cache* directories. upstreams are the last element of each
+    srv*/symsrv* entry, a URL or a share that is never read, since reading it would contact the
+    store. dirs are plain directory entries. servers are the srv* entries that name a downstream store slot and an upstream
     store, rejoined from their stripped elements; uProf translate receives them as symbol
     servers and download_cache, the first server's local downstream store, as its symbol cache.
     """
 
     caches: tuple[str, ...] = ()
-    urls: tuple[str, ...] = ()
+    upstreams: tuple[str, ...] = ()
     dirs: tuple[str, ...] = ()
     servers: tuple[str, ...] = ()
     download_cache: str | None = None
@@ -394,7 +395,7 @@ def _unique(items: Iterable[str]) -> tuple[str, ...]:
 def parse_nt_symbol_path(value: str | None) -> NtSymbolPath:
     """Read _NT_SYMBOL_PATH once, the same way for translate, discovery and the cache key."""
     caches: list[str] = []
-    urls: list[str] = []
+    upstreams: list[str] = []
     dirs: list[str] = []
     servers: list[str] = []
     download_cache = None
@@ -407,9 +408,8 @@ def parse_nt_symbol_path(value: str | None) -> NtSymbolPath:
         if kind in ("srv", "symsrv"):
             # symsrv*<dll>*<stores>: the second element names the DLL, not a store.
             slots = parts[2 if kind == "symsrv" else 1:]
-            local = [store for store in slots if store and not _is_url(store)]
-            caches += local
-            urls += [store for store in slots if _is_url(store)]
+            caches += [store for store in slots[:-1] if store and not _is_url(store)]
+            upstreams += [store for store in slots[-1:] if store]
             if kind == "srv" and len(slots) >= 2:
                 servers.append("*".join(parts))
                 if download_cache is None and slots[0] and not _is_url(slots[0]):
@@ -418,7 +418,7 @@ def parse_nt_symbol_path(value: str | None) -> NtSymbolPath:
             caches += [part for part in parts[1:] if part]
         elif len(parts) == 1 and not _is_url(entry):
             dirs.append(entry)
-    return NtSymbolPath(_unique(caches), _unique(urls), _unique(dirs), tuple(servers),
+    return NtSymbolPath(_unique(caches), _unique(upstreams), _unique(dirs), tuple(servers),
                         download_cache)
 
 

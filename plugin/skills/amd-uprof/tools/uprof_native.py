@@ -21,8 +21,8 @@ from typing import Final
 
 from uprof_session import (ContextCadence, achieved_summary, derive_sampler, read_meta,
                            run_gap_limit_ns, system_wide)
-from uprof_util import (COPY_DIRS, DUMP_FILENAMES, UprofError, absolute, copy_session,
-                        parse_time_filter, skill_identity, tail_lines)
+from uprof_util import (COPY_DIRS, DUMP_FILENAMES, UprofError, absolute, contains,
+                        copy_session, parse_time_filter, skill_identity, tail_lines)
 
 IS_WINDOWS = os.name == "nt"
 TRANSLATE_TIMEOUT: Final = 4 * 60 * 60
@@ -470,9 +470,11 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     if out.exists() and not out.is_dir():
         raise UprofError(f"output path exists and is not a directory: {out}; choose another "
                          "--out-dir")
-    if os.path.normcase(os.fspath(out)) == os.path.normcase(os.fspath(session)):
-        raise UprofError("--out-dir must differ from --session: translate rewrites cpu.db, "
-                         "callstack.db and session.uprof, so it works on a copy")
+    if contains(out, session) or contains(session, out):
+        raise UprofError(f"--out-dir {out} overlaps --session {session} (the same directory "
+                         "under another name, or one inside the other): translate rewrites "
+                         "cpu.db, callstack.db and session.uprof, so it works on a copy. Choose an "
+                         "--out-dir outside the session")
     conflicts = [out / name for name in TRANSLATE_OUTPUTS if (out / name).exists()]
     if conflicts and not force:
         shown = ", ".join(os.fspath(path) for path in conflicts)

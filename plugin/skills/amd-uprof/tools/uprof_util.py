@@ -75,6 +75,39 @@ def absolute(path: os.PathLike[str] | str) -> Path:
     return Path(os.path.abspath(os.fspath(path)))
 
 
+def canonical(path: os.PathLike[str] | str) -> Path:
+    """The one spelling of path: links, junctions, 8.3 names, UNC and mapped drives resolved.
+
+    Compare paths only through this (or same_path/contains): two different strings can name the
+    same file. Missing trailing components keep their spelling, case-folded where the platform
+    folds case.
+    """
+    full = absolute(path)
+    try:
+        full = Path(os.path.realpath(full))
+    except (OSError, ValueError):
+        pass
+    return Path(os.path.normcase(os.fspath(full)))
+
+
+def same_path(first: os.PathLike[str] | str, second: os.PathLike[str] | str) -> bool:
+    """Whether both paths name the same file or directory, however each is spelled."""
+    try:
+        if os.path.samefile(first, second):
+            return True
+    except (OSError, ValueError):
+        pass
+    return canonical(first) == canonical(second)
+
+
+def contains(outer: os.PathLike[str] | str, inner: os.PathLike[str] | str) -> bool:
+    """Whether inner is outer or lies below it, however each is spelled."""
+    if same_path(outer, inner):
+        return True
+    root, path = canonical(outer), canonical(inner)
+    return root in path.parents
+
+
 def tail_lines(text: str, count: int = 6) -> str:
     lines = [line for line in (text or "").strip().splitlines() if line.strip()]
     return " | ".join(lines[-count:])

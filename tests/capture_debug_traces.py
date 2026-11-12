@@ -389,6 +389,10 @@ def main(argv=None) -> int:
     parser.add_argument("--out-dir", required=True,
                         help="directory that receives <os>/ and manifest.txt")
     args = parser.parse_args(argv)
+    if os.environ.get("UPROF_REQUIRE_TOOLS") == "1":
+        missing = F.tool_skip() or F.duckdb_skip()
+        if missing:
+            raise SystemExit(f"UPROF_REQUIRE_TOOLS=1: {missing}")
     os_name = "windows" if os.name == "nt" else "linux"
     out_dir = Path(args.out_dir).resolve()
     target = out_dir / os_name

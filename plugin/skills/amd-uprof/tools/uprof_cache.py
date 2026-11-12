@@ -30,7 +30,7 @@ import uprof_symbols
 from uprof_context import find_readobj
 from uprof_native import (IS_WINDOWS, default_symbol_servers, find_sibling, find_symbolizer,
                           symbol_cache_dir)
-from uprof_util import contains
+from uprof_util import contains, same_path
 
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 
@@ -128,17 +128,21 @@ def _files_in(directory: Path, names: set[str] | None = None,
     return result
 
 
-def _dir_listing(path: Path, limit: int = 1024, holds_own: bool = False) -> list[object]:
+def _dir_listing(path: Path, limit: int = 1024, holds_own: bool = False,
+                 own_name: str | None = None) -> list[object]:
     """A directory's mtime and child names; a newly staged PDB changes the names.
 
-    holds_own marks a directory the session cache writes into: its own entries are left out and
-    its mtime is not used, since storing a result must not change the key it is stored under.
+    Storing a result must not change the key it is stored under. holds_own marks a directory the
+    session cache writes into, own_name the child that is the session cache root: the session
+    cache's entries and that child are left out, and the directory's mtime is not used.
     """
+    skip_own = holds_own or own_name is not None
     try:
         with os.scandir(path) as entries:
             names = sorted(entry.name for entry in entries
-                           if not (holds_own and _OWN_ENTRY.fullmatch(entry.name)))[:limit]
-        return [str(path), None if holds_own else Path(path).stat().st_mtime_ns, names]
+                           if not (holds_own and _OWN_ENTRY.fullmatch(entry.name))
+                           and os.path.normcase(entry.name) != own_name)[:limit]
+        return [str(path), None if skip_own else Path(path).stat().st_mtime_ns, names]
     except OSError:
         return [str(path), None, []]
 
@@ -146,8 +150,8 @@ def _dir_listing(path: Path, limit: int = 1024, holds_own: bool = False) -> list
 def _srv_caches() -> list[list[object]]:
     """The cache directories named by _NT_SYMBOL_PATH srv* entries and their child listings.
 
-    The session cache root may lie inside such a cache (the default one does); it is listed
-    without the session cache's own files.
+    The session cache root may lie inside such a cache (the default one does); the root and the
+    session cache's files are left out, so creating or filling it never changes the key.
     """
     own = cache_root()
     try:
@@ -161,14 +165,18 @@ def _srv_caches() -> list[list[object]]:
             continue
         root = Path(parts[1].strip())
         root_is_own = own_stat is not None and contains(own, root)
-        result.append(_dir_listing(root, holds_own=root_is_own))
+        # The root may not exist yet: creating it must not change the key either.
+        own_name = (os.path.normcase(own.name)
+                    if not root_is_own and same_path(root, own.parent) else None)
+        result.append(_dir_listing(root, holds_own=root_is_own, own_name=own_name))
         try:
             for child in sorted(root.iterdir())[:256]:
                 if root_is_own and _OWN_ENTRY.fullmatch(child.name):
                     continue
+                if _same_dir(child, own_stat):
+                    continue
                 if child.is_dir():
-                    is_own = root_is_own or _same_dir(child, own_stat)
-                    result.append(_dir_listing(child, 64, holds_own=is_own))
+                    result.append(_dir_listing(child, 64, holds_own=root_is_own))
         except OSError:
             pass
     return result

@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path, PureWindowsPath
 from unittest import mock
 
+import uprof_native
 import uprof_symbols
 from run_tests import HOST_SKIP
 from uprof_util import UprofError
@@ -296,6 +297,109 @@ class ExplicitPdbTest(unittest.TestCase):
         self.assertEqual(result.empty_records, 2)
         self.assertIn("fixture.pdb", result.errors[0][1])
         self.assertIn("another build", result.errors[0][1])
+
+
+def write_stub_symbolizer(directory: Path, pdb_option: bool) -> Path:
+    """An llvm-symbolizer stand-in whose --help lists --pdb only when pdb_option is set."""
+    help_lines = ["OVERVIEW: llvm-symbolizer", "OPTIONS:",
+                  "  --dwp=<file>            Path to DWP file to be use for any split CUs"]
+    if pdb_option:
+        help_lines.append("  --pdb=<file>            Path to PDB file")
+    version = "23.1.4" if pdb_option else "22.1.6"
+    script = directory / "stub_symbolizer.py"
+    script.write_text("\n".join([
+        "import sys",
+        f"HELP = {chr(10).join(help_lines)!r}",
+        f"VERSION = {('LLVM (http://llvm.org/):' + chr(10) + '  LLVM version ' + version)!r}",
+        "if '--help' in sys.argv:",
+        "    print(HELP)",
+        "elif '--version' in sys.argv:",
+        "    print(VERSION)",
+        f"elif {not pdb_option!r}:",
+        "    bad = [arg for arg in sys.argv[1:] if arg.startswith('--pdb')]",
+        "    if bad:",
+        "        print(f\"error: unknown argument '{bad[0]}'\", file=sys.stderr)",
+        "        sys.exit(1)",
+        ""]), encoding="utf-8")
+    if os.name == "nt":
+        launcher = directory / "llvm-symbolizer.cmd"
+        launcher.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+    else:
+        launcher = directory / "llvm-symbolizer"
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n',
+                            encoding="utf-8")
+        launcher.chmod(0o755)
+    return launcher
+
+
+class PdbOptionProbeTest(unittest.TestCase):
+    """llvm-symbolizer accepts --pdb only from LLVM 23; an older one fails every PDB module."""
+
+    def setUp(self):
+        uprof_native.pdb_option_cause.cache_clear()
+        self.addCleanup(uprof_native.pdb_option_cause.cache_clear)
+        directory = tempfile.TemporaryDirectory(prefix="uprof-pdb-option-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def test_a_symbolizer_without_pdb_names_the_llvm_minimum(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=False)
+
+        cause = uprof_native.pdb_option_cause(str(stub))
+
+        self.assertIsNotNone(cause)
+        self.assertIn("--pdb", cause)
+        self.assertIn("LLVM >= 23", cause)
+        self.assertIn("22.1.6", cause)
+
+    def test_a_symbolizer_with_pdb_passes(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=True)
+
+        self.assertIsNone(uprof_native.pdb_option_cause(str(stub)))
+
+    def test_the_probe_runs_once_per_symbolizer(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=False)
+        with mock.patch.object(uprof_native, "run", wraps=uprof_native.run) as invoked:
+            uprof_native.pdb_option_cause(str(stub))
+            calls = invoked.call_count
+            uprof_native.pdb_option_cause(str(stub))
+
+        self.assertEqual(invoked.call_count, calls)
+
+    @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
+    def test_an_accepted_pdb_with_an_old_symbolizer_fails_with_the_cause(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=False)
+        module = self.root / "fixture.exe"
+        module.write_bytes(b"MZ")
+        pdb = self.root / "fixture.pdb"
+        pdb.write_bytes(b"pdb")
+        rvas = self.root / "rvas.txt"
+        rvas.write_text("0x1000\n", encoding="utf-8")
+        search = uprof_symbols.PdbSearch(
+            pdb=pdb, probes=[uprof_symbols.PdbProbe(pdb, "accepted")])
+        with mock.patch.object(uprof_symbols, "require_symbolizer", return_value=stub),                 mock.patch.object(uprof_symbols, "find_sibling",
+                                  side_effect=lambda _tool, name: Path(name + ".exe")),                 mock.patch.object(uprof_symbols, "_readobj_info",
+                                  return_value=("fixture.pdb", "ABCD", 1)),                 mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search),                 mock.patch.object(uprof_symbols, "_run_symbolizer") as symbolizer:
+            with self.assertRaisesRegex(UprofError, "LLVM >= 23"):
+                uprof_symbols.symbolize_module(
+                    str(module), rvas, self.root / "out", module_name="fixture.exe")
+
+        symbolizer.assert_not_called()
+
+    def test_the_evidence_line_gives_the_llvm_remedy_not_symbol_paths(self):
+        stub = write_stub_symbolizer(self.root, pdb_option=False)
+        cause = uprof_native.pdb_option_cause(str(stub))
+        module = self.root / "fixture.exe"
+        module.write_bytes(b"MZ")
+        with mock.patch.object(uprof_symbols, "symbolize_module",
+                               side_effect=uprof_native.SymbolizerUnsupported(cause)):
+            outcome = uprof_symbols._symbolize_worker(
+                0, "fixture.exe", str(module), ["0x1000"], self.root, None, (), (), (), ())
+
+        self.assertIsNone(outcome.error)
+        self.assertEqual(outcome.evidence.outcome, "failed")
+        self.assertIn("LLVM >= 23", outcome.output)
+        self.assertNotIn("--symbol-path", outcome.output)
 
 
 class SourcePathProbeTest(unittest.TestCase):

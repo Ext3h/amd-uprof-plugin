@@ -261,6 +261,7 @@ Run `uprof.py tools` only when a command reports `MISSING`; each row is `<NAME>=
 | llvm-symbolizer | `LLVM_SYMBOLIZER`, `PATH`, then `C:\Program Files\LLVM\bin` | `LLVM_SYMBOLIZER`, `PATH`, then `/usr/lib/llvm-*/bin`, `/usr/bin` |
 | llvm-pdbutil | beside `llvm-symbolizer` or on `PATH`; fold cache (Windows only) | not used |
 | llvm-readobj | beside `llvm-symbolizer` or on `PATH`; image GUID (Windows only) | not used |
+| llvm-objdump | beside `llvm-symbolizer` or on `PATH`; instruction context | the same |
 
 ## Output
 

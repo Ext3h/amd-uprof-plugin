@@ -54,17 +54,14 @@ def _duckdb_missing():
 
 
 def _symbolizer_skip():
+    """A skip reason when no llvm-symbolizer at the required LLVM version is found, or None."""
     symbolizer = uprof_native.find_symbolizer()
     if symbolizer is None:
         return "llvm-symbolizer is required; install LLVM"
-    return None
+    return uprof_native.llvm_cause(str(symbolizer))
 
 
-def _pdb_skip():
-    symbolizer = uprof_native.find_symbolizer()
-    if symbolizer is None:
-        return "llvm-symbolizer is required; install LLVM"
-    return uprof_native.pdb_option_cause(str(symbolizer))
+_pdb_skip = _symbolizer_skip
 
 
 def _alternatives(text):

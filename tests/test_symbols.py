@@ -299,8 +299,12 @@ class ExplicitPdbTest(unittest.TestCase):
         self.assertIn("another build", result.errors[0][1])
 
 
-def write_stub_symbolizer(directory: Path, pdb_option: bool) -> Path:
-    """An llvm-symbolizer stand-in whose --help lists --pdb only when pdb_option is set."""
+def write_stub_symbolizer(directory: Path, pdb_option: bool, zlib: bool = True) -> Path:
+    """An llvm-symbolizer stand-in whose --help lists --pdb only when pdb_option is set.
+
+    Without zlib, a symbolization run reports the decompression error of an LLVM built without
+    LLVM_ENABLE_ZLIB, the way such a build reads compressed DWARF.
+    """
     help_lines = ["OVERVIEW: llvm-symbolizer", "OPTIONS:",
                   "  --dwp=<file>            Path to DWP file to be use for any split CUs"]
     if pdb_option:
@@ -320,6 +324,9 @@ def write_stub_symbolizer(directory: Path, pdb_option: bool) -> Path:
         "    if bad:",
         "        print(f\"error: unknown argument '{bad[0]}'\", file=sys.stderr)",
         "        sys.exit(1)",
+        f"if {not zlib!r} and '--help' not in sys.argv and '--version' not in sys.argv:",
+        "    print(\"error: failed to decompress '.debug_info', LLVM was not built with \"",
+        "          \"LLVM_ENABLE_ZLIB or did not find zlib at build time\", file=sys.stderr)",
         ""]), encoding="utf-8")
     if os.name == "nt":
         launcher = directory / "llvm-symbolizer.cmd"

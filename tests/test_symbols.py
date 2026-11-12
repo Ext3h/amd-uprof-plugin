@@ -251,6 +251,32 @@ class NoPdbEvidenceTest(unittest.TestCase):
         self.assertIs(result.evidence.symbolizer, failed)
         self.assertIsNone(symbolizer.call_args.args[2])
 
+    @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
+    def test_missing_guid_without_explicit_pdb_records_no_pdb_note(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-no-guid-") as directory:
+            root = Path(directory)
+            module = root / "fixture.exe"
+            module.write_bytes(b"MZ")
+            rvas = root / "rvas.txt"
+            rvas.write_text("0x1000\n", encoding="utf-8")
+            with mock.patch.object(uprof_symbols, "require_symbolizer",
+                                   return_value=Path("llvm-symbolizer.exe")), \
+                    mock.patch.object(uprof_symbols, "find_sibling",
+                                      side_effect=lambda _tool, name: Path(name + ".exe")), \
+                    mock.patch.object(uprof_symbols, "_readobj_info",
+                                      return_value=("fixture.pdb", None, None)), \
+                    mock.patch.object(uprof_symbols, "_run_symbolizer",
+                                      return_value=uprof_symbols.SymbolizerRun(0, [], "")), \
+                    mock.patch.object(uprof_symbols, "_write_parquet",
+                                      return_value=root / "symbols.parquet"):
+                result = uprof_symbols.symbolize_module(
+                    str(module), rvas, root / "out", module_name="fixture.exe")
+
+        self.assertIsNone(result.pdb)
+        self.assertEqual(result.evidence.outcome, "readobj_failed")
+        self.assertEqual(result.evidence.note, "the image's debug directory records no PDB")
+
+
 
 class ExplicitPdbTest(unittest.TestCase):
     def test_an_explicit_symbol_file_is_probed_before_any_search_root(self):

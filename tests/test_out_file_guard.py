@@ -1,0 +1,121 @@
+"""--out-file must never name a file the command reads or derives from its inputs."""
+
+import contextlib
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import uprof
+import uprof_dump
+import uprof_query
+import uprof_session
+import uprof_util
+
+_OVERWRITE = "--out-file would overwrite"
+
+
+class _Reached(Exception):
+    """The command got past every guard."""
+
+
+class OutFileGuardTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="uprof-outguard-")
+        self.root = Path(self._tmp.name)
+        self.session = self.root / "session"
+        self.session.mkdir()
+        (self.session / "session.uprof").write_text(
+            '{"collection": {"target": {"systemWide": true}}, "translateCommand": ""}',
+            encoding="utf-8")
+        import duckdb
+        connection = duckdb.connect(str(self.session / "cpu.db"))
+        self.image = self.root / "app.exe"
+        self.image.write_bytes(b"image")
+        connection.execute("CREATE TABLE Module (path VARCHAR)")
+        connection.execute("INSERT INTO Module VALUES (?)", [str(self.image)])
+        connection.close()
+        self.dump = self.root / "IbsOpDump.csv"
+        self.dump.write_text("DeltaTick\n1\n", encoding="utf-8")
+        self.cache = self.root / "dump-cache"
+        self.cache.mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, *extra):
+        args = uprof.build_parser().parse_args(
+            ["profile", "--session", str(self.session), "--by", "process", "--top", "5",
+             *extra])
+
+        @contextlib.contextmanager
+        def real_connection(cpu_db, view_files, variables, views=None):
+            import duckdb
+            connection = duckdb.connect(str(cpu_db), read_only=True)
+            try:
+                yield connection
+            finally:
+                connection.close()
+
+        def parquet(dump, session_dir):
+            target = Path(dump.cache_dir) / (Path(dump.path).stem + ".samples.parquet")
+            target.write_bytes(b"rebuilt")
+            return target
+
+        sampler = types.SimpleNamespace(pmc=False, event_column="")
+        dump = uprof_dump.DumpInfo(self.dump, "beside", self.cache)
+        with mock.patch.object(uprof_session, "derive_sampler", return_value=sampler), \
+                mock.patch.object(uprof_session, "system_wide", return_value=True), \
+                mock.patch.object(uprof_dump, "resolve_dump", return_value=dump), \
+                mock.patch.object(uprof_dump, "samples_parquet", side_effect=parquet), \
+                mock.patch.object(uprof_dump, "recorded_time_filter", return_value=None), \
+                mock.patch.object(uprof_query, "_primary_measure",
+                                  return_value=("sample_share", None)), \
+                mock.patch.object(uprof_query, "_dump_sanity", side_effect=_Reached()), \
+                mock.patch.object(uprof_query.uprof_db, "open_query", real_connection):
+            uprof_query.run_query_command(args)
+
+    def _assert_refused(self, target, *extra):
+        before = target.read_bytes()
+        with self.assertRaisesRegex(uprof_util.UprofError, _OVERWRITE):
+            self._run(*extra, "--out-file", str(target))
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_an_explicit_symbol_file_is_protected(self):
+        pdb = self.root / "app.pdb"
+        pdb.write_bytes(b"pdb")
+        self._assert_refused(pdb, "--symbol-path", str(pdb))
+
+    def test_an_explicit_image_file_is_protected(self):
+        image = self.root / "other.exe"
+        image.write_bytes(b"other")
+        self._assert_refused(image, "--image-path", str(image))
+
+    def test_the_captured_module_image_is_protected(self):
+        self._assert_refused(self.image)
+
+    def test_a_module_image_found_in_an_image_directory_is_protected(self):
+        images = self.root / "images"
+        images.mkdir()
+        found = images / "app.exe"
+        found.write_bytes(b"found")
+        self._assert_refused(found, "--image-path", str(images))
+
+    def test_the_parquet_dump_copy_is_protected(self):
+        copy = self.cache / "IbsOpDump.samples.parquet"
+        copy.write_bytes(b"copy")
+        self._assert_refused(copy)
+
+    def test_the_parquet_copy_sidecar_is_protected(self):
+        sidecar = self.cache / "IbsOpDump.samples.parquet.json"
+        sidecar.write_text("{}", encoding="utf-8")
+        self._assert_refused(sidecar)
+
+    def test_an_unrelated_out_file_passes_every_guard(self):
+        with self.assertRaises(_Reached):
+            self._run("--out-file", str(self.root / "table.txt"))
+
+
+if __name__ == "__main__":
+    unittest.main()

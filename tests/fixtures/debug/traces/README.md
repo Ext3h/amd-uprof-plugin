@@ -10,8 +10,8 @@ its `SYMBOL_COVERAGE` line, its stderr `WARNING:` lines and its rows.
 
 The tool output was captured by
 [capture-debug-traces.yml](../../../../.github/workflows/capture-debug-traces.yml) in
-[run 43214725994](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43214725994) at
-commit `c3e42a7`:
+[run 43216136838](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43216136838) at
+commit `7c516a0`:
 
 | directory | runner | Python | LLVM | DuckDB |
 | --- | --- | --- | --- | --- |
@@ -20,6 +20,8 @@ commit `c3e42a7`:
 
 Both jobs succeeded, and both downloaded artifacts are byte-identical to the committed files.
 The capture commit is an ancestor of the final head; the only later change is this README.
+Compared with run 43214725994 at `c3e42a7`, only the PDB GUIDs of the PE fixtures changed,
+because they were relinked with `/release`.
 Run 43212399428, with apt.llvm.org 23.1.6 on Linux, produced the same files. The previous
 capture, run 43111099142 at `3b30ab6`, had no `symbol_coverage=` or `WARNING:` lines and
 otherwise matches this one.

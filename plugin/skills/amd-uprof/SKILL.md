@@ -252,7 +252,7 @@ The aggregate `<other instructions>` row carries no `context`.
 
 ## Tools
 
-Run `uprof.py tools` only when a command reports `MISSING`; each row is `<NAME>=<path>; version=<version>`, optional absent tools print `MISSING (not found)`, and a uProf or LLVM version that cannot be read prints `unavailable` or the install-path version.
+Run `uprof.py tools` only when a command reports `MISSING`; each row is `<NAME>=<path>; version=<version>`, optional absent tools print `MISSING (<cause>)`, and a uProf or LLVM version that cannot be read prints `unavailable` or the install-path version.
 
 | Tool | Windows | Linux |
 |---|---|---|
@@ -261,7 +261,7 @@ Run `uprof.py tools` only when a command reports `MISSING`; each row is `<NAME>=
 | llvm-symbolizer | `LLVM_SYMBOLIZER`, `PATH`, then `C:\Program Files\LLVM\bin` | `LLVM_SYMBOLIZER`, `PATH`, then `/usr/lib/llvm-*/bin`, `/usr/bin` |
 | llvm-pdbutil | beside `llvm-symbolizer` or on `PATH`; fold cache (Windows only) | not used |
 | llvm-readobj | beside `llvm-symbolizer` or on `PATH`; image GUID (Windows only) | not used |
-| llvm-objdump | beside `llvm-symbolizer` or on `PATH`; instruction context | the same |
+| llvm-objdump | beside `llvm-symbolizer` or on `PATH`; instruction context | beside `llvm-symbolizer` or on `PATH` |
 
 ## Output
 

@@ -256,9 +256,11 @@ def _first_version_line(path: Path, *args: str) -> str | None:
     return next((line for line in lines if "version" in line.lower()), lines[0])
 
 
-def _tool_row(name: str, path: Path | None, version: str | None) -> str:
+def _tool_row(name: str, path: Path | None, version: str | None,
+              missing: str = "not found") -> str:
+    """One `tools` row; missing is the cause (and remedy) printed when path is absent."""
     if not path:
-        return f"{name}=; version=MISSING (not found)"
+        return f"{name}=; version=MISSING ({missing})"
     return f"{name}={path}; version={version or 'unavailable'}"
 
 
@@ -310,7 +312,10 @@ def tool_report() -> None:
     print(_tool_row("READOBJ", readobj,
                     _first_version_line(readobj, "--version") if readobj else None))
     print(_tool_row("OBJDUMP", objdump,
-                    _first_version_line(objdump, "--version") if objdump else None))
+                    _first_version_line(objdump, "--version") if objdump else None,
+                    "llvm-objdump is not beside llvm-symbolizer or on PATH; instruction context "
+                    "is omitted; remedy: install LLVM or add its bin directory to PATH; "
+                    "module/RVA rows still work"))
     missing = []
     if not uprof:
         missing.append("uProf CLI (install AMD uProf or set AMDUPROF_CLI)")

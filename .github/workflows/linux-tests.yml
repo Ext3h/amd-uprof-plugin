@@ -32,7 +32,7 @@ jobs:
           wget -qO "$RUNNER_TEMP/$archive.tar.zst" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$archive.tar.zst"
           echo "$LLVM_SHA256  $RUNNER_TEMP/$archive.tar.zst" | sha256sum -c -
           tools="llvm-symbolizer llvm-objdump llvm-readobj llvm-pdbutil"
-          sudo tar --zstd -xf "$RUNNER_TEMP/$archive.tar.zst" -C /usr/local/bin --strip-components=2 $(for tool in $tools; do echo "$archive/bin/$tool"; done)
+          sudo tar -I "zstd -d --long=31" -xf "$RUNNER_TEMP/$archive.tar.zst" -C /usr/local/bin --strip-components=2 $(for tool in $tools; do echo "$archive/bin/$tool"; done)
           rm "$RUNNER_TEMP/$archive.tar.zst"
           for tool in $tools; do
             if [ ! -x "/usr/local/bin/$tool" ]; then

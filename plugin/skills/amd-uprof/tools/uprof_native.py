@@ -495,13 +495,16 @@ def translate(session_dir: Path | str, out_dir: Path | str,
         raise UprofError(f"output path exists and is not a directory: {out}; choose another "
                          "--out-dir")
     _refuse_overlap(out, session)
-    conflicts = [out / name for name in TRANSLATE_OUTPUTS if (out / name).exists()]
+    # Copied inputs count too: a translate that stopped after the copy leaves them, and copying
+    # another capture over them would merge both captures' raw files into one translation.
+    conflicts = [out / name for name in (*TRANSLATE_OUTPUTS, "session.uprof", *COPY_DIRS)
+                 if os.path.lexists(out / name)]
     if conflicts and not force:
         shown = ", ".join(os.fspath(path) for path in conflicts)
         raise UprofError(
-            f"--out-dir already holds a previous translation ({shown}); translate never appends "
-            "to it. Choose another --out-dir, or pass --force to replace the files translate "
-            "generated there")
+            f"--out-dir already holds a previous translation or its copied inputs ({shown}); "
+            "translate never appends to it or merges into it. Choose another --out-dir, or pass "
+            "--force to replace the files translate copied and generated there")
     if time_filter and parse_time_filter(time_filter) is None:
         raise UprofError("--time-filter needs T1:T2 in seconds from capture start, e.g. 0:5")
     if ascii_kind and ascii_kind not in DUMP_FILENAMES:

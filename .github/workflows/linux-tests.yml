@@ -14,6 +14,8 @@ jobs:
     env:
       # Same release as the Windows MSI; the trace goldens hold verbatim LLVM tool output.
       LLVM_VERSION: '23.1.4'
+      # sha256 of LLVM-23.1.4-Linux-X64.tar.zst from the llvmorg-23.1.4 release.
+      LLVM_SHA256: efdd1dbd089b99bfcfcde7b8eb1236163f2e88df5a981cca4f783ec9cb5e0378
     steps:
       - uses: actions/checkout@v4
 
@@ -26,16 +28,17 @@ jobs:
 
       - name: Install LLVM
         run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 23
-          sudo apt-get install -y llvm-23
-          for tool in llvm-symbolizer llvm-objdump llvm-readobj llvm-pdbutil; do
-            if [ ! -x "/usr/lib/llvm-23/bin/$tool" ]; then
-              echo "::error::$tool is missing from the llvm-23 package"
+          archive="LLVM-$LLVM_VERSION-Linux-X64"
+          wget -qO "$RUNNER_TEMP/$archive.tar.zst" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$archive.tar.zst"
+          echo "$LLVM_SHA256  $RUNNER_TEMP/$archive.tar.zst" | sha256sum -c -
+          tools="llvm-symbolizer llvm-objdump llvm-readobj llvm-pdbutil"
+          sudo tar --zstd -xf "$RUNNER_TEMP/$archive.tar.zst" -C /usr/local/bin --strip-components=2 $(for tool in $tools; do echo "$archive/bin/$tool"; done)
+          rm "$RUNNER_TEMP/$archive.tar.zst"
+          for tool in $tools; do
+            if [ ! -x "/usr/local/bin/$tool" ]; then
+              echo "::error::$tool is missing from $archive"
               exit 1
             fi
-            sudo ln -sf "/usr/lib/llvm-23/bin/$tool" "/usr/local/bin/$tool"
           done
           llvm-objdump --version
 

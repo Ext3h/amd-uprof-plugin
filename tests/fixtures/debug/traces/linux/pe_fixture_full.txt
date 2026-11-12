@@ -4,7 +4,7 @@ format=COFF-x86-64
 pointer_to_symbol_table=0x0
 debug_type=CodeView (0x2)
 sections=.text,.rdata,.pdata
-debug pdb=fixture_full.pdb guid={26DA1114-29CB-9815-4C4C-44205044422E} age=1
+debug pdb=fixture_full.pdb guid={C30C06AD-43AB-9603-4C4C-44205044422E} age=1
 ## symbols
 none
 ## objdump
@@ -31,7 +31,7 @@ Disassembly of section .text:
 14000102b:     	addq	$0x28, %rsp
 14000102f:     	retq
 ## pdbutil
-pdb=fixture_full.pdb guid={26DA1114-29CB-9815-4C4C-44205044422E} age=1 has_types=true has_publics=true type_records=2
+pdb=fixture_full.pdb guid={C30C06AD-43AB-9603-4C4C-44205044422E} age=1 has_types=true has_publics=true type_records=2
 public fixture_entry rva=0x1010
 public fixture_helper rva=0x1000
 ## symbolizer

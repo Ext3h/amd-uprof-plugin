@@ -85,6 +85,18 @@ class SymbolStoreTest(unittest.TestCase):
             after = uprof_cache.search_identity(None, None, ["ntdll.dll"], stores)
         self.assertNotEqual(before, after)
 
+    def test_staging_behind_many_other_store_entries_changes_the_search_identity(self):
+        # translate also stages <name>.dll/<name>.exe folders, which sort before ntdll.pdb.
+        for index in range(300):
+            (self.default_cache / f"a{index:03d}.dll").mkdir(parents=True)
+        (self.default_cache / "ntdll.pdb").mkdir()
+        stores = uprof_symbols.symbol_stores(self.session)
+        with mock.patch.dict(os.environ, {"UPROF_SESSION_CACHE_ROOT": str(self.root / "c")}):
+            before = uprof_cache.search_identity(None, None, ["ntdll.dll"], stores)
+            self.stage(self.default_cache)
+            after = uprof_cache.search_identity(None, None, ["ntdll.dll"], stores)
+        self.assertNotEqual(before, after)
+
     def test_staging_under_a_symbol_path_changes_the_search_identity(self):
         store = self.root / "store"
         (store / "ntdll.pdb").mkdir(parents=True)
@@ -93,7 +105,6 @@ class SymbolStoreTest(unittest.TestCase):
             self.stage(store)
             after = uprof_cache.search_identity([str(store)], None, ["ntdll.dll"])
         self.assertNotEqual(before, after)
-
 
 
 class NoPdbRemedyTest(unittest.TestCase):

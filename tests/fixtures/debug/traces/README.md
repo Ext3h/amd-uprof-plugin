@@ -10,22 +10,19 @@ its `SYMBOL_COVERAGE` line, its stderr `WARNING:` lines and its rows.
 
 The tool output was captured by
 [capture-debug-traces.yml](../../../../.github/workflows/capture-debug-traces.yml) in
-[run 43212399428](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43212399428) at
-commit `2fca250`:
+[run 43214725994](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43214725994) at
+commit `c3e42a7`:
 
 | directory | runner | Python | LLVM | DuckDB |
 | --- | --- | --- | --- | --- |
 | `windows/` | windows-latest | 3.12.10 | 23.1.4 (MSI) | 2.0.0 |
-| `linux/` | ubuntu-latest | 3.12.16 | 23.1.6 (apt.llvm.org) | 2.0.0 |
+| `linux/` | ubuntu-latest | 3.12.16 | 23.1.4 (release tarball) | 2.0.0 |
 
 Both jobs succeeded, and both downloaded artifacts are byte-identical to the committed files.
-The capture commit is an ancestor of the final head; the only later change is the goldens and
-this README. The previous capture, run 43111099142 at `3b30ab6`, had no `symbol_coverage=` or
-`WARNING:` lines and otherwise matches this one.
-
-The Linux jobs now install the pinned LLVM 23.1.4 release tarball instead of apt.llvm.org.
-[Run 43212413746](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43212413746) at `09a1bcc`
-captured `linux/` with it; that artifact is byte-identical to the committed files.
+The capture commit is an ancestor of the final head; the only later change is this README.
+Run 43212399428, with apt.llvm.org 23.1.6 on Linux, produced the same files. The previous
+capture, run 43111099142 at `3b30ab6`, had no `symbol_coverage=` or `WARNING:` lines and
+otherwise matches this one.
 
 Run 43097467349 (tag `trace-capture-2026-11-11-3` at `2a03321`) was queued during a GitHub
 Actions outage and superseded by run 43111099142. Run 43090273610 captured the same Windows

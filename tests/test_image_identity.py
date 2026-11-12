@@ -13,7 +13,7 @@ from pathlib import Path
 import debug_fixtures as F
 from run_tests import HOST_SKIP
 
-SKIP = F.tool_skip() or F.duckdb_skip() or F.pdb_option_skip()
+SKIP = F.tool_skip() or F.duckdb_skip() or F.llvm_version_skip()
 NT_ONLY = HOST_SKIP + "PE symbolization of the production path runs only on Windows"
 IMAGE = F.PE / "fixture_full.exe"
 

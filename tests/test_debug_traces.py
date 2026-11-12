@@ -24,7 +24,7 @@ GOLDENS = F.DEBUG / "traces" / OS_NAME
 
 SKIP = F.tool_skip() or F.duckdb_skip()
 # The goldens hold the output of an LLVM that reads PDBs and compressed DWARF.
-TRACE_SKIP = SKIP or F.pdb_option_skip() or F.zlib_skip()
+TRACE_SKIP = SKIP or F.llvm_version_skip() or F.zlib_skip()
 
 
 @unittest.skipIf(TRACE_SKIP, TRACE_SKIP or "")

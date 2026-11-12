@@ -49,10 +49,10 @@ def tool_skip() -> str | None:
     return ("missing " + ", ".join(missing) + "; install LLVM") if missing else None
 
 
-def pdb_option_skip(symbolizer=None) -> str | None:
-    """A skip reason when llvm-symbolizer lacks --pdb (LLVM before 23), or None."""
+def llvm_version_skip(symbolizer=None) -> str | None:
+    """A skip reason when llvm-symbolizer is below the LLVM minimum (it lacks --pdb), or None."""
     symbolizer = symbolizer or SYMBOLIZER
-    return uprof_native.pdb_option_cause(os.fspath(symbolizer)) if symbolizer else None
+    return uprof_native.llvm_cause(os.fspath(symbolizer)) if symbolizer else None
 
 
 @functools.lru_cache(maxsize=None)

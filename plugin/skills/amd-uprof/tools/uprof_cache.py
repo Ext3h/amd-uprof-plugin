@@ -35,6 +35,9 @@ TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 
 CACHE_ALIAS = "uprof_cache"
 SCHEMA_VERSION = 3
+# The only files the cache owns in its root: cache_db_path names and their quarantined copies.
+_CACHE_NAME = re.compile(r"[0-9a-f]{32}\.duckdb")
+_CORRUPT_NAME = re.compile(r"[0-9a-f]{32}\.duckdb\.corrupt")
 
 
 def _env_float(name: str, default: float) -> float:
@@ -304,8 +307,18 @@ def _remove_db(path: Path) -> None:
             candidate.unlink(missing_ok=True)
 
 
+def _storage_version_error(exc: BaseException) -> bool:
+    """DuckDB refused the file because another DuckDB version wrote it; the file is intact."""
+    text = str(exc).lower()
+    return "storage version" in text or "newer version of duckdb" in text
+
+
 def cleanup_orphans(root: Path | None = None) -> None:
-    """Best-effort removal of cache databases that no live session digest can use."""
+    """Best-effort removal of cache databases that no live session digest can use.
+
+    Only digest-named files are considered, and a file written by a newer cache schema or
+    another DuckDB storage version is left to the version that owns it.
+    """
     global _CLEANED
     if _CLEANED:
         return
@@ -315,24 +328,32 @@ def cleanup_orphans(root: Path | None = None) -> None:
         return
     cutoff = time.time() - TTL_DAYS * 86400
     for path in root.glob("*.duckdb"):
+        if not _CACHE_NAME.fullmatch(path.name):
+            continue
         try:
             mtime = path.stat().st_mtime
         except OSError:
             continue
         session_path = None
+        version = None
         readable = False
         try:
             import duckdb
             connection = duckdb.connect(str(path), read_only=True)
             try:
                 rows = connection.execute(
-                    "SELECT session_path FROM cache_meta LIMIT 1").fetchall()
-                session_path = str(rows[0][0]) if rows and rows[0][0] else None
+                    "SELECT max(version), any_value(session_path) FROM cache_meta").fetchall()
+                version = rows[0][0] if rows else None
+                session_path = str(rows[0][1]) if rows and rows[0][1] else None
                 readable = True
             finally:
                 connection.close()
-        except Exception:  # noqa: BLE001 - unreadable and old: an orphan candidate
+        except Exception as exc:  # noqa: BLE001 - unreadable and old: an orphan candidate
+            if _storage_version_error(exc):
+                continue
             readable = False
+        if readable and version is not None and int(version) > SCHEMA_VERSION:
+            continue
         if not readable:
             if mtime <= cutoff:
                 _remove_db(path)
@@ -347,6 +368,8 @@ def cleanup_orphans(root: Path | None = None) -> None:
         except OSError:
             pass
     for path in root.glob("*.duckdb.corrupt"):
+        if not _CORRUPT_NAME.fullmatch(path.name):
+            continue
         try:
             if path.stat().st_mtime <= cutoff:
                 path.unlink(missing_ok=True)
@@ -421,6 +444,11 @@ class SessionCache:
                     self.busy = True
                     self._warn("cache is busy; profiling without it")
                     return False
+                if _storage_version_error(exc):
+                    self._warn(f"written by another DuckDB storage version ({exc}); "
+                               "profiling without the cache")
+                    self.disabled = True
+                    return False
                 if not retried and self._discard_corrupt(exc):
                     retried = True
                     if read_only and not self.path.is_file():
@@ -481,6 +509,13 @@ class SessionCache:
             rows = self.connection.execute(
                 f"SELECT max(version) FROM {CACHE_ALIAS}.cache_meta").fetchall()
             current = None if not rows else rows[0][0]
+            if current is not None and int(current) > SCHEMA_VERSION:
+                # A newer plugin owns this file; rebuilding would wipe its cache.
+                self.connection.execute("ROLLBACK")
+                self._warn(f"schema version {current} is newer than {SCHEMA_VERSION}; "
+                           "profiling without the cache")
+                self.disabled = True
+                return False
             if current is not None and int(current) != SCHEMA_VERSION:
                 self._warn(f"schema version {current} -> {SCHEMA_VERSION}; rebuilding")
                 for table in ("symbols", "publics", "pdbs", "symbol_runs",

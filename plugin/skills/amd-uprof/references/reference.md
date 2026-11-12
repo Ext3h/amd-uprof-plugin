@@ -136,8 +136,9 @@ and `UPROF_SESSION_CACHE_TIMEOUT` (default 30 s) bounds attach/store retries.
 The capture `cpu.db` stays read-only. The cache is attached read-only for lookups and read-write
 for a run that stores; DuckDB permits one writer per file, so a busy cache is waited for up to
 the timeout and then the run continues uncached without disabling it. A file that cannot be
-opened is moved aside as `.corrupt` and recreated once; a missing table left by an interrupted
-store is repaired. Any remaining cache error disables the cache for the run and the profile
+opened is moved aside as `.corrupt` and recreated once; a file written by another DuckDB storage
+version or a newer cache schema is left untouched and the run continues uncached. A missing table
+left by an interrupted store is repaired. Any remaining cache error disables the cache for the run and the profile
 continues uncached; a cache error must not fail the profile.
 
 Artifacts are tables, not files. A run is keyed by the capture-side module identity (path, size,
@@ -164,7 +165,8 @@ The cache is per session and never shared across sessions. A database over the s
 to store the run and warns; there is no LRU eviction. Orphaned databases whose recorded session
 directory is gone are removed on startup, and a rewritten `cpu.db` (a new digest) removes the
 stale sibling databases for the same live session rather than waiting for the TTL; unreadable
-databases are removed only after `UPROF_SESSION_CACHE_TTL_DAYS`. There are no leases or
+databases are removed only after `UPROF_SESSION_CACHE_TTL_DAYS`. Cleanup touches only the
+digest-named `.duckdb` files and their `.corrupt` copies, so other files in a shared root stay. There are no leases or
 checkpoint policy yet. If a wrong-build PDB is overwritten in place in a location whose
 directory identity does not change, delete `<root>/<digest>.duckdb` or set
 `UPROF_SESSION_CACHE_DISABLE=1`; probe candidates are fingerprinted, which covers the normal

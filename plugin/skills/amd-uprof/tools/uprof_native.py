@@ -32,7 +32,6 @@ TRANSLATE_OUTPUTS: Final = ("cpu.db", "callstack.db", *DUMP_FILENAMES.values())
 # --no-symbolize-operands. A tool below its minimum stops the command that needs it.
 UPROF_MINIMUM: Final = (5, 3)
 LLVM_MINIMUM: Final = (23,)
-LLVM_TOOLS: Final = ("llvm-symbolizer", "llvm-readobj", "llvm-pdbutil", "llvm-objdump")
 
 
 # ---------------------------------------------------------------- tool discovery
@@ -98,13 +97,18 @@ def find_sibling(symbolizer: Path | None, name: str) -> Path | None:
     return _first_existing(candidates)
 
 
+# apt.llvm.org's installer for one LLVM release; distribution packages are often older.
+LINUX_LLVM_INSTALL: Final = "wget https://apt.llvm.org/llvm.sh && sudo bash llvm.sh 23"
+
+
 def require_uprof() -> Path:
     found = find_uprof()
     if not found:
         hint = ("install AMD uProf, or set AMDUPROF_CLI to AMDuProfCLI.exe"
                 if IS_WINDOWS else "install AMD uProf, or set AMDUPROF_CLI to the AMDuProfCLI binary")
         raise UprofError(f"AMDuProfCLI not found; {hint}")
-    cause = uprof_version_cause(found, _uprof_version(found))
+    # Only --version is evidence: an install path naming a release is not the binary's version.
+    cause = uprof_version_cause(found, _first_version_line(found, "--version"))
     if cause:
         raise UprofError(cause)
     return found
@@ -114,26 +118,26 @@ def require_symbolizer() -> Path:
     """The llvm-symbolizer; it and the found siblings symbolization uses must meet LLVM_MINIMUM."""
     found = find_symbolizer()
     if not found:
-        hint = ("winget install --id LLVM.LLVM" if IS_WINDOWS
-                else "install LLVM (for example: sudo apt install llvm)")
+        hint = "winget install --id LLVM.LLVM" if IS_WINDOWS else LINUX_LLVM_INSTALL
         raise UprofError(f"llvm-symbolizer not found; {hint} (or set LLVM_SYMBOLIZER)")
     require_llvm(SYMBOLIZE_TOOLS, found)
     return found
 
 
-# llvm-readobj reads the PE GUID and llvm-pdbutil the fold cache, both only on Windows.
-SYMBOLIZE_TOOLS: Final = (("llvm-symbolizer", "llvm-readobj", "llvm-pdbutil") if IS_WINDOWS
-                          else ("llvm-symbolizer",))
+# Symbolization derives function ranges with llvm-readobj on every OS; llvm-pdbutil reads the
+# PDB fold cache on Windows only.
+SYMBOLIZE_TOOLS: Final = ("llvm-symbolizer", "llvm-readobj") + (
+    ("llvm-pdbutil",) if IS_WINDOWS else ())
 # Instruction context symbolizes, reads imports with llvm-readobj and decodes with llvm-objdump.
 CONTEXT_TOOLS: Final = ("llvm-symbolizer", "llvm-readobj", "llvm-objdump")
 
 
 def parse_version(text: str | None) -> tuple[int, ...] | None:
-    """The dotted version after the word "version", else a leading dotted number."""
+    """The dotted version after the word "version", else the first dotted number in text."""
     if not text:
         return None
-    match = (re.search(r"(?i)\bversion\s+v?(\d+(?:\.\d+)*)", text)
-             or re.match(r"\s*(\d+(?:\.\d+)+)", text))
+    match = (re.search(r"(?i)\bversion[:\s-]*v?(\d+(?:\.\d+)*)", text)
+             or re.search(r"(\d+(?:\.\d+)+)", text))
     return tuple(int(part) for part in match.group(1).split(".")) if match else None
 
 
@@ -166,13 +170,25 @@ def uprof_version_cause(path: Path, version: str | None) -> str | None:
 
 def llvm_version_cause(path: Path, version: str | None) -> str | None:
     floor = _minimum_text(LLVM_MINIMUM)
-    install = ("winget upgrade --id LLVM.LLVM" if IS_WINDOWS
-               else f"install LLVM {floor} or later from apt.llvm.org")
+    install = "winget upgrade --id LLVM.LLVM" if IS_WINDOWS else LINUX_LLVM_INSTALL
     return _version_cause(
         path, version, LLVM_MINIMUM, "LLVM",
         "llvm-symbolizer --pdb and llvm-objdump --no-symbolize-operands need it",
         f"{install}, or set LLVM_SYMBOLIZER to an llvm-symbolizer of LLVM {floor} or later "
         "whose directory holds the other LLVM tools")
+
+
+class SymbolizerUnsupported(UprofError):
+    """An LLVM tool is below LLVM_MINIMUM; the message is the cause and the remedy."""
+
+
+@functools.lru_cache(maxsize=None)
+def llvm_cause(path: str) -> str | None:
+    """None when the LLVM tool at path meets LLVM_MINIMUM, else its one-line cause.
+
+    One --version run per tool path and process: every module of a profile asks again.
+    """
+    return llvm_version_cause(Path(path), _first_version_line(Path(path), "--version"))
 
 
 def _llvm_path(name: str, symbolizer: Path | None) -> Path | None:
@@ -185,43 +201,9 @@ def require_llvm(names: Iterable[str], symbolizer: Path | None = None) -> None:
     symbolizer = symbolizer if symbolizer else find_symbolizer()
     for name in names:
         path = _llvm_path(name, symbolizer)
-        if path:
-            cause = llvm_version_cause(path, _first_version_line(path, "--version"))
-            if cause:
-                raise UprofError(cause)
-
-
-class SymbolizerUnsupported(UprofError):
-    """The installed llvm-symbolizer lacks an option the run needs; the message is the remedy."""
-
-
-@functools.lru_cache(maxsize=None)
-def pdb_option_cause(symbolizer: str) -> str | None:
-    """None when this llvm-symbolizer accepts --pdb, else the cause and remedy in one line.
-
-    llvm-symbolizer has an explicit --pdb option only from LLVM 23; an older one rejects it as an
-    unknown argument, which fails every module that has an accepted PDB. A help text that cannot
-    be read is not evidence of a missing option, so it does not block symbolization.
-    """
-    try:
-        completed = run([symbolizer, "--help"], timeout=30)
-    except (UprofError, OSError):
-        return None
-    text = (completed.stdout or "") + "\n" + (completed.stderr or "")
-    if completed.returncode != 0 or not text.strip() or re.search(r"--pdb[=\s]", text):
-        return None
-    version = _first_version_line(Path(symbolizer), "--version") or "version unknown"
-    hint = ("winget upgrade --id LLVM.LLVM" if IS_WINDOWS
-            else "install LLVM 23 or later from apt.llvm.org")
-    return (f"{symbolizer} ({version}) has no --pdb option, so it cannot read a PDB; "
-            f"LLVM >= 23 required: {hint}, or set LLVM_SYMBOLIZER to an LLVM >= 23 "
-            "llvm-symbolizer, then re-run")
-
-
-def require_pdb_option(symbolizer: Path) -> None:
-    cause = pdb_option_cause(str(symbolizer))
-    if cause:
-        raise SymbolizerUnsupported(cause)
+        cause = llvm_cause(str(path)) if path else None
+        if cause:
+            raise SymbolizerUnsupported(cause)
 
 
 def run(command: Sequence[str], timeout: int | None = None, input_text: str | None = None,
@@ -339,22 +321,23 @@ def _first_version_line(path: Path, *args: str) -> str | None:
 
 def _tool_row(name: str, path: Path | None, version: str | None,
               missing: str = "not found", minimum: tuple[int, ...] | None = None,
-              too_old: str | None = None) -> str:
-    """One `tools` row; missing is the cause (and remedy) printed when path is absent, and
-    too_old the cause when the found version is below minimum."""
+              too_old: str | None = None, display: str | None = None) -> str:
+    """One `tools` row; missing is the cause (and remedy) printed when path is absent, too_old
+    the cause when version is below minimum or unreadable, and display replaces the printed
+    version text without changing the verdict."""
     if not path:
         return f"{name}=; version=MISSING ({missing})"
-    row = f"{name}={path}; version={version or 'unavailable'}"
+    row = f"{name}={path}; version={display or version or 'unavailable'}"
     if minimum is not None:
         status = "TOO OLD" if parse_version(version) else "UNREADABLE"
         row += f"; minimum={_minimum_text(minimum)}; " + (f"{status}: {too_old}" if too_old else "ok")
     return row
 
 
-def _uprof_version(path: Path | None) -> str | None:
+def _uprof_version(path: Path | None, version: str | None) -> str | None:
+    """The --version line for display, else the install-path version marked as such."""
     if path is None:
         return None
-    version = _first_version_line(path, "--version")
     if version:
         return version
     path_version = ".".join(str(part) for part in _version_key(path))
@@ -365,7 +348,8 @@ def _uprof_version(path: Path | None) -> str | None:
 
 def tool_report() -> None:
     """Print every tool path and version against its minimum, then fail once if a required tool
-    is missing or a found tool is below its minimum."""
+    is missing or any found tool, optional ones included, is below its minimum or unreadable:
+    a command that runs it would stop, while an absent optional tool only omits its block."""
     uprof = find_uprof()
     symbolizer = find_symbolizer()
     pdbutil = find_sibling(symbolizer, "llvm-pdbutil")
@@ -394,18 +378,19 @@ def tool_report() -> None:
     too_old: list[str] = []
 
     def row(name: str, path: Path | None, version: str | None, minimum: tuple[int, ...],
-            cause_of, tool: str, missing: str = "not found") -> str:
+            cause_of, tool: str, missing: str = "not found", display: str | None = None) -> str:
         cause = cause_of(path, version) if path else None
         if cause:
             too_old.append(tool)
-        return _tool_row(name, path, version, missing, minimum, cause)
+        return _tool_row(name, path, version, missing, minimum, cause, display)
 
     def llvm_row(name: str, path: Path | None, tool: str, missing: str = "not found") -> str:
         version = _first_version_line(path, "--version") if path else None
         return row(name, path, version, LLVM_MINIMUM, llvm_version_cause, tool, missing)
 
-    print(row("UPROF", uprof, _uprof_version(uprof), UPROF_MINIMUM, uprof_version_cause,
-              "AMDuProfCLI"))
+    uprof_line = _first_version_line(uprof, "--version") if uprof else None
+    print(row("UPROF", uprof, uprof_line, UPROF_MINIMUM, uprof_version_cause, "AMDuProfCLI",
+              display=_uprof_version(uprof, uprof_line)))
     print(f"DUCKDB={duckdb_version or ''}; version={duckdb_short or 'MISSING (not installed)'}")
     print(llvm_row("SYMBOLIZER", symbolizer, "llvm-symbolizer"))
     print(llvm_row("PDBUTIL", pdbutil, "llvm-pdbutil"))

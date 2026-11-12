@@ -23,7 +23,6 @@ def report(siblings: dict[str, Path | None]) -> list[str]:
             mock.patch.object(uprof_native, "find_sibling",
                               side_effect=lambda symbolizer, name: siblings.get(name)), \
             mock.patch.object(uprof_native, "_first_version_line", return_value="LLVM version 23.1.4"), \
-            mock.patch.object(uprof_native, "_uprof_version", return_value="AMDuProfCLI.exe Version 5.3.521.0"), \
             mock.patch.dict("sys.modules", duckdb=types.SimpleNamespace(__version__="2.0.0")), \
             contextlib.redirect_stdout(out):
         uprof_native.tool_report()

@@ -1406,8 +1406,9 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
     any sample landed in a kernel image, so the kernel-coverage check adds no query of its own.
     """
     meta = uprof_session.read_meta(args.session) or {}
-    schedule = (meta.get("collection") or {}).get("schedule") or {}
-    elapsed_ms = schedule.get("elapsed")
+    collection = meta.get("collection")
+    schedule = collection.get("schedule") if isinstance(collection, dict) else {}
+    elapsed_ms = schedule.get("elapsed") if isinstance(schedule, dict) else None
     contexts: list[uprof_session.ContextCadence] = []
     label = "CPU"
     window_s: float | None = None

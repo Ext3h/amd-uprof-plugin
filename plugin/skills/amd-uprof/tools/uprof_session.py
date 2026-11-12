@@ -63,15 +63,28 @@ class ContextCadence:
 _RUN_GAP_FACTOR = 10.0
 
 
+def _parse_int(value: Any, name: str) -> int:
+    """Convert value to int, or raise UprofError if non-numeric."""
+    if isinstance(value, bool):
+        raise UprofError(f"session metadata has non-numeric {name}: {value!r}")
+    try:
+        return int(value, 0) if isinstance(value, str) else int(value)
+    except (ValueError, TypeError) as exc:
+        raise UprofError(f"session metadata has non-numeric {name}: {value!r}") from exc
+
+
 def read_meta(session_dir: Path | str) -> dict[str, Any] | None:
     path = Path(session_dir) / "session.uprof"
     try:
         with open(path, "r", encoding="utf-8-sig") as handle:
-            return json.load(handle)
+            data = json.load(handle)
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError):
         return {}
+    if not isinstance(data, dict):
+        raise UprofError(f"session metadata in {path} is not a JSON object")
+    return data
 
 
 def records_true(value: Any) -> bool:
@@ -86,24 +99,39 @@ def system_wide(session_dir: Path | str) -> bool:
     non-boolean value cannot make the Python legend and the SQL weighting disagree.
     """
     meta = read_meta(session_dir) or {}
-    return records_true(((meta.get("collection") or {}).get("target") or {}).get("systemWide"))
+    collection = meta.get("collection")
+    target = collection.get("target") if isinstance(collection, dict) else None
+    return records_true(target.get("systemWide") if isinstance(target, dict) else None)
 
 
 def _registered_columns(meta: dict[str, Any]) -> dict[str, str]:
     columns: dict[str, str] = {}
-    for category in (meta.get("auxiliary") or {}).get("eventColumnIds") or []:
-        for event in category.get("events") or []:
-            name = event.get("name")
-            encoded = event.get("encodedId")
-            if name and encoded is not None:
-                columns.setdefault(str(name), f"event#0x{int(encoded):x}")
+    auxiliary = meta.get("auxiliary")
+    categories = auxiliary.get("eventColumnIds") if isinstance(auxiliary, dict) else None
+    if isinstance(categories, list):
+        for category in categories:
+            if not isinstance(category, dict):
+                continue
+            events = category.get("events")
+            if isinstance(events, list):
+                for event in events:
+                    if not isinstance(event, dict):
+                        continue
+                    name = event.get("name")
+                    encoded = event.get("encodedId")
+                    if name and encoded is not None:
+                        val = _parse_int(encoded, "encodedId")
+                        columns.setdefault(str(name), f"event#0x{val:x}")
     return columns
 
 
 def _encoded_name(event: dict[str, Any]) -> str | None:
     """The event#0x... spelling of the entry's encodedEventId; None when it has none."""
     encoded = event.get("encodedEventId")
-    return f"event#0x{int(encoded):x}" if encoded is not None else None
+    if encoded is None:
+        return None
+    val = _parse_int(encoded, "encodedEventId")
+    return f"event#0x{val:x}"
 
 
 def _event_from_command(meta: dict[str, Any]) -> str | None:
@@ -132,16 +160,23 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
 
     columns = _registered_columns(meta)
     from_command = _event_from_command(meta)
-    ibs = (meta.get("collection") or {}).get("events", {}).get("ibsEvents")
-    is_ibs = bool((meta.get("auxiliary") or {}).get("ibsOpSampling")) or bool(
-        ibs and (ibs.get("op") or ibs.get("fetch")))
+    collection = meta.get("collection")
+    collection_dict = collection if isinstance(collection, dict) else {}
+    events = collection_dict.get("events")
+    events_dict = events if isinstance(events, dict) else {}
+    ibs = events_dict.get("ibsEvents")
+    ibs_dict = ibs if isinstance(ibs, dict) else {}
+    auxiliary = meta.get("auxiliary")
+    auxiliary_dict = auxiliary if isinstance(auxiliary, dict) else {}
+    is_ibs = bool(auxiliary_dict.get("ibsOpSampling")) or bool(
+        ibs_dict and (ibs_dict.get("op") or ibs_dict.get("fetch")))
 
     if is_ibs:
-        os_mode = _ibs_os_mode(ibs)
-        if ibs and ibs.get("op"):
+        os_mode = _ibs_os_mode(ibs_dict if isinstance(ibs, dict) else None)
+        if ibs_dict and ibs_dict.get("op"):
             event = columns.get("IBS_ALL_OPS", IBS_OP_EVENT)
-            interval = ibs.get("opInterval")
-            if bool(ibs.get("opCycleCount")):
+            interval = ibs_dict.get("opInterval")
+            if bool(ibs_dict.get("opCycleCount")):
                 metric = (f"METRIC: IBS OP (IBS_ALL_OPS {event}, cycle-controlled interval {interval}) "
                           "-- sample shares: core-cycle share (fixed cycles per sample), not "
                           "wall time, not a per-op cost; tag-to-retire: share of tag-to-retire "
@@ -154,24 +189,26 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
                           "tag-to-retire cycles summed over sampled ops (dispatch tag to "
                           "retirement, queue/stalls included), clipped at 65535")
             return Sampler(ibs_dump_kind="ibsop-event-dump", metric=metric, interval=interval,
-                           interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops",
+                           interval_units="cycles" if bool(ibs_dict.get("opCycleCount")) else "ops",
                            os_requested=os_mode is not None, os_mode=os_mode)
-        if ibs and ibs.get("fetch"):
+        if ibs_dict and ibs_dict.get("fetch"):
             event = columns.get("IBS_FETCH", IBS_FETCH_EVENT)
-            metric = (f"METRIC: IBS fetch (IBS_FETCH {event}, interval {ibs.get('fetchInterval')}) "
+            metric = (f"METRIC: IBS fetch (IBS_FETCH {event}, interval {ibs_dict.get('fetchInterval')}) "
                       "-- sample shares: fetch-sample frequency share (fixed fetch events per "
                       "sample); fetch path unverified")
             return Sampler(ibs_dump_kind="ibsfetch-event-dump", metric=metric,
-                           interval=ibs.get("fetchInterval"), interval_units="fetch",
+                           interval=ibs_dict.get("fetchInterval"), interval_units="fetch",
                            os_requested=os_mode is not None, os_mode=os_mode)
         return Sampler(metric=(
             "METRIC: IBS capture (details not recorded in session.uprof) -- sample shares: "
             "not established; do not read them as time"),
             os_requested=os_mode is not None, os_mode=os_mode)
 
-    pmc = [event for event in
-           ((meta.get("collection") or {}).get("events", {}).get("pmcEvents") or {}).get("pmcEventList") or []
-           if event]
+    pmc_events = events_dict.get("pmcEvents")
+    pmc_events_dict = pmc_events if isinstance(pmc_events, dict) else {}
+    raw_pmc = pmc_events_dict.get("pmcEventList")
+    pmc = [event for event in (raw_pmc if isinstance(raw_pmc, list) else [])
+           if isinstance(event, dict)]
     if pmc:
         mapped = columns.get("CYCLES_NOT_IN_HALT")
         event = next((entry for entry in pmc if entry.get("hwId") == 118), None)
@@ -243,10 +280,17 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
     meta = read_meta(session_dir)
     if not meta:
         raise UprofError(f"session.uprof is missing or unreadable in {session_dir}")
-    target = (meta.get("collection") or {}).get("target") or {}
-    collection_event = ((meta.get("collection") or {}).get("events") or {})
+    collection = meta.get("collection")
+    collection_dict = collection if isinstance(collection, dict) else {}
+    target = collection_dict.get("target")
+    target_dict = target if isinstance(target, dict) else {}
+    events = collection_dict.get("events")
+    events_dict = events if isinstance(events, dict) else {}
     if event == "cycles":
-        pmc = ((collection_event.get("pmcEvents") or {}).get("pmcEventList") or [])
+        pmc_events = events_dict.get("pmcEvents")
+        pmc_events_dict = pmc_events if isinstance(pmc_events, dict) else {}
+        raw_pmc = pmc_events_dict.get("pmcEventList")
+        pmc = [e for e in raw_pmc if isinstance(e, dict)] if isinstance(raw_pmc, list) else []
         if not pmc:
             raise UprofError("no PMC event recorded; this is not a cycle capture")
         applied = pmc[0]
@@ -256,25 +300,36 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
             raise UprofError(f"interval is {applied.get('interval')}, expected {interval}")
         if not applied.get("isSampling"):
             raise UprofError("PMC event is not sampling")
-        if (meta.get("auxiliary") or {}).get("ibsOpSampling"):
+        auxiliary = meta.get("auxiliary")
+        auxiliary_dict = auxiliary if isinstance(auxiliary, dict) else {}
+        if auxiliary_dict.get("ibsOpSampling"):
             raise UprofError("capture is IBS, not PMC cycle counting")
     else:
-        ibs = collection_event.get("ibsEvents") or {}
-        if not ibs.get("op"):
+        ibs = events_dict.get("ibsEvents")
+        ibs_dict = ibs if isinstance(ibs, dict) else {}
+        if not ibs_dict.get("op"):
             raise UprofError("no IBS OP event recorded; this is not an IBS OP capture")
-        if not (meta.get("auxiliary") or {}).get("ibsOpSampling"):
+        auxiliary = meta.get("auxiliary")
+        auxiliary_dict = auxiliary if isinstance(auxiliary, dict) else {}
+        if not auxiliary_dict.get("ibsOpSampling"):
             raise UprofError("capture metadata says IBS OP sampling is off")
-        if ibs.get("opInterval") != interval:
-            raise UprofError(f"IBS interval is {ibs.get('opInterval')}, expected {interval}")
-        if bool(ibs.get("opCycleCount")) != (count_control == "cycles"):
-            raise UprofError(f"IBS count control is opCycleCount={ibs.get('opCycleCount')}, "
+        if ibs_dict.get("opInterval") != interval:
+            raise UprofError(f"IBS interval is {ibs_dict.get('opInterval')}, expected {interval}")
+        if bool(ibs_dict.get("opCycleCount")) != (count_control == "cycles"):
+            raise UprofError(f"IBS count control is opCycleCount={ibs_dict.get('opCycleCount')}, "
                              f"expected {count_control == 'cycles'} ({count_control})")
-    if records_true(target.get("systemWide")) != system_wide:
-        raise UprofError(f"capture target mode is systemWide={target.get('systemWide')}, "
+    if records_true(target_dict.get("systemWide")) != system_wide:
+        raise UprofError(f"capture target mode is systemWide={target_dict.get('systemWide')}, "
                          f"expected {system_wide} (use -a or --process)")
     if not system_wide:
-        attached = {int(entry.get("processId")) for entry in target.get("attachedProcesses") or []
-                    if entry.get("processId") is not None}
+        raw_attached = target_dict.get("attachedProcesses")
+        if raw_attached is not None and not isinstance(raw_attached, list):
+            raise UprofError("session metadata collection.target.attachedProcesses is not a list")
+        attached = {
+            _parse_int(entry.get("processId"), "processId")
+            for entry in (raw_attached or [])
+            if isinstance(entry, dict) and entry.get("processId") is not None
+        }
         missing = [pid for pid in pids if pid not in attached]
         if missing:
             raise UprofError("capture did not attach to PID(s): " + ", ".join(map(str, missing)))
@@ -282,18 +337,27 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
 
 
 def collect_summary(meta: dict[str, Any], event: str) -> str:
-    collection_event = ((meta.get("collection") or {}).get("events") or {})
-    target = (meta.get("collection") or {}).get("target") or {}
-    auxiliary = meta.get("auxiliary") or {}
+    collection = meta.get("collection")
+    collection_dict = collection if isinstance(collection, dict) else {}
+    events = collection_dict.get("events")
+    events_dict = events if isinstance(events, dict) else {}
+    target = collection_dict.get("target")
+    target_dict = target if isinstance(target, dict) else {}
+    auxiliary = meta.get("auxiliary")
+    auxiliary_dict = auxiliary if isinstance(auxiliary, dict) else {}
     if event == "cycles":
-        applied = (((collection_event.get("pmcEvents") or {}).get("pmcEventList")) or [{}])[0]
+        pmc_events = events_dict.get("pmcEvents")
+        pmc_events_dict = pmc_events if isinstance(pmc_events, dict) else {}
+        pmc_list = pmc_events_dict.get("pmcEventList")
+        applied = (pmc_list[0] if isinstance(pmc_list, list) and pmc_list and isinstance(pmc_list[0], dict) else {})
         return (f"hwId={applied.get('hwId')} interval={applied.get('interval')} "
-                f"isSampling={applied.get('isSampling')} systemWide={target.get('systemWide')} "
-                f"ibsOpSampling={auxiliary.get('ibsOpSampling')}")
-    ibs = collection_event.get("ibsEvents") or {}
-    return (f"ibsOpSampling={auxiliary.get('ibsOpSampling')} ibsOp={ibs.get('op')} "
-            f"opInterval={ibs.get('opInterval')} opCycleCount={ibs.get('opCycleCount')} "
-            f"systemWide={target.get('systemWide')}")
+                f"isSampling={applied.get('isSampling')} systemWide={target_dict.get('systemWide')} "
+                f"ibsOpSampling={auxiliary_dict.get('ibsOpSampling')}")
+    ibs = events_dict.get("ibsEvents")
+    ibs_dict = ibs if isinstance(ibs, dict) else {}
+    return (f"ibsOpSampling={auxiliary_dict.get('ibsOpSampling')} ibsOp={ibs_dict.get('op')} "
+            f"opInterval={ibs_dict.get('opInterval')} opCycleCount={ibs_dict.get('opCycleCount')} "
+            f"systemWide={target_dict.get('systemWide')}")
 
 
 def _format_duration(seconds: float) -> str:
@@ -408,21 +472,25 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
     meta = read_meta(session_dir)
     if not meta:
         raise UprofError(f"session.uprof is missing or unreadable in {session_dir}")
-    schedule = (meta.get("collection") or {}).get("schedule") or {}
-    start = schedule.get("start")
+    collection = meta.get("collection")
+    collection_dict = collection if isinstance(collection, dict) else {}
+    schedule = collection_dict.get("schedule")
+    schedule_dict = schedule if isinstance(schedule, dict) else {}
+    start = schedule_dict.get("start")
     if start is None:
         raise UprofError("session.uprof records no collection.schedule.start; cannot anchor")
+    start_ns = _parse_int(start, "collection.schedule.start")
     from datetime import timezone
 
     hertz = freq or 10_000_000
     source = "argument" if freq else "default (10 MHz; the session records no QPC frequency)"
-    relative = (qpc * 1e9 / hertz - int(start)) / 1e9
+    relative = (qpc * 1e9 / hertz - start_ns) / 1e9
     lines = [
         f"QPC={qpc} HZ={hertz} HZ_SOURCE={source}",
-        f"START_NS={int(start)}",
+        f"START_NS={start_ns}",
         f"RELATIVE_S={relative:.9f}",
     ]
-    stamp = schedule.get("startTs")
+    stamp = schedule_dict.get("startTs")
     if stamp:
         parsed = _parse_start_ts(str(stamp))
         if parsed is not None:

@@ -400,7 +400,9 @@ def _dump_window_s(session: Path, time_filter: str | None) -> float | None:
         if bounds is not None:
             return float(bounds[1] - bounds[0])
     meta = read_meta(session) or {}
-    elapsed_ms = ((meta.get("collection") or {}).get("schedule") or {}).get("elapsed")
+    collection = meta.get("collection")
+    schedule = collection.get("schedule") if isinstance(collection, dict) else None
+    elapsed_ms = schedule.get("elapsed") if isinstance(schedule, dict) else None
     try:
         return int(elapsed_ms) / 1000.0
     except (TypeError, ValueError):

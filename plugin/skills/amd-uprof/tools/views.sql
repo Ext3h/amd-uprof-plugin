@@ -540,7 +540,7 @@ SELECT CAST(NULL AS BIGINT) AS delta_tick,
        CAST(s.moduleRVA AS BIGINT) AS rva,
        module_key(m.path) AS module_name,
        CAST(NULL AS DOUBLE) AS weight,
-       CAST(COLUMNS(lambda c: c = getvariable('uprof_event_column')) AS BIGINT) AS samples,
+       CAST(COLUMNS(lambda c: lower(c) = lower(getvariable('uprof_event_column'))) AS BIGINT) AS samples,
        CAST(NULL AS DOUBLE) AS tag_cycles,
        COALESCE(p.name, '<unknown process>') AS process,
        s.functionId AS function_id
@@ -686,7 +686,7 @@ SELECT * FROM query(CASE WHEN getvariable('has_dump') THEN $dump$
 ELSE $pmc$
   SELECT module_key(m.path) AS module_name,
          CAST(s.coreId AS INTEGER) AS context,
-         CAST(COLUMNS(lambda col: col = getvariable('uprof_event_column')) AS BIGINT) AS samples,
+         CAST(COLUMNS(lambda col: lower(col) = lower(getvariable('uprof_event_column'))) AS BIGINT) AS samples,
          COALESCE(c.kernel_image,
                   is_kernel_image(module_key(m.path), NULL)) AS kernel_image
   FROM UnifiedSampleSeries s

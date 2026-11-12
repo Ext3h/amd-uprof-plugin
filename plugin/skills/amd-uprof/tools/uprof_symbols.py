@@ -358,14 +358,14 @@ def _unique_dirs(paths: Iterable[str | Path]) -> list[Path]:
     return list(result.values())
 
 
-def symbol_stores(session: str | Path) -> list[Path]:
+def symbol_stores(session: str | Path | None) -> list[Path]:
     """The symbol stores translate may have staged this session's PDBs into, besides srv* caches.
 
     translate stages a PDB as <store>/<pdb>/<GUID><age>/<pdb> under the --symbol-cache-dir it
     recorded in session.uprof, by default the user's symbol cache. Existing directories only.
     """
     try:
-        meta = json.loads(read_text(Path(session) / "session.uprof"))
+        meta = json.loads(read_text(Path(session) / "session.uprof")) if session else None
     except (UprofError, ValueError):
         meta = None
     command = str(meta.get("translateCommand") or "") if isinstance(meta, dict) else ""
@@ -1030,7 +1030,7 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
         remedy = (f"copy the PDB with GUID {evidence.image_guid} age {evidence.image_age} to one "
                   "of the searched paths, or re-run profile with --symbol-path set to the "
                   "directory or file holding it (translate --symbol-server stages it from a "
-                  "symbol server into a searched store); a third-party module with no symbols "
+                  "symbol server into the symbol cache profile searches); a third-party module with no symbols "
                   "is a finding, not a blocker")
     else:
         remedy = ("pass profile --symbol-path <file|dir> for a symbol or debug file or a search "

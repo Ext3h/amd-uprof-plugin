@@ -280,8 +280,16 @@ class CliLog:
         return None, ""
 
 
+def recapture_commands(session: Path) -> tuple[str, str]:
+    """Runnable cycle and IBS collect commands writing next to session, for a capture that
+    holds nothing to translate."""
+    script = Path(__file__).resolve().with_name("uprof.py")
+    cycles = f'python "{script}" collect --out-dir "{session}-recapture" --seconds 60'
+    return cycles, cycles + " --event ibs-op"
+
+
 def translate_failure(what: str, completed: subprocess.CompletedProcess[str],
-                      log: CliLog) -> str:
+                      log: CliLog, session: Path) -> str:
     """One line for a failed AMDuProfCLI translate, naming the cause the CLI log gives."""
     detail = failure_detail(completed)
     code = completed.returncode
@@ -289,10 +297,10 @@ def translate_failure(what: str, completed: subprocess.CompletedProcess[str],
         if code in ACCESS_VIOLATION_EXITS else ""
     log_path, log_text = log.appended()
     if NO_CATEGORY_LOG in log_text:
+        cycles, ibs = recapture_commands(session)
         return (f"{what} failed with {code}{crash}: the session has no translatable sample "
-                f"category (AMDuProfCLI log {log_path}: \"{NO_CATEGORY_LOG}\"), so it holds no "
-                "samples to translate; remedy: capture again with `uprof.py collect --out-dir "
-                "<new dir> --seconds 60` (cycles) or add `--event ibs-op` for IBS, then translate "
+                "category (per the AMDuProfCLI log), so it holds no samples to translate; "
+                f"remedy: capture again with {cycles} (cycles) or {ibs} (IBS), then translate "
                 "that session")
     if crash and log_path:
         return f"{what} failed with {code}{crash}: {detail}; AMDuProfCLI log: {log_path}"
@@ -696,7 +704,7 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     completed = run(command, timeout=TRANSLATE_TIMEOUT)
     print_output(completed)
     if completed.returncode != 0:
-        raise UprofError(translate_failure("translate", completed, log))
+        raise UprofError(translate_failure("translate", completed, log, session))
 
     cpu_db = out / "cpu.db"
     if not cpu_db.is_file():

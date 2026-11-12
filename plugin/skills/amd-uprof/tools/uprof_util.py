@@ -24,6 +24,12 @@ COPY_DIRS: Final = ("cpu", "metadata", ".config", ".log", "sources", "binaries")
 # step with the released plugin version.
 _BUILTIN_VERSION: Final = "2.1.0"
 _PLUGIN_MANIFEST: Final = Path(".claude-plugin") / "plugin.json"
+_CREDENTIALS: Final = re.compile(r"(?i)([a-z]+://)[^@\s/]+@")
+
+
+def redact_credentials(text: str) -> str:
+    """Drop credentials from symbol-server URLs before printing or persisting."""
+    return _CREDENTIALS.sub(r"\1***@", text)
 
 
 class UprofError(RuntimeError):

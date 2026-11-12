@@ -20,7 +20,8 @@ from typing import Final, TextIO
 
 from uprof_native import (SymbolizerUnsupported, find_sibling,
                           require_symbolizer, run)
-from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
+from uprof_util import (UprofError, absolute, read_text, redact_credentials,
+                        require_file, tail_lines)
 
 _GUID = re.compile(r"^\s*GUID:\s*(.+)$")
 _AGE = re.compile(r"^\s*Age:\s*(\d+)")
@@ -982,7 +983,7 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
                          + "; ".join(_probe_text(probe) for probe in evidence.search.probes))
         if evidence.search.urls:
             facts.append("symbol-server URLs not consulted: "
-                         + ", ".join(evidence.search.urls))
+                         + ", ".join(redact_credentials(url) for url in evidence.search.urls))
     remedy = ("pass profile --symbol-path <file|dir> for a symbol or debug file or a search "
               "root, --image-path <file|dir> when the module image is not at its recorded path, "
               "or place the matching debug file beside the module or in a local srv* cache "

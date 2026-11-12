@@ -30,7 +30,7 @@ import uprof_symbols
 from uprof_context import find_readobj
 from uprof_native import (IS_WINDOWS, default_symbol_servers, find_sibling, find_symbolizer,
                           symbol_cache_dir)
-from uprof_util import contains, same_path
+from uprof_util import contains, redact_credentials, same_path
 
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 
@@ -696,7 +696,7 @@ class SessionCache:
     @staticmethod
     def _redact(text: str) -> str:
         """Drop credentials from symbol-server URLs before persisting/replaying evidence."""
-        return _CREDENTIALS.sub(r"\1***@", text)
+        return redact_credentials(text)
 
     def _over_cap(self) -> bool:
         try:

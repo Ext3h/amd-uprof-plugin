@@ -42,6 +42,8 @@ class ParseTest(unittest.TestCase):
 
         self.assertEqual(parsed.caches, (r"C:\sym",))
         self.assertEqual(parsed.urls, ("https://symbols.example/store",))
+        self.assertEqual(parsed.servers, ())
+        self.assertIsNone(parsed.download_cache)
 
     def test_cache_and_plain_directory_entries_are_kept(self):
         parsed = self.parse(r"cache*C:\cached; C:\plain ;;")
@@ -58,7 +60,7 @@ class ParseTest(unittest.TestCase):
 
         self.assertEqual(cache, r"C:\sym")
         self.assertEqual(servers, ["srv**https://b.example",
-                                   r"srv* C:\sym *https://c.example"])
+                                   r"srv*C:\sym*https://c.example"])
 
 
 class CallersAgreeTest(unittest.TestCase):
@@ -87,8 +89,15 @@ class CallersAgreeTest(unittest.TestCase):
     def test_discovery_reads_a_plain_directory_entry(self):
         self.assertIn(self.plain / "app.pdb", self.candidates())
 
+    def test_discovery_reads_a_cache_entry_like_a_store(self):
+        with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": f"cache*{self.cache}"}):
+            candidates = self.candidates()
+
+        self.assertIn(self.cache / "app.pdb" / "ABCD1" / "app.pdb", candidates)
+
     def test_the_cache_key_fingerprints_the_same_roots(self):
-        fingerprinted = {entry[0] for entry in uprof_cache._srv_caches()}
+        fingerprinted = {entry[0]
+                         for entry in uprof_cache.search_identity(None, None, [])["srv_caches"]}
 
         self.assertIn(str(self.cache), fingerprinted)
         self.assertIn(str(self.plain), fingerprinted)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -125,6 +126,65 @@ def contains(outer: os.PathLike[str] | str, inner: os.PathLike[str] | str) -> bo
         except (OSError, ValueError):
             continue
     return False
+
+
+def sha256_file(path: os.PathLike[str] | str) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def capture_identity(session_dir: os.PathLike[str] | str,
+                     known: object = None) -> list[dict[str, object]] | None:
+    """What one capture is: name, size and SHA-256 of every raw cpu/*.prd, in name order.
+
+    Neither the path nor file times identify a capture: copies keep their source's times, and
+    another capture can be copied to the same path. session.uprof is not part of it because
+    translate rewrites it. known is an earlier result; a file whose volume, file ID, size and
+    modification time still match its entry keeps that digest unread, every other file is hashed.
+    None when a raw file cannot be read.
+    """
+    previous = {entry.get("name"): entry for entry in known
+                if isinstance(entry, dict)} if isinstance(known, list) else {}
+    try:
+        files = sorted((path for path in (Path(session_dir) / "cpu").iterdir()
+                        if path.name.lower().endswith(".prd") and path.is_file()),
+                       key=lambda path: path.name)
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return None
+    identity: list[dict[str, object]] = []
+    for path in files:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        file_key = [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns]
+        entry = previous.get(path.name, {})
+        digest = (entry.get("sha256") if stat.st_ino and entry.get("file") == file_key
+                  else sha256_file(path))
+        if not digest:
+            return None
+        identity.append({"name": path.name, "size": stat.st_size, "sha256": digest,
+                         "file": file_key})
+    return identity
+
+
+def same_capture(first: object, second: object) -> bool:
+    """Whether two capture_identity results describe the same raw content."""
+    def content(identity: object) -> list[tuple[object, ...]] | None:
+        if not isinstance(identity, list):
+            return None
+        return [(entry.get("name"), entry.get("size"), entry.get("sha256"))
+                for entry in identity if isinstance(entry, dict)]
+    left = content(first)
+    return left is not None and left == content(second)
 
 
 def tail_lines(text: str, count: int = 6) -> str:

@@ -113,7 +113,7 @@ class AliasedOutDirTest(unittest.TestCase):
 
     def test_junction_to_the_session_is_refused(self):
         if os.name != "nt":
-            self.skipTest("junctions exist on Windows only")
+            self.skipTest("host: junctions exist on Windows only")
         import _winapi
         link = self.root / "junction"
         _winapi.CreateJunction(str(self.session), str(link))
@@ -124,28 +124,28 @@ class AliasedOutDirTest(unittest.TestCase):
         try:
             link.symlink_to(self.session, target_is_directory=True)
         except OSError as exc:
-            self.skipTest(f"cannot create a directory symlink here: {exc}")
+            self.skipTest(f"host: cannot create a directory symlink here: {exc}")
         self.assert_refused_and_intact(link)
 
     def test_different_case_is_refused_on_a_case_insensitive_volume(self):
         upper = Path(str(self.session).upper())
         if str(upper) == str(self.session) or not upper.is_dir():
-            self.skipTest("the volume is case-sensitive")
+            self.skipTest("host: the volume is case-sensitive")
         self.assert_refused_and_intact(upper)
 
     def test_short_name_is_refused(self):
         short = _short_path(self.session)
         if short is None:
-            self.skipTest("the volume keeps no 8.3 names")
+            self.skipTest("host: the volume keeps no 8.3 names")
         self.assert_refused_and_intact(short)
 
     def test_unc_path_is_refused(self):
         if os.name != "nt":
-            self.skipTest("UNC paths exist on Windows only")
+            self.skipTest("host: UNC paths exist on Windows only")
         drive, rest = os.path.splitdrive(str(self.session))
         unc = Path(rf"\localhost\{drive[0]}$" + rest)
         if not unc.is_dir():
-            self.skipTest("the administrative share is not reachable")
+            self.skipTest("host: the administrative share is not reachable")
         self.assert_refused_and_intact(unc)
 
     def test_session_inside_a_copied_directory_of_out_dir_is_refused(self):

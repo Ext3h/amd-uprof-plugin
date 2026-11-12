@@ -40,6 +40,13 @@ class SessionCacheInsideSymbolCacheTest(unittest.TestCase):
     def test_a_session_cache_at_the_srv_cache_root_is_not_fingerprinted(self):
         self.assert_storing_keeps_the_identity(self.srv)
 
+    def test_creating_the_session_cache_root_keeps_the_identity(self):
+        cache_root = self.srv / "uprof-session-cache"
+        before = self.identity(cache_root)
+        cache_root.mkdir()
+        (cache_root / ("0" * 32 + ".duckdb")).write_bytes(b"cache")
+        self.assertEqual(self.identity(cache_root), before)
+
     def test_a_staged_pdb_still_changes_the_identity(self):
         cache_root = self.srv / "uprof-session-cache"
         cache_root.mkdir()

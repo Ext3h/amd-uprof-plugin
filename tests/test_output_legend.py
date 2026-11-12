@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import duckdb
 
@@ -379,6 +380,11 @@ class OutputLegendTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
+    def run_next(self, command):
+        """Run one emitted NEXT command through the shell, as an agent would."""
+        return subprocess.run(command, shell=True, capture_output=True, text=True,
+                              encoding="utf-8")
+
     def test_markdown_legend_per_mode(self):
         for mode in MODES:
             with self.subTest(mode=mode):
@@ -598,8 +604,7 @@ class OutputLegendTest(unittest.TestCase):
         self.assertIn("--by module", calls[0])
         self.assertNotIn("--by instruction", calls[0])
         self.assertFalse(any("hit-site" in call for call in calls))
-        result = subprocess.run(calls[0], shell=True, capture_output=True, text=True,
-                                encoding="utf-8")
+        result = self.run_next(calls[0])
         self.assertEqual(result.returncode, 0, result.stderr)
 
         image_document = json.loads(self.profile(self.session("ibs-op-ops"),
@@ -610,8 +615,7 @@ class OutputLegendTest(unittest.TestCase):
         self.assertTrue(all(expected_pattern in call for call in image_calls))
         self.assertTrue(any("--by module" in call for call in image_calls))
         # The image-scope command must run, including the escaped pattern.
-        result = subprocess.run(image_calls[0], shell=True, capture_output=True, text=True,
-                                encoding="utf-8")
+        result = self.run_next(image_calls[0])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("scoped coverage (--image", result.stdout)
 
@@ -636,9 +640,28 @@ class OutputLegendTest(unittest.TestCase):
                     self.assertIn("--pid 100", command)
                     self.assertIn("--top 2", command)
                     self.assertIn("--by", command)
-                    result = subprocess.run(command, shell=True, capture_output=True,
-                                            text=True, encoding="utf-8")
+                    result = self.run_next(command)
                     self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_next_runs_with_the_test_interpreter(self):
+        # The emitted command starts with a bare "python"; the PATH one may lack DuckDB, so the
+        # runnable checks must use the interpreter running the tests. A failing "python" that
+        # comes first on PATH must not be the one that runs.
+        fake_dir = self.root / "fake-python"
+        fake_dir.mkdir()
+        if os.name == "nt":
+            (fake_dir / "python.cmd").write_text("@exit /b 3\r\n", encoding="ascii")
+        else:
+            fake = fake_dir / "python"
+            fake.write_text("#!/bin/sh\nexit 3\n", encoding="ascii")
+            fake.chmod(0o755)
+        session = self._write_ordering()
+        command = json.loads(self.profile(session, "--json"))["legend"]["next"][0]
+        self.assertTrue(command.startswith("python "), command)
+        with mock.patch.dict(os.environ,
+                             {"PATH": str(fake_dir) + os.pathsep + os.environ["PATH"]}):
+            result = self.run_next(command)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_attribution_definition_is_emitted(self):
         definition = "unique / derived (synthetic binary range) / unresolved (no symbol)"

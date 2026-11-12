@@ -173,18 +173,22 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertIn("HOT_RVA: ", result.stdout)
         self.assertIn("other_samples 1 = the function's 4 samples minus hot_samples 3",
                       result.stdout)
-        # Every row is resolved, so the minimal path stops here and offers no region call.
-        self.assertFalse(any(line.startswith("NEXT: ")
-                             for line in result.stdout.splitlines()))
+        # Every row is resolved, so the drill-down stops here and offers no region call; this
+        # unscoped view of a system-wide capture names only the process ranking.
+        next_lines = [line for line in result.stdout.splitlines() if line.startswith("NEXT: ")]
+        self.assertEqual(len(next_lines), 1)
+        self.assertIn("--by process", next_lines[0])
+        self.assertNotIn("--by region", next_lines[0])
 
     def test_next_offers_region_only_when_a_function_is_unresolved(self):
-        resolved = self.document(self.fixture_session("resolved-stop"))
+        # Scoped to the process, so only the function stop rule decides NEXT.
+        resolved = self.document(self.fixture_session("resolved-stop"), "--pid", "100")
         self.assertEqual(resolved["legend"]["next"], [])
 
         session = Session(self.root, "unresolved-stop")
         session.module(1, self.root / "missing.dll", False).function(10, 1, "")
         session.sample(1, 10, 0x2010, 2)
-        calls = self.document(session.write())["legend"]["next"]
+        calls = self.document(session.write(), "--pid", "100")["legend"]["next"]
         self.assertEqual(len(calls), 1)
         self.assertIn("--by region", calls[0])
         self.assertNotIn("--by instruction", calls[0])

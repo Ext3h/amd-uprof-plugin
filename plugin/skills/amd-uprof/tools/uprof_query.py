@@ -738,16 +738,22 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
 
 
 def _next_calls(args: argparse.Namespace,
-                row_attribution: dict[str, int] | None = None) -> list[str]:
+                row_attribution: dict[str, int] | None = None,
+                system_wide: bool = False) -> list[str]:
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
     when function rows still carry unresolved samples; instruction context is a separate request,
     not a default drill-down. A function-scoped instruction or line view was asked for, so it
     offers the sibling view with the same --function/--module scope; the unscoped views keep
-    their old stops.
+    their old stops. An unscoped view of a system-wide capture mixes every process, so it names
+    the process ranking first; the first call itself is chosen by the question.
     """
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
+    unscoped = (args.pid is None and args.image in (None, "%")
+                and not getattr(args, "function", None))
+    if system_wide and unscoped and args.by != "process":
+        calls.insert(0, _profile_command(args, "process"))
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))
     if args.by == "line":
@@ -1117,7 +1123,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution),
+        "next": _next_calls(args, row_attribution, system_wide),
     }
     if function_scope is not None:
         result["function_scope"] = _function_scope_json(

@@ -93,6 +93,18 @@ class CallersAgreeTest(unittest.TestCase):
         self.assertIn(str(self.cache), fingerprinted)
         self.assertIn(str(self.plain), fingerprinted)
 
+    def test_the_cache_key_follows_the_roots_not_the_spelling(self):
+        def identity(value):
+            with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": value}):
+                return uprof_cache.search_identity(None, None, [])
+
+        base = identity(f"srv*{self.cache}*https://a.example;{self.plain}")
+        respelled = identity(f" ;srv* {self.cache} *https://b.example;; {self.plain} ")
+        moved = identity(f"srv*{self.cache}*https://a.example;{self.root}")
+
+        self.assertEqual(base, respelled)
+        self.assertNotEqual(base, moved)
+
     def test_the_unconsulted_url_is_reported_once(self):
         search = uprof_symbols._choose_pdb(
             Path("llvm-pdbutil.exe"), self.root / "app" / "app.exe", "app.pdb", "ABCD", 1)

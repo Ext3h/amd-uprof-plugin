@@ -64,6 +64,41 @@ class FixtureTestCase(unittest.TestCase):
         return target
 
 
+def pe_checksum(data):
+    """The optional-header CheckSum field and the value the PE checksum algorithm computes.
+
+    The algorithm sums the file as little-endian 16-bit words with end-around carry, skipping
+    the CheckSum field itself, and adds the file length.
+    """
+    field = int.from_bytes(data[0x3C:0x40], "little") + 4 + 20 + 64
+    recorded = int.from_bytes(data[field:field + 4], "little")
+    padded = data + b"\0" * (len(data) % 2)
+    total = 0
+    for offset in range(0, len(padded), 2):
+        if field <= offset < field + 4:
+            continue
+        total += padded[offset] | padded[offset + 1] << 8
+        total = (total & 0xFFFF) + (total >> 16)
+    return recorded, ((total & 0xFFFF) + (total >> 16) + len(data)) & 0xFFFFFFFF
+
+
+class PeChecksumTest(unittest.TestCase):
+    """Every PE fixture carries the CheckSum that the documented `/release` link writes.
+
+    A zero CheckSum lets a build-identity check against the capture's Module.checksum pass for
+    any rebuild, and such a fixture does not match its `/release` recipe.
+    """
+
+    def test_every_pe_fixture_has_its_release_checksum(self):
+        images = sorted(F.PE.glob("*.exe")) + [F.HERE / "fixtures" / "fixture.exe"]
+        self.assertGreaterEqual(len(images), 6)
+        for image in images:
+            with self.subTest(image=image.name):
+                recorded, computed = pe_checksum(image.read_bytes())
+                self.assertNotEqual(recorded, 0)
+                self.assertEqual(recorded, computed)
+
+
 @unittest.skipIf(F.tool_skip(), F.tool_skip() or "")
 class PeCoffSymbolTableTest(FixtureTestCase):
     """Row 2: a PE with a COFF symbol table and no PDB."""

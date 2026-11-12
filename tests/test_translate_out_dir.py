@@ -62,6 +62,28 @@ class TranslateOutDirTest(unittest.TestCase):
 
         self.assertEqual((self.out / "cpu.db").read_text(encoding="utf-8"), SAMPLE)
 
+    def test_leftover_copied_inputs_are_refused_without_force(self):
+        """A translate that stopped after the copy leaves inputs a new copy would merge into."""
+        for index, name in enumerate(("session.uprof", *uprof_util.COPY_DIRS)):
+            with self.subTest(name=name):
+                self.out = Path(self.tmp.name) / f"out{index}"
+                self.out.mkdir()
+                leftover = self.out / name
+                if name == "session.uprof":
+                    leftover.write_bytes(b"other session")
+                else:
+                    leftover.mkdir()
+                    (leftover / "old.prd").write_bytes(b"old")
+
+                with redirect_stdout(io.StringIO()),                         self.assertRaisesRegex(UprofError, "--force"):
+                    self.translate(force=False)
+
+                self.assertFalse((self.out / "cpu.db").exists(), "translate ran")
+                if name == "session.uprof":
+                    self.assertEqual(leftover.read_bytes(), b"other session")
+                else:
+                    self.assertEqual([path.name for path in leftover.iterdir()], ["old.prd"])
+
     def test_force_replaces_instead_of_appending(self):
         self.seed_previous_translation()
 

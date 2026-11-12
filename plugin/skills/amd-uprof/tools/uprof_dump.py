@@ -150,6 +150,13 @@ def _write_unsupported(path: Path, source: Path, key: tuple[int, int],
                    "mtime_ns": key[1], "missing": missing}, handle, indent=2)
 
 
+def samples_parquet_files(dump: DumpInfo, session_dir: Path | str) -> tuple[Path, ...]:
+    """The files samples_parquet reads or writes for this dump: copy, sidecar, unsupported marker."""
+    directory = dump.cache_dir if dump.cache_dir is not None else cache_dir(session_dir)
+    target, meta_path = _samples_paths(Path(dump.path), directory)
+    return target, meta_path, _unsupported_path(target)
+
+
 def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
     """A Parquet copy of the dump's SAMPLE_COLUMNS, built or refreshed on demand.
 

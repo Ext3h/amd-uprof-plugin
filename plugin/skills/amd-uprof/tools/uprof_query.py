@@ -124,11 +124,44 @@ def _out_path(args: argparse.Namespace, cpu_db: Path, session: Path) -> Path | N
         raise util.UprofError(f"output directory not found: {out_path.parent}")
     if out_path.is_dir():
         raise util.UprofError(f"output path is a directory: {out_path}")
-    for protected in (cpu_db, session / "session.uprof"):
-        if os.path.normcase(os.fspath(util.absolute(protected))) == os.path.normcase(
-                os.fspath(out_path)):
-            raise util.UprofError(f"--out-file would overwrite {util.absolute(protected)}")
+    paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
+                                      getattr(args, "image_path", None))
+    _guard_out_file(out_path, [("", cpu_db), ("", session / "session.uprof"),
+                               *(("", path) for path in paths.symbol_files),
+                               *(("", path) for path in paths.image_files)])
     return out_path
+
+
+def _guard_out_file(out_path: Path | None, protected: list[tuple[str, Path | str]]) -> None:
+    """Refuse an --out-file that names a protected input; each entry is (label, path).
+
+    Paths are compared as normalized absolute paths, so the output can never replace a file the
+    command reads.
+    """
+    if out_path is None:
+        return
+    target = os.path.normcase(os.fspath(util.absolute(out_path)))
+    for label, path in protected:
+        full = util.absolute(path)
+        if os.path.normcase(os.fspath(full)) == target:
+            raise util.UprofError(f"--out-file would overwrite {label}{full}")
+
+
+def _guard_out_file_images(out_path: Path | None, connection: object,
+                           args: argparse.Namespace) -> None:
+    """Refuse an --out-file that names a module image symbolization would read."""
+    if out_path is None:
+        return
+    paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
+                                      getattr(args, "image_path", None))
+    rows = connection.sql("SELECT DISTINCT path FROM Module WHERE path IS NOT NULL").fetchall()
+    images = []
+    for (module_path,) in rows:
+        image, _ = uprof_symbols.resolve_image(Path(str(module_path)).name, str(module_path),
+                                               paths.image_files, paths.image_dirs)
+        if image is not None:
+            images.append(("the module image ", image))
+    _guard_out_file(out_path, images)
 
 
 def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: int,
@@ -1825,11 +1858,11 @@ def run_query_command(args: argparse.Namespace) -> None:
         dump = uprof_dump.resolve_dump(session, sampler)
     # A Parquet copy of the dump's time_share columns removes the ASCII parse from every run.
     # None keeps the CSV path, so a missing column or a write failure still reaches the views.
+    if dump is not None:
+        _guard_out_file(out_path, [("the IBS dump ", dump.path),
+                                   *(("the Parquet dump copy ", path) for path in
+                                     uprof_dump.samples_parquet_files(dump, session))])
     samples = uprof_dump.samples_parquet(dump, session) if dump is not None else None
-    if (out_path and dump is not None
-            and os.path.normcase(os.fspath(dump.path)) == os.path.normcase(
-                os.fspath(out_path))):
-        raise util.UprofError(f"--out-file would overwrite the IBS dump {dump.path}")
     # The resolved dump may have been produced by the recorded translate window, so the
     # whole-capture claim cannot be made from it.
     dump_windowed = dump is not None and uprof_dump.recorded_time_filter(session) is not None
@@ -1848,6 +1881,7 @@ def run_query_command(args: argparse.Namespace) -> None:
     success = False
     try:
         with uprof_db.open_query(cpu_db, [TOOLS_DIR / "views.sql"], variables) as connection:
+            _guard_out_file_images(out_path, connection, args)
             causes: dict[str, str] = {}
             symbolizer: dict[str, Any] | None = None
             symbolized = False

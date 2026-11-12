@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 import uprof_native
+import uprof_util
 from uprof_util import UprofError
 
 SAMPLE = "sample\n"
@@ -139,25 +140,44 @@ class AliasedOutDirTest(unittest.TestCase):
             self.skipTest("host: the volume keeps no 8.3 names")
         self.assert_refused_and_intact(short)
 
-    def test_unc_path_is_refused(self):
+    def unc(self, path):
+        """path spelled through the administrative share of its drive."""
         if os.name != "nt":
             self.skipTest("host: UNC paths exist on Windows only")
-        drive, rest = os.path.splitdrive(str(self.session))
-        unc = Path(rf"\localhost\{drive[0]}$" + rest)
-        if not unc.is_dir():
+        drive, rest = os.path.splitdrive(str(path))
+        share = Path(rf"\\localhost\{drive[0]}$" + "\\")
+        if not share.is_dir():
             self.skipTest("host: the administrative share is not reachable")
-        self.assert_refused_and_intact(unc)
+        return Path(rf"\\localhost\{drive[0]}$" + rest)
 
-    def test_session_inside_a_copied_directory_of_out_dir_is_refused(self):
+    def nest_session_in_out(self):
         out = self.root / "out"
         nested = out / "cpu" / "capture_session"
         nested.parent.mkdir(parents=True)
         self.session.rename(nested)
         self.session = nested
-        self.assert_refused_and_intact(out)
+        return out
+
+    def test_unc_path_is_refused(self):
+        self.assert_refused_and_intact(self.unc(self.session))
+
+    def test_session_inside_a_copied_directory_of_out_dir_is_refused(self):
+        self.assert_refused_and_intact(self.nest_session_in_out())
+
+    def test_session_inside_a_unc_out_dir_is_refused(self):
+        self.assert_refused_and_intact(self.unc(self.nest_session_in_out()))
 
     def test_out_dir_inside_the_session_is_refused(self):
         self.assert_refused_and_intact(self.session / "cpu" / "copy", force=False)
+
+    def test_new_out_dir_inside_the_session_through_unc_is_refused(self):
+        self.assert_refused_and_intact(self.unc(self.session) / "new" / "deeper", force=False)
+
+    def test_a_sibling_directory_is_accepted(self):
+        sibling = self.root / "capture_session_copy"
+        sibling.mkdir()
+        self.assertFalse(uprof_util.contains(sibling, self.session))
+        self.assertFalse(uprof_util.contains(self.session, sibling))
 
 
 class SymbolizationCountsTest(unittest.TestCase):

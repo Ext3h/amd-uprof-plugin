@@ -76,11 +76,12 @@ def absolute(path: os.PathLike[str] | str) -> Path:
 
 
 def canonical(path: os.PathLike[str] | str) -> Path:
-    """The one spelling of path: links, junctions, 8.3 names, UNC and mapped drives resolved.
+    """path absolute, with links, junctions and 8.3 names resolved and case folded where the
+    platform folds case.
 
-    Compare paths only through this (or same_path/contains): two different strings can name the
-    same file. Missing trailing components keep their spelling, case-folded where the platform
-    folds case.
+    Not unique: a UNC path, a mapped drive or a subst drive keeps its own spelling of a local
+    directory, and missing trailing components keep theirs. Decide identity with same_path or
+    contains, which also compare volume and file IDs.
     """
     full = absolute(path)
     try:
@@ -101,11 +102,29 @@ def same_path(first: os.PathLike[str] | str, second: os.PathLike[str] | str) -> 
 
 
 def contains(outer: os.PathLike[str] | str, inner: os.PathLike[str] | str) -> bool:
-    """Whether inner is outer or lies below it, however each is spelled."""
+    """Whether inner is outer or lies below it, however each is spelled.
+
+    Every existing ancestor of inner is compared with outer by volume and file ID, which no
+    spelling (UNC, mapped or subst drive, junction, 8.3 name) hides; the canonical string
+    prefix covers an outer that does not exist yet.
+    """
     if same_path(outer, inner):
         return True
     root, path = canonical(outer), canonical(inner)
-    return root in path.parents
+    if root in path.parents:
+        return True
+    try:
+        if not os.path.isdir(outer):
+            return False
+    except (OSError, ValueError):
+        return False
+    for ancestor in (absolute(inner), *absolute(inner).parents):
+        try:
+            if os.path.exists(ancestor) and os.path.samefile(outer, ancestor):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 
 def tail_lines(text: str, count: int = 6) -> str:

@@ -28,10 +28,9 @@ UPROF = Path("/uprof/AMDuProfCLI")
 def toolchain(llvm: dict[str, str | None], uprof: str | None = "AMDuProfCLI.exe Version 5.3.521.0"):
     """Every named LLVM tool is found with the given --version line; uProf likewise."""
     def version_line(path, *args):
-        return llvm.get(Path(path).name)
+        return uprof if Path(path) == UPROF else llvm.get(Path(path).name)
 
     with mock.patch.object(uprof_native, "find_uprof", return_value=UPROF), \
-            mock.patch.object(uprof_native, "_uprof_version", return_value=uprof), \
             mock.patch.object(uprof_native, "find_symbolizer",
                               return_value=(LLVM_BIN / "llvm-symbolizer"
                                             if "llvm-symbolizer" in llvm else None)), \

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, TextIO
 
-from uprof_native import (SymbolizerUnsupported, find_sibling, require_pdb_option,
+from uprof_native import (SymbolizerUnsupported, find_sibling,
                           require_symbolizer, run)
 from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
 
@@ -828,7 +828,6 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
             return SymbolizedModule(parquet, None, None, evidence)
-        require_pdb_option(symbolizer_path)
         print("PDB_MATCH=yes", file=stream)
         evidence.pdb = str(pdb)
 

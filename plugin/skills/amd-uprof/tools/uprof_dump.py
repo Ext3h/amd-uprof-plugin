@@ -152,9 +152,12 @@ def _write_unsupported(path: Path, source: Path, key: tuple[int, int],
 
 def samples_parquet_files(dump: DumpInfo, session_dir: Path | str) -> tuple[Path, ...]:
     """The files samples_parquet reads or writes for this dump: copy, sidecar, unsupported marker."""
-    directory = dump.cache_dir if dump.cache_dir is not None else cache_dir(session_dir)
-    target, meta_path = _samples_paths(Path(dump.path), directory)
+    target, meta_path = _samples_paths(Path(dump.path), _samples_dir(dump, session_dir))
     return target, meta_path, _unsupported_path(target)
+
+
+def _samples_dir(dump: DumpInfo, session_dir: Path | str) -> Path:
+    return dump.cache_dir if dump.cache_dir is not None else cache_dir(session_dir)
 
 
 def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
@@ -171,9 +174,8 @@ def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
     key = _file_key(source)
     if key is None:
         return None
-    directory = dump.cache_dir if dump.cache_dir is not None else cache_dir(session_dir)
-    target, meta_path = _samples_paths(source, directory)
-    unsupported_path = _unsupported_path(target)
+    directory = _samples_dir(dump, session_dir)
+    target, meta_path, unsupported_path = samples_parquet_files(dump, session_dir)
     if _unsupported_marker_matches(_read_unsupported(unsupported_path), source, key):
         return None
     meta = _read_samples_meta(meta_path)

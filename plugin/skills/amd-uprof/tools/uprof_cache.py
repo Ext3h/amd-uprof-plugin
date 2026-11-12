@@ -176,10 +176,10 @@ def _store_listings(root: Path, pdb_only: bool = False) -> list[list[object]]:
                 if not root_is_own and same_path(root, own.parent) else None)
     result = [_dir_listing(root, holds_own=root_is_own, own_name=own_name)]
     try:
-        for child in sorted(root.iterdir())[:256]:
+        children = sorted(child for child in root.iterdir()
+                          if not pdb_only or child.name.lower().endswith(".pdb"))
+        for child in children[:256]:
             if root_is_own and _OWN_ENTRY.fullmatch(child.name):
-                continue
-            if pdb_only and not child.name.lower().endswith(".pdb"):
                 continue
             if _same_dir(child, own_stat):
                 continue
@@ -330,7 +330,7 @@ def build_symbols_key(connection: object, args: Any) -> tuple[str, list[tuple[st
         rvas, module_identity_rows(connection, names), _disk_identity(paths),
         tool_identities(),
         search_identity(getattr(args, "symbol_path", None), getattr(args, "image_path", None),
-                        names, uprof_symbols.symbol_stores(args.session)))
+                        names, uprof_symbols.symbol_stores(getattr(args, "session", None))))
     return key, rvas
 
 

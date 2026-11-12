@@ -56,3 +56,24 @@ class DebugTraceTest(unittest.TestCase):
                     expected = committed[name].read_text(encoding="utf-8")
                     self.assertEqual(actual, expected,
                                      f"{OS_NAME}/{name} differs from the golden")
+
+
+@unittest.skipIf(SKIP, SKIP or "")
+class ProfileSectionTest(unittest.TestCase):
+    """A profile section keeps the symbol-outcome evidence, not only the JSON rows."""
+
+    def test_profile_section_keeps_warning_and_symbol_coverage_lines(self):
+        import capture_debug_traces as C
+
+        case = next(case for case in C.CASES if case.name == "elf_fixture_nosym")
+        for by in ("line", "function"):
+            with self.subTest(by=by):
+                text = C.normalize("\n".join(C.profile_section(case, by)))
+                lines = text.splitlines()
+                coverage = [line for line in lines if line.startswith("symbol_coverage=")]
+                self.assertEqual(len(coverage), 1, text)
+                self.assertIn("fixture_nosym", coverage[0])
+                warnings = [line for line in lines if line.startswith("WARNING: ")]
+                self.assertTrue(any("no symbols resolved" in line for line in warnings), text)
+                self.assertNotIn("uprof-trace-session-", text)
+                self.assertNotIn(str(F.DEBUG), text)

@@ -18,8 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, TextIO
 
-from uprof_native import (SymbolizerUnsupported, find_sibling,
-                          require_symbolizer, run, symbol_cache_dir)
+from uprof_native import (NtSymbolPath, SymbolizerUnsupported, find_sibling,
+                          parse_nt_symbol_path, require_symbolizer, run, symbol_cache_dir)
 from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
 
 _GUID = re.compile(r"^\s*GUID:\s*(.+)$")
@@ -334,15 +334,9 @@ def _probe_pdb(pdbutil: Path, path: Path, module_guid: str,
     return probe
 
 
-def _symbol_server_entries() -> list[tuple[Path, str]]:
-    """(cache root, URL) for every _NT_SYMBOL_PATH srv entry; only the root is ever read."""
-    entries: list[tuple[Path, str]] = []
-    for entry in (os.environ.get("_NT_SYMBOL_PATH") or "").split(";"):
-        parts = entry.split("*")
-        if len(parts) < 3 or parts[0].strip().lower() != "srv":
-            continue
-        entries.append((Path(parts[1]), parts[2].strip()))
-    return entries
+def _nt_symbol_path() -> NtSymbolPath:
+    """The _NT_SYMBOL_PATH local roots and URLs; only the local roots are ever read."""
+    return parse_nt_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
 
 
 # translate records the command it ran in session.uprof as space-joined, unquoted arguments.
@@ -389,9 +383,13 @@ def _candidate_pdbs(exe: Path, pdb_name: str, module_guid: str | None,
         if module_guid and age is not None:
             candidates.extend(root / f"{module_guid}{age:X}" / name for name in names)
     candidates.extend(exe.parent / name for name in names)
-    # Stores in the <store>/<pdb>/<GUID><age>/<pdb> layout: srv* caches and translate's stores
-    # always name their keyed path; a --symbol-path directory only once it holds a <pdb> folder.
-    stores = [cache_root for cache_root, _url in _symbol_server_entries()]
+    nt_symbol_path = _nt_symbol_path()
+    for directory in nt_symbol_path.dirs:
+        candidates.extend(Path(directory) / name for name in names)
+    # Stores in the <store>/<pdb>/<GUID><age>/<pdb> layout: _NT_SYMBOL_PATH local stores and
+    # translate's stores always name their keyed path; a --symbol-path directory only once it
+    # holds a <pdb> folder.
+    stores = [Path(cache_root) for cache_root in nt_symbol_path.caches]
     stores += [Path(path) for path in symbol_stores]
     stores += [Path(path) for path in symbol_dirs if (Path(path) / pdb_name).is_dir()]
     seen: set[str] = set()
@@ -418,7 +416,7 @@ def _choose_pdb(pdbutil: Path, exe_path: Path, pdb_name: str, module_guid: str,
                 symbol_files: Iterable[str | Path] = (),
                 symbol_stores: Iterable[str | Path] = ()) -> PdbSearch:
     """Probe every candidate once; the search carries each rejection as evidence."""
-    search = PdbSearch(urls=[url for _root, url in _symbol_server_entries()])
+    search = PdbSearch(urls=list(_nt_symbol_path().urls))
     for path in dict.fromkeys(
             _candidate_pdbs(exe_path, pdb_name, module_guid, module_age, symbol_dirs,
                             symbol_files, symbol_stores)):

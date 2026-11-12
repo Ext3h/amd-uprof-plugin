@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -364,22 +365,67 @@ def default_symbol_servers() -> list[str]:
     return ["https://msdl.microsoft.com/download/symbols"] if IS_WINDOWS else []
 
 
-def parse_symbol_path(value: str | None) -> tuple[str | None, list[str]]:
-    """Return (download cache, symbol servers) from a Windows-style _NT_SYMBOL_PATH."""
-    cache = None
+@dataclass(frozen=True)
+class NtSymbolPath:
+    """The parts of a Windows-style _NT_SYMBOL_PATH, each element stripped of padding.
+
+    caches are local symbol-store roots: the non-URL stores of srv*/symsrv* entries and cache*
+    directories. urls are the remote stores of srv*/symsrv* entries. dirs are plain directory
+    entries. servers are the srv*/symsrv* entries that name a downstream store slot and an
+    upstream store, as written; uProf translate receives them as symbol servers and
+    download_cache, the first server's downstream store, as its symbol cache.
+    """
+
+    caches: tuple[str, ...] = ()
+    urls: tuple[str, ...] = ()
+    dirs: tuple[str, ...] = ()
+    servers: tuple[str, ...] = ()
+    download_cache: str | None = None
+
+
+def _is_url(text: str) -> bool:
+    return re.match(r"[a-z][a-z0-9+.-]*://", text, re.IGNORECASE) is not None
+
+
+def _unique(items: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(items))
+
+
+def parse_nt_symbol_path(value: str | None) -> NtSymbolPath:
+    """Read _NT_SYMBOL_PATH once, the same way for translate, discovery and the cache key."""
+    caches: list[str] = []
+    urls: list[str] = []
+    dirs: list[str] = []
     servers: list[str] = []
-    if not value:
-        return cache, servers
-    for entry in value.split(";"):
+    download_cache = None
+    for entry in (value or "").split(";"):
         entry = entry.strip()
         if not entry:
             continue
-        parts = entry.split("*")
-        if len(parts) >= 3 and parts[0].lower() == "srv":
-            if not cache and parts[1]:
-                cache = parts[1]
-            servers.append(entry)
-    return cache, servers
+        parts = [part.strip() for part in entry.split("*")]
+        kind = parts[0].lower()
+        if kind in ("srv", "symsrv"):
+            # symsrv*<dll>*<stores>: the second element names the DLL, not a store.
+            slots = parts[2 if kind == "symsrv" else 1:]
+            local = [store for store in slots if store and not _is_url(store)]
+            caches += local
+            urls += [store for store in slots if _is_url(store)]
+            if len(slots) >= 2:
+                servers.append(entry)
+                if download_cache is None and slots[0] and not _is_url(slots[0]):
+                    download_cache = slots[0]
+        elif kind == "cache":
+            caches += [part for part in parts[1:] if part]
+        elif len(parts) == 1 and not _is_url(entry):
+            dirs.append(entry)
+    return NtSymbolPath(_unique(caches), _unique(urls), _unique(dirs), tuple(servers),
+                        download_cache)
+
+
+def parse_symbol_path(value: str | None) -> tuple[str | None, list[str]]:
+    """Return (download cache, symbol servers) from a Windows-style _NT_SYMBOL_PATH."""
+    parsed = parse_nt_symbol_path(value)
+    return parsed.download_cache, list(parsed.servers)
 
 
 def is_admin() -> bool:

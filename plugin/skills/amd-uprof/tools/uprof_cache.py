@@ -148,13 +148,15 @@ def _dir_listing(path: Path, limit: int = 1024, holds_own: bool = False,
 
 
 def _srv_caches() -> list[list[object]]:
-    """The cache directories named by _NT_SYMBOL_PATH srv* entries and their child listings."""
+    """Every local root PDB discovery reads from _NT_SYMBOL_PATH, with its child listings.
+
+    The roots come from the same parser discovery uses, so a PDB staged where discovery looks
+    always changes the key.
+    """
+    nt_symbol_path = uprof_symbols._nt_symbol_path()
     result: list[list[object]] = []
-    for entry in os.environ.get("_NT_SYMBOL_PATH", "").split(";"):
-        parts = entry.split("*")
-        if len(parts) < 2 or parts[0].strip().lower() != "srv" or not parts[1].strip():
-            continue
-        result.extend(_store_listings(Path(parts[1].strip())))
+    for directory in (*nt_symbol_path.caches, *nt_symbol_path.dirs):
+        result.extend(_store_listings(Path(directory)))
     return result
 
 

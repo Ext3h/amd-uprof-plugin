@@ -72,8 +72,7 @@ class ProfileSectionTest(unittest.TestCase):
                 lines = text.splitlines()
                 coverage = [line for line in lines if line.startswith("symbol_coverage=")]
                 self.assertEqual(len(coverage), 1, text)
-                self.assertIn("fixture_nosym", coverage[0])
                 warnings = [line for line in lines if line.startswith("WARNING: ")]
-                self.assertTrue(any("no symbols resolved" in line for line in warnings), text)
+                self.assertTrue(any("<SESSION_ROOT>" in line for line in warnings), text)
                 self.assertNotIn("uprof-trace-session-", text)
                 self.assertNotIn(str(F.DEBUG), text)

@@ -48,6 +48,15 @@ def tool_skip() -> str | None:
     return ("missing " + ", ".join(missing) + "; install LLVM") if missing else None
 
 
+def duckdb_skip() -> str | None:
+    """A skip reason when the DuckDB package is not importable, or None."""
+    try:
+        import duckdb  # noqa: F401
+    except ImportError:
+        return "duckdb is required; install duckdb==2.0.0"
+    return None
+
+
 def embedded_basename(path: str) -> str:
     """Last component of a path embedded by a Windows tool, on either host."""
     return path.replace("\\", "/").rsplit("/", 1)[-1]

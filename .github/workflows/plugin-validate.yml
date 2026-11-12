@@ -29,6 +29,9 @@ jobs:
 
   tests:
     runs-on: windows-latest
+    env:
+      # Fail every test skip caused by a missing tool, module or golden (see tests/run_tests.py).
+      UPROF_REQUIRE_TOOLS: '1'
     steps:
       - uses: actions/checkout@v4
 

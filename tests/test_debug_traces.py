@@ -22,16 +22,7 @@ OS_NAME = "windows" if os.name == "nt" else "linux"
 GOLDENS = F.DEBUG / "traces" / OS_NAME
 
 
-def _duckdb_installed() -> bool:
-    try:
-        import duckdb  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-SKIP = F.tool_skip() or ("duckdb is required; install duckdb==2.0.0"
-                         if not _duckdb_installed() else None)
+SKIP = F.tool_skip() or F.duckdb_skip()
 
 
 @unittest.skipIf(SKIP, SKIP or "")

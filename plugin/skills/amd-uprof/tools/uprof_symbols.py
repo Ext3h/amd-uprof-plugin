@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, TextIO
 
-from uprof_native import find_sibling, require_symbolizer, run
+from uprof_native import (SymbolizerUnsupported, find_sibling, require_pdb_option,
+                          require_symbolizer, run)
 from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
 
 _GUID = re.compile(r"^\s*GUID:\s*(.+)$")
@@ -190,6 +191,8 @@ class ModuleEvidence:
     pdb: str | None = None
     outcome: str = "resolved"  # resolved, no_debug_info, no_pdb, readobj_failed, module_missing, failed
     note: str | None = None
+    # A toolchain cause carries its own remedy in note; the symbol-path remedy would mislead.
+    toolchain: bool = False
 
 
 @dataclass
@@ -825,6 +828,7 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
             return SymbolizedModule(parquet, None, None, evidence)
+        require_pdb_option(symbolizer_path)
         print("PDB_MATCH=yes", file=stream)
         evidence.pdb = str(pdb)
 
@@ -946,8 +950,11 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
               "or place the matching debug file beside the module or in a local srv* cache "
               "(translate --symbol-path/--symbol-cache/--symbol-server can stage it), then re-run "
               "profile; a third-party module with no symbols is a finding, not a blocker")
+    if evidence.toolchain:
+        remedy = None
     print(f"WARNING: no symbols resolved for {evidence.module_name} "
-          f"({evidence.module_path}): {'; '.join(facts)}; {remedy}", file=stream)
+          f"({evidence.module_path}): {'; '.join(facts)}"
+          + (f"; {remedy}" if remedy else ""), file=stream)
 
 
 def _write_pdb_manifest(inputs: list[tuple[str, str]], out_dir: Path) -> Path:
@@ -1027,7 +1034,8 @@ def _symbolize_worker(index: int, module_name: str, module_path: str, rvas: list
         except UprofError as exc:
             evidence = ModuleEvidence(module_name, module_path,
                                       found_debug_info=(debug_info or {}).get(module_name),
-                                      outcome="failed", note=str(exc))
+                                      outcome="failed", note=str(exc),
+                                      toolchain=isinstance(exc, SymbolizerUnsupported))
             _evidence_line(evidence, output)
             return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence)
         evidence = result.evidence

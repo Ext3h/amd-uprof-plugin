@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import ctypes
+import functools
 import os
 import re
 import shutil
@@ -107,6 +108,39 @@ def require_symbolizer() -> Path:
                 else "install LLVM (for example: sudo apt install llvm)")
         raise UprofError(f"llvm-symbolizer not found; {hint} (or set LLVM_SYMBOLIZER)")
     return found
+
+
+class SymbolizerUnsupported(UprofError):
+    """The installed llvm-symbolizer lacks an option the run needs; the message is the remedy."""
+
+
+@functools.lru_cache(maxsize=None)
+def pdb_option_cause(symbolizer: str) -> str | None:
+    """None when this llvm-symbolizer accepts --pdb, else the cause and remedy in one line.
+
+    llvm-symbolizer has an explicit --pdb option only from LLVM 23; an older one rejects it as an
+    unknown argument, which fails every module that has an accepted PDB. A help text that cannot
+    be read is not evidence of a missing option, so it does not block symbolization.
+    """
+    try:
+        completed = run([symbolizer, "--help"], timeout=30)
+    except (UprofError, OSError):
+        return None
+    text = (completed.stdout or "") + "\n" + (completed.stderr or "")
+    if completed.returncode != 0 or not text.strip() or re.search(r"--pdb[=\s]", text):
+        return None
+    version = _first_version_line(Path(symbolizer), "--version") or "version unknown"
+    hint = ("winget upgrade --id LLVM.LLVM" if IS_WINDOWS
+            else "install LLVM 23 or later from apt.llvm.org")
+    return (f"{symbolizer} ({version}) has no --pdb option, so it cannot read a PDB; "
+            f"LLVM >= 23 required: {hint}, or set LLVM_SYMBOLIZER to an LLVM >= 23 "
+            "llvm-symbolizer, then re-run")
+
+
+def require_pdb_option(symbolizer: Path) -> None:
+    cause = pdb_option_cause(str(symbolizer))
+    if cause:
+        raise SymbolizerUnsupported(cause)
 
 
 def run(command: Sequence[str], timeout: int | None = None, input_text: str | None = None,

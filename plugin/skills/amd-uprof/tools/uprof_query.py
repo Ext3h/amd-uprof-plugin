@@ -507,6 +507,8 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
     ambiguous = set(uprof_cache.ambiguous_modules(connection, [str(row[0]) for row in rows]))
     ranges: list[uprof_functions.FunctionRange] = []
     candidates: list[tuple[str, str]] = []
+    identities = _module_identities(connection)
+    readobj: str | None = None
     for module_name, module_path, _unresolved, _samples in rows:
         name = str(module_name)
         info["attempted"].append(name)
@@ -522,6 +524,18 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
         if not Path(path).is_file():
             info["absent_by_module"][name] = f"{path} is not on this host"
             continue
+        identity = identities.get(name)
+        if identity is not None:
+            # Ranges read from another build would regroup the captured build's RVAs.
+            readobj = readobj or uprof_context.find_readobj()
+            mismatch = uprof_symbols.image_build_mismatch(
+                path, identity[0], identity[1], Path(readobj) if readobj else None)
+            if mismatch:
+                reason = f"wrong_build: {mismatch}"
+                info["absent_by_module"][name] = reason
+                print(f"WARNING: no function range derived for {name} ({path}): {reason}",
+                      file=stream)
+                continue
         candidates.append((name, path))
     # One read of the combined public-symbol artifact for every module that will be derived.
     # Looking the artifact up per module re-read the whole CSV once per module.

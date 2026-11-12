@@ -339,12 +339,12 @@ def write_stub_symbolizer(directory: Path, pdb_option: bool, zlib: bool = True) 
     return launcher
 
 
-class PdbOptionProbeTest(unittest.TestCase):
-    """llvm-symbolizer accepts --pdb only from LLVM 23; an older one fails every PDB module."""
+class LlvmVersionGateTest(unittest.TestCase):
+    """llvm-symbolizer accepts --pdb only from LLVM 23; an older one stops symbolization."""
 
     def setUp(self):
-        uprof_native.pdb_option_cause.cache_clear()
-        self.addCleanup(uprof_native.pdb_option_cause.cache_clear)
+        uprof_native.llvm_cause.cache_clear()
+        self.addCleanup(uprof_native.llvm_cause.cache_clear)
         directory = tempfile.TemporaryDirectory(prefix="uprof-pdb-option-")
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
@@ -352,29 +352,29 @@ class PdbOptionProbeTest(unittest.TestCase):
     def test_a_symbolizer_without_pdb_names_the_llvm_minimum(self):
         stub = write_stub_symbolizer(self.root, pdb_option=False)
 
-        cause = uprof_native.pdb_option_cause(str(stub))
+        cause = uprof_native.llvm_cause(str(stub))
 
         self.assertIsNotNone(cause)
         self.assertIn("--pdb", cause)
-        self.assertIn("LLVM >= 23", cause)
+        self.assertIn("minimum 23", cause)
         self.assertIn("22.1.6", cause)
 
     def test_a_symbolizer_with_pdb_passes(self):
         stub = write_stub_symbolizer(self.root, pdb_option=True)
 
-        self.assertIsNone(uprof_native.pdb_option_cause(str(stub)))
+        self.assertIsNone(uprof_native.llvm_cause(str(stub)))
 
     def test_the_probe_runs_once_per_symbolizer(self):
         stub = write_stub_symbolizer(self.root, pdb_option=False)
         with mock.patch.object(uprof_native, "run", wraps=uprof_native.run) as invoked:
-            uprof_native.pdb_option_cause(str(stub))
+            uprof_native.llvm_cause(str(stub))
             calls = invoked.call_count
-            uprof_native.pdb_option_cause(str(stub))
+            uprof_native.llvm_cause(str(stub))
 
         self.assertEqual(invoked.call_count, calls)
 
     @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
-    def test_an_accepted_pdb_with_an_old_symbolizer_fails_with_the_cause(self):
+    def test_an_old_symbolizer_stops_before_the_pdb_search(self):
         stub = write_stub_symbolizer(self.root, pdb_option=False)
         module = self.root / "fixture.exe"
         module.write_bytes(b"MZ")
@@ -384,10 +384,12 @@ class PdbOptionProbeTest(unittest.TestCase):
         rvas.write_text("0x1000\n", encoding="utf-8")
         search = uprof_symbols.PdbSearch(
             pdb=pdb, probes=[uprof_symbols.PdbProbe(pdb, "accepted")])
-        with mock.patch.object(uprof_symbols, "require_symbolizer", return_value=stub),                 mock.patch.object(uprof_symbols, "find_sibling",
+        with mock.patch.object(uprof_native, "find_symbolizer", return_value=stub), \
+                mock.patch.object(uprof_native, "find_sibling", return_value=None), \
+                mock.patch.object(uprof_symbols, "find_sibling",
                                   side_effect=lambda _tool, name: Path(name + ".exe")),                 mock.patch.object(uprof_symbols, "_readobj_info",
                                   return_value=("fixture.pdb", "ABCD", 1)),                 mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search),                 mock.patch.object(uprof_symbols, "_run_symbolizer") as symbolizer:
-            with self.assertRaisesRegex(UprofError, "LLVM >= 23"):
+            with self.assertRaisesRegex(uprof_native.SymbolizerUnsupported, "minimum 23"):
                 uprof_symbols.symbolize_module(
                     str(module), rvas, self.root / "out", module_name="fixture.exe")
 
@@ -395,7 +397,7 @@ class PdbOptionProbeTest(unittest.TestCase):
 
     def test_the_evidence_line_gives_the_llvm_remedy_not_symbol_paths(self):
         stub = write_stub_symbolizer(self.root, pdb_option=False)
-        cause = uprof_native.pdb_option_cause(str(stub))
+        cause = uprof_native.llvm_cause(str(stub))
         module = self.root / "fixture.exe"
         module.write_bytes(b"MZ")
         with mock.patch.object(uprof_symbols, "symbolize_module",
@@ -405,7 +407,7 @@ class PdbOptionProbeTest(unittest.TestCase):
 
         self.assertIsNone(outcome.error)
         self.assertEqual(outcome.evidence.outcome, "failed")
-        self.assertIn("LLVM >= 23", outcome.output)
+        self.assertIn("minimum 23", outcome.output)
         self.assertNotIn("--symbol-path", outcome.output)
 
 

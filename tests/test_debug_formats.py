@@ -21,7 +21,7 @@ from run_tests import HOST_SKIP
 from test_symbols import write_stub_symbolizer
 
 NT_ONLY = HOST_SKIP + "production PDB discovery runs only on Windows (os.name == 'nt')"
-NO_PDB_OPTION = F.pdb_option_skip()
+NO_PDB_OPTION = F.llvm_version_skip()
 NO_ZLIB = F.zlib_skip()
 
 
@@ -111,8 +111,8 @@ class LlvmFeatureGateTest(unittest.TestCase):
     """
 
     def setUp(self):
-        uprof_native.pdb_option_cause.cache_clear()
-        self.addCleanup(uprof_native.pdb_option_cause.cache_clear)
+        uprof_native.llvm_cause.cache_clear()
+        self.addCleanup(uprof_native.llvm_cause.cache_clear)
         directory = tempfile.TemporaryDirectory(prefix="uprof-llvm-gate-")
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
@@ -120,15 +120,15 @@ class LlvmFeatureGateTest(unittest.TestCase):
     def test_a_symbolizer_without_pdb_is_a_tool_skip_naming_llvm_23(self):
         stub = write_stub_symbolizer(self.root, pdb_option=False)
 
-        reason = F.pdb_option_skip(stub)
+        reason = F.llvm_version_skip(stub)
 
         self.assertFalse(reason.startswith(HOST_SKIP), reason)
-        self.assertIn("LLVM >= 23", reason)
+        self.assertIn("minimum 23", reason)
 
     def test_a_symbolizer_with_pdb_does_not_skip(self):
         stub = write_stub_symbolizer(self.root, pdb_option=True)
 
-        self.assertIsNone(F.pdb_option_skip(stub))
+        self.assertIsNone(F.llvm_version_skip(stub))
 
     def test_a_symbolizer_without_zlib_is_a_tool_skip_naming_zlib(self):
         stub = write_stub_symbolizer(self.root, pdb_option=True, zlib=False)

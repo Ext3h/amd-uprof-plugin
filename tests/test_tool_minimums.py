@@ -39,7 +39,11 @@ def toolchain(llvm: dict[str, str | None], uprof: str | None = "AMDuProfCLI.exe 
                               side_effect=lambda symbolizer, name:
                               LLVM_BIN / name if name in llvm else None), \
             mock.patch.object(uprof_native, "_first_version_line", side_effect=version_line):
-        yield
+        uprof_native.llvm_cause.cache_clear()
+        try:
+            yield
+        finally:
+            uprof_native.llvm_cause.cache_clear()
 
 
 LLVM23 = "LLVM version 23.1.4"
@@ -61,11 +65,24 @@ class UprofMinimumTest(unittest.TestCase):
         for part in ("5.2.606.0", "minimum 5.3", "AMDUPROF_CLI", "re-run"):
             self.assertIn(part, message)
 
-    def test_an_unreadable_uprof_version_stops(self):
-        with toolchain({}, uprof=None):
+    def test_an_unreadable_uprof_version_stops_even_when_the_install_path_names_one(self):
+        path = Path("/opt/AMDuProf_5.3-521/bin/AMDuProfCLI")
+        with mock.patch.object(uprof_native, "find_uprof", return_value=path), \
+                mock.patch.object(uprof_native, "_first_version_line", return_value=None):
             with self.assertRaises(UprofError) as caught:
                 uprof_native.require_uprof()
         self.assertIn("cannot read the version", str(caught.exception))
+
+    def test_version_lines_in_other_shapes_parse(self):
+        for text, expected in (("AMDuProfCLI.exe Version 5.3.521.0 ", (5, 3, 521, 0)),
+                               ("Version: 5.3.521.0", (5, 3, 521, 0)),
+                               ("AMDuProfCLI version-5.3.521", (5, 3, 521)),
+                               ("AMD uProf 5.3.521", (5, 3, 521)),
+                               ("AMDuProfCLI 5.3-521", (5, 3)),
+                               ("Ubuntu LLVM version 23.1.0", (23, 1, 0)),
+                               ("Homebrew LLVM version 23.0.0git", (23, 0, 0))):
+            with self.subTest(text=text):
+                self.assertEqual(uprof_native.parse_version(text), expected)
 
 
 class LlvmMinimumTest(unittest.TestCase):
@@ -81,6 +98,27 @@ class LlvmMinimumTest(unittest.TestCase):
         self.assertNotIn("\n", message)
         for part in ("22.1.8", "minimum 23", "LLVM_SYMBOLIZER", "re-run"):
             self.assertIn(part, message)
+
+    def test_an_old_readobj_stops_symbolization_on_every_os(self):
+        # Function-range derivation runs llvm-readobj on every OS.
+        with toolchain(dict(ALL23, **{"llvm-readobj": LLVM22})):
+            with self.assertRaises(UprofError) as caught:
+                uprof_native.require_symbolizer()
+        self.assertIn("llvm-readobj", str(caught.exception))
+
+    def test_a_too_old_tool_raises_the_toolchain_error(self):
+        with toolchain(dict(ALL23, **{"llvm-symbolizer": LLVM22})):
+            with self.assertRaises(uprof_native.SymbolizerUnsupported):
+                uprof_native.require_symbolizer()
+
+    def test_each_tool_version_is_read_once_per_process(self):
+        with toolchain(ALL23):
+            for _ in range(3):
+                uprof_native.require_symbolizer()
+                uprof_native.require_llvm(uprof_native.CONTEXT_TOOLS)
+            calls = [Path(call.args[0]).name
+                     for call in uprof_native._first_version_line.call_args_list]
+        self.assertEqual(sorted(calls), sorted(set(calls)))
 
     def test_an_unreadable_llvm_version_stops(self):
         with toolchain(dict(ALL23, **{"llvm-symbolizer": None})):
@@ -156,7 +194,11 @@ class CiPinsTest(unittest.TestCase):
         for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
             text = workflow.read_text(encoding="utf-8")
             pins += [(workflow.name, found) for found
-                     in re.findall(r"LLVM_VERSION:\s*'([\d.]+)'|LLVM-([\d.]+)-win64\.msi", text)]
+                     in re.findall(r"LLVM_VERSION:\s*[\"']?([\d.]+)|LLVM-([\d.]+)-win64\.msi",
+                                   text)]
+            if "llvm-project/releases" in text:
+                self.assertTrue(any(name == workflow.name for name, _ in pins),
+                                f"{workflow.name} installs LLVM without a recognised pin")
         versions = [(name, next(part for part in found if part)) for name, found in pins]
         self.assertTrue(versions)
         for name, version in versions:

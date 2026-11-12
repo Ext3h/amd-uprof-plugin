@@ -100,17 +100,19 @@ def run_tool(tool, *args) -> str:
     return completed.stdout
 
 
+def replace_spellings(text: str, paths, placeholder: str) -> str:
+    """Replace each path in native and forward-slash spelling, either case, longest first."""
+    spellings = set()
+    for path in paths:
+        spellings |= {str(path), path.as_posix(), str(path).lower(), path.as_posix().lower()}
+    for spelling in sorted(spellings, key=len, reverse=True):
+        text = text.replace(spelling, placeholder)
+    return text
+
+
 def normalize(text: str) -> str:
     """Replace checkout-specific fixture spellings; nothing else varies by machine."""
-    spellings = {
-        str(F.DEBUG),
-        F.DEBUG.as_posix(),
-        str(F.DEBUG).lower(),
-        F.DEBUG.as_posix().lower(),
-    }
-    for spelling in sorted(spellings, key=len, reverse=True):
-        text = text.replace(spelling, "<FIXTURES>")
-    return text
+    return replace_spellings(text, (F.DEBUG,), "<FIXTURES>")
 
 
 def readobj_section(case: Case) -> list[str]:
@@ -296,8 +298,13 @@ def production_section(case: Case) -> list[str]:
 def profile_section(case: Case, by: str) -> list[str]:
     with tempfile.TemporaryDirectory(prefix="uprof-trace-session-") as root:
         session = F.write_session(root, case.image, list(case.addresses))
-        document = F.profile(session, by)
-    facts = [f"## profile.{by}"]
+        document, stderr = F.profile_with_stderr(session, by)
+        # The symbol-outcome evidence names the temporary session; only its role is stable.
+        evidence = [f"symbol_coverage={document.get('SYMBOL_COVERAGE') or 'none'}"]
+        evidence += [line for line in stderr.splitlines() if line.startswith("WARNING:")]
+        evidence = [replace_spellings(line, (Path(root), Path(root).resolve()), "<SESSION_ROOT>")
+                    for line in evidence]
+    facts = [f"## profile.{by}", *evidence]
     rows = document.get("rows") or []
     if by == "line":
         rows = sorted(rows, key=lambda row: (row.get("function") or "",

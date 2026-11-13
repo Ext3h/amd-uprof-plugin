@@ -246,12 +246,14 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertIn("--by module", process_calls[0])
         self.assertNotIn("--by instruction", process_calls[0])
 
-        # The function call decides whether region is needed; module does not pre-empt it.
+        # The function call decides whether region is needed; module does not pre-empt it. This
+        # unscoped view of a system-wide capture names the process ranking first.
         module_calls = self.document(session)["legend"]["next"]
-        self.assertEqual(len(module_calls), 1)
-        self.assertIn("--by function", module_calls[0])
-        self.assertNotIn("--by region", module_calls[0])
-        self.assertNotIn("--by instruction", module_calls[0])
+        self.assertEqual(len(module_calls), 2)
+        self.assertIn("--by process", module_calls[0])
+        self.assertIn("--by function", module_calls[1])
+        self.assertFalse(any("--by region" in call or "--by instruction" in call
+                             for call in module_calls))
 
     def test_truncated_module_rollup_keeps_a_remainder_last(self):
         session = self.session()

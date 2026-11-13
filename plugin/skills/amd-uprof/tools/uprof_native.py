@@ -644,7 +644,9 @@ def recapture_commands(session: Path) -> tuple[str, str, str | None]:
     return cycles, cycles + " --event ibs-op", data
 
 
-def translate_stopped(session: Path, out: Path, servers: Sequence[str], stalled: bool) -> str:
+def translate_stopped(
+    session: Path, out: Path, servers: Sequence[str], stalled: bool
+) -> LinesError:
     """The cause and a runnable alternative for a translate stopped by its stall or ceiling bound.
 
     AMDuProfCLI fetches symbols during translate from the servers it is given and from the
@@ -673,7 +675,7 @@ def translate_stopped(session: Path, out: Path, servers: Sequence[str], stalled:
         "run it with _NT_SYMBOL_PATH unset or set to a local folder only",
     ]
     lines += [data for data in (script_data, session_data, out_data) if data]
-    return "\n".join(lines)
+    return LinesError(lines)
 
 
 def _tree_size(root: Path) -> int:
@@ -1319,9 +1321,9 @@ def translate(
             command, progress=progress, stall_s=TRANSLATE_STALL, ceiling_s=TRANSLATE_CEILING
         )
     except ToolStalled:
-        raise UprofError(translate_stopped(session, out, servers, stalled=True)) from None
+        raise translate_stopped(session, out, servers, stalled=True) from None
     except ToolTimeout:
-        raise UprofError(translate_stopped(session, out, servers, stalled=False)) from None
+        raise translate_stopped(session, out, servers, stalled=False) from None
     print_output(completed)
     if completed.returncode != 0:
         raise translate_failure("translate", completed, log, session)

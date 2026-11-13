@@ -291,6 +291,28 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertIn("== callstack.db", review)
         self.assertIn("== table CallstackFrame (2 rows)", review)
 
+    def test_functions_the_kept_call_stacks_reach_stay_in_cpu_db(self):
+        import duckdb
+
+        # A frame may name a function in a module the kept processes never sampled.
+        connection = duckdb.connect(str(self.session / "cpu.db"), read_only=True)
+        try:
+            (function,) = connection.execute(
+                "SELECT f.id FROM Function f WHERE f.moduleId = 5").fetchone()
+        finally:
+            connection.close()
+        self.write_callstacks()
+        connection = duckdb.connect(str(self.session / "callstack.db"))
+        try:
+            connection.execute("INSERT INTO CallstackFrame VALUES (7, ?, 2, 8)", [function])
+        finally:
+            connection.close()
+        code, stderr = self.run_main()
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.query(f"SELECT count(*) FROM Function WHERE id = {function}"),
+                         [(1,)])
+        self.assertEqual(self.query("SELECT count(*) FROM Module WHERE id = 5"), [(1,)])
+
     def test_a_missing_callstack_db_is_noted(self):
         code, stderr = self.run_main()
         self.assertEqual(code, 0, stderr)

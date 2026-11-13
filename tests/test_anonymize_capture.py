@@ -320,6 +320,30 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertIn("callstack.db: absent", (self.out / "review.txt").read_text(
             encoding="utf-8"))
 
+    def test_commands_lose_symbol_servers_and_every_embedded_drive_path(self):
+        command = ("AMDuProfCLI.exe translate -i C:\\cap --symbol-cache-dir D:\\Sym "
+                   "--symbol-server srv*C:\\SymCache\\Ms*https://symbols.example.invalid/ms "
+                   "--symbol-server=SRV*C:\\SymCache\\Game*http://symbols.example.invalid/game "
+                   "--symbol-path=E:\\pdbs;F:\\more --ascii ibsop-event-dump")
+        cleaned = anonymize_capture.sanitize_command(command)
+        for leaked in ("SymCache", "example.invalid", "C:\\", "D:\\", "E:\\", "F:\\", "srv*",
+                       "SRV*"):
+            self.assertNotIn(leaked, cleaned)
+        self.assertEqual(cleaned.count("--symbol-server"), 2)
+        self.assertIn("--ascii ibsop-event-dump", cleaned)
+        self.assertIn("translate", cleaned)
+
+        meta = json.loads((self.session / "session.uprof").read_text(encoding="utf-8"))
+        meta["translateCommand"] = command
+        meta["collectCommand"] = "AMDuProfCLI.exe collect -o out --symbol-server srv*C:\\S*x"
+        (self.session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+        code, stderr = self.run_main()
+        self.assertEqual(code, 0, stderr)
+        text = (self.out / "session.uprof").read_text(encoding="utf-8")
+        self.assertNotIn("SymCache", text)
+        self.assertNotIn("example.invalid", text)
+        self.assertNotIn("C:\\\\", text)
+
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

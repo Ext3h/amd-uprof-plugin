@@ -241,10 +241,17 @@ class ModuleProfileTest(unittest.TestCase):
 
     def test_next_is_the_minimal_module_chain(self):
         session = self.session()
+        # A system-wide process ranking scopes the module call to its top process, so following
+        # NEXT never loops back to the ranking.
         process_calls = self.document(session, "process")["legend"]["next"]
         self.assertEqual(len(process_calls), 1)
         self.assertIn("--by module", process_calls[0])
+        self.assertIn("--pid 100", process_calls[0])
         self.assertNotIn("--by instruction", process_calls[0])
+        scoped_calls = self.document(session, "module", "--pid", "100")["legend"]["next"]
+        self.assertEqual(len(scoped_calls), 1)
+        self.assertIn("--by function", scoped_calls[0])
+        self.assertIn("--pid 100", scoped_calls[0])
 
         # The function call decides whether region is needed; module does not pre-empt it. This
         # unscoped view of a system-wide capture names the process ranking first.
@@ -254,6 +261,15 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertIn("--by function", module_calls[1])
         self.assertFalse(any("--by region" in call or "--by instruction" in call
                              for call in module_calls))
+
+    def test_an_attached_module_view_points_only_to_functions(self):
+        session = self.session("attached")
+        meta = _meta(True)
+        meta["collection"]["target"] = {"systemWide": False}
+        (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+        calls = self.document(session)["legend"]["next"]
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--by function", calls[0])
 
     def test_truncated_module_rollup_keeps_a_remainder_last(self):
         session = self.session()

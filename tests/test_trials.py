@@ -352,6 +352,45 @@ class BuilderTest(unittest.TestCase):
 
 
 OWN_IMAGE_NAME = "fixture_full.exe"
+LAB_CLASSES = ("memory", "lock", "branch", "os", "vendor", "wait", "chain", "efficient")
+
+
+class LabScenarioTest(unittest.TestCase):
+    """SCN-21..28 ask the open-ended question once per defect_lab class.
+
+    Their captures come from the owner's reference machine (D-028); until they are reviewed and
+    committed, each scenario names no session and gives the parts' shape.
+    """
+
+    def test_one_scenario_per_class_names_the_module_and_the_process(self):
+        catalogue = scenarios()
+        for number, name in enumerate(LAB_CLASSES, start=21):
+            scn = f"SCN-{number}"
+            with self.subTest(scenario=scn):
+                entry = catalogue[scn]
+                for word in ("lab_core.dll", "defect_lab.exe"):
+                    self.assertIn(word, entry["fields"]["Question"])
+                self.assertIn("open (D-028)", entry["fields"]["Session"])
+                self.assertEqual(len(entry["calls"]), 2)
+                for call in entry["calls"]:
+                    self.assertIn("--image %defect_lab.exe", call)
+
+    def test_the_timer_and_efficient_rules_are_in_the_answers(self):
+        catalogue = scenarios()
+        for number, name in enumerate(LAB_CLASSES, start=21):
+            answer = " ".join(
+                [
+                    catalogue[f"SCN-{number}"]["fields"]["Answer"],
+                    *catalogue[f"SCN-{number}"]["parts"].values(),
+                ]
+            )
+            with self.subTest(defect_class=name):
+                if name in ("memory", "lock", "branch", "chain"):
+                    self.assertIn("cause not determinable from a timer capture", answer)
+                if name == "efficient":
+                    self.assertIn("never claims that no algorithmic optimization is left", answer)
+                if name == "wait":
+                    self.assertIn("off-CPU", answer)
 
 
 def base_name(path: object) -> str:

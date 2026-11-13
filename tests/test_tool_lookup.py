@@ -59,7 +59,10 @@ class LookupTest(unittest.TestCase):
     def test_a_tool_on_an_absolute_path_entry_is_found(self):
         self.plant(self.cwd, "AMDuProfCLI")
         real = self.plant(self.bin, "AMDuProfCLI")
-        self.assertEqual(self.which("AMDuProfCLI", [str(self.bin)]), real.resolve())
+        found = self.which("AMDuProfCLI", [str(self.bin)])
+        self.assertIsNotNone(found)
+        # resolve() on both sides: a temp root may be spelled with an 8.3 short name.
+        self.assertEqual(found.resolve(), real.resolve())
 
 
 @unittest.skipUnless(os.name == "nt", "host: PowerShell is started only on Windows")

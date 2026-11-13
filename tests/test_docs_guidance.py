@@ -11,6 +11,7 @@ Run from the repository root: python tests/run_tests.py test_docs_guidance
 """
 # Spec: SPEC-31, SPEC-32, SPEC-38
 
+import re
 import unittest
 from pathlib import Path
 
@@ -19,6 +20,7 @@ SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 DOCS = Path(__file__).resolve().parents[1] / "docs"
 REFERENCE = (DOCS / "reference.md").read_text(encoding="utf-8")
 SPEC = (DOCS / "spec.md").read_text(encoding="utf-8")
+VALIDATION = (DOCS / "validation.md").read_text(encoding="utf-8")
 
 FIRST_CALL = ("**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py "
               "profile --session <capture dir> --by function|module|process`; its `NEXT` line "
@@ -278,6 +280,23 @@ class DocsGuidanceTest(unittest.TestCase):
         self.assertIn("SYMBOL_COVERAGE:", example)
         self.assertIn("stop", example)
         self.assertNotIn("objdump -d", example)
+
+
+class ValidationQuoteTest(unittest.TestCase):
+    def test_agreement_quotes_use_the_printed_field_syntax(self):
+        # The AGREEMENT line prints `mismatch_rate=<p>%`, `name_mismatches=<n> addresses of <m>
+        # compared` and `unresolved=<u> addresses`; a quote of it may abbreviate but not respell.
+        spans = [s for s in re.findall(r"`([^`]*)`", VALIDATION)
+                 if re.search(r"mismatch_rate|name_mismatches|unresolved[ =]\d", s)]
+        self.assertTrue(spans)
+        for span in spans:
+            with self.subTest(quote=span):
+                if "mismatch_rate" in span:
+                    self.assertRegex(span, r"mismatch_rate=[\d.]+%")
+                if "name_mismatches" in span:
+                    self.assertRegex(span, r"name_mismatches=\d+ addresses of \d+ compared")
+                if re.search(r"unresolved[ =]\d", span):
+                    self.assertRegex(span, r"unresolved=\d+( addresses|$)")
 
 
 if __name__ == "__main__":

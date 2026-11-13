@@ -6,6 +6,7 @@ region view would print the same rows after the re-run, so the line is dropped t
 symbolization text keeps it for the line and instruction views, which need the image.
 Run from the repository root: python tests/run_tests.py test_named_rows_warning
 """
+# Spec: SPEC-40
 
 import io
 import unittest

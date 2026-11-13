@@ -6,6 +6,7 @@ translated capture found below it as a complete call with the same --by and scop
 first gains nothing.
 Run from the repository root: python tests/run_tests.py test_session_candidates
 """
+# Spec: SPEC-67
 
 import tempfile
 import unittest

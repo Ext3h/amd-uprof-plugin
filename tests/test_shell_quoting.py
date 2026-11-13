@@ -8,7 +8,7 @@ cmd.exe on Windows. The argument must arrive unchanged and nothing else may run.
 list are rejected and become a placeholder plus a data line.
 Run from the repository root: python tests/run_tests.py test_shell_quoting
 """
-# Spec: SPEC-37
+# Spec: SPEC-47
 
 import base64
 import json

@@ -2,7 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_kernel_coverage
 """
-# Spec: SPEC-11
+# Spec: SPEC-12, SPEC-13
 
 import contextlib
 import io

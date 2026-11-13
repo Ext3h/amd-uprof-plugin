@@ -7,7 +7,7 @@ stops: no instruction breakdown is offered unless one was asked for.
 
 Run from the repository root: python tests/run_tests.py test_function_scope
 """
-# Spec: SPEC-24, SPEC-33
+# Spec: SPEC-26, SPEC-39
 
 import json
 import subprocess

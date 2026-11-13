@@ -6,7 +6,7 @@ sample category; stdout carries only "Translation started" and the cause is only
 read what the run appended to that log and stop with one cause line and runnable alternatives.
 Run from the repository root: python tests/run_tests.py test_translate_failure
 """
-# Spec: SPEC-49
+# Spec: SPEC-66, SPEC-67
 
 import contextlib
 import io

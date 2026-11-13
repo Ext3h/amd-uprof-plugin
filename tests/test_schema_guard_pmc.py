@@ -1,5 +1,5 @@
 """PMC captures require UnifiedSampleSeries.processId and coreId."""
-# Spec: SPEC-49
+# Spec: SPEC-67
 
 import unittest
 from pathlib import Path

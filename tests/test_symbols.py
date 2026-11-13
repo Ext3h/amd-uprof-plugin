@@ -2,7 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_symbols
 """
-# Spec: SPEC-51
+# Spec: SPEC-71
 
 import contextlib
 import csv

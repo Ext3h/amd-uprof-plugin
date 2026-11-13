@@ -2,7 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_context_json
 """
-# Spec: SPEC-41
+# Spec: SPEC-54, SPEC-56, SPEC-57
 
 import argparse
 import json

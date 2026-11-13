@@ -2177,6 +2177,20 @@ def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
     return "; ".join(parts) + "".join(f"\n{name}={value!r}" for name, value in data.items())
 
 
+def _contract_verdict(sampler: uprof_session.Sampler) -> str:
+    """What the schema command's contract guard checked, for the capture's mode."""
+    if sampler.timer or sampler.pmc:
+        mode = "a timer capture" if sampler.timer else "a PMC capture"
+        return (f"cpu.db has every table and column profile requires for {mode}, including its "
+                f"event column {sampler.event_column}")
+    if sampler.ibs_dump_kind:
+        return ("cpu.db has every table and column profile requires for an IBS capture; the IBS "
+                "dump is checked when profile reads it")
+    return ("mode unknown (no IBS, PMC or timer sampler in session.uprof, or no session.uprof): "
+            "only the tables and "
+            "columns every mode reads were checked")
+
+
 # The line in views.sql that ends the export contract guard.
 _CONTRACT_END: Final = "-- END OF THE EXPORT CONTRACT GUARD"
 
@@ -2198,16 +2212,16 @@ def run_query_command(args: argparse.Namespace) -> None:
 
     if args.command == "schema":
         # The listing is unchanged; then the same contract guard profile runs, for this capture's
-        # mode (an IBS capture reads its dump, a PMC or timer capture its event column), without
-        # resolving or generating a dump. A missing item fails with the guard's own error.
+        # mode, without resolving or generating a dump. A missing item fails with the guard's own
+        # error; the CONTRACT line names exactly what was checked.
         sampler = uprof_session.derive_sampler(session)
-        variables = {"uprof_ibs_dump": "" if sampler.pmc or sampler.timer else "<dump>",
+        column_mode = sampler.pmc or sampler.timer
+        variables = {"uprof_ibs_dump": "" if column_mode else "<dump>",
                      "uprof_event_column": sampler.event_column or ""}
         with uprof_db.open_query(cpu_db, [], variables) as connection:
             uprof_db.output(connection, TOOLS_DIR / "schema.sql", [], False, out_path)
             uprof_db.run_script_until(connection, TOOLS_DIR / "views.sql", _CONTRACT_END)
-        print("CONTRACT: the export has every table and column the query surface reads for "
-              "this capture mode", file=sys.stderr)
+        print(f"CONTRACT: {_contract_verdict(sampler)}", file=sys.stderr)
         return
 
     _require_llvm(args)

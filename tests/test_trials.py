@@ -143,8 +143,9 @@ class CatalogueTest(unittest.TestCase):
                                     f"{scn}: list calls or say none (reason)")
 
     def test_pass_criteria_cap_the_final_turn_context(self):
-        # Every run must end below the context budget: the model's input at its final turn,
-        # harness system prompt included. A harness without usage reports records it unmeasured.
+        # A run that reaches the context ceiling is defective: the ceiling counts the model's
+        # input at its final turn, harness system prompt included. A harness without usage
+        # reports records it unmeasured.
         text = (TRIALS / "scenarios.md").read_text(encoding="utf-8")
         section = text.partition("\n## Pass criteria\n")[2].partition("\n## ")[0]
         self.assertTrue(section, "the catalogue has no Pass criteria section")

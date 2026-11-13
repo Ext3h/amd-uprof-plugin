@@ -48,6 +48,8 @@ ANONYMIZE = REPO / "trials" / "anonymize_capture.py"
 CLASSES = ("memory", "lock", "branch", "os", "vendor", "wait", "chain", "efficient")
 MODES = ("timer", "ibs", "pmc", "timer-cg", "ibs-cg")
 CALL_GRAPH_MODES = ("timer-cg", "ibs-cg")
+# The lab's own images; their PDBs share the stem. System DLLs are not bundled.
+LAB_IMAGES = ("defect_lab.exe", "lab_core.dll", "lab_vendor.dll")
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,13 @@ def is_elevated() -> bool:
 
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     return os.geteuid() == 0
+
+
+def bundle_files(bin_dir: Path) -> list[str]:
+    """The images and PDBs every capture was recorded with, for the handover's images/."""
+    return [
+        str(bin_dir / name) for image in LAB_IMAGES for name in (image, f"{Path(image).stem}.pdb")
+    ]
 
 
 def stressor_images(bin_dir: Path, count: int) -> list[Path]:
@@ -388,6 +397,8 @@ def main(argv: list[str] | None = None) -> int:
                     *settings.keep(),
                     "--out",
                     str(args.anonymize / label),
+                    "--bundle",
+                    *bundle_files(bin_dir),
                 ]
             ).returncode
             print(f"anonymize {label}: exit {code}")

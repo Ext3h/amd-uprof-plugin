@@ -2,7 +2,7 @@
 
 Usage:
     python trials/anonymize_capture.py <session_dir> --keep-process <name> [<name> ...]
-        --out <dir>
+        --out <dir> [--bundle <image or PDB> ...]
 
 <session_dir> is a translated session (session.uprof and cpu.db, as `uprof.py translate`
 writes it). <out_dir> must be new or empty. It receives:
@@ -14,6 +14,8 @@ writes it). <out_dir> must be new or empty. It receives:
 - session.uprof: only the keys the tools read, with host values and paths replaced.
 - review.txt: every table with every column as plain text, then the sorted distinct strings of
   the capture, for a person to review before the files leave the machine.
+- images/: each --bundle image the capture names, if its size and checksum match the module,
+  and its PDB, if GUID and age match the image; review.txt lists their strings.
 
 It exits 1 when review.txt still contains this machine's name, the user's name or a user
 profile path, and 2 when the input is not usable (missing files, an unknown process, or a
@@ -27,7 +29,9 @@ import getpass
 import json
 import os
 import re
+import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -412,7 +416,7 @@ def disclosures(text: str, names: list[str]) -> list[str]:
     return found
 
 
-def anonymize(session: Path, keep: list[str], out: Path) -> Path:
+def anonymize(session: Path, keep: list[str], out: Path, files: list[Path] = ()) -> Path:
     import duckdb
 
     for name in ("session.uprof", "cpu.db"):
@@ -444,6 +448,7 @@ def anonymize(session: Path, keep: list[str], out: Path) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     try:
         review = write_filtered(session, kept, out, meta)
+        review += bundle(list(files), out)
     except BaseException:
         # A failed run leaves nothing that could be mistaken for a finished capture.
         for name in (
@@ -456,6 +461,7 @@ def anonymize(session: Path, keep: list[str], out: Path) -> Path:
             *DUMP_NAMES,
         ):
             (out / name).unlink(missing_ok=True)
+        shutil.rmtree(out / "images", ignore_errors=True)
         raise
     (out / "review.txt").write_text(review, encoding="utf-8")
     (out / "session.uprof").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
@@ -697,6 +703,157 @@ def handover_dump(session: Path, kept: list[int], out: Path, meta: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+ASCII_RUN = re.compile(rb"[\x20-\x7e]{4,}")
+UTF16_RUN = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")
+DRIVE = re.compile(r"(?<![A-Za-z])([A-Za-z]):(?:\\+|/)")
+# The compiler and linker record their own install paths in every PDB; LLVM's default install
+# folder names no user.
+TOOLCHAIN = re.compile(r"[a-z]:\\program files\\llvm\\")
+MSF_MAGIC = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0"
+
+
+def file_strings(data: bytes) -> list[str]:
+    """The sorted distinct ASCII and UTF-16 strings of four or more characters in data."""
+    strings = {match.group().decode("ascii") for match in ASCII_RUN.finditer(data)}
+    strings |= {match.group().decode("utf-16-le") for match in UTF16_RUN.finditer(data)}
+    return sorted(strings)
+
+
+def host_paths(strings: list[str]) -> list[str]:
+    """Strings that hold a drive path outside LLVM's install folder, or start a UNC path."""
+    found = []
+    for string in strings:
+        if re.match(r"\\\\[A-Za-z0-9]", string):
+            found.append(string)
+            continue
+        for match in DRIVE.finditer(string):
+            head = re.sub(r"\\+|/", "\\\\", string[match.start() : match.start() + 60]).lower()
+            if not TOOLCHAIN.match(head):
+                found.append(string)
+                break
+    return found
+
+
+def file_disclosures(path: Path, names: list[str]) -> list[str]:
+    """What in a bundled file names this host: the checks of disclosures() and host paths."""
+    strings = file_strings(path.read_bytes())
+    found = disclosures("\n".join(strings), names)
+    found += [f"the path {string[:200]!r}" for string in host_paths(strings)]
+    return found
+
+
+def pe_identity(data: bytes) -> tuple[int, int]:
+    """(CheckSum, SizeOfImage) from a PE optional header, as the capture's Module table has them."""
+    optional = struct.unpack_from("<I", data, 0x3C)[0] + 24
+    return struct.unpack_from("<I", data, optional + 64)[0], struct.unpack_from(
+        "<I", data, optional + 56
+    )[0]
+
+
+def debug_record(data: bytes) -> tuple[bytes, int, str] | None:
+    """(GUID, age, PDB path) of the image's CodeView debug directory record, if it has one."""
+    at = data.find(b"RSDS")
+    if at < 0:
+        return None
+    end = data.index(b"\0", at + 24)
+    guid = data[at + 4 : at + 20]
+    age = struct.unpack_from("<I", data, at + 20)[0]
+    return guid, age, data[at + 24 : end].decode("utf-8", "replace")
+
+
+def pdb_record(data: bytes) -> tuple[bytes, int] | None:
+    """(GUID, age) from a PDB's info stream (stream 1 of the MSF container)."""
+    if not data.startswith(MSF_MAGIC):
+        return None
+    block_size, _, _, directory_bytes, _, block_map = struct.unpack_from("<6I", data, 32)
+    count = -(-directory_bytes // block_size)
+    blocks = struct.unpack_from(f"<{count}I", data, block_map * block_size)
+    directory = b"".join(data[b * block_size : (b + 1) * block_size] for b in blocks)
+    streams = struct.unpack_from("<I", directory)[0]
+    sizes = struct.unpack_from(f"<{streams}I", directory, 4)
+    offset = 4 + 4 * streams
+    offset += 4 * -(-sizes[0] // block_size) if sizes[0] != 0xFFFFFFFF else 0
+    first = struct.unpack_from("<I", directory, offset)[0]
+    _, _, age = struct.unpack_from("<3I", data, first * block_size)
+    return data[first * block_size + 12 : first * block_size + 28], age
+
+
+def bundle(files: list[Path], out: Path) -> str:
+    """Copy the images the capture names, and their PDBs, into out/images; return the review.
+
+    An image whose size or checksum differs from the capture's module, or a PDB whose GUID or
+    age differs from its image's debug directory, is refused: the views would read another
+    build. A file the capture does not name is listed as not bundled.
+    """
+    import duckdb
+
+    connection = duckdb.connect(str(out / "cpu.db"), read_only=True)
+    try:
+        modules = connection.execute("SELECT path, size, checksum FROM Module").fetchall()
+    finally:
+        connection.close()
+    by_name = {}
+    for path, size, checksum in modules:
+        by_name[PureWindowsPath(str(path)).name.casefold()] = (size, checksum)
+    pdbs = {path.name.casefold(): path for path in files if path.suffix.lower() == ".pdb"}
+    lines, chosen = [], []
+    for path in files:
+        if not path.is_file():
+            raise Refused(f"{path} is missing; pass the images the capture was recorded with")
+        if path.suffix.lower() == ".pdb":
+            continue
+        module = by_name.get(path.name.casefold())
+        if module is None:
+            lines.append(f"not bundled: {path.name} is not a module of the capture")
+            continue
+        data = path.read_bytes()
+        checksum, size = pe_identity(data)
+        if (size, checksum) != (module[0], module[1]):
+            raise Refused(
+                f"{path.name} has size {size} and checksum {checksum}, the capture's module "
+                f"size {module[0]} and checksum {module[1]}; bundle the image the capture was "
+                "recorded with"
+            )
+        lines.append(f"== bundled images/{path.name}")
+        lines.append(f"size {size}, checksum {checksum}: matches the capture's module")
+        record = debug_record(data)
+        chosen.append((path, data))
+        if record is None:
+            lines.append("debug directory: none")
+        else:
+            guid, age, pdb_path = record
+            lines.append(f"debug directory PDB: {pdb_path}")
+            lines.append(f"GUID {guid.hex()} age {age}")
+            pdb = pdbs.get(PureWindowsPath(pdb_path).name.casefold())
+            if pdb is not None:
+                pdb_data = pdb.read_bytes()
+                if pdb_record(pdb_data) != (guid, age):
+                    raise Refused(
+                        f"{pdb.name} has another GUID or age than {path.name}'s debug "
+                        "directory; bundle the PDB built with the image"
+                    )
+                chosen.append((pdb, pdb_data))
+        lines.append(f"strings ({len(file_strings(data))})")
+        lines += file_strings(data)
+    bundled = {path.name.casefold() for path, _ in chosen}
+    for name, pdb in pdbs.items():
+        if name not in bundled:
+            lines.append(f"not bundled: {pdb.name} belongs to no bundled image")
+    for path, data in chosen:
+        if path.suffix.lower() == ".pdb":
+            guid, age = pdb_record(data)
+            strings = file_strings(data)
+            lines.append(f"== bundled images/{path.name}")
+            lines.append(f"GUID {guid.hex()} age {age}: matches the image's GUID and age")
+            lines.append(f"strings ({len(strings)})")
+            lines += strings
+    if chosen:
+        (out / "images").mkdir()
+        for path, data in chosen:
+            (out / "images" / path.name).write_bytes(data)
+    return "\n".join(lines) + "\n" if lines else ""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("session", type=Path, help="translated session directory")
@@ -708,13 +865,24 @@ def main(argv: list[str] | None = None) -> int:
         help="process image names to keep, e.g. defect_lab.exe",
     )
     parser.add_argument("--out", type=Path, required=True, help="new or empty directory")
+    parser.add_argument(
+        "--bundle",
+        nargs="+",
+        type=Path,
+        default=[],
+        metavar="FILE",
+        help="images and PDBs the capture was recorded with, copied into <out>/images",
+    )
     args = parser.parse_args(argv)
     try:
-        review = anonymize(args.session, args.keep_process, args.out)
+        review = anonymize(args.session, args.keep_process, args.out, args.bundle)
     except Refused as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    found = disclosures(review.read_text(encoding="utf-8"), host_names())
+    names = host_names()
+    found = disclosures(review.read_text(encoding="utf-8"), names)
+    for path in sorted((args.out / "images").glob("*")):
+        found += [f"{item} in images/{path.name}" for item in file_disclosures(path, names)]
     if found:
         print(
             f"error: {review} still contains {'; '.join(found)}; do not hand these files "

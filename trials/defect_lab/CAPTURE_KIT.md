@@ -38,8 +38,10 @@ key names, for #237.
    - A mode the machine cannot record is printed as `skipped <class> <mode>: <cause>`.
    - Every capture ends with `anonymize <class>.<mode>: exit 0`. An exit 1 means `review.txt` still names this machine, the user or a profile path: do not hand that folder over.
 6. **Review:** read `C:\lab\out\<class>.<mode>\review.txt`. It holds every table of the filtered capture as text and, after `== distinct strings`, every path and name in it. Only `defect_lab.exe`, `busy_NN.exe`, `lab_core.dll`, `lab_vendor.dll` under `c:\capture\`, Windows system modules, function names and timestamps should appear.
+   - Each folder also has `images\`: the `defect_lab.exe`, `lab_core.dll` and `lab_vendor.dll` the capture was recorded with, and their PDBs. The anonymizer bundles an image only if its size and checksum match the capture's module, and a PDB only if its GUID and age match the image. `review.txt` lists each file's debug directory and strings under `== bundled images/<name>`; only bare PDB names and `C:\Program Files\LLVM\` toolchain paths should appear there. A host path in them fails the run with exit 1.
+   - With `images\`, line and instruction views of the lab's modules should work from the folder alone (not verified end to end yet): `profile ... --by line --function <name> --module c:\capture\lab_core.dll --image-path <folder>\images`. System DLLs (ntdll and the like) are not bundled, so their instruction view is limited to what the host running `profile` has.
 7. **Hand over:**
-   - `C:\lab\out\` with each folder's `cpu.db`, `session.uprof` and `review.txt`, plus the filtered `IbsOpDump.csv` for an IBS capture, `callstack.db` where uProf wrote one, and `notes.txt` for a call-graph capture. `profile` needs that dump and cannot regenerate it without the raw files;
+   - `C:\lab\out\` with each folder's `cpu.db`, `session.uprof`, `review.txt` and `images\`, plus the filtered `IbsOpDump.csv` for an IBS capture, `callstack.db` where uProf wrote one, and `notes.txt` for a call-graph capture. `profile` needs that dump and cannot regenerate it without the raw files;
    - the `*.keys.txt` files from `C:\lab\raw\`: key names and value types only, no values.
 
    Do not hand over `C:\lab\raw\` itself: the raw and translated captures name the machine, the user and every running process.
@@ -48,6 +50,6 @@ key names, for #237.
 
 | File | Role |
 |---|---|
-| `trials/defect_lab/*.c`, `lab.h`, `kernel32.def`, `build.py` | the workload and its build (freestanding C, no C runtime) |
+| `trials/defect_lab/*.c`, `lab.h`, `kernel32.def`, `build.py` | the workload and its build (freestanding C, no C runtime; sources compiled under relative names, so no host path reaches the PDBs) |
 | `trials/defect_lab/record.py` | starts the stressors and the class, records each mode, translates, writes `keys.txt`, anonymizes |
-| `trials/anonymize_capture.py` | keeps the named processes, deletes the rest, rewrites host paths, empties HostInfo, writes `review.txt` and checks it |
+| `trials/anonymize_capture.py` | keeps the named processes, deletes the rest, rewrites host paths, empties HostInfo, bundles the matching images and PDBs (`--bundle`), writes `review.txt` and checks it |

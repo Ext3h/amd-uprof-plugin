@@ -11,6 +11,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import debug_fixtures as F
 import uprof_context
@@ -333,6 +334,59 @@ class PeMismatchedPdbTest(FixtureTestCase):
             F.PE / "fixture_mismatch.exe", [F.PE_HELPER], found_debug_info=False
         )
         self.assertEqual(module.evidence.outcome, "no_debug_info")
+
+    def stale_pdb_beside_image(self, root):
+        """fixture_mismatch.exe naming a bare fixture_other.pdb, with another build's PDB of
+        that name beside it that maps the entry RVA to fixture_entry."""
+        data = (F.PE / "fixture_mismatch.exe").read_bytes()
+        recorded = rb"C:\uprof-fixture-build\pe\fixture_other.pdb"
+        self.assertEqual(data.count(recorded), 1)
+        image = Path(root) / "fixture_mismatch.exe"
+        image.write_bytes(data.replace(recorded, b"fixture_other.pdb".ljust(len(recorded), b"\0")))
+        shutil.copyfile(F.PE / "fixture_full.pdb", Path(root) / "fixture_other.pdb")
+        return image
+
+    @unittest.skipUnless(os.name == "nt", NT_ONLY)
+    def test_a_refused_pdb_beside_the_image_names_no_row(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-stale-pdb-") as root:
+            image = self.stale_pdb_beside_image(root)
+            module, records, stream = F.production(image, [F.PE_ENTRY])
+
+        self.assertIsNone(module.pdb)
+        self.assertNotIn("PDB_MATCH=yes", stream)
+        self.assertEqual(
+            [
+                innermost.get("FunctionName")
+                for innermost in (F.innermost(record) for record in records)
+                if innermost.get("FunctionName")
+            ],
+            [],
+        )
+
+    @unittest.skipUnless(os.name == "nt", NT_ONLY)
+    def test_a_stale_pdb_beside_the_image_names_no_row_without_pdbutil(self):
+        real = uprof_symbols.find_sibling
+        with (
+            tempfile.TemporaryDirectory(prefix="uprof-stale-pdb-") as root,
+            mock.patch.object(
+                uprof_symbols,
+                "find_sibling",
+                side_effect=lambda tool, name: None if name == "llvm-pdbutil" else real(tool, name),
+            ),
+        ):
+            image = self.stale_pdb_beside_image(root)
+            module, records, stream = F.production(image, [F.PE_ENTRY])
+
+        self.assertIsNone(module.pdb)
+        self.assertNotIn("PDB_MATCH=yes", stream)
+        self.assertEqual(
+            [
+                innermost.get("FunctionName")
+                for innermost in (F.innermost(record) for record in records)
+                if innermost.get("FunctionName")
+            ],
+            [],
+        )
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
     def test_production_reports_no_accepted_pdb(self):

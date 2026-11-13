@@ -51,6 +51,12 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- A PDB is used only when `llvm-pdbutil` verifies that its GUID and age match the image. Without
+  `llvm-pdbutil` or an image GUID no PDB is used, and llvm-symbolizer runs without a PDB only
+  for an image `llvm-readobj` shows to record none, so it cannot load a stale PDB by name. The
+  module's evidence line names the tool to install or the image to supply. Such hosts used to
+  get names from an unverified PDB with a warning (issue #109).
+
 - The profile pipeline is faster: the dump is parsed once into a `TEMP TABLE`, its time-share
   columns are cached as a validated Parquet copy, line and instruction views bind only for their
   own scopes, symbolization runs in parallel, function ranges are derived in a process pool, and

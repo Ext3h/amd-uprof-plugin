@@ -787,6 +787,9 @@ def _pairs(lines: list[str], sections: dict[int, int]) -> list[tuple[int, str]]:
     return pairs
 
 
+_PUBLIC_STARTS_SQL: Final = Path(__file__).resolve().with_name("public-starts.sql")
+
+
 def _write_pairs(path: Path, pairs: list[tuple[int, str]]) -> None:
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
@@ -857,34 +860,22 @@ _PUBLICS_CACHE = _PublicsCache()
 
 
 def _aggregate_publics(pairs_path: Path, out_path: Path) -> tuple[int, int]:
-    """Group names by RVA in memory; return (starts, starts with more than one name).
+    """Group names by RVA with public-starts.sql; return (starts, starts with more than one name).
 
-    The pairs file is the caller's CSV of (rva, name). A name reads as NULL when its field is
-    empty, and NULL names sort after named ones and are left out of the label, which is what
-    the CSV/SQL path this replaces produced.
+    The pairs file is the caller's CSV of (rva, name). The query answers the grouping; this
+    writes its rows as the rva,name_count,names CSV the views read.
     """
-    by_rva: dict[int, list[str | None]] = {}
     try:
-        with open(pairs_path, "r", encoding="utf-8", newline="") as handle:
-            reader = csv.reader(handle)
-            next(reader, None)
-            for rva_text, name in reader:
-                by_rva.setdefault(int(rva_text), []).append(name or None)
+        with uprof_db.memory_connection() as connection:
+            uprof_db.set_variables(connection, {"uprof_public_pairs": str(pairs_path)})
+            _, rows = uprof_db.fetch(connection, _PUBLIC_STARTS_SQL)
         with open(out_path, "w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle, lineterminator="\n")
             writer.writerow(["rva", "name_count", "names"])
-            for rva in sorted(by_rva):
-                names = by_rva[rva]
-                ordered = sorted(names, key=lambda value: (value is None, value or ""))
-                label = " | ".join(value for value in ordered[:4] if value is not None)
-                if len(ordered) > 4 and label:
-                    label += f" | ... (+{len(ordered) - 4} more)"
-                writer.writerow([rva, len(names), label])
-    except (OSError, ValueError, csv.Error) as exc:
+            writer.writerows(rows)
+    except Exception as exc:  # noqa: BLE001 - a file, CSV or DuckDB cast error names the cause
         raise UprofError(f"cannot aggregate public symbols: {exc}") from exc
-    starts = len(by_rva)
-    shared = sum(1 for names in by_rva.values() if len(names) > 1)
-    return starts, shared
+    return len(rows), sum(1 for _rva, count, _names in rows if count > 1)
 
 
 def public_symbols(

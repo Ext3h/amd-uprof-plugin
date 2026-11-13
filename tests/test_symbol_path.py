@@ -68,7 +68,11 @@ class ParseTest(unittest.TestCase):
         cache, servers = uprof_native.parse_symbol_path(value)
 
         self.assertEqual(cache, r"C:\sym")
-        self.assertEqual(servers, ["srv**https://b.example", r"srv*C:\sym*https://c.example"])
+        # srv*<upstream> uses the default downstream store; it still names a server.
+        self.assertEqual(
+            servers,
+            ["srv*https://a.example", "srv**https://b.example", r"srv*C:\sym*https://c.example"],
+        )
 
 
 class CallersAgreeTest(unittest.TestCase):

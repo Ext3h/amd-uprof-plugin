@@ -204,7 +204,7 @@ class TimerAlternativesTest(unittest.TestCase):
             message = str(uprof_native.failure("cause", labels, session="C:/a$b/session"))
         lines = message.splitlines()
         commands = "\n".join(line for line in lines if line.startswith("ALTERNATIVE: "))
-        for data in lines[1 + len(labels) :]:
+        for data in [line for line in lines[1:] if not line.startswith("ALTERNATIVE: ")]:
             placeholder = "<" + data.split("=", 1)[0] + ">"
             self.assertIn(placeholder, commands, data)
 

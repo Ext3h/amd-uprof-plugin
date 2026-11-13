@@ -4,6 +4,8 @@ Run from the repository root: python tests/run_tests.py test_tools_report
 """
 # Spec: SPEC-32
 
+from __future__ import annotations
+
 import contextlib
 import io
 import types

@@ -8,6 +8,8 @@ Run from the repository root: python tests/run_tests.py test_tool_minimums
 """
 # Spec: SPEC-107
 
+from __future__ import annotations
+
 import argparse
 import contextlib
 import io

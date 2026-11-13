@@ -978,7 +978,6 @@ def symbolize_module(
     out_path.mkdir(parents=True, exist_ok=True)
     jsonl_file = out_path / "symbols.jsonl"
     parquet_file = out_path / "symbols.parquet"
-    out_path / "symbols.publics.csv"
     symbolizer_path = require_symbolizer()
     evidence = ModuleEvidence(module_name or exe, exe, found_debug_info=found_debug_info)
     pdb: Path | None = None

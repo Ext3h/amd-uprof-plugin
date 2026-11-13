@@ -35,9 +35,10 @@ captures.
 - A question about the user's own code names the process (exe name, and PID where the
   capture holds more than one instance) as well as the module (D-019).
 - **Open steps** say `open (D-nnn)`:
-  - open (D-028): the `defect_lab` captures for SCN-21..28 are recorded on the owner's reference
-    machine, then reviewed for disclosure before commit; until then those scenarios give the
-    parts' shape.
+  - open (D-028): the `defect_lab` captures for SCN-21..28 come from the owner's re-run on the
+    reference machine with the images rebuilt for call stacks, reviewed for disclosure before
+    commit. Until then each scenario names the captures it needs and gives the parts' shape;
+    every number is marked TODO(re-run).
   - open (D-020): loaded attached captures are to be real captures recorded in CI, with a
     stressor process for the load. Until they exist, SCN-02..08, 11, 17 and 19 run on their
     unloaded sessions, and SCN-13 and 15 have none.
@@ -354,74 +355,82 @@ A trial run passes when both hold:
 
 ## SCN-21: what can I improve (memory class)
 
-- **Session:** none (open (D-028): the capture of `defect_lab.exe --class memory` comes from the owner's reference machine)
-- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_memory` in `lab_core.dll` and its hot RVA. Proof: its samples; on an IBS capture, `IbsDcMiss` set and long tag-to-retire at the hot load make it memory-bound; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture. Cost: its share of `defect_lab.exe`'s samples and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by changing the access pattern or data layout.
+- **Session:** none (open (D-028): needs `memory.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; the cause also needs `memory.ibs`, a system-wide IBS capture, which the SANITY guard refuses today: that part is blocked on #358)
+- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
+- **Answer:** the parts' shape. Location: `lab_memory` in `lab_core.dll` and its hot RVA. Proof: its samples; on an IBS capture, `IbsDcMiss` set and long tag-to-retire at the hot load make it memory-bound; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture. Cost: its share of `defect_lab.exe`'s samples and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by changing the access pattern or data layout. TODO(re-run): the function's samples and share of `defect_lab.exe`, its `cpu_seconds`, the hot RVA and its source line, from the owner's re-run with the rebuilt images.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
 
 ## SCN-22: what can I improve (lock class)
 
-- **Session:** none (open (D-028): the capture of `defect_lab.exe --class lock` comes from the owner's reference machine)
-- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_lock` and `lock_thread` in `lab_core.dll`. Proof: on an IBS capture, `IbsDcLockedOp` and a `pause` spin in the decoded window show the time is waiting for the lock; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture (the `lock cmpxchg` and `pause` in the code may be named as facts). Cost: their share and `cpu_seconds`. Confidence: 1/√samples. Saving: by reducing contention, at most their `cpu_seconds`.
+- **Session:** none (open (D-028): needs `lock.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; the cause also needs `lock.ibs`, a system-wide IBS capture, which the SANITY guard refuses today: that part is blocked on #358)
+- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
+- **Answer:** the parts' shape. Location: `lab_lock` and `lock_thread` in `lab_core.dll`. Proof: on an IBS capture, `IbsDcLockedOp` and a `pause` spin in the decoded window show the time is waiting for the lock; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture (the `lock cmpxchg` and `pause` in the code may be named as facts). Cost: their share and `cpu_seconds`. Confidence: 1/√samples. Saving: by reducing contention, at most their `cpu_seconds`. TODO(re-run): the function's samples and share of `defect_lab.exe`, its `cpu_seconds`, the hot RVA and its source line, from the owner's re-run with the rebuilt images.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
 
 ## SCN-23: what can I improve (branch class)
 
-- **Session:** none (open (D-028): the capture of `defect_lab.exe --class branch` comes from the owner's reference machine)
-- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_branch` in `lab_core.dll` and its hot RVA. Proof: on an IBS capture, `IbsOpBrnMisp` set at the hot branch shows mispredictions; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture. Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by making the branch predictable or branch-free.
+- **Session:** none (open (D-028): needs `branch.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; the cause also needs `branch.ibs`, a system-wide IBS capture, which the SANITY guard refuses today: that part is blocked on #358)
+- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
+- **Answer:** the parts' shape. Location: `lab_branch` in `lab_core.dll` and its hot RVA. Proof: on an IBS capture, `IbsOpBrnMisp` set at the hot branch shows mispredictions; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture. Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by making the branch predictable or branch-free. TODO(re-run): the function's samples and share of `defect_lab.exe`, its `cpu_seconds`, the hot RVA and its source line, from the owner's re-run with the rebuilt images.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
 
 ## SCN-24: what can I improve (os class)
 
-- **Session:** none (open (D-028): the capture of `defect_lab.exe --class os` comes from the owner's reference machine)
-- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`. What can I improve?"
-- **Answer:** the parts' shape. Location: outside the user's module, the `ntdll.dll` heap functions; `lab_os` itself is small. Proof: their samples within `defect_lab.exe`; own call sites into them cannot be attributed (#187). Cost: `ntdll.dll`'s share of the process. Confidence: 1/√samples. Saving: by allocating less often from `lab_os`, a hypothesis, not measured.
-- **Known gaps:** #187 (own call paths into outside code).
+- **Session:** none (open (D-028): needs `os.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; and `os.timer-cg` for the call stacks from `lab_os` into `ntdll.dll`)
+- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
+- **Answer:** the parts' shape. Location: outside the user's module, the `ntdll.dll` heap functions; `lab_os` itself is small. Proof: their samples within `defect_lab.exe`; own call sites into them cannot be attributed (#187). Cost: `ntdll.dll`'s share of the process. Confidence: 1/√samples. Saving: by allocating less often from `lab_os`, a hypothesis, not measured. TODO(re-run): the function's samples and share of `defect_lab.exe`, its `cpu_seconds`, the hot RVA and its source line, from the owner's re-run with the rebuilt images.
+- **Known gaps:** #187 (own call paths into outside code; the timer-cg capture holds the stacks, no view shows them yet)
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
 
 ## SCN-25: what can I improve (vendor class)
 
-- **Session:** none (open (D-028): the capture of `defect_lab.exe --class vendor` comes from the owner's reference machine)
-- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`. What can I improve?"
-- **Answer:** the parts' shape. Location: outside the user's module, `vendor_work` in `lab_vendor.dll`, kept as one outside line. Proof: its samples within `defect_lab.exe`; own call sites into it cannot be attributed (#187). Cost: its share of the process. Confidence: 1/√samples. Saving: by calling it less, or by a vendor change; a hypothesis, not measured.
-- **Known gaps:** #187 (own call paths into outside code).
+- **Session:** none (open (D-028): needs `vendor.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; and `vendor.timer-cg` for the call stacks from `lab_core.dll` into `lab_vendor.dll`)
+- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
+- **Answer:** the parts' shape. Location: outside the user's module, `vendor_work` in `lab_vendor.dll`, kept as one outside line. Proof: its samples within `defect_lab.exe`; own call sites into it cannot be attributed (#187). Cost: its share of the process. Confidence: 1/√samples. Saving: by calling it less, or by a vendor change; a hypothesis, not measured. TODO(re-run): the function's samples and share of `defect_lab.exe`, its `cpu_seconds`, the hot RVA and its source line, from the owner's re-run with the rebuilt images.
+- **Known gaps:** #187 (own call paths into outside code; the timer-cg capture holds the stacks, no view shows them yet)
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_vendor.dll --image-path <IMAGE_DIR> --top 1`
 
 ## SCN-26: what can I improve (wait class)
 
-- **Session:** none (open (D-028): the capture of `defect_lab.exe --class wait` comes from the owner's reference machine)
-- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_wait` in `lab_core.dll`, the little code that runs. Proof: few samples against the capture's wall time: CPU sampling only samples running threads, so the time the thread spends blocked is off-CPU and does not appear. Cost: its small share and `cpu_seconds`, CPU time, not wall-clock time. Confidence: 1/√samples. Saving: n/a: the improvement lies in what the program waits for, which needs a wait or I/O analysis outside this skill.
+- **Session:** none (open (D-028): needs `wait.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it)
+- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
+- **Answer:** the parts' shape. Location: `lab_wait` in `lab_core.dll`, the little code that runs. Proof: few samples against the capture's wall time: CPU sampling only samples running threads, so the time the thread spends blocked is off-CPU and does not appear. Cost: its small share and `cpu_seconds`, CPU time, not wall-clock time. Confidence: 1/√samples. Saving: n/a: the improvement lies in what the program waits for, which needs a wait or I/O analysis outside this skill. TODO(re-run): the function's samples and share of `defect_lab.exe`, its `cpu_seconds`, the hot RVA and its source line, from the owner's re-run with the rebuilt images.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
 
 ## SCN-27: what can I improve (chain class)
 
-- **Session:** none (open (D-028): the capture of `defect_lab.exe --class chain` comes from the owner's reference machine)
-- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_chain` in `lab_core.dll` and its hot RVA. Proof: on an IBS capture, no `IbsDcMiss` and long tag-to-retire on `imul`/`div` show a latency-bound dependency chain; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture (the `imul`/`div` chain may be named as a fact). Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by breaking the chain into independent accumulators or replacing the divide.
+- **Session:** none (open (D-028): needs `chain.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; the cause also needs `chain.ibs`, a system-wide IBS capture, which the SANITY guard refuses today: that part is blocked on #358)
+- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
+- **Answer:** the parts' shape. Location: `lab_chain` in `lab_core.dll` and its hot RVA. Proof: on an IBS capture, no `IbsDcMiss` and long tag-to-retire on `imul`/`div` show a latency-bound dependency chain; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture (the `imul`/`div` chain may be named as a fact). Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by breaking the chain into independent accumulators or replacing the divide. TODO(re-run): the function's samples and share of `defect_lab.exe`, its `cpu_seconds`, the hot RVA and its source line, from the owner's re-run with the rebuilt images.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
 
 ## SCN-28: what can I improve (efficient class)
 
-- **Session:** none (open (D-028): the capture of `defect_lab.exe --class efficient` comes from the owner's reference machine)
-- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_efficient` in `lab_core.dll` and its hot RVA. Proof: its samples; the answer names the hotspot and its cost and never claims that no algorithmic optimization is left, because a profile cannot show that. Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, from doing less work or a different algorithm, found by reading the source. A run that proposes an instruction-level fix without evidence, or declares the code optimal, fails.
+- **Session:** none (open (D-028): needs `efficient.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it)
+- **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
+- **Answer:** the parts' shape. Location: `lab_efficient` in `lab_core.dll` and its hot RVA. Proof: its samples; the answer names the hotspot and its cost and never claims that no algorithmic optimization is left, because a profile cannot show that. Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, from doing less work or a different algorithm, found by reading the source. A run that proposes an instruction-level fix without evidence, or declares the code optimal, fails. TODO(re-run): the function's samples and share of `defect_lab.exe`, its `cpu_seconds`, the hot RVA and its source line, from the owner's re-run with the rebuilt images.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`

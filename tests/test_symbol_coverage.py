@@ -10,6 +10,7 @@ Run from the repository root: python tests/run_tests.py test_symbol_coverage
 # Spec: SPEC-63, SPEC-67
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from pathlib import Path
 import duckdb
 
 import uprof_query
+from test_function_region_profile import FIXTURE, Session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 
@@ -313,6 +315,55 @@ class CoverageChannelsTest(unittest.TestCase):
         self.assertEqual(entry["profile_symbolizer"]["unresolved_samples"], 30)
         self.assertEqual(entry["profile_symbolizer"]["scoped_samples"], 30)
         self.assertFalse(entry["rows_drillable"])
+
+
+class FailingSymbolizerTest(unittest.TestCase):
+    """profile --by line/instruction when llvm-symbolizer exits 1 for the only module (#195).
+
+    The rows stay unsymbolized, so the line must name the symbolizer channel with 0 resolved,
+    the module's cause and the remedy, not a uProf DB share that says every sample resolves.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        session = Session(root, "session")
+        session.module(1, FIXTURE, False).function(10, 1, "fixture_entry")
+        session.sample(1, 10, 0x101B, 3)
+        self.session = session.write()
+        self.symbols = root / "symbols"
+        self.symbols.mkdir()
+        # A symbolizer that reports a supported version and fails every symbolization.
+        if os.name == "nt":
+            self.symbolizer = root / "llvm-symbolizer.bat"
+            self.symbolizer.write_text(
+                '@echo off\r\nif "%~1"=="--version" (\r\necho LLVM version 23.1.5\r\n'
+                "exit /b 0\r\n)\r\nexit /b 1\r\n", encoding="ascii", newline="")
+        else:
+            self.symbolizer = root / "llvm-symbolizer"
+            self.symbolizer.write_text(
+                '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "LLVM version 23.1.5"; '
+                "exit 0; fi\nexit 1\n", encoding="ascii", newline="")
+            self.symbolizer.chmod(0o755)
+
+    def test_line_and_instruction_name_the_failed_symbolizer_channel(self):
+        environment = dict(os.environ, LLVM_SYMBOLIZER=str(self.symbolizer))
+        for by in ("line", "instruction"):
+            with self.subTest(by):
+                result = subprocess.run(
+                    [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
+                     str(self.session), "--by", by, "--symbol-path", str(self.symbols)],
+                    capture_output=True, text=True, encoding="utf-8", env=environment)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                line = next(line for line in result.stdout.splitlines()
+                            if line.startswith("SYMBOL_COVERAGE: "))
+                self.assertIn("uProf DB 3/3 samples (100.0%) resolve to a named function", line)
+                self.assertIn("profile symbolizer 0/3 samples (0.0%) resolve below module/RVA "
+                              "(flags: --symbol-path)", line)
+                self.assertIn("llvm-symbolizer exited 1", line)
+                self.assertIn(NO_NAMED_STOP, line)
+                self.assertIn("remedy: pass profile --symbol-path", line)
 
 
 if __name__ == "__main__":

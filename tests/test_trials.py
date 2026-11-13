@@ -83,6 +83,21 @@ def conventions() -> str:
     return text.partition("\n## Conventions\n")[2].partition("\n## ")[0]
 
 
+# Scenarios whose loaded attached capture comes from the owner's reference machine (#390).
+AWAITING_LOADED_CAPTURE = (
+    "SCN-02",
+    "SCN-03",
+    "SCN-04",
+    "SCN-05",
+    "SCN-06",
+    "SCN-07",
+    "SCN-08",
+    "SCN-11",
+    "SCN-13",
+    "SCN-15",
+    "SCN-17",
+    "SCN-19",
+)
 # Sessions with background load, where an own-code function call must be filtered first.
 LOADED_SESSIONS = {"systemwide_loaded", "attached_inproc_loaded"}
 # Steps (1-based) of scenarios on loaded sessions that ask for outside code on purpose, so an
@@ -221,6 +236,13 @@ class CatalogueTest(unittest.TestCase):
         note = next(line for line in text.splitlines() if "open (D-031)" in line)
         self.assertIn("not run: awaiting reference capture (#390)", note)
         self.assertNotIn("D-020", text)
+        # Each scenario says so itself, for a reader who opens only that entry.
+        for scn in AWAITING_LOADED_CAPTURE:
+            with self.subTest(scenario=scn):
+                self.assertIn(
+                    "open (D-031): not run: awaiting reference capture (#390)",
+                    self.scenarios[scn]["fields"]["Session"],
+                )
 
     def test_open_steps_name_a_decision_the_conventions_list(self):
         listed = set(OPEN_MARK.findall(conventions()))

@@ -181,7 +181,7 @@ REFERENCE_FRAGMENTS = (
     "remedy:",
     "Verify translate symbolization",
     "SYMBOLIZATION:",
-    "One evidence line per non-resolved module",
+    "one evidence line per distinct cause, naming its modules",
     "the consumer does not write a PE parser",
     "does not read `.pdata` by hand",
     "fully named from the uProf DB; function-range derivation skipped",

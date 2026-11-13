@@ -1080,6 +1080,11 @@ _CONTEXT_HELP_OMISSIONS: Final = {
         "a nonzero on-disk CheckSum differs from the capture's Module.checksum; "
         "remedy: symbolicate against the exact binary recorded in the capture"
     ),
+    "ambiguous_module_version": (
+        "the capture maps the module name to more than one image "
+        "version, so no single Module row identifies the build to "
+        "verify; remedy: read the module/RVA row without a context"
+    ),
     "context_failed": (
         "an LLVM tool timed out or a scoped query failed while building this "
         "context; remedy: retry, then check the LLVM tools and the artifact "
@@ -1180,8 +1185,10 @@ class _ContextBuilder:
         fallback_paths: Iterable[str] = (),
         image_files: Iterable[str | Path] = (),
         image_dirs: Iterable[str | Path] = (),
+        ambiguous_modules: Iterable[str] = (),
     ) -> None:
         self.connection = connection
+        self.ambiguous_modules = frozenset(ambiguous_modules)
         self.total_samples = total_samples
         self.debug_dirs = tuple(debug_dirs)
         self.fallback_paths = tuple(fallback_paths)
@@ -1204,6 +1211,12 @@ class _ContextBuilder:
         return state
 
     def _load_module(self, module_name: str) -> _ModuleState:
+        if module_name in self.ambiguous_modules:
+            # Any one Module row would verify or reject the build by row order, not evidence.
+            raise ContextOmission(
+                "ambiguous_module_version",
+                f"the capture records more than one image version of {module_name!r}",
+            )
         columns = {
             str(name).lower()
             for (name,) in self.connection.execute(
@@ -1415,13 +1428,15 @@ def instruction_contexts(
     fallback_paths: Iterable[str] = (),
     image_files: Iterable[str | Path] = (),
     image_dirs: Iterable[str | Path] = (),
+    ambiguous_modules: Iterable[str] = (),
 ) -> list[object | None]:
     """One context (or omission) per instruction row, in row order.
 
     Rows without a module and RVA (the aggregate row) carry no context. Rows past cap carry
     reason row_cap instead of doing more work. debug_dirs and fallback_paths are the debug-file
     search roots the profile symbol path supplies; image_files and image_dirs resolve a module
-    image that is not at its recorded path.
+    image that is not at its recorded path. A module in ambiguous_modules has more than one
+    image version in the capture and omits.
     """
     indices = {name: index for index, name in enumerate(columns)}
     if "module" not in indices or "rva" not in indices:
@@ -1435,6 +1450,7 @@ def instruction_contexts(
         fallback_paths=fallback_paths,
         image_files=image_files,
         image_dirs=image_dirs,
+        ambiguous_modules=ambiguous_modules,
     )
     module_at, rva_at = indices["module"], indices["rva"]
     contexts: list[object | None] = [None] * len(rows)

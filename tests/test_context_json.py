@@ -361,12 +361,25 @@ class InstructionProfileTest(unittest.TestCase):
                 uprof_query.uprof_context, "instruction_contexts", return_value=contexts
             ) as built:
                 with mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered:
-                    with mock.patch.object(uprof_query.uprof_db, "output") as legacy:
+                    with (
+                        mock.patch.object(uprof_query.uprof_db, "output") as legacy,
+                        mock.patch.object(
+                            uprof_query.uprof_cache, "ambiguous_modules", return_value=["b"]
+                        ) as ambiguous,
+                    ):
                         uprof_query._write_profile(None, args, [("METRIC", "x")], None, legend)
 
         fetched.assert_called_once()
+        ambiguous.assert_called_once_with(None, ["a"])
         built.assert_called_once_with(
-            None, columns, rows, debug_dirs=(), fallback_paths=(), image_files=(), image_dirs=()
+            None,
+            columns,
+            rows,
+            debug_dirs=(),
+            fallback_paths=(),
+            image_files=(),
+            image_dirs=(),
+            ambiguous_modules=["b"],
         )
         rendered.assert_called_once()
         call = rendered.call_args.args

@@ -25,6 +25,7 @@ cpu.db schema the tools do not read). Needs Python 3.9+ and the duckdb package.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import json
 import os
@@ -63,10 +64,9 @@ def host_names() -> list[str]:
         os.environ.get("USERNAME", ""),
         os.environ.get("USER", ""),
     }
-    try:
+    # Without a user name there is nothing to add.
+    with contextlib.suppress(Exception):
         names.add(getpass.getuser())
-    except Exception:  # noqa: BLE001 - no user name to add
-        pass
     return sorted(name for name in names if name)
 
 
@@ -324,7 +324,7 @@ def sanitize_command(command: object) -> object:
             result.append("<VALUE>")
             replace_next = False
             continue
-        option, equals, value = bare.partition("=")
+        option, equals, _value = bare.partition("=")
         if option in SERVER_OPTIONS:
             if equals:
                 result.append(f"{option}=<VALUE>")
@@ -638,6 +638,7 @@ def dump_source(session: Path, meta: dict, workdir: Path) -> Path | None:
             "--ascii",
             "ibsop-event-dump",
         ],
+        check=False,
         capture_output=True,
         text=True,
     )

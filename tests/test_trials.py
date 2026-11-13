@@ -468,6 +468,7 @@ class ContextCeilingTest(unittest.TestCase):
     def run_call(self, call: str) -> str:
         result = subprocess.run(
             [sys.executable, str(UPROF), *shlex.split(call)],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

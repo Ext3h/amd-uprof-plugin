@@ -97,7 +97,7 @@ def build(out_dir: Path) -> list[Path]:
 
 def run(command: list, cwd: Path) -> None:
     completed = subprocess.run(
-        [str(part) for part in command], cwd=cwd, capture_output=True, text=True
+        [str(part) for part in command], check=False, cwd=cwd, capture_output=True, text=True
     )
     if completed.returncode != 0:
         raise RuntimeError(

@@ -25,8 +25,8 @@ import debug_fixtures as F
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "trials"))
-import anonymize_capture  # noqa: E402
-import build_captures  # noqa: E402
+import anonymize_capture
+import build_captures
 
 HOST, USER = "BUILD-HOST-7", "alice"
 PROFILE = f"C:\\Users\\{USER}\\work"
@@ -249,6 +249,7 @@ class AnonymizeCaptureTest(unittest.TestCase):
                 "--by",
                 "module",
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

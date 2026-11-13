@@ -271,6 +271,48 @@ class CoverageChannelsTest(unittest.TestCase):
         self.assertEqual(entry["profile_symbolizer"]["scoped_samples"], 5575)
         self.assertTrue(entry["rows_drillable"])
 
+    def test_line_scope_prints_symbolizer_channel_and_causes_when_symbolizer_resolved_nothing(self):
+        text = uprof_query._coverage_field(
+            None, {"fixture.exe": "llvm-symbolizer failed: exit status 1"},
+            _symbolizer(30, 30), False, ["--symbol-path"],
+            _coverage([_unresolved_row("fixture.exe", 30, 30)], 30, 30),
+            by="line")[0][1]
+
+        self.assertIn("uProf DB 30/30 samples (100.0%) resolve to a named function", text)
+        self.assertIn("profile symbolizer 0/30 samples (0.0%) resolve below module/RVA "
+                      "(flags: --symbol-path)", text)
+        self.assertIn("cause by module: fixture.exe: llvm-symbolizer failed: exit status 1", text)
+        self.assertIn(NO_NAMED_STOP, text)
+        self.assertIn("remedy: pass profile --symbol-path", text)
+
+    def test_instruction_scope_prints_symbolizer_channel_even_without_flags(self):
+        text = uprof_query._coverage_field(
+            None, {"fixture.exe": "no PDB found"},
+            _symbolizer(30, 30), True, [],
+            _coverage([_unresolved_row("fixture.exe", 30, 30)], 30, 30),
+            by="instruction")[0][1]
+
+        self.assertIn("uProf DB 30/30 samples (100.0%) resolve to a named function", text)
+        self.assertIn("profile symbolizer 0/30 samples (0.0%) resolve below module/RVA", text)
+        self.assertIn("cause by module: fixture.exe: no PDB found", text)
+        self.assertIn(NO_NAMED_STOP, text)
+        self.assertIn("remedy: pass profile --symbol-path", text)
+
+    def test_json_legend_line_scope_records_zero_resolved_when_symbolizer_resolved_nothing(self):
+        entry = uprof_query._symbol_coverage_legend(
+            _coverage([_unresolved_row("fixture.exe", 30, 30)], 30, 30),
+            _symbolizer(30, 30), False, ["--symbol-path"], by="line")
+
+        self.assertEqual(list(entry),
+                         ["uprof_db", "flags", "profile_symbolizer", "rows_drillable"])
+        self.assertEqual(entry["uprof_db"]["named_samples"], 30)
+        self.assertEqual(entry["uprof_db"]["scoped_samples"], 30)
+        self.assertEqual(entry["flags"], ["--symbol-path"])
+        self.assertEqual(entry["profile_symbolizer"]["resolved_samples"], 0)
+        self.assertEqual(entry["profile_symbolizer"]["unresolved_samples"], 30)
+        self.assertEqual(entry["profile_symbolizer"]["scoped_samples"], 30)
+        self.assertFalse(entry["rows_drillable"])
+
 
 if __name__ == "__main__":
     unittest.main()

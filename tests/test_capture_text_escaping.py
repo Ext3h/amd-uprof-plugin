@@ -187,6 +187,21 @@ class LongValueTest(unittest.TestCase):
         _assert_clean(self, result.stderr)
 
 
+class NameTooLongTest(unittest.TestCase):
+    def test_a_path_the_os_cannot_stat_is_a_missing_image(self):
+        # Linux refuses a path over PATH_MAX with ENAMETOOLONG instead of reporting it missing.
+        import errno
+        import uprof_symbols
+
+        def refuse(*args, **kwargs):
+            raise OSError(errno.ENAMETOOLONG, "File name too long")
+
+        with mock.patch("os.stat", side_effect=refuse):
+            self.assertEqual(
+                uprof_symbols.resolve_image("app.exe", "/x/" + "y" * 5000, (), ()), (None, None)
+            )
+
+
 class ProcessNameTest(unittest.TestCase):
     def test_a_hostile_process_name_forges_no_stderr_line(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -29,12 +29,34 @@ PROBE = textwrap.dedent('''
                 json.dump({"cache": os.environ.get("UPROF_SESSION_CACHE_ROOT"),
                            "temp": tempfile.gettempdir(),
                            "scratch": scratch,
-                           "env_temp": [os.environ.get(name) for name in ("TMPDIR", "TEMP", "TMP")]},
+                           "env_temp": [os.environ.get(name) for name in ("TMPDIR", "TEMP", "TMP")],
+                           "symbol_vars": {name: os.environ.get(name) for name in (
+                               "_NT_SYMBOL_PATH", "_NT_ALT_SYMBOL_PATH", "DEBUGINFOD_URLS")}},
                           handle)
 ''')
 
 
 class RunnerIsolationTest(unittest.TestCase):
+    def test_a_run_clears_symbol_path_variables(self):
+        with tempfile.TemporaryDirectory() as outer:
+            outer = Path(outer)
+            probe_dir = outer / "probe"
+            probe_dir.mkdir()
+            (probe_dir / "probe_symbols.py").write_text(PROBE, encoding="utf-8")
+            report = outer / "report.json"
+            sentinels = {
+                "_NT_SYMBOL_PATH": r"srv*C:\developer\symbols*https://symbols.invalid",
+                "_NT_ALT_SYMBOL_PATH": r"C:\developer\alt_symbols",
+                "DEBUGINFOD_URLS": "https://debuginfod.invalid",
+            }
+            env = dict(os.environ, PYTHONPATH=str(probe_dir), PROBE_REPORT=str(report), **sentinels)
+            run = subprocess.run([sys.executable, str(RUNNER), "probe_symbols"], env=env,
+                                 capture_output=True, text=True, timeout=120)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            seen = json.loads(report.read_text(encoding="utf-8"))
+            for name in sentinels:
+                self.assertIsNone(seen["symbol_vars"][name], f"{name} leaked into the test suite")
+
     def test_a_run_uses_and_removes_its_own_cache_and_temp_root(self):
         with tempfile.TemporaryDirectory() as outer:
             outer = Path(outer)

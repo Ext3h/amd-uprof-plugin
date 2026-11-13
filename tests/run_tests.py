@@ -49,9 +49,15 @@ def run(suite: unittest.TestSuite, require_tools: bool, stream=None) -> bool:
     return runner.run(suite).wasSuccessful()
 
 
+# Symbol-path variables cleared by isolate() so a developer's environment never leaks
+# local symbol caches into the test suite or trace comparisons.
+SYMBOL_PATH_VARS = ("_NT_SYMBOL_PATH", "_NT_ALT_SYMBOL_PATH", "DEBUGINFOD_URLS")
+
+
 def isolate(root: Path) -> None:
     """Point the session cache and every temp directory of this process and its children
-    below root, overriding the caller's settings so a run never touches their cache."""
+    below root, overriding the caller's settings so a run never touches their cache,
+    and clear symbol-path variables so the developer's environment never leaks into tests."""
     cache, temp = root / "cache", root / "tmp"
     cache.mkdir()
     temp.mkdir()
@@ -59,6 +65,8 @@ def isolate(root: Path) -> None:
     for name in ("TMPDIR", "TEMP", "TMP"):
         os.environ[name] = str(temp)
     tempfile.tempdir = str(temp)
+    for name in SYMBOL_PATH_VARS:
+        os.environ.pop(name, None)
 
 
 def main(argv: list[str]) -> int:

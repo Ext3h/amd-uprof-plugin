@@ -142,7 +142,57 @@ def run(connection, sql: str, step: str, params=()):
         ) from exc
 
 
-def copy_filtered(connection, pids: list[int]) -> None:
+def stack_functions(session: Path, pids: list[int]) -> set[int]:
+    """Function ids the kept processes' call stacks reach, so cpu.db keeps them."""
+    import duckdb
+
+    source = session / "callstack.db"
+    if not source.is_file():
+        return set()
+    pid_list = ", ".join(str(pid) for pid in pids)
+    connection = duckdb.connect(str(source), read_only=True)
+    try:
+        functions: set[int] = set()
+        tables = tables_of(connection)
+        stacks = []
+        for table in tables:
+            names = set(columns_of(connection, table))
+            stack = next((n for n in ("callstackId", "callStackId") if n in names), None)
+            if "processId" in names and stack:
+                stacks.append(f'SELECT "{stack}" FROM "{table}" WHERE "processId" IN ({pid_list})')
+            if "processId" in names and "functionId" in names:
+                functions |= {
+                    row[0]
+                    for row in run(
+                        connection,
+                        f'SELECT DISTINCT "functionId" FROM "{table}" WHERE '
+                        f'"processId" IN ({pid_list}) AND "functionId" IS NOT NULL',
+                        f"reading the functions of {table}",
+                    ).fetchall()
+                }
+        for table in tables:
+            names = set(columns_of(connection, table))
+            if (
+                stacks
+                and "callstackId" in names
+                and "functionId" in names
+                and "processId" not in names
+            ):
+                functions |= {
+                    row[0]
+                    for row in run(
+                        connection,
+                        f'SELECT DISTINCT "functionId" FROM "{table}" WHERE '
+                        f'"callstackId" IN ({" UNION ".join(stacks)}) AND "functionId" IS NOT NULL',
+                        f"reading the frames of {table}",
+                    ).fetchall()
+                }
+        return functions
+    finally:
+        connection.close()
+
+
+def copy_filtered(connection, pids: list[int], reached: set[int] = frozenset()) -> None:
     """Copy every table of src into packed, keeping only the kept processes' rows.
 
     Copying into a fresh database instead of deleting from a copy keeps no key or foreign-key
@@ -188,6 +238,18 @@ def copy_filtered(connection, pids: list[int]) -> None:
                 f"SELECT DISTINCT moduleId FROM src.ModuleInstance WHERE moduleId IS "
                 f"NOT NULL AND processId IN ({pid_list})",
                 "selecting the kept module instances",
+            ).fetchall()
+        }
+    if reached:
+        # Modules only the kept call stacks reach, so their frames still resolve.
+        reached_list = ", ".join(str(int(f)) for f in reached)
+        modules |= {
+            row[0]
+            for row in run(
+                connection,
+                f"SELECT DISTINCT moduleId FROM src.Function WHERE id IN "
+                f"({reached_list}) AND moduleId IS NOT NULL",
+                "selecting the modules the call stacks reach",
             ).fetchall()
         }
     module_list = ", ".join(str(int(m)) for m in modules) or "NULL"
@@ -362,7 +424,15 @@ def anonymize(session: Path, keep: list[str], out: Path) -> Path:
         review = write_filtered(session, kept, out, meta)
     except BaseException:
         # A failed run leaves nothing that could be mistaken for a finished capture.
-        for name in ("cpu.db", "cpu.db.wal", "session.uprof", "review.txt", *DUMP_NAMES):
+        for name in (
+            "cpu.db",
+            "cpu.db.wal",
+            "callstack.db",
+            "callstack.db.wal",
+            "session.uprof",
+            "review.txt",
+            *DUMP_NAMES,
+        ):
             (out / name).unlink(missing_ok=True)
         raise
     (out / "review.txt").write_text(review, encoding="utf-8")
@@ -388,7 +458,7 @@ def write_filtered(session: Path, kept: list[int], out: Path, meta: dict) -> str
             f"ATTACH '{(out / 'cpu.db').as_posix()}' AS packed (BLOCK_SIZE 16384)",
             "creating the filtered cpu.db",
         )
-        copy_filtered(connection, kept)
+        copy_filtered(connection, kept, stack_functions(session, kept))
     finally:
         connection.close()
     connection = duckdb.connect(str(out / "cpu.db"))
@@ -404,7 +474,104 @@ def write_filtered(session: Path, kept: list[int], out: Path, meta: dict) -> str
             ) from exc
     finally:
         connection.close()
-    return review + handover_dump(session, kept, out, meta)
+    return (
+        review + handover_dump(session, kept, out, meta) + handover_callstacks(session, kept, out)
+    )
+
+
+def handover_callstacks(session: Path, kept: list[int], out: Path) -> str:
+    """Copy callstack.db like cpu.db: every table, only the kept processes' rows, paths
+    rewritten; return its review section. Call stacks are what caller-path attribution needs."""
+    import duckdb
+
+    source = session / "callstack.db"
+    if not source.is_file():
+        return "== callstack.db: absent in the capture\n"
+    pid_list = ", ".join(str(pid) for pid in kept)
+    connection = duckdb.connect()
+    try:
+        run(
+            connection,
+            f"ATTACH '{source.as_posix()}' AS src (READ_ONLY)",
+            "attaching callstack.db read-only",
+        )
+        run(
+            connection,
+            f"ATTACH '{(out / 'callstack.db').as_posix()}' AS packed (BLOCK_SIZE 16384)",
+            "creating the filtered callstack.db",
+        )
+        tables = [
+            name
+            for (name,) in run(
+                connection,
+                "SELECT table_name FROM duckdb_tables() WHERE database_name = 'src' "
+                "ORDER BY table_name",
+                "listing the callstack.db tables",
+            ).fetchall()
+        ]
+        stacks = []
+        for table in tables:
+            names = {
+                name
+                for (name,) in run(
+                    connection,
+                    "SELECT column_name FROM duckdb_columns() WHERE database_name = "
+                    "'src' AND table_name = ?",
+                    f"reading the columns of {table}",
+                    [table],
+                ).fetchall()
+            }
+            stack_column = (
+                "callstackId"
+                if "callstackId" in names
+                else ("callStackId" if "callStackId" in names else None)
+            )
+            if "processId" in names and stack_column:
+                stacks.append(
+                    f'SELECT "{stack_column}" FROM src."{table}" WHERE "processId" IN ({pid_list})'
+                )
+        kept_stacks = " UNION ".join(stacks) or "SELECT NULL"
+        for table in tables:
+            names = {
+                name
+                for (name,) in run(
+                    connection,
+                    "SELECT column_name FROM duckdb_columns() WHERE database_name = "
+                    "'src' AND table_name = ?",
+                    f"reading the columns of {table}",
+                    [table],
+                ).fetchall()
+            }
+            if "host" in table.lower():
+                where = "FALSE"
+            elif "processId" in names:
+                where = f'"processId" IN ({pid_list})'
+            elif "callstackId" in names:
+                where = f'"callstackId" IN ({kept_stacks})'
+            else:
+                where = "TRUE"
+            run(
+                connection,
+                f'CREATE TABLE packed."{table}" AS SELECT * FROM src."{table}" WHERE {where}',
+                f"copying callstack.db table {table}",
+            )
+    finally:
+        connection.close()
+    connection = duckdb.connect(str(out / "callstack.db"))
+    try:
+        rewrite_strings(connection)
+        run(connection, "CHECKPOINT", "writing the filtered callstack.db")
+        try:
+            section = dump(connection, {})
+        except duckdb.Error as exc:
+            detail = " ".join(str(exc).split())[:300]
+            raise Refused(
+                f"DuckDB {duckdb.__version__} failed while dumping the filtered "
+                f"callstack.db: {detail}"
+            ) from exc
+    finally:
+        connection.close()
+    return "== callstack.db\n" + section
 
 
 DUMP_NAMES = ("IbsOpDump.csv", "IbsFetchDump.csv")

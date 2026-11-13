@@ -333,7 +333,7 @@ class NoPdbEvidenceTest(unittest.TestCase):
 
         self.assertIsNone(result.pdb)
         self.assertEqual(result.evidence.outcome, "readobj_failed")
-        self.assertEqual(result.evidence.note, "the image's debug directory records no PDB")
+        self.assertEqual(result.evidence.note, uprof_symbols.NO_PDB_NOTE)
 
     @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
     def test_an_image_without_a_pdb_gets_no_pdb_staging_remedy(self):
@@ -375,6 +375,46 @@ class NoPdbEvidenceTest(unittest.TestCase):
         self.assertIn("records no PDB", warning[0])
         for option in ("--symbol-path", "--symbol-server", "--symbol-cache"):
             self.assertNotIn(option, warning[0])
+
+    @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
+    def test_a_non_pe_image_keeps_the_debug_file_remedy(self):
+        # An ELF image has no PDB but can have a separate debug file worth staging.
+        stream = io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="uprof-no-guid-") as directory:
+            root = Path(directory)
+            module = root / "driver.dll"
+            module.write_bytes(b"\x7fELF")
+            rvas = root / "rvas.txt"
+            rvas.write_text("0x1000\n", encoding="utf-8")
+            with (
+                mock.patch.object(
+                    uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+                ),
+                mock.patch.object(
+                    uprof_symbols,
+                    "find_sibling",
+                    side_effect=lambda _tool, name: Path(name + ".exe"),
+                ),
+                mock.patch.object(
+                    uprof_symbols, "_readobj_info", return_value=("driver.pdb", None, None, None)
+                ),
+                mock.patch.object(
+                    uprof_symbols,
+                    "_run_symbolizer",
+                    return_value=uprof_symbols.SymbolizerRun(0, [], ""),
+                ),
+                mock.patch.object(
+                    uprof_symbols, "_write_parquet", return_value=root / "symbols.parquet"
+                ),
+            ):
+                result = uprof_symbols.symbolize_module(
+                    str(module), rvas, root / "out", stream=io.StringIO(), module_name="driver.dll"
+                )
+        uprof_symbols._evidence_line(result.evidence, stream)
+        warning = [line for line in stream.getvalue().splitlines() if line.startswith("WARNING")]
+        self.assertTrue(warning, stream.getvalue())
+        self.assertNotIn("no PDB can be found or staged", warning[0])
+        self.assertIn("--symbol-path", warning[0])
 
 
 class ExplicitPdbTest(unittest.TestCase):

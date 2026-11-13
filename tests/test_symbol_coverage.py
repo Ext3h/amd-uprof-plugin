@@ -318,7 +318,7 @@ class CoverageChannelsTest(unittest.TestCase):
             "driver.dll",
             "C:/drivers/driver.dll",
             outcome="readobj_failed",
-            note="the image's debug directory records no PDB",
+            note=uprof_symbols.NO_PDB_NOTE,
         )
         return uprof_query._evidence_cause(evidence)
 

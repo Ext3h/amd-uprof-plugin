@@ -81,6 +81,8 @@ carries the derivation notes and validation records.
   skill, its tools and references).
 - `tests/` — maintainer-only test suite and fixtures; run with `python tests/run_tests.py`.
 - `bench/` — maintainer-only timing harness (added by #40).
+- `examples/` — recorded trial scenarios (prompt, input, expected answer, reference metrics);
+  not part of the installed plugin.
 - `.claude-plugin/` — marketplace entry and the icon (`icon.svg` master, `icon.png` raster).
 
 Validate a change with `claude plugin validate ./plugin`.

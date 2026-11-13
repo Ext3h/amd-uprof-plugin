@@ -386,6 +386,8 @@ def collect(options: CollectOptions) -> None:
         print(f"NOTE: the failed IBS attempt is left in {options.out_dir}; the cycle capture "
               f"goes to {out_dir}", file=sys.stderr)
         options = replace(options, out_dir=str(out_dir))
+        out_display, out_data = uprof_shell.path_arg(options.out_dir, "<OUT_DIR>")
+        command_data = [line for line in (uprof_data, out_data) if line]
         session_before, children_before = _session_marker(out_dir)
         effective_event = "cycles"
         if mode != "cycles":

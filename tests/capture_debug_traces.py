@@ -12,6 +12,8 @@ goldens. Nothing here touches an AMD PMU, IBS or AMDuProfCLI: the sessions are s
 the traces are symbol/debug-format and production-pipeline evidence, not hardware profiling.
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import re

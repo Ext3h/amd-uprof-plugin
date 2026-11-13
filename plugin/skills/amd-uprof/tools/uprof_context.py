@@ -10,7 +10,6 @@ reported as unsupported rather than disassembled with different rules.
 
 from __future__ import annotations
 
-import itertools
 import json
 import re
 import sys
@@ -786,7 +785,7 @@ def parse_objdump(text: str, image_base: int) -> list[DecodedInstruction]:
         if not instruction:
             continue
         decoded.append(DecodedInstruction(address - image_base, instruction))
-    for current, following in itertools.pairwise(decoded):
+    for current, following in zip(decoded, decoded[1:]):
         current.next_rva = following.rva
     return decoded
 

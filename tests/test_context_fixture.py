@@ -6,6 +6,8 @@ in fixtures/README.md. Run from the repository root: python tests/run_tests.py t
 """
 # Spec: SPEC-86, SPEC-87, SPEC-88, SPEC-89, SPEC-90
 
+from __future__ import annotations
+
 import unittest
 from pathlib import Path
 

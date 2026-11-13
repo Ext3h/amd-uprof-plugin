@@ -3,6 +3,8 @@
 The binaries and their exact builds are documented in fixtures/debug/README.md.
 """
 
+from __future__ import annotations
+
 import csv
 import functools
 import json

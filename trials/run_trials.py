@@ -26,7 +26,7 @@ import subprocess
 import sys
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 TRIALS = Path(__file__).resolve().parent
@@ -296,7 +296,7 @@ def main(argv: list[str] | None = None, registry: dict[str, type] | None = None)
             )
         )
     header = {
-        "Started": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
+        "Started": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "Runner": runner.name,
         "Model": args.model,
         "Plugin": source,

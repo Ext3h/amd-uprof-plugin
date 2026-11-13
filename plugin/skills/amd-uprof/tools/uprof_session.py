@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -647,7 +647,7 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
     if stamp:
         parsed = _parse_start_ts(str(stamp))
         if parsed is not None:
-            utc = parsed.astimezone(UTC)
+            utc = parsed.astimezone(timezone.utc)
             lines.append(f"START_LOCAL={parsed.isoformat()}")
             lines.append(f"START_UTC={utc:%Y-%m-%dT%H:%M:%S}Z (precision: one second)")
         else:

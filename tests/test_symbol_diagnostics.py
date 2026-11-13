@@ -9,6 +9,8 @@ covers. A cache hit prints what the cold run printed.
 Run from the repository root: python tests/run_tests.py test_symbol_diagnostics
 """
 
+from __future__ import annotations
+
 import io
 import os
 import re

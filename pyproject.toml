@@ -2,5 +2,7 @@
 # CI installs this exact version; another ruff refuses to run on this repository.
 required-version = "==0.17.5"
 line-length = 100
+# The oldest Python the skill documents (SKILL.md); ruff's rewrites and syntax checks keep to it.
+target-version = "py39"
 
 [tool.ruff.format]

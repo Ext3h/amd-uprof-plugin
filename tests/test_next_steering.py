@@ -17,11 +17,9 @@ import uprof_query
 SESSION = "C:/captures/run" if uprof_query.os.name == "nt" else "/captures/run"
 
 
-def next_calls(*argv, system_wide, unresolved=0, top_process=None):
+def next_calls(*argv, system_wide, unresolved=0):
     args = uprof.build_parser().parse_args(["profile", "--session", SESSION, *argv])
-    return uprof_query._next_calls(
-        args, {"unresolved": unresolved}, system_wide=system_wide, top_process=top_process
-    )
+    return uprof_query._next_calls(args, {"unresolved": unresolved}, system_wide=system_wide)
 
 
 def argv_of(call):
@@ -63,28 +61,41 @@ class NextSteeringTest(unittest.TestCase):
     def test_the_process_view_still_points_to_modules(self):
         self.assertEqual(bys(next_calls("--by", "process", system_wide=False)), ["module"])
 
-    def test_a_system_wide_process_view_scopes_its_module_call_to_the_top_process(self):
-        calls = next_calls("--by", "process", system_wide=True, top_process=(4242, "app.exe"))
+    def test_a_system_wide_process_view_leaves_the_process_to_the_caller(self):
+        # Which process to drill into is the caller's choice from the rows, never the top row.
+        calls = next_calls("--by", "process", system_wide=True)
         self.assertEqual(bys(calls), ["module"])
-        self.assertIn("--pid 4242", calls[0])
+        self.assertIn("--pid <PID>", calls[0])
 
-    def test_a_top_process_without_a_pid_scopes_by_its_image_and_ends_the_chain(self):
-        calls = next_calls("--by", "process", system_wide=True, top_process=(None, "app.exe"))
-        self.assertEqual(bys(calls), ["module"])
-        self.assertIn("--image app.exe", calls[0])
-        follow = next_calls(*argv_of(calls[0]), system_wide=True)
-        self.assertEqual(bys(follow), ["function"])
-
-    def test_no_process_row_offers_no_unscoped_module_call(self):
-        self.assertEqual(next_calls("--by", "process", system_wide=True, top_process=None), [])
+    def test_no_next_call_carries_a_value_the_caller_did_not_give(self):
+        # Only the caller's own session, scope, filter and paths are carried forward.
+        for argv, system_wide in (
+            (["--by", "process"], True),
+            (["--by", "process"], False),
+            (["--by", "module"], True),
+            (["--by", "function"], False),
+            (["--by", "line", "--function", "f", "--module", "m.dll"], True),
+            (["--by", "instruction", "--function", "f", "--module", "m.dll"], False),
+        ):
+            with self.subTest(argv=argv, system_wide=system_wide):
+                given = set(argv) | {SESSION}
+                for call in next_calls(*argv, system_wide=system_wide, unresolved=1):
+                    values = argv_of(call)
+                    for flag in ("--pid", "--image", "--function", "--module", "--function-start"):
+                        if flag in values:
+                            value = values[values.index(flag) + 1]
+                            self.assertTrue(
+                                value in given or value.startswith("<"), f"{flag} {value} in {call}"
+                            )
 
     def test_following_next_from_the_system_wide_process_ranking_never_loops(self):
-        # process -> module --pid -> function --pid, never back to the process ranking.
+        # process -> module --pid -> function --pid, never back to the process ranking; the
+        # caller fills <PID> from the rows.
         seen = ["process"]
-        calls = next_calls("--by", "process", system_wide=True, top_process=(4242, "app.exe"))
+        calls = next_calls("--by", "process", system_wide=True)
         while calls:
             self.assertEqual(len(calls), 1, calls)
-            argv = argv_of(calls[0])
+            argv = [value.replace("<PID>", "4242") for value in argv_of(calls[0])]
             self.assertIn("--pid", argv)
             by = argv[argv.index("--by") + 1]
             self.assertNotIn(by, seen)

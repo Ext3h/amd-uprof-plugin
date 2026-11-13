@@ -50,6 +50,11 @@ be outside the repository. Per scenario with a session, the harness:
 - copies `plugin/` from `--plugin-rev` (default `HEAD`) once, or uses `--plugin-dir`;
 - builds the scenario's own capture copy, so no session-cache entry is shared between trials,
   and names the sessions `capture` (`before`/`after` for two), not after the scenario;
+- copies a committed reference capture (`defect_lab/<class>.<mode>`) with its platform's
+  `images/` from a committed revision instead: the `--plugin-rev` revision, or `HEAD` with
+  `--plugin-dir`, never the working tree. `meta.json` records each as `capture_source`
+  (`<commit>:<path>`), and a committed name that does not exist stops the run before any trial
+  starts;
 - starts one agent process in a fresh empty folder with only the question, the real paths filled
   in; reads are limited to that folder, the plugin copy and the capture; the repository, the
   output folder and the other trials are denied; temp variables point into the trial folder;

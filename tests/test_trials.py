@@ -142,6 +142,16 @@ class CatalogueTest(unittest.TestCase):
                 self.assertNotEqual(declined, bool(entry["calls"]),
                                     f"{scn}: list calls or say none (reason)")
 
+    def test_pass_criteria_cap_the_final_turn_context(self):
+        # Every run must end below the context budget: the model's input at its final turn,
+        # harness system prompt included. A harness without usage reports records it unmeasured.
+        text = (TRIALS / "scenarios.md").read_text(encoding="utf-8")
+        section = text.partition("\n## Pass criteria\n")[2].partition("\n## ")[0]
+        self.assertTrue(section, "the catalogue has no Pass criteria section")
+        self.assertIn("fewer than 100,000 tokens", section)
+        self.assertIn("system prompt", section)
+        self.assertIn("not measured", section)
+
     def test_every_call_parses_with_the_current_cli(self):
         parser = uprof.build_parser()
         for scn, entry in self.scenarios.items():

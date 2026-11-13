@@ -2832,15 +2832,18 @@ def run_query_command(args: argparse.Namespace) -> None:
     if not cpu_db.is_file():
         candidates = _session_candidates(session)
         if candidates:
-            raise util.UprofError(
-                f"cpu.db not found: {cpu_db}; --session must be one translated "
-                f"capture, and {_candidate_calls(args, candidates)}"
+            raise util.LinesError(
+                f"cpu.db not found: {cpu_db}; --session must be one "
+                f"translated capture, and {_candidate_calls(args, candidates)}".split("\n")
             )
         session_arg, data = uprof_shell.path_arg(session, "<SESSION_DIR>")
-        raise util.UprofError(
-            f"cpu.db not found: {cpu_db} (run translate --session "
-            f"{session_arg} --out-dir <COPY_DIR> first, then query the "
-            "original session)" + (f"\n{data}" if data else "")
+        raise util.LinesError(
+            [
+                f"cpu.db not found: {cpu_db} (run translate --session "
+                f"{session_arg} --out-dir <COPY_DIR> first, then query the "
+                "original session)",
+                data or "",
+            ]
         )
     out_path = _out_path(args, cpu_db, session)
 

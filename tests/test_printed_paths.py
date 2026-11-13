@@ -51,7 +51,7 @@ class RecaptureTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(["x"], -1073741819, "Translation started\n", "")
         log = mock.Mock()
         log.appended.return_value = (Path("cli.log"), "No categories to translate...")
-        message = uprof_native.translate_failure("translate", completed, log, Path(HOSTILE))
+        message = str(uprof_native.translate_failure("translate", completed, log, Path(HOSTILE)))
         lines = message.splitlines()
         self.assertEqual(len(lines), 2)
         self.assertNotIn("$(calc)", lines[0])

@@ -446,8 +446,6 @@ def achieved_summary(samples: int, window_s: float | None, cpus: int, sampler: S
                 gap_s = busiest.median_gap_ns / 1e9
                 text += (f"; busiest {context_label} {delivered:,.0f}/s "
                          f"(median gap {_format_duration(gap_s)})")
-                below = (ideal_per_s is not None
-                         and busiest.median_gap_ns > _RUN_GAP_FACTOR * interval_s * 1e9)
             elif sampler.ibs_dump_kind is not None:
                 # The dump has timestamps, so no gap inside the limit means the context never
                 # sampled continuously: exactly the condition the warning exists for.

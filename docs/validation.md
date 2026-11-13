@@ -42,7 +42,7 @@ its denominator includes the process's samples in every module, not only `strata
 Exact command: `... --by line --top 20` or `... --by instruction --top 20` (whole capture, no
 image filter). Both print:
 
-`mismatch_rate 33.749068171404346% (531048/1573519); name_mismatches 40211 of 47752 addresses; unresolved 10284 addresses, 22281 samples (1.396127861526373% of 1595914)`.
+`mismatch_rate=33.749068171404346% (531048/1573519); name_mismatches=40211 addresses of 47752 compared; unresolved=10284 addresses, 22281 samples (1.396127861526373% of 1595914 scoped)`.
 
 ### Line baseline (innermost-frame attribution)
 
@@ -105,7 +105,7 @@ are the uncapped views.
 | `ibs-session` | IBS OP, tagged | 57/4249/1606/6915 | all three shares 1.0 | adds `tag_to_retire_share` |
 | `fetch-session` | IBS fetch | 1/8/9/13 | `sample_share`, `time_share` 1.0 | no `tag_to_retire_share`; `TAG_TO_RETIRE_SHARE` says this export has no tag-to-retire counter |
 | `t1-fold-session` | IBS OP, no tag | 1/1/1/1 | `sample_share`, `time_share` 1.0 | line row `shared: fold_alpha \| fold_beta`, attribution `shared` |
-| `t1-nopdb-session` | IBS OP, no tag, no PDB | 1/1/1/1 | `sample_share`, `time_share` 1.0 | `<no symbol>` rows, attribution `unresolved`; AGREEMENT `unresolved 1 address, 3 samples` |
+| `t1-nopdb-session` | IBS OP, no tag, no PDB | 1/1/1/1 | `sample_share`, `time_share` 1.0 | `<no symbol>` rows, attribution `unresolved`; AGREEMENT `unresolved=1 addresses, 3 samples (100.0% of 3 scoped)` |
 
 `icf-session` line detail: `mixed.cpp:8` and `:9` are shared-fold rows
 (`shared: fold_alpha \| fold_beta`, 2 samples each); `mixed.cpp:20` is the standalone
@@ -113,7 +113,7 @@ are the uncapped views.
 `plain_volatile`, all `unique`. Instruction detail: `0x1140/0x1145/0x1155` are inline instances
 (`mix_inline`, line 20), `0x1070/0x1075` the standalone `mix_inline(int)` copy, `0x1150`
 `call_inline_b`, and `0x1160/0x1163` shared fold rows. AGREEMENT:
-`mismatch_rate 16.666666666666668% (4/24), name_mismatches 2 of 13`.
+`mismatch_rate=16.666666666666668% (4/24); name_mismatches=2 addresses of 13 compared; unresolved=0`.
 `edge.cpp:1` and `overload.cpp:5` line rows carry `<multiple>` for the overload set.
 
 ### Tagged IBS and `tag_to_retire_share`

@@ -26,6 +26,17 @@ captures.
   previous call printed for the user's own image. A scenario that is not answerable today says
   `none` and why.
 - **Known gaps**: open issues the answer must state rather than paper over.
+- **Loaded sessions** (`systemwide_loaded`, `attached_inproc_loaded`) carry background load, so
+  the user's rows sit below the top rows. A question about the user's own code narrows with
+  `--pid` or `--image` before the function view; an unfiltered function call before that
+  filter is a wasted turn. `--pid` and `--image` select processes: `--pid` one instance,
+  `--image` every instance of that image.
+- **Open steps** wait for an owner decision and say `open (D-nnn)`:
+  - open (D-019): how a question that names only the user's module or app finds its process.
+    The calls take the process as `<PID>`.
+  - open (D-020): whether a loaded attached capture holds foreign processes. Until then
+    SCN-02..08, 11, 17 and 19 run on their unloaded sessions, and SCN-13 and 15 have none.
+  - open (D-021): whether an answer on a timer capture may name the instructions it sees.
 - `cpu_seconds` is samples × the sampling interval / the analysing host's core frequency, so its
   value differs between hosts; shares and sample counts do not. The IBS sessions sample every
   4,700,000 cycles.
@@ -69,15 +80,24 @@ A trial run passes when both hold:
 | `opcount` | `attached` with op-count IBS (dispatched ops per sample) |
 | `pmc` | `attached` as a PMC `CYCLES_NOT_IN_HALT` capture without an IBS dump |
 | `timer` | the committed real timer capture of `heap_churn.exe` (see `examples/timer-heap-churn`); image and PDB in `bins/timer` |
+| `systemwide_loaded` | `systemwide` under desktop load: 26 more processes of 22 images (browser, antivirus, indexer and others), 4,660 samples. `storage_test.exe` PID 3112 holds `attached`'s samples doubled (194, 4.2 %, rank 11 of 28 processes); PID 3113 is an unrelated instance of the same image (10 samples, all in `fixture_full.exe`). The unfiltered function view's 20 rows are all foreign |
+| `attached_inproc_loaded` | `attached` plus 22 runtime, graphics and vendor DLLs inside the same process, each hotter than the own `fixture_entry`; 746 samples |
 
 ## SCN-01: where did my app's CPU time go
 
-- **Session:** none (the 954-sample IBS capture of `examples/ibs-trial-9` is not published)
+- **Session:** `systemwide_loaded`
 - **Question:** "Where did my app's CPU time go? What are the hottest functions? The capture is in `<CAPTURE>`."
-- **Answer:** the expected answer recorded in `examples/ibs-trial-9`.
+- **Answer:**
+  - **Location:** in the app's process (PID 3112): `amdvlk64.dll` `fixture_entry` at 0x101B, `ntdll.dll` `RtlQueryPerformanceCounter` at 0x1000, `amdvlk64.dll` `fixture_second` at 0x1030, then own `fixture_entry` in `fixture_full.exe` at 0x1018.
+  - **Proof:** under `--pid 3112`, 80, 28, 24 and 18 samples, `attribution` unique; `amdvlk64.dll` has no PDB, its names are exports.
+  - **Cost:** shares of PID 3112's 194 samples: modules `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052; functions 0.412, 0.144, 0.124, 0.093. The PID's share of the whole capture is not printed under `--pid`.
+  - **Confidence:** PID ±7% (194 samples), own `fixture_entry` ±24% (18).
+  - **Saving:** at most own `fixture_entry`'s `cpu_seconds`; the driver's cost is outside the app's code.
+- **Open:** finding the app's process (`<PID>`, here 3112): open (D-019).
+- **Known gaps:** #286 (a `--pid` scope does not state its share of the capture).
 - **Minimal calls:**
-  1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
+  1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid <PID>`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid <PID>`
 
 ## SCN-02: mine versus the driver and ntdll
 
@@ -104,10 +124,11 @@ A trial run passes when both hold:
   - **Cost:** 0.093 of the capture's core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
   - **Confidence:** ±33% (9 samples).
   - **Saving:** at most that line's `cpu_seconds`.
+- **Known gaps:** #339 (the instruction JSON can exceed a harness's output limit on a real capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by line --function fixture_entry --module <OWN_MODULE>`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json --top 1`
 
 ## SCN-04: my PDB is in another folder
 
@@ -157,9 +178,10 @@ A trial run passes when both hold:
   - **Cost:** 0.093 of the core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
   - **Confidence:** ±33% (9 samples).
   - **Saving:** at most that instruction's `cpu_seconds`, if the load stops missing.
+- **Known gaps:** #339 (the instruction JSON can exceed a harness's output limit on a real capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json --top 1`
 
 ## SCN-08: did my fix help
 
@@ -177,29 +199,36 @@ A trial run passes when both hold:
 
 ## SCN-09: system-wide capture, what is slow in my process
 
-- **Session:** `systemwide`
-- **Question:** "This is a system-wide AMD uProf capture: `<CAPTURE>`. What is slow in my process storage_test.exe?"
+- **Session:** `systemwide_loaded`
+- **Question:** "This is a system-wide AMD uProf capture: `<CAPTURE>`. What is slow in my process storage_test.exe, PID 3112?"
 - **Answer:**
   - **Location:** in PID 3112: own `fixture_entry` at 0x1018; outside, `amdvlk64.dll` `fixture_entry` at 0x101B.
-  - **Proof:** process ranking `storage_test.exe` 0.548 (97 samples), `node.exe` 0.452 (80); scoped to PID 3112, the module and function rows of SCN-02.
-  - **Cost:** of the process: `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052; of the whole capture, the process is 0.548; `cpu_seconds` = samples × 4.7 M cycles / core frequency.
-  - **Confidence:** process ±10% (97 samples), own module ±29% (12).
+  - **Proof:** scoped to PID 3112 (194 samples): `amdvlk64.dll` `fixture_entry` 80 samples, own `fixture_entry` 18, `attribution` unique. `--image storage_test.exe` would also count PID 3113, an unrelated instance of the same image, and raise `fixture_full.exe` from 24 to 34 samples.
+  - **Cost:** shares of PID 3112's samples: `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052; own `fixture_entry` 0.093. The PID's share of the whole capture is not printed under `--pid`. `cpu_seconds` = samples × 4.7 M cycles / core frequency.
+  - **Confidence:** PID ±7% (194 samples), own module ±20% (24).
   - **Saving:** at most own `fixture_entry`'s `cpu_seconds`.
+- **Known gaps:** #286 (a `--pid` scope does not state its share of the capture).
 - **Minimal calls:**
-  1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by process`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid 3112`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid 3112`
+  1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid 3112`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid 3112`
 
 ## SCN-10: only the loading phase is slow
 
-- **Session:** none (no capture with QPC markers)
-- **Question:** "Only the loading phase is slow. My app printed QueryPerformanceCounter `<QPC1>` at its start and `<QPC2>` at its end; the capture is in `<CAPTURE>`."
-- **Answer:** the SCN-02 parts restricted to the window between the two readings, mapped onto the capture clock; values need a capture.
+- **Session:** `systemwide_loaded`
+- **Question:** "Only the loading phase is slow. My app printed QueryPerformanceCounter 12000000 at its start and 15000000 at its end; the capture is in `<CAPTURE>`."
+- **Answer:**
+  - **Location:** in the window, in the app's process: `amdvlk64.dll` `fixture_entry` at 0x101B, `ntdll.dll` `RtlAllocateHeap` at 0x1050, own `fixture_helper` in `fixture_full.exe` at 0x1000.
+  - **Proof:** `anchor` maps the readings to 0.2 s and 0.5 s from capture start at its default 10 MHz, because the session records no QPC frequency; `--time-filter 0.2:0.5` with `--pid 3112` keeps 55 samples: 33, 12 and 6, `attribution` unique.
+  - **Cost:** shares of the window's samples in PID 3112: modules `amdvlk64.dll` 0.673, `ntdll.dll` 0.218, `fixture_full.exe` 0.109; functions 0.600, 0.218, 0.109.
+  - **Confidence:** window ±13% (55 samples), own `fixture_helper` ±41% (6).
+  - **Saving:** at most own `fixture_helper`'s `cpu_seconds` in the window.
+- **Open:** finding the app's process (`<PID>`, here 3112): open (D-019).
+- **Known gaps:** #286 (a scope does not state its share of the capture).
 - **Minimal calls:**
-  1. `python <SKILL_DIR>/tools/uprof.py anchor --session <CAPTURE> --qpc <QPC1>`
-  2. `python <SKILL_DIR>/tools/uprof.py anchor --session <CAPTURE> --qpc <QPC2>`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --time-filter <T1>:<T2>`
-  4. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --time-filter <T1>:<T2>`
+  1. `python <SKILL_DIR>/tools/uprof.py anchor --session <CAPTURE> --qpc 12000000`
+  2. `python <SKILL_DIR>/tools/uprof.py anchor --session <CAPTURE> --qpc 15000000`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid <PID> --time-filter 0.2:0.5`
+  4. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid <PID> --time-filter 0.2:0.5`
 
 ## SCN-11: spinning or computing
 
@@ -211,9 +240,10 @@ A trial run passes when both hold:
   - **Cost:** 0.093 of the core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
   - **Confidence:** ±33% (9 samples).
   - **Saving:** at most that instruction's `cpu_seconds`.
+- **Known gaps:** #339 (the instruction JSON can exceed a harness's output limit on a real capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json --top 1`
 
 ## SCN-12: which thread is hot
 
@@ -305,14 +335,16 @@ A trial run passes when both hold:
 
 ## SCN-20: only my exe is mine
 
-- **Session:** `attached`
+- **Session:** `attached_inproc_loaded`
 - **Question:** "AMD uProf capture of my app: `<CAPTURE>`. Only fixture_full.exe is my code; vendorlib.dll is a vendor DLL, not mine. How much time is mine versus everything else, and what is hot in my code?"
 - **Answer:**
-  - **Location:** own hot function `fixture_entry` in `fixture_full.exe`, hot RVA 0x1018.
-  - **Proof:** 9 samples, `attribution` unique; everything outside the own exe in one total, including the third-party `vendorlib.dll` (0.052).
-  - **Cost:** own 0.124 (12 samples), everything else 0.876 (85); `fixture_entry` 0.093; `cpu_seconds` = samples × 4.7 M cycles / core frequency.
-  - **Confidence:** own ±29% (12 samples), `fixture_entry` ±33% (9).
-  - **Saving:** at most `fixture_entry`'s `cpu_seconds`.
+  - **Location:** not reached in the default rows. With D-017's process filter, outside code inside the same process can push the own functions below the default rows; no scope narrows below the process, and only a larger `--top` lists them. The filtered function view's 20 rows are all outside functions, each hotter than any own function.
+  - **Proof:** `fixture_full.exe` has 12 of the process's 746 samples, rank 25 of 26 modules, so the module view needs `--top all`; everything outside the own exe is one total, including the third-party `vendorlib.dll`.
+  - **Cost:** own 0.016 (12 samples), everything else 0.984 (734); `cpu_seconds` = samples × 4.7 M cycles / core frequency.
+  - **Confidence:** own ±29% (12 samples).
+  - **Saving:** n/a: the own hot function is not located.
+- **Open:** finding the app's process (`<PID>`, here 3112): open (D-019).
+- **Known gaps:** #345 (outside code inside the process pushes the own functions out of the default rows); #320 (the filtered function view repeats each module's symbol cause on stderr: 25,853 characters here).
 - **Minimal calls:**
-  1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
+  1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --top all`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid <PID>`

@@ -32,6 +32,10 @@ transcripts with a script: they can be large.
 
 Count a call as extra when the scenario's answer was reachable without it. Reading SKILL.md and
 writing the answer are not calls. A retry after the agent's own syntax error is cause (c).
+On a loaded session, an unfiltered `--by function` call before the `--pid`/`--image` filter is
+extra when the question is about the user's own code (see the scenario's minimal calls). It is
+cause (b) while SKILL.md and the tool output do not state filter-first, and cause (c) once they
+do.
 
 ## Summary
 

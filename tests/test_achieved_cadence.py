@@ -4,11 +4,15 @@ Run from the repository root: python tests/run_tests.py test_achieved_cadence
 """
 # Spec: SPEC-24
 
+import argparse
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import uprof_collect
 import uprof_native
+import uprof_query
 import uprof_session
 
 
@@ -75,6 +79,36 @@ class AchievedCadenceTest(unittest.TestCase):
     def test_no_contexts_never_warns_on_the_diluted_average(self):
         text = self.achieved([], window_s=8.0, cpus=16)
         self.assertNotIn("WARN", text)
+
+
+class OneFrequencyReadTest(unittest.TestCase):
+    """The run-gap limit and the ACHIEVED text convert the cycle interval at one frequency.
+
+    The Linux fallback reads the current MHz, which can change between two reads; a median gap
+    filtered at one frequency and judged at another could then warn about a gap the filter kept.
+    """
+
+    def test_profile_reads_the_core_frequency_once_for_gaps_and_text(self):
+        sampler = cycle_sampler(ibs_dump_kind="ibsop-event-dump")
+        args = argparse.Namespace(session=Path("session"))
+        reads = [(4_700_000_000, "4700 MHz", "first"), (2_200_000_000, "2200 MHz", "second")]
+        limits = []
+
+        def contexts(_connection, limit_ns):
+            limits.append(limit_ns)
+            return [uprof_session.ContextCadence(5, 1_000_000)]
+
+        with mock.patch.object(uprof_collect, "_core_frequency", side_effect=reads) as read, \
+                mock.patch.object(uprof_session, "read_meta", return_value={}), \
+                mock.patch.object(uprof_session, "system_wide", return_value=True), \
+                mock.patch.object(uprof_query, "_capture_scan", return_value=(5, 1, None)), \
+                mock.patch.object(uprof_query, "_dump_contexts", side_effect=contexts):
+            (_name, text), _samples, _kernel = uprof_query._achieved_field(
+                None, True, args, sampler, None)
+
+        self.assertEqual(read.call_count, 1)
+        self.assertEqual(limits, [10 * 4_700_000 / 4.7e9 * 1e9])
+        self.assertIn("4700 MHz", text)
 
 
 class DumpCadenceTest(unittest.TestCase):

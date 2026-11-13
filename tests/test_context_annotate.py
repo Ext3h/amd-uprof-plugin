@@ -241,8 +241,15 @@ class IbsScopeTest(unittest.TestCase):
         self.connection.execute(
             "CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')"
         )
+        self.connection.execute(
+            "CREATE OR REPLACE TEMP MACRO image_matches(name, pattern) AS "
+            "COALESCE(name, '') ILIKE pattern "
+            "OR regexp_replace(COALESCE(name, ''), '^.*[\\\\/]', '') ILIKE pattern"
+        )
         self.connection.execute("CREATE TABLE Process(id INTEGER, name VARCHAR)")
-        self.connection.execute("INSERT INTO Process VALUES (4524, 'a.exe'), (7132, 'b.exe')")
+        self.connection.execute(
+            "INSERT INTO Process VALUES (4524, 'c:\\capture\\a.exe'), (7132, 'c:\\capture\\b.exe')"
+        )
         self.connection.execute("SET VARIABLE uprof_ibs_dump = ?", [str(self.dump)])
         self.set_scope(time_start=0, time_end=1000, pid="", image="%")
 
@@ -287,6 +294,11 @@ class ModuleRowTest(unittest.TestCase):
         self.addCleanup(self.connection.close)
         self.connection.execute(
             "CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')"
+        )
+        self.connection.execute(
+            "CREATE OR REPLACE TEMP MACRO image_matches(name, pattern) AS "
+            "COALESCE(name, '') ILIKE pattern "
+            "OR regexp_replace(COALESCE(name, ''), '^.*[\\\\/]', '') ILIKE pattern"
         )
         self.connection.execute("CREATE TABLE Module(path VARCHAR, checksum BIGINT, size UBIGINT)")
         self.connection.execute(

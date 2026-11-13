@@ -222,7 +222,7 @@ def write_session(root, module_path, addresses, function_name="") -> Path:
             "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
             "functionId UBIGINT, moduleRVA UBIGINT)"
         )
-        connection.execute("INSERT INTO Process VALUES (100, 'workload.exe')")
+        connection.execute("INSERT INTO Process VALUES (100, 'c:\\capture\\workload.exe')")
         connection.execute("INSERT INTO Module VALUES (1, ?, false)", [str(module_path)])
         connection.execute("INSERT INTO Function VALUES (10, 1, ?)", [function_name])
         connection.executemany(

@@ -24,6 +24,8 @@ import duckdb
 import uprof_db
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
+# Process.name holds the full image path, as real uProf stores it.
+PROCESS = {name: f"c:\\capture\\{name}.exe" for name in "abcd"}
 EVENT_COLUMN = "event#0x3000076"
 
 SAMPLE_PMC = "busy core-cycle share (fixed cycles per sample; halted excluded)"
@@ -354,7 +356,10 @@ class OutputLegendTest(unittest.TestCase):
                 "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
                 "functionId UBIGINT, moduleRVA UBIGINT)"
             )
-            connection.execute("INSERT INTO Process VALUES (100, 'a.exe'), (200, 'b.exe')")
+            connection.execute(
+                "INSERT INTO Process VALUES (100, 'c:\\capture\\a.exe'), "
+                "(200, 'c:\\capture\\b.exe')"
+            )
         finally:
             connection.close()
         rows = [
@@ -402,8 +407,9 @@ class OutputLegendTest(unittest.TestCase):
                 "functionId UBIGINT, moduleRVA UBIGINT)"
             )
             connection.execute(
-                "INSERT INTO Process VALUES (100, 'a.exe'), (200, 'b.exe'), "
-                "(300, 'c.exe'), (400, 'd.exe')"
+                "INSERT INTO Process VALUES (100, 'c:\\capture\\a.exe'), "
+                "(200, 'c:\\capture\\b.exe'), (300, 'c:\\capture\\c.exe'), "
+                "(400, 'c:\\capture\\d.exe')"
             )
         finally:
             connection.close()
@@ -551,7 +557,7 @@ class OutputLegendTest(unittest.TestCase):
         session = self._write_ordering()
         document = json.loads(self.profile(session, "--top", "all", "--json"))
         output_order = [row["process"] for row in document["rows"]]
-        self.assertEqual(output_order, ["a.exe", "b.exe"])
+        self.assertEqual(output_order, [PROCESS["a"], PROCESS["b"]])
         variables = {
             "uprof_image": "%",
             "uprof_pid": "",
@@ -581,19 +587,19 @@ class OutputLegendTest(unittest.TestCase):
                 row["process"]
                 for row in sorted(document["rows"], key=lambda row: row["time_share"], reverse=True)
             ],
-            ["b.exe", "a.exe"],
+            [PROCESS["b"], PROCESS["a"]],
         )
 
     def test_process_ordering_and_top_follow_the_gap_weighted_measure(self):
         session = self._write_ordering(fetch=True, name="ordering-fetch")
         document = json.loads(self.profile(session, "--top", "all", "--json"))
-        self.assertEqual([row["process"] for row in document["rows"]], ["b.exe", "a.exe"])
+        self.assertEqual([row["process"] for row in document["rows"]], [PROCESS["b"], PROCESS["a"]])
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "time_share")
         self.assertEqual(document["legend"]["impact"]["order_by"], ["time_share", "samples"])
         self.assertEqual(document["legend"]["impact"]["gap_weighted"], True)
 
         top = json.loads(self.profile(session, "--top", "1", "--json"))
-        self.assertEqual(top["rows"][0]["process"], "b.exe")
+        self.assertEqual(top["rows"][0]["process"], PROCESS["b"])
 
     def test_module_ordering_and_top_follow_the_sample_measure(self):
         session = self._write_ordering(name="ordering-module-op")
@@ -793,10 +799,10 @@ class OutputLegendTest(unittest.TestCase):
         session = self._write_tag_clip()
         document = json.loads(self.profile(session, "--top", "all", "--json"))
         rows = {row["process"]: row for row in document["rows"]}
-        self.assertAlmostEqual(rows["a.exe"]["tag_to_retire_share"], 65535 / 66535, places=12)
-        self.assertAlmostEqual(rows["b.exe"]["tag_to_retire_share"], 1000 / 66535, places=12)
-        self.assertIsNone(rows["c.exe"]["tag_to_retire_share"])
-        self.assertIsNone(rows["d.exe"]["tag_to_retire_share"])
+        self.assertAlmostEqual(rows[PROCESS["a"]]["tag_to_retire_share"], 65535 / 66535, places=12)
+        self.assertAlmostEqual(rows[PROCESS["b"]]["tag_to_retire_share"], 1000 / 66535, places=12)
+        self.assertIsNone(rows[PROCESS["c"]]["tag_to_retire_share"])
+        self.assertIsNone(rows[PROCESS["d"]]["tag_to_retire_share"])
         self.assertEqual(document["legend"]["columns"]["tag_to_retire_share"], TAG_MEANING)
         output = self.profile(session)
         self.assertIn("clipped at 65535", output)

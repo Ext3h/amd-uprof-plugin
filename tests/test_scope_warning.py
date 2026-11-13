@@ -62,7 +62,7 @@ class ScopeWarningTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertIn("WARNING: no samples in the selected scope", result.stderr)
-        self.assertIn("available images in this capture: workload.exe", result.stderr)
+        self.assertIn("available images in this capture: c:\\capture\\workload.exe", result.stderr)
         self.assertIn(MODULE_HINT, result.stderr)
         document = json.loads(out_file.read_text(encoding="utf-8"))
         self.assertIn("no samples in the selected scope", document["WARNING"])

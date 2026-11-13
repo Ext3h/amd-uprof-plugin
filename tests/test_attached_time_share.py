@@ -108,7 +108,8 @@ class AttachedTimeShareTest(unittest.TestCase):
                 "functionId UBIGINT, moduleRVA UBIGINT)"
             )
             connection.execute(
-                "INSERT INTO Process VALUES (100, 'workload.exe'), (200, 'other.exe')"
+                "INSERT INTO Process VALUES (100, 'c:\\capture\\workload.exe'), "
+                "(200, 'c:\\capture\\other.exe')"
             )
             connection.execute(f"INSERT INTO Module VALUES (1, '{ALPHA}'), (2, '{BETA}')")
             connection.execute(

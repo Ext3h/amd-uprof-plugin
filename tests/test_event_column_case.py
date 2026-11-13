@@ -25,7 +25,7 @@ class EventColumnCaseTest(unittest.TestCase):
             'processId UINTEGER, coreId UINTEGER, "event#0X76" BIGINT)'
         )
         connection.execute("INSERT INTO UnifiedSampleSeries VALUES (1, 1, 4096, 100, 0, 42)")
-        connection.execute("INSERT INTO Process VALUES (100, 'test.exe')")
+        connection.execute("INSERT INTO Process VALUES (100, 'c:\\capture\\test.exe')")
         connection.execute("INSERT INTO Module VALUES (1, 'test.dll', false)")
         connection.execute("INSERT INTO Function VALUES (1, 1, 'test_fn', 4096, 64, 0)")
 
@@ -76,7 +76,7 @@ class EventColumnCaseTest(unittest.TestCase):
             'processId UINTEGER, coreId UINTEGER, "event#0x76" BIGINT)'
         )
         connection.execute("INSERT INTO UnifiedSampleSeries VALUES (1, 1, 4096, 100, 0, 99)")
-        connection.execute("INSERT INTO Process VALUES (100, 'test.exe')")
+        connection.execute("INSERT INTO Process VALUES (100, 'c:\\capture\\test.exe')")
         connection.execute("INSERT INTO Module VALUES (1, 'test.dll', false)")
         connection.execute("INSERT INTO Function VALUES (1, 1, 'test_fn', 4096, 64, 0)")
 

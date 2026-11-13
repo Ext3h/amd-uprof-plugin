@@ -118,9 +118,10 @@ class SymbolCoverageTest(unittest.TestCase):
                 "functionId UBIGINT, moduleRVA UBIGINT)"
             )
             connection.execute(
-                "INSERT INTO Process VALUES (100, 'good.exe'), "
-                "(200, 'nostrings.exe'), (300, 'partial.exe'), "
-                "(400, 'unknown.exe')"
+                "INSERT INTO Process VALUES (100, 'c:\\capture\\good.exe'), "
+                "(200, 'c:\\capture\\nostrings.exe'), "
+                "(300, 'c:\\capture\\partial.exe'), "
+                "(400, 'c:\\capture\\unknown.exe')"
             )
             connection.execute(
                 f"INSERT INTO Module VALUES (1, '{GOOD}'), (2, '{NO_STRINGS}'), "

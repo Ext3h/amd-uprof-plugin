@@ -3,7 +3,8 @@
 -- views. A hand run sets the same inputs with SET VARIABLE.
 --
 -- Bound inputs:
---   uprof_image         process base-image ILIKE pattern; '%' selects every process
+--   uprof_image         ILIKE pattern on the process image's file name or full path; '%'
+--                       selects every process
 --   uprof_pid           one PID as text; empty selects every process
 --   uprof_top           row cap; 20 by default, 0 means no cap
 --   uprof_time_start    window start in ns from capture start (inclusive)
@@ -37,6 +38,12 @@
 
 -- Macros are TEMP because cpu.db is opened read-only.
 CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/');
+
+-- --image selects a process when its pattern matches the image's file name or its full path:
+-- uProf stores Process.name as the full image path, and callers name the file.
+CREATE OR REPLACE TEMP MACRO image_matches(name, pattern) AS
+  COALESCE(name, '') ILIKE pattern
+  OR regexp_replace(COALESCE(name, ''), '^.*[\\/]', '') ILIKE pattern;
 -- A dump row carries the module name, not Module.id, so a name with several image versions
 -- cannot be tied to one version's Function rows.
 CREATE OR REPLACE TEMP MACRO module_ambiguous(name) AS COALESCE(list_contains(
@@ -537,7 +544,7 @@ LEFT JOIN (
   GROUP BY module_name, rva
 ) rf ON w.module_name = rf.module_name AND w.rva = rf.rva
 WHERE (getvariable('uprof_pid') = '' OR w.pid = CAST(getvariable('uprof_pid') AS INTEGER))
-  AND COALESCE(p.name, '') ILIKE getvariable('uprof_image')$dump$
+  AND image_matches(p.name, getvariable('uprof_image'))$dump$
 ELSE $pmc$
 SELECT CAST(NULL AS BIGINT) AS delta_tick,
        CAST(NULL AS INTEGER) AS cpu,
@@ -554,7 +561,7 @@ FROM UnifiedSampleSeries s
 LEFT JOIN Process p ON p.id = s.processId
 LEFT JOIN Module m ON m.id = s.moduleId
 WHERE (getvariable('uprof_pid') = '' OR s.processId = CAST(getvariable('uprof_pid') AS INTEGER))
-  AND COALESCE(p.name, '') ILIKE getvariable('uprof_image')$pmc$ END);
+  AND image_matches(p.name, getvariable('uprof_image'))$pmc$ END);
 
 -- Late-coverage verdict for the report's scope, appended to SANITY when --image/--pid or
 -- --time-filter narrows the population below the whole dump. The scope window is the recorded

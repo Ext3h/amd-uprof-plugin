@@ -745,7 +745,7 @@ def ibs_rows(connection: object, module_name: str, rvas: list[int]) -> dict[int,
         " AND (getvariable('uprof_pid') = ''"
         '      OR TRY_CAST(d."PID" AS INTEGER)'
         "         = CAST(getvariable('uprof_pid') AS INTEGER))"
-        " AND COALESCE(p.name, '') ILIKE getvariable('uprof_image')"
+        " AND image_matches(p.name, getvariable('uprof_image'))"
         " GROUP BY rva"
     )
     rows = connection.execute(sql, [module_name, addresses]).fetchall()

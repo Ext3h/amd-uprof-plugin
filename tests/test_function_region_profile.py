@@ -96,7 +96,7 @@ class Session:
                 "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
                 "functionId UBIGINT, moduleRVA UBIGINT)"
             )
-            connection.execute("INSERT INTO Process VALUES (100, 'workload.exe')")
+            connection.execute("INSERT INTO Process VALUES (100, 'c:\\capture\\workload.exe')")
             connection.executemany("INSERT INTO Module VALUES (?, ?, ?)", self.modules)
             connection.executemany("INSERT INTO Function VALUES (?, ?, ?)", self.functions)
             connection.executemany("INSERT INTO UnifiedSampleSeries VALUES (?, ?, ?)", self.unified)

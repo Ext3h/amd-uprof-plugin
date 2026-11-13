@@ -5,6 +5,7 @@ the capture does; these fixtures make one process stop early while another sampl
 
 Run from the repository root: python tests/run_tests.py test_sanity_scope
 """
+# Spec: SPEC-19
 
 import json
 import re

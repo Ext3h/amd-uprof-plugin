@@ -2,6 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_translate_out_dir
 """
+# Spec: SPEC-13
 
 import io
 import os

@@ -11,6 +11,7 @@ other character replaced by the one-character wildcard, and a directory with any
 is named as data, not as a command.
 Run from the repository root: python tests/run_tests.py test_hostile_names
 """
+# Spec: SPEC-37
 
 import os
 import re

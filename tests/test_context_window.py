@@ -2,6 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_context_window
 """
+# Spec: SPEC-41
 
 import subprocess
 import unittest

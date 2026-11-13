@@ -7,6 +7,7 @@ every language. A loaded Linux KVM module does not prove the cause, so it is nam
 possibility.
 Run from the repository root: python tests/run_tests.py test_ibs_unavailable_reason
 """
+# Spec: SPEC-12
 
 import subprocess
 import unittest

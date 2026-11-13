@@ -2,6 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_session_cache_key
 """
+# Spec: SPEC-50
 
 import os
 import tempfile

@@ -2,6 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_achieved_cadence
 """
+# Spec: SPEC-12
 
 import tempfile
 import unittest

@@ -802,7 +802,7 @@ HAVING count(*) > 0;
 -- synthetic pdata_0x<start>/sub_0x<start> names the row. Samples outside every derived range fall
 -- back to Function.id, so a module whose binary is unavailable keeps its uProf naming. hot_rva is
 -- the highest-sample RVA in the row; attribution 'derived' marks a synthetic binary name, not a
--- source symbol. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
+-- source symbol, and 'shared' a range whose start carries several public names. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
 -- otherwise the sample count (the same order as sample_share). This view is uncapped, so the
 -- parent lookup of a function-scoped instruction or line view is not hidden by --top; the public
 -- v_function_rows adds the cap and the <other functions> remainder.
@@ -869,6 +869,7 @@ WITH placed AS (
               THEN true ELSE false END AS function_derived,
          CASE WHEN a.range_kind = 'range' AND a.range_name IS NULL AND a.db_name = ''
                    THEN 'derived'
+              WHEN a.range_kind = 'range' AND COALESCE(p.name_count, 1) > 1 THEN 'shared'
               WHEN a.range_kind = 'range' THEN 'unique'
               WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN 'unique'
               ELSE 'unresolved' END AS attribution,
@@ -885,6 +886,10 @@ WITH placed AS (
            AS function_reason
   FROM agg a
   LEFT JOIN hot h USING (group_key)
+  -- A range that starts at a folded public start (several names at one address) is shared, as
+  -- the line, instruction and region views label that address; its name is the first of them.
+  LEFT JOIN v_public_starts p
+    ON a.range_kind = 'range' AND p.module_name = a.module_name AND p.rva = a.function_start
 ), measured AS (
   SELECT labelled.*,
          CAST(sum(samples) OVER () AS BIGINT) AS total_samples,

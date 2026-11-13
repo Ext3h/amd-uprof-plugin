@@ -1444,7 +1444,8 @@ def _legend(
     denominators: dict[str, str] = {"sample_share": "total_samples"}
     if args.by == "function":
         columns["attribution"] = (
-            "unique / derived (synthetic binary range) / unresolved (no symbol)"
+            "unique / shared (folded names) / derived (synthetic binary "
+            "range) / unresolved (no symbol)"
         )
         columns["function_start"] = (
             "first RVA of the derived function range (inclusive); NULL when no range was derived"

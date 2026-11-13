@@ -191,7 +191,9 @@ class FunctionRangeProfileTest(unittest.TestCase):
 
         self.assertIn("sample_share orders the functions", result.stdout)
         self.assertIn(
-            "attribution = unique / derived (synthetic binary range) / unresolved", result.stdout
+            "attribution = unique / shared (folded names) / derived (synthetic binary "
+            "range) / unresolved",
+            result.stdout,
         )
         self.assertIn(
             "function_source = boundary source of the range: pdb_public, export, pdata",

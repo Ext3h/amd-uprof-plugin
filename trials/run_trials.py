@@ -367,6 +367,15 @@ def main(argv: list[str] | None = None, registry: dict[str, type] | None = None)
     skipped = {scn: scenarios[scn]["Session"] for scn in chosen if not sessions_of(scenarios[scn])}
     runnable = [scn for scn in chosen if scn not in skipped]
     args.capture_rev = capture_revision(args.plugin_rev, args.plugin_dir)
+    # Every committed capture must exist before any trial starts: trials run in parallel, so a
+    # name checked only when its trial starts would let the others spend model calls first.
+    for scn in runnable:
+        for name in sessions_of(scenarios[scn]):
+            if name.startswith(COMMITTED):
+                try:
+                    committed_folder(name, args.capture_rev)
+                except ValueError as exc:
+                    raise SystemExit(f"{scn}: {exc}") from exc
     args.run_dir.mkdir(parents=True)
     plugin, source = plugin_copy(
         args.run_dir, None if args.plugin_dir else args.plugin_rev, args.plugin_dir

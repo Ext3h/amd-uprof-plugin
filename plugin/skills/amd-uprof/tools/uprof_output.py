@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
-from uprof_util import UprofError
+from uprof_util import UprofError, escape_controls, has_controls
 
 _NUMERIC_TYPE_PREFIXES: Final = (
     "TINYINT",
@@ -36,7 +36,6 @@ _NUMERIC_TYPE_PREFIXES: Final = (
     "DECIMAL",
 )
 _NULL_CELL: Final = "NULL"
-_CONTROL_ESCAPES: Final = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
 
 
 def _is_numeric(type_name: str) -> bool:
@@ -44,21 +43,13 @@ def _is_numeric(type_name: str) -> bool:
 
 
 def _escape_controls(text: str) -> str:
-    """Replace C0 controls and DEL with visible escapes so a value stays on one line.
+    """Replace control characters with visible escapes so a value stays on one line.
 
-    JSON carries the original characters; the table shows \\n, \\r, \\t or \\xNN. Escapes are
-    introduced after backslash doubling, so a literal backslash before one stays unambiguous.
+    JSON carries the original characters; the table shows \\n, \\r, \\t, \\xNN or \\uNNNN.
+    Escapes are introduced after backslash doubling, so a literal backslash before one stays
+    unambiguous.
     """
-    parts: list[str] = []
-    for char in text:
-        escape = _CONTROL_ESCAPES.get(char)
-        if escape is not None:
-            parts.append(escape)
-        elif ord(char) < 0x20 or ord(char) == 0x7F:
-            parts.append(f"\\x{ord(char):02X}")
-        else:
-            parts.append(char)
-    return "".join(parts)
+    return escape_controls(text)
 
 
 def _header_value(text: str) -> str:
@@ -66,7 +57,7 @@ def _header_value(text: str) -> str:
 
     A control-free path keeps its single backslashes, so existing header bytes do not change.
     """
-    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in text):
+    if has_controls(text):
         text = text.replace("\\", "\\\\")
     return _escape_controls(text)
 
@@ -139,7 +130,15 @@ def json_document(
             record["context"] = contexts[index]
         records.append(record)
     payload["rows"] = records
-    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    # json.dumps escapes C0 only; DEL, C1, zero-width and bidi controls become \\uNNNN, which
+    # decodes to the same string.
+    return (
+        "".join(
+            f"\\u{ord(char):04x}" if has_controls(char) and char != "\n" else char for char in text
+        )
+        + "\n"
+    )
 
 
 def header_text(fields: Sequence[tuple[str, str]]) -> str:

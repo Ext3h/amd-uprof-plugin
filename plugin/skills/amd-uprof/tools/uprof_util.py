@@ -12,7 +12,7 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import Final
+from typing import Any, Final
 
 DUMP_FILENAMES: Final = MappingProxyType(
     {
@@ -66,13 +66,82 @@ def parse_time_filter(value: str) -> tuple[Decimal, Decimal] | None:
     return Decimal(match.group(1)), Decimal(match.group(2))
 
 
+_CONTROL_ESCAPES: Final = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+# Zero-width and bidi controls hide or reorder the text around them.
+_HIDDEN: Final = frozenset([*range(0x200B, 0x2010), *range(0x202A, 0x202F), *range(0x2066, 0x206A)])
+INLINE_LIMIT: Final = 512
+
+
+def _unsafe(char: str) -> bool:
+    """C0 controls, DEL, C1 controls and zero-width or bidi controls."""
+    code = ord(char)
+    return code < 0x20 or 0x7F <= code <= 0x9F or code in _HIDDEN
+
+
+def has_controls(text: str) -> bool:
+    return any(_unsafe(char) for char in text)
+
+
+def escape_controls(text: str, keep: str = "") -> str:
+    """Replace every character that can split a line, start a terminal escape or hide or reorder
+    text with a visible escape: \\n, \\r, \\t, \\xNN up to U+00FF, else \\uNNNN. Characters in
+    keep pass unchanged."""
+    if not has_controls(text):
+        return text
+    parts: list[str] = []
+    for char in text:
+        if char in keep or not _unsafe(char):
+            parts.append(char)
+        elif char in _CONTROL_ESCAPES:
+            parts.append(_CONTROL_ESCAPES[char])
+        elif ord(char) <= 0xFF:
+            parts.append(f"\\x{ord(char):02X}")
+        else:
+            parts.append(f"\\u{ord(char):04X}")
+    return "".join(parts)
+
+
+def one_line(text: object) -> str:
+    """text escaped onto one line, for a prose line that embeds capture or tool text."""
+    return escape_controls(str(text))
+
+
+def inline(value: object) -> str:
+    """A capture value (name, path) embedded in a prose line: on one line, at most INLINE_LIMIT
+    characters, so a hostile value can neither forge a line nor flood the output."""
+    text = str(value)
+    cut = len(text) - INLINE_LIMIT
+    if cut <= 0:
+        return one_line(text)
+    return one_line(text[:INLINE_LIMIT]) + f"...[truncated {cut} chars]"
+
+
+class _ControlSafeStream:
+    """A text stream that writes control characters visibly; newlines and tabs pass."""
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        self._stream.write(escape_controls(text, keep="\n\t"))
+        return len(text)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
 def configure_streams() -> None:
-    """Keep non-ASCII symbol names readable on a legacy console code page."""
+    """Keep non-ASCII symbol names readable on a legacy console code page, and never let a
+    control character from capture or tool text reach the terminal raw."""
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
+    if not isinstance(sys.stdout, _ControlSafeStream):
+        sys.stdout = _ControlSafeStream(sys.stdout)
+    if not isinstance(sys.stderr, _ControlSafeStream):
+        sys.stderr = _ControlSafeStream(sys.stderr)
 
 
 def absolute(path: os.PathLike[str] | str) -> Path:

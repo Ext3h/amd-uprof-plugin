@@ -149,7 +149,7 @@ REFERENCE_FRAGMENTS = (
     "omitted: true",
     "single unscoped instruction run",
     "on stderr before the document is written",
-    "selects process base images, not modules",
+    "matches the full process image path (`Process.name`), not modules",
     "`other_samples` is `samples - hot_samples`",
     "isSystemModule = false",
     "neither an OS-shipped predicate nor a kernel predicate",

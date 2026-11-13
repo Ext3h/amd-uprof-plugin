@@ -5,7 +5,7 @@ description: Profile CPU time on AMD Zen with AMD uProf cycle sampling (PMCx076 
 
 # AMD uProf profile
 
-**Choose the first `profile` call from the question; each output's `NEXT` line names the following call. Do not list the skill tree, session directory, references or metadata.**
+**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py profile --session <capture dir> --by module|function|process`; its `NEXT` line names the next.**
 
 One entry point, run from any directory:
 

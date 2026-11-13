@@ -18,9 +18,9 @@ SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encoding="utf-8")
 SPEC = (TOOLS_DIR.parent / "references" / "spec.md").read_text(encoding="utf-8")
 
-FIRST_CALL = ("**Choose the first `profile` call from the question; each output's `NEXT` line "
-              "names the following call. Do not list the skill tree, session directory, "
-              "references or metadata.**")
+FIRST_CALL = ("**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py "
+              "profile --session <capture dir> --by module|function|process`; its `NEXT` line "
+              "names the next.**")
 REGION_MEANING = ("region = 4 KiB address page; samples are grouped by address, not by control "
                   "flow; a page may span unrelated code; the hot RVA is the precise attribution "
                   "and the page is the coarse bucket")

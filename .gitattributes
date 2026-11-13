@@ -1,0 +1,10 @@
+# Text files are stored and checked out with LF on every platform, so fixtures
+# and expected outputs have the same bytes locally and in CI.
+* text=auto eol=lf
+
+# Binary fixtures are never converted.
+*.debug binary
+*.exe binary
+*.pdb binary
+*.png binary
+tests/fixtures/debug/elf/fixture_* binary

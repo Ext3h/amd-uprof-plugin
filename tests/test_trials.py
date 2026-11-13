@@ -12,6 +12,7 @@ import contextlib
 import io
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,7 @@ import uprof_context
 import uprof_symbols
 
 REPO = Path(__file__).resolve().parents[1]
+UPROF = REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"
 TRIALS = REPO / "trials"
 sys.path.insert(0, str(TRIALS))
 import build_captures  # noqa: E402
@@ -72,8 +74,21 @@ def scenarios() -> dict[str, dict]:
                 parts[part.group(1)] = part.group(2)
             elif call := CALL.match(line):
                 calls.append(call.group(1))
-        result[match.group(1)] = {"fields": fields, "parts": parts, "calls": calls}
+        result[match.group(1)] = {"fields": fields, "parts": parts, "calls": calls, "body": body}
     return result
+
+
+def conventions() -> str:
+    text = (TRIALS / "scenarios.md").read_text(encoding="utf-8")
+    return text.partition("\n## Conventions\n")[2].partition("\n## ")[0]
+
+
+# Sessions with background load, where an own-code function call must be filtered first.
+LOADED_SESSIONS = {"systemwide_loaded", "attached_inproc_loaded"}
+# Steps (1-based) of scenarios on loaded sessions that ask for outside code on purpose, so an
+# unfiltered --by function is the minimal call there.
+UNFILTERED_STEPS: dict[str, set[int]] = {}
+OPEN_MARK = re.compile(r"open \((D-\d{3})\)")
 
 
 def retired_ids() -> set[str]:
@@ -172,6 +187,51 @@ class CatalogueTest(unittest.TestCase):
         # The catalogue stays harness-neutral; how a harness's usage report adds up is the
         # runner's business.
         self.assertNotIn("cache-read", flat)
+
+    def test_loaded_scenarios_run_on_their_loaded_sessions(self):
+        expected = {
+            "SCN-01": "systemwide_loaded",
+            "SCN-09": "systemwide_loaded",
+            "SCN-10": "systemwide_loaded",
+            "SCN-20": "attached_inproc_loaded",
+        }
+        for scn, session in expected.items():
+            with self.subTest(scenario=scn):
+                self.assertEqual(
+                    re.findall(r"`([^`]+)`", self.scenarios[scn]["fields"]["Session"]), [session]
+                )
+
+    def test_own_code_function_calls_on_loaded_sessions_are_filtered_first(self):
+        # An unfiltered function view on a loaded capture shows other processes' code: a wasted
+        # turn when the question is about the user's process.
+        for scn, entry in self.scenarios.items():
+            sessions = set(re.findall(r"`([^`]+)`", entry["fields"]["Session"]))
+            if not sessions & LOADED_SESSIONS:
+                continue
+            for step, call in enumerate(entry["calls"], start=1):
+                if "--by function" not in call or step in UNFILTERED_STEPS.get(scn, set()):
+                    continue
+                with self.subTest(scenario=scn, step=step):
+                    self.assertRegex(call, r"--pid |--image ")
+
+    def test_open_steps_name_a_decision_the_conventions_list(self):
+        listed = set(OPEN_MARK.findall(conventions()))
+        for scn, entry in self.scenarios.items():
+            for decision in OPEN_MARK.findall(entry["body"]):
+                with self.subTest(scenario=scn, decision=decision):
+                    self.assertIn(decision, listed)
+
+    def test_instruction_calls_ask_for_the_hot_row_only(self):
+        for scn, entry in self.scenarios.items():
+            for call in entry["calls"]:
+                if "--by instruction" in call:
+                    with self.subTest(scenario=scn, call=call):
+                        self.assertIn("--top 1", call)
+
+    def test_the_conventions_state_the_filter_first_rule(self):
+        text = " ".join(conventions().split())
+        self.assertIn("--pid", text)
+        self.assertIn("before the function view", text)
 
     def test_every_call_parses_with_the_current_cli(self):
         parser = uprof.build_parser()
@@ -272,6 +332,81 @@ class BuilderTest(unittest.TestCase):
 
 
 OWN_IMAGE_NAME = "fixture_full.exe"
+# What the minimal calls of one scenario may print together (stdout and stderr), in characters.
+# A run must end below 50,000 tokens of context: 21,500 go to the harness and prompt, about
+# 1,200 to SKILL.md after #118's cut, 300 per call, and 5,000 stay as margin; at 2.0 characters
+# per token, the low end measured on tool output, that leaves about 44,000 characters.
+CALL_OUTPUT_CEILING = 44_000
+
+
+@unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
+@unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
+class ContextCeilingTest(unittest.TestCase):
+    """Each scenario's minimal calls print little enough to stay below the context ceiling."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory(prefix="uprof-trials-ceiling-")
+        cls.root = Path(cls.directory.name) / "captures"
+        cls.sessions = build_captures.build(cls.root)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def run_call(self, call: str) -> str:
+        result = subprocess.run(
+            [sys.executable, str(UPROF), *shlex.split(call)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(result.returncode, 0, f"{call}\n{result.stderr}")
+        return result.stdout + result.stderr
+
+    def own_module(self, session: Path) -> str:
+        document = F.profile(session, "function", ("--top", "all"))
+        return next(
+            row["module"] for row in document["rows"] if str(row["module"]).endswith(OWN_IMAGE_NAME)
+        )
+
+    def concrete(self, call: str, names: list[str]) -> str:
+        # Forward slashes: the calls are split the way a POSIX shell splits them.
+        capture = self.sessions[names[0]]
+        values = {
+            "<CAPTURE>": capture.as_posix(),
+            "<PDB_DIR>": (self.root / "bins" / "pdbs").as_posix(),
+            "<IMAGE_DIR>": (self.root / "bins" / "timer").as_posix(),
+            "<PID>": "3112",
+            "<FUNCTION>": "fixture_entry",
+            "<QPC1>": "12000000",
+            "<QPC2>": "15000000",
+            "<T1>": "0.2",
+            "<T2>": "0.5",
+        }
+        if len(names) > 1:
+            values.update(
+                {
+                    "<BEFORE>": self.sessions[names[0]].as_posix(),
+                    "<AFTER>": self.sessions[names[1]].as_posix(),
+                }
+            )
+        if "<OWN_MODULE>" in call:
+            values["<OWN_MODULE>"] = self.own_module(capture)
+        for placeholder, value in values.items():
+            call = call.replace(placeholder, shlex.quote(value) if " " in value else value)
+        return call
+
+    def test_minimal_calls_print_less_than_the_ceiling(self):
+        for scn, entry in scenarios().items():
+            names = re.findall(r"`([^`]+)`", entry["fields"]["Session"])
+            if entry["fields"]["Session"].startswith("none") or not entry["calls"]:
+                continue
+            with self.subTest(scenario=scn):
+                printed = sum(
+                    len(self.run_call(self.concrete(call, names))) for call in entry["calls"]
+                )
+                self.assertLess(printed, CALL_OUTPUT_CEILING)
 
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
@@ -282,7 +417,7 @@ class LoadedSessionTest(unittest.TestCase):
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory(prefix="uprof-trials-loaded-")
         cls.sessions = build_captures.build(
-            Path(cls.directory.name) / "captures", ["systemwide_loaded"]
+            Path(cls.directory.name) / "captures", ["systemwide_loaded", "attached_inproc_loaded"]
         )
 
     @classmethod
@@ -319,6 +454,41 @@ class LoadedSessionTest(unittest.TestCase):
         self.assertEqual(own(self.rows("systemwide_loaded", "function")), [])
         filtered = self.rows("systemwide_loaded", "function", "--pid", str(build_captures.PID))
         self.assertIn("fixture_entry", [row["function"] for row in own(filtered)])
+
+    def test_the_image_filter_merges_the_unrelated_instance_and_the_pid_does_not(self):
+        def total(*extra):
+            return sum(
+                row["samples"]
+                for row in self.rows("systemwide_loaded", "module", "--top", "all", *extra)
+            )
+
+        by_pid = total("--pid", str(build_captures.PID))
+        second = total("--pid", str(build_captures.SECOND_PID))
+        self.assertGreater(second, 0)
+        self.assertEqual(total("--image", build_captures.PROCESS), by_pid + second)
+
+    @unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
+    def test_inproc_load_hides_the_own_functions_even_under_the_process_filter(self):
+        processes = [
+            row
+            for row in self.rows("attached_inproc_loaded", "process", "--top", "all")
+            if not str(row["process"]).startswith("<")
+        ]
+        self.assertEqual([row["pid"] for row in processes], [build_captures.PID])
+        modules = [
+            row
+            for row in self.rows("attached_inproc_loaded", "module", "--top", "all")
+            if not str(row["module"]).startswith("<")
+        ]
+        self.assertGreater(len(modules), 20)
+        rows = self.rows("attached_inproc_loaded", "function", "--pid", str(build_captures.PID))
+        named = [row for row in rows if not str(row["function"]).startswith("<other")]
+        self.assertGreaterEqual(len(named), 20)
+        self.assertFalse([row for row in rows if str(row["module"]).endswith(OWN_IMAGE_NAME)])
+        everything = self.rows(
+            "attached_inproc_loaded", "function", "--pid", str(build_captures.PID), "--top", "all"
+        )
+        self.assertTrue([row for row in everything if str(row["module"]).endswith(OWN_IMAGE_NAME)])
 
 
 if __name__ == "__main__":

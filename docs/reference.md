@@ -377,7 +377,7 @@ When every context is omitted with `symbolizer_failed`, stderr prints one `CONTE
 
 ## SQL schema — `tools/views.sql`
 
-One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twenty-two inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection. The table below is the full bound set: the twenty-one `uprof_*` keys of `uprof_query._variables` plus `uprof_ibs_parquet`, which the profile call binds after locating the dump's Parquet copy.
+One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twenty-two inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection. The table below is the full bound set: the twenty-one `uprof_*` keys of `uprof_query._variables` plus `uprof_ibs_parquet`, which the profile call binds after locating the dump's Parquet copy; `views.sql`'s header lists nineteen of the twenty-two.
 
 | Bound input | Meaning |
 |---|---|

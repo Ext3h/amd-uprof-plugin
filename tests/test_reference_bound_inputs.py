@@ -12,7 +12,7 @@ from pathlib import Path
 import uprof_query
 
 SKILL = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof"
-REFERENCE = SKILL / "references" / "reference.md"
+REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference.md"
 VIEWS = SKILL / "tools" / "views.sql"
 # Bound by the profile call after it locates the dump's Parquet copy, not by _variables.
 LATE_BOUND = {"uprof_ibs_parquet"}

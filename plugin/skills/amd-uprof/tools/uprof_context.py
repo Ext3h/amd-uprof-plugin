@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from uprof_native import find_sibling, find_symbolizer, run
+from uprof_native import find_sibling, find_symbolizer, run, tool_operand
 from uprof_symbols import resolve_image
 from uprof_util import UprofError, tail_lines
 
@@ -465,7 +465,7 @@ def load_imports(module_path: str, build: BuildIdentity,
     if not tool:
         raise ContextOmission("readobj_missing",
                               "llvm-readobj not found beside llvm-symbolizer or on PATH")
-    completed = run([tool, "--coff-imports", module_path], timeout=CONTEXT_TOOL_TIMEOUT)
+    completed = run([tool, "--coff-imports", tool_operand(module_path)], timeout=CONTEXT_TOOL_TIMEOUT)
     if completed.returncode != 0:
         raise ContextOmission("imports_failed",
                               tail_lines((completed.stdout or "") + "\n" +
@@ -751,7 +751,7 @@ def decode_stream(module_path: str, build: BuildIdentity, anchor: Anchor, last_r
         stop_vma = start_vma + 16
     command = [tool, "-d", f"--start-address=0x{start_vma:X}",
                f"--stop-address=0x{stop_vma:X}", "--no-show-raw-insn",
-               "--no-symbolize-operands", module_path]
+               "--no-symbolize-operands", tool_operand(module_path)]
     completed = run(command, timeout=CONTEXT_TOOL_TIMEOUT)
     if completed.returncode != 0:
         detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
@@ -1028,7 +1028,8 @@ class _ContextBuilder:
             raise ContextOmission("readobj_missing",
                                   "llvm-readobj not found beside llvm-symbolizer or on PATH")
         completed = run([readobj, "--file-headers", "--sections", "--unwind",
-                         "--coff-exports", module_path], timeout=CONTEXT_TOOL_TIMEOUT)
+                         "--coff-exports", tool_operand(module_path)],
+                        timeout=CONTEXT_TOOL_TIMEOUT)
         if completed.returncode != 0:
             raise ContextOmission("readobj_failed",
                                   tail_lines((completed.stdout or "") + "\n" +

@@ -981,10 +981,6 @@ def symbolize_module(
             else:
                 evidence.note = "the image's debug directory records no PDB"
             evidence.outcome = "no_debug_info" if found_debug_info is False else "readobj_failed"
-            if pdb_files:
-                evidence.note = "--symbol-path file not found: " + ", ".join(
-                    os.fspath(path) for path in pdb_files
-                )
             evidence.symbolizer = _run_symbolizer(
                 symbolizer_path,
                 exe_input,

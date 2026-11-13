@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, TextIO
 
+import uprof_db
 from uprof_native import (NtSymbolPath, SymbolizerUnsupported, find_sibling,
                           parse_nt_symbol_path, require_symbolizer, run, symbol_cache_dir)
 from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
@@ -591,7 +592,7 @@ COPY (
 """
         parameters = [str(absolute(out_file)), str(absolute(temp_file))]
     try:
-        with duckdb.connect() as connection:
+        with uprof_db.memory_connection() as connection:
             # One thread for a small write: it avoids starting a full pool in every symbolization
             # worker. A large write keeps the default because the pool then pays for itself.
             try:
@@ -985,7 +986,7 @@ def _combine_artifacts(parquet_inputs: list[tuple[str, Path]],
     symbols_file = out_dir / "symbols.parquet"
     publics_file = out_dir / "symbols.publics.csv"
     try:
-        with duckdb.connect() as connection:
+        with uprof_db.memory_connection() as connection:
             connection.execute(
                 "CREATE TEMP TABLE combined(module_name VARCHAR, address VARCHAR, "
                 "function VARCHAR, function_short VARCHAR, "

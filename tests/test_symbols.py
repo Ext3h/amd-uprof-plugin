@@ -889,7 +889,7 @@ class ParquetWriteThreadTest(unittest.TestCase):
             Error = Exception
 
             @staticmethod
-            def connect():
+            def connect(*_args, **_kwargs):
                 return FakeConnection()
 
         with tempfile.TemporaryDirectory(prefix="uprof-parquet-thread-") as tmp:

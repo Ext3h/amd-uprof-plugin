@@ -62,8 +62,9 @@ be outside the repository. Per scenario with a session, the harness:
 
 Scenarios without a session are listed as skipped with their reason. A known limit of the
 Claude Code adapter: shell commands are allowed, so a write outside the trial folder (for example
-to `/tmp`) cannot be blocked without the CLI's sandbox; the run log shows any tool input naming a
-denied path.
+to `/tmp`) or a shell read of a denied path through another spelling (a relative path or an
+environment variable) cannot be blocked without the CLI's sandbox. The run log shows any tool
+input naming a denied path in its usual spelling, so "none" there is not proof of isolation.
 
 ### Adding a runner
 

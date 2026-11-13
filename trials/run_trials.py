@@ -104,10 +104,12 @@ def prepare(run_dir: Path, scn: str, fields: dict[str, str]) -> tuple[str, Path]
     return prompt, root
 
 
-def context_limit() -> int:
-    """The catalogue's pass criterion: a run must end with fewer than this many context tokens."""
-    text = (TRIALS / "scenarios.md").read_text(encoding="utf-8")
-    match = re.search(r"fewer than ([\d,]+) tokens", text)
+def context_limit(text: str | None = None) -> int:
+    """The catalogue's context ceiling: a run that reaches this many tokens is defective."""
+    if text is None:
+        text = (TRIALS / "scenarios.md").read_text(encoding="utf-8")
+    section = text.partition("\n## Pass criteria\n")[2].partition("\n## ")[0]
+    match = re.search(r"fewer than ([\d,]+) tokens", section)
     if not match:
         raise ValueError("scenarios.md states no context limit")
     return int(match.group(1).replace(",", ""))

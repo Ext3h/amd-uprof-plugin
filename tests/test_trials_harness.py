@@ -345,5 +345,105 @@ class DriverTest(unittest.TestCase):
             )
 
 
+def git(*args: str) -> bytes:
+    import subprocess
+
+    return subprocess.run(["git", "-C", str(REPO), *args], check=True, capture_output=True).stdout
+
+
+@unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
+class CommittedCaptureTest(unittest.TestCase):
+    """A Session may name a committed reference capture: defect_lab/<class>.<mode>.
+
+    The trial gets a copy taken from a committed revision, never from the working tree, inside
+    its own capture root, because the agent may read only its run folder.
+    """
+
+    QUESTION = "Here is a capture: `<CAPTURE>`; the images are in `<IMAGE_DIR>`."
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="uprof-trial-committed-")
+        self.addCleanup(self.tmp.cleanup)
+        self.run_dir = Path(self.tmp.name)
+        self.head = git("rev-parse", "HEAD").decode().strip()
+        platforms = git("ls-tree", "--name-only", "HEAD", f"{run_trials.CAPTURES}/").decode()
+        self.platform = platforms.split()[0].rsplit("/", 1)[-1]
+        self.folder = f"{run_trials.CAPTURES}/{self.platform}"
+
+    def prepare(self, session: str, rev: str = "HEAD", question: str = QUESTION):
+        fields = {"Session": session, "Question": f'"{question}"'}
+        return run_trials.prepare(self.run_dir, "SCN-99", fields, rev)
+
+    def test_a_committed_capture_is_copied_from_the_revision_with_its_images(self):
+        prompt, root, sources = self.prepare("`defect_lab/lock.timer`")
+        capture, images = root / "capture", root / "images"
+        for name in git("ls-tree", "--name-only", "HEAD", f"{self.folder}/lock.timer/").split():
+            path = name.decode()
+            with self.subTest(file=path):
+                copied = capture / path.rsplit("/", 1)[-1]
+                self.assertEqual(copied.read_bytes(), git("show", f"HEAD:{path}"))
+        self.assertEqual(
+            sorted(path.name for path in images.iterdir()),
+            sorted(
+                f"{stem}.{ext}"
+                for stem, image in (
+                    ("defect_lab", "exe"),
+                    ("lab_core", "dll"),
+                    ("lab_vendor", "dll"),
+                )
+                for ext in (image, "pdb")
+            ),
+        )
+        self.assertIn(str(capture), prompt)
+        self.assertIn(str(images), prompt)
+        self.assertNotIn(str(REPO), prompt)
+        self.assertEqual(sources, [f"{self.head}:{self.folder}/lock.timer"])
+
+    def test_built_and_committed_sessions_mix(self):
+        _, root, sources = self.prepare(
+            "`attached`, `defect_lab/lock.timer`", question="Before `<BEFORE>`, after `<AFTER>`."
+        )
+        self.assertTrue((root / "before" / "cpu.db").is_file())
+        self.assertTrue((root / "after" / "cpu.db").is_file())
+        self.assertEqual(sources, [f"{self.head}:{self.folder}/lock.timer"])
+
+    def test_an_explicit_platform_selects_its_folder(self):
+        _, root, _ = self.prepare(f"`defect_lab/{self.platform}/wait.timer`")
+        self.assertTrue((root / "capture" / "cpu.db").is_file())
+
+    def test_unknown_captures_and_platforms_are_refused_before_anything_runs(self):
+        for session, message in (
+            ("`defect_lab/lock.nomode`", "no committed capture defect_lab/lock.nomode"),
+            ("`defect_lab/no-such-platform/lock.timer`", "no platform no-such-platform"),
+        ):
+            with self.subTest(session=session):
+                with self.assertRaises(ValueError) as caught:
+                    self.prepare(session)
+                self.assertIn(message, str(caught.exception))
+
+    def test_a_revision_without_captures_is_refused(self):
+        added = git("log", "--diff-filter=A", "--format=%H", "-1", "--", f"{run_trials.CAPTURES}/")
+        before = added.decode().strip() + "~1"
+        with self.assertRaises(ValueError) as caught:
+            self.prepare("`defect_lab/lock.timer`", before)
+        self.assertIn("no platform folder", str(caught.exception))
+
+    def test_several_platforms_need_an_explicit_name(self):
+        with self.assertRaises(ValueError) as caught:
+            run_trials.choose_platform(["linux-x64", "windows-x64"], "lock.timer", "HEAD")
+        self.assertIn("linux-x64, windows-x64", str(caught.exception))
+        self.assertEqual(
+            run_trials.choose_platform(["windows-x64"], "lock.timer", "HEAD"), "windows-x64"
+        )
+
+    def test_captures_come_from_the_plugin_revision_or_head(self):
+        self.assertEqual(run_trials.capture_revision("HEAD", None), self.head)
+        self.assertEqual(
+            run_trials.capture_revision("HEAD~1", None), git("rev-parse", "HEAD~1").decode().strip()
+        )
+        # A plugin folder is not a revision; the captures still come from a commit.
+        self.assertEqual(run_trials.capture_revision("HEAD~1", REPO / "plugin"), self.head)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -76,22 +76,28 @@ class HotRvaAttributionTest(unittest.TestCase):
             with self.subTest(by=by, mode="ibsfetch"):
                 legend, fields = self._make_legend_and_fields(self.samplers["ibsfetch"], by)
                 col = legend["columns"]["hot_rva"]
-                self.assertIn("fetch samples carry a fetch-block address", col)
-                self.assertNotIn("precise attribution", col)
+                self.assertIn(
+                    f"the precise attribution inside the {container} (fetch samples carry a fetch-block address)",
+                    col,
+                )
                 self.assertIn("fetch samples carry a fetch-block address", fields["COLUMNS"])
 
             with self.subTest(by=by, mode="timer"):
                 legend, fields = self._make_legend_and_fields(self.samplers["timer"], by)
                 col = legend["columns"]["hot_rva"]
-                self.assertIn("timer samples skid", col)
-                self.assertNotIn("precise attribution", col)
+                self.assertIn(
+                    f"the precise attribution inside the {container} (timer samples skid)",
+                    col,
+                )
                 self.assertIn("timer samples skid", fields["COLUMNS"])
 
             with self.subTest(by=by, mode="pmc"):
                 legend, fields = self._make_legend_and_fields(self.samplers["pmc"], by)
                 col = legend["columns"]["hot_rva"]
-                self.assertIn("PMC samples skid", col)
-                self.assertNotIn("precise attribution", col)
+                self.assertIn(
+                    f"the precise attribution inside the {container} (PMC samples skid)",
+                    col,
+                )
                 self.assertIn("PMC samples skid", fields["COLUMNS"])
 
     def test_region_impact_estimate_semantics_per_mode(self):
@@ -108,28 +114,25 @@ class HotRvaAttributionTest(unittest.TestCase):
             legend, _ = self._make_legend_and_fields(self.samplers["ibsfetch"], "region")
             estimate = legend["impact"]["estimate"]
             self.assertIn(
-                "hot_rva is the highest-sample RVA inside the page; fetch samples carry a fetch-block address",
+                "hot_rva is the highest-sample RVA inside the page and the precise attribution (fetch samples carry a fetch-block address)",
                 estimate,
             )
-            self.assertNotIn("precise attribution", estimate)
 
         with self.subTest(mode="timer"):
             legend, _ = self._make_legend_and_fields(self.samplers["timer"], "region")
             estimate = legend["impact"]["estimate"]
             self.assertIn(
-                "hot_rva is the highest-sample RVA inside the page; timer samples skid",
+                "hot_rva is the highest-sample RVA inside the page and the precise attribution (timer samples skid)",
                 estimate,
             )
-            self.assertNotIn("precise attribution", estimate)
 
         with self.subTest(mode="pmc"):
             legend, _ = self._make_legend_and_fields(self.samplers["pmc"], "region")
             estimate = legend["impact"]["estimate"]
             self.assertIn(
-                "hot_rva is the highest-sample RVA inside the page; PMC samples skid",
+                "hot_rva is the highest-sample RVA inside the page and the precise attribution (PMC samples skid)",
                 estimate,
             )
-            self.assertNotIn("precise attribution", estimate)
 
     def test_region_read_semantics_per_mode(self):
         with self.subTest(mode="ibsop"):
@@ -142,28 +145,25 @@ class HotRvaAttributionTest(unittest.TestCase):
             _, fields = self._make_legend_and_fields(self.samplers["ibsfetch"], "region")
             read = fields["READ"]
             self.assertIn(
-                "hot_rva is the highest-sample RVA inside the page (fetch samples carry a fetch-block address)",
+                "hot_rva is the precise attribution inside the page (fetch samples carry a fetch-block address)",
                 read,
             )
-            self.assertNotIn("precise attribution", read)
 
         with self.subTest(mode="timer"):
             _, fields = self._make_legend_and_fields(self.samplers["timer"], "region")
             read = fields["READ"]
             self.assertIn(
-                "hot_rva is the highest-sample RVA inside the page (timer samples skid)",
+                "hot_rva is the precise attribution inside the page (timer samples skid)",
                 read,
             )
-            self.assertNotIn("precise attribution", read)
 
         with self.subTest(mode="pmc"):
             _, fields = self._make_legend_and_fields(self.samplers["pmc"], "region")
             read = fields["READ"]
             self.assertIn(
-                "hot_rva is the highest-sample RVA inside the page (PMC samples skid)",
+                "hot_rva is the precise attribution inside the page (PMC samples skid)",
                 read,
             )
-            self.assertNotIn("precise attribution", read)
 
 
 if __name__ == "__main__":

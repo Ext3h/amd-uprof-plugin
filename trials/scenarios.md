@@ -38,9 +38,10 @@ captures.
   - open (D-028): the `defect_lab` captures for SCN-21..28 come from the owner's re-run on the
     reference machine with the images rebuilt for call stacks. The scenarios' values come from
     that re-run; the captures are not committed yet.
-  - open (D-020): loaded attached captures are to be real captures recorded in CI, with a
-    stressor process for the load. Until they exist, SCN-02..08, 11, 17 and 19 run on their
-    unloaded sessions, and SCN-13 and 15 have none.
+  - open (D-031): not run: awaiting reference capture (#390). The loaded attached captures,
+    with a parallel stressor process as the load, are recorded on the owner's reference
+    machine. Until they exist, SCN-02..08, 11, 17 and 19 run on their unloaded sessions, and
+    SCN-13 and 15 have none.
 - On a timer capture an answer may name the instructions in the hot window as facts about the
   code, while saying that a timer capture cannot show they are the cause (D-021).
 - `cpu_seconds` is samples × the sampling interval / the analysing host's core frequency, so its

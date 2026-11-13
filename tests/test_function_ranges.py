@@ -22,6 +22,7 @@ import uprof_query
 from uprof_context import PeSection
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "plugin" / "skills" / "amd-uprof" / "tools"
 READOBJ = uprof_context.find_readobj()
 TEXT = PeSection(0x1000, 0x62, True)
 DATA = PeSection(0x3000, 0x40, False)
@@ -352,6 +353,77 @@ class SerialDerivationTest(unittest.TestCase):
         self.assertIsNone(path)
         self.assertIn("range derivation failed", info["absent_by_module"]["a.exe"])
         self.assertIn("WARNING: no function range derived for a.exe", stream.getvalue())
+
+
+class ProfileFunctionModulesQueryTest(unittest.TestCase):
+    def setUp(self):
+        try:
+            import duckdb
+            self.conn = duckdb.connect()
+        except Exception as exc:
+            raise unittest.SkipTest(f"duckdb unavailable: {exc}")
+
+        self.conn.execute("""
+            CREATE MACRO module_key(p) AS regexp_replace(p, '^.*[\\\\/]', '');
+            CREATE TEMP TABLE Function (id BIGINT, name VARCHAR);
+            CREATE TEMP TABLE Module (path VARCHAR);
+        """)
+
+    def test_unresolved_samples_sums_samples_not_rows(self):
+        self.conn.execute("""
+            CREATE OR REPLACE TEMP VIEW v_scoped AS
+            SELECT 'a.dll' AS module_name, 1 AS function_id, 100 AS samples
+            UNION ALL
+            SELECT 'a.dll' AS module_name, 2 AS function_id, 250 AS samples;
+
+            DELETE FROM Function;
+            INSERT INTO Function VALUES (1, 'resolved_func'), (2, '');
+
+            DELETE FROM Module;
+            INSERT INTO Module VALUES ('C:\\bin\\a.dll');
+        """)
+        sql = (TOOLS_DIR / "profile-function-modules.sql").read_text(encoding="utf-8")
+        rows = self.conn.execute(sql).fetchall()
+        self.assertEqual(len(rows), 1)
+        module_name, module_path, unresolved_samples, total_samples = rows[0]
+        self.assertEqual(module_name, "a.dll")
+        self.assertEqual(module_path, "C:\\bin\\a.dll")
+        self.assertEqual(unresolved_samples, 250)
+        self.assertEqual(total_samples, 350)
+
+    def test_module_with_zero_unresolved_samples_is_excluded(self):
+        self.conn.execute("""
+            CREATE OR REPLACE TEMP VIEW v_scoped AS
+            SELECT 'a.dll' AS module_name, 1 AS function_id, 100 AS samples
+            UNION ALL
+            SELECT 'a.dll' AS module_name, 2 AS function_id, 0 AS samples;
+
+            DELETE FROM Function;
+            INSERT INTO Function VALUES (1, 'resolved_func'), (2, '');
+
+            DELETE FROM Module;
+            INSERT INTO Module VALUES ('C:\\bin\\a.dll');
+        """)
+        sql = (TOOLS_DIR / "profile-function-modules.sql").read_text(encoding="utf-8")
+        rows = self.conn.execute(sql).fetchall()
+        self.assertEqual(rows, [])
+
+    def test_fully_resolved_module_is_excluded(self):
+        self.conn.execute("""
+            CREATE OR REPLACE TEMP VIEW v_scoped AS
+            SELECT 'a.dll' AS module_name, 1 AS function_id, 100 AS samples
+            UNION ALL
+            SELECT 'a.dll' AS module_name, 2 AS function_id, 200 AS samples;
+
+            DELETE FROM Function;
+            INSERT INTO Function VALUES (1, 'resolved_func_1'), (2, 'resolved_func_2');
+
+            DELETE FROM Module;
+            INSERT INTO Module VALUES ('C:\\bin\\a.dll');
+        """)
+        sql = (TOOLS_DIR / "profile-function-modules.sql").read_text(encoding="utf-8")
+        rows = self.conn.execute(sql).fetchall()
+        self.assertEqual(rows, [])
 
 
 if __name__ == "__main__":

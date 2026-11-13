@@ -1,11 +1,12 @@
 {
   "total_samples": 1446,
   "metric_prefix": "METRIC: timer sampling (CPU_TIME, interval 1 ms)",
+  "calls": ["module", "function", "line"],
   "modules": {
     "c:/fixture/heap_churn.exe": {"samples": 1052, "isSystemModule": false},
     "c:/windows/system32/ntdll.dll": {"samples": 393, "isSystemModule": true}
   },
-  "module_read_clause": "top row c:/fixture/heap_churn.exe 72.8% ±2.3 points (95% binomial, n=1446)",
+  "own_module": "c:/fixture/heap_churn.exe",
   "functions": {
     "static unsigned int hash_block(const unsigned char *, unsigned int)": 826,
     "static void fill_block(unsigned char *, unsigned int, unsigned int)": 211,
@@ -15,12 +16,10 @@
     "RtlpAllocateNTHeapInternal": 55,
     "RtlAllocateHeap": 28
   },
+  "heap_functions": ["RtlpLowFragHeapAllocFromContext", "RtlFreeHeap",
+                     "RtlpAllocateNTHeapInternal", "RtlAllocateHeap"],
   "top_function": "static unsigned int hash_block(const unsigned char *, unsigned int)",
   "hot_rva": {"rva": "0x129E", "samples": 167},
-  "hash_block_lines": [
-    {"file": "heap_churn.c", "line": 25, "samples": 468},
-    {"file": "heap_churn.c", "line": 26, "samples": 202},
-    {"file": "heap_churn.c", "line": 24, "samples": 156}
-  ],
-  "minimal_tool_calls": 5
+  "hash_block_lines": {"file": "heap_churn.c", "lines": [24, 25, 26], "top_line": 25},
+  "minimal_tool_calls": 3
 }

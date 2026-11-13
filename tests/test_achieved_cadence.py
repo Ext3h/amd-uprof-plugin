@@ -63,6 +63,16 @@ class AchievedCadenceTest(unittest.TestCase):
         self.assertIn("busiest thread 1,000/s", text)
         self.assertIn("1 active thread", text)
 
+    def test_an_attached_capture_leads_with_the_busiest_threads_cadence(self):
+        # One thread at the requested 1 ms on a 12-CPU machine: 1446 samples over 2.644 s is
+        # 45.57/s per CPU, a figure no thread can reach; it must not read as the cadence.
+        contexts = [uprof_session.ContextCadence(samples=1446, median_gap_ns=1_000_000)]
+        text = self.achieved(contexts, window_s=2.644, cpus=12, label="thread")
+        self.assertTrue(text.startswith("busiest thread 1,000/s"), text)
+        per_cpu = text.index("45.57/s per CPU")
+        self.assertIn("not the delivered cadence", text[per_cpu:])
+        self.assertLess(text.index("requested"), per_cpu)
+
     def test_pmc_contexts_use_the_busiest_core_rate(self):
         # PMC carries no per-sample timestamps, so the busiest core's samples/s is the cadence.
         sampler = cycle_sampler(pmc=True, event_column="event#0x3000076")

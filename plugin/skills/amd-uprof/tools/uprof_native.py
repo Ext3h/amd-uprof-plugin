@@ -34,6 +34,7 @@ from uprof_session import (
 from uprof_util import (
     COPY_DIRS,
     DUMP_FILENAMES,
+    LinesError,
     one_line,
     UprofError,
     absolute,
@@ -235,14 +236,12 @@ def failure(
             "--event <ibs-op|cycles>" + then
         ),
     }
-    lines = [one_line(cause)] + [
+    lines = [cause] + [
         f"ALTERNATIVE: {label}: {chains[label]}" for label in sorted(set(labels), key=str.lower)
     ]
     # A path that is not plain is a placeholder in the commands and named here as data only.
-    lines += [one_line(data) for data in (cli_data, script_data, known_data) if data]
-    error = UprofError("\n".join(lines))
-    error.escaped_lines = True
-    return error
+    lines += [data for data in (cli_data, script_data, known_data) if data]
+    return LinesError(lines)
 
 
 def require_symbolizer() -> Path:
@@ -461,8 +460,15 @@ def recapture_commands(session: Path) -> tuple[str, str, str | None]:
 
 def translate_failure(
     what: str, completed: subprocess.CompletedProcess[str], log: CliLog, session: Path
-) -> str:
-    """One line for a failed AMDuProfCLI translate, naming the cause the CLI log gives."""
+) -> LinesError:
+    """The error for a failed AMDuProfCLI translate, naming the cause the CLI log gives: one
+    line, plus a data line for each path a remedy holds as a placeholder."""
+    return LinesError(_translate_failure_lines(what, completed, log, session))
+
+
+def _translate_failure_lines(
+    what: str, completed: subprocess.CompletedProcess[str], log: CliLog, session: Path
+) -> list[str]:
     detail = failure_detail(completed)
     code = completed.returncode
     crash = (
@@ -473,15 +479,16 @@ def translate_failure(
     log_path, log_text = log.appended()
     if NO_CATEGORY_LOG in log_text:
         cycles, ibs, data = recapture_commands(session)
-        return (
+        return [
             f"{what} failed with {code}{crash}: the session has no translatable sample "
             "category (per the AMDuProfCLI log), so it holds no samples to translate; "
             f"remedy: capture again with {cycles} (cycles) or {ibs} (IBS), then translate "
-            "that session" + (f"\n{data}" if data else "")
-        )
+            "that session",
+            *(data.split("\n") if data else []),
+        ]
     if crash and log_path:
-        return f"{what} failed with {code}{crash}: {detail}; AMDuProfCLI log: {log_path}"
-    return f"{what} failed with {code}{crash}: {detail}"
+        return [f"{what} failed with {code}{crash}: {detail}; AMDuProfCLI log: {log_path}"]
+    return [f"{what} failed with {code}{crash}: {detail}"]
 
 
 def symbol_cache_dir() -> Path:
@@ -1056,7 +1063,7 @@ def translate(
     completed = run(command, timeout=TRANSLATE_TIMEOUT)
     print_output(completed)
     if completed.returncode != 0:
-        raise UprofError(translate_failure("translate", completed, log, session))
+        raise translate_failure("translate", completed, log, session)
 
     cpu_db = out / "cpu.db"
     if not cpu_db.is_file():

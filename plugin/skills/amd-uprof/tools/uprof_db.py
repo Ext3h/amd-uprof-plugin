@@ -15,7 +15,7 @@ from typing import Any, Final
 
 import uprof_shell
 from uprof_output import header_text, json_document, markdown_table, write_payload
-from uprof_util import UprofError
+from uprof_util import LinesError, UprofError
 
 
 def _statement_sql(duckdb: Any, statement: Any) -> str:
@@ -118,7 +118,7 @@ def _stored_sql_error(cpu_db: Path | str, objects: list[tuple[str, str]]) -> Upr
     # A path that is not plain is a placeholder in the command and named here as data only.
     if script_data:
         lines.append(script_data)
-    return UprofError("\n".join(lines))
+    return LinesError(lines)
 
 
 def connect(cpu_db: Path | str) -> Any:

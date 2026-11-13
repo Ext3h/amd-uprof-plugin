@@ -276,9 +276,9 @@ def main(argv: list[str] | None = None) -> int:
         _dispatch(args)
         return 0
     except util.UprofError as exc:
-        # A failure's own lines (cause, ALTERNATIVE ...) were escaped when they were built; any
-        # other message is one line, whatever capture text it carries.
-        text = str(exc) if getattr(exc, "escaped_lines", False) else util.one_line(exc)
+        # A LinesError's own lines (cause, ALTERNATIVE, data) were escaped one by one; any other
+        # message is one line, whatever capture text it carries.
+        text = str(exc) if isinstance(exc, util.LinesError) else util.one_line(exc)
         print(f"error: {text}", file=sys.stderr)
         return 2
     except BrokenPipeError:

@@ -1210,7 +1210,7 @@ def _combine_artifacts(
 
 
 def _probe_text(probe: PdbProbe) -> str:
-    return f"{probe.path} [{probe.detail or probe.status}]"
+    return f"{inline(probe.path)} [{probe.detail or probe.status}]"
 
 
 def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
@@ -1350,12 +1350,12 @@ def _symbolize_worker(
             if not module_path:
                 note = (
                     "the capture records no path for this module and no --image-path image "
-                    f"matches {basename}"
+                    f"matches {inline(basename)}"
                 )
             else:
                 note = (
-                    f"{module_path} is not on this host and no --image-path image matches "
-                    f"{basename}"
+                    f"{inline(module_path)} is not on this host and no --image-path image "
+                    f"matches {inline(basename)}"
                 )
             evidence = ModuleEvidence(
                 module_name,

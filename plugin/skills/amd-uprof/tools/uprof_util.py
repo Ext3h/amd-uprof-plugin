@@ -12,6 +12,7 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
+from collections.abc import Iterable
 from typing import Any, Final
 
 DUMP_FILENAMES: Final = MappingProxyType(
@@ -114,6 +115,14 @@ def inline(value: object) -> str:
     if cut <= 0:
         return one_line(text)
     return one_line(text[:INLINE_LIMIT]) + f"...[truncated {cut} chars]"
+
+
+class LinesError(UprofError):
+    """An error of several lines, each escaped on its own: capture text inside a line cannot
+    start a new one, while the tool's own ALTERNATIVE and data lines stay separate."""
+
+    def __init__(self, lines: Iterable[str]) -> None:
+        super().__init__("\n".join(one_line(line) for line in lines if line))
 
 
 class _ControlSafeStream:

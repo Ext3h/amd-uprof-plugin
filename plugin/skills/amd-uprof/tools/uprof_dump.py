@@ -503,13 +503,11 @@ def _make_dump(
         completed = run(command, timeout=TRANSLATE_TIMEOUT)
         detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
         if completed.returncode != 0:
-            raise UprofError(
-                translate_failure(
-                    f"AMDuProfCLI translate --ascii {kind} on the cache copy {staging}",
-                    completed,
-                    log,
-                    absolute(session_dir),
-                )
+            raise translate_failure(
+                f"AMDuProfCLI translate --ascii {kind} on the cache copy {staging}",
+                completed,
+                log,
+                absolute(session_dir),
             )
         dump = staging / dump_name
         if not dump.is_file():

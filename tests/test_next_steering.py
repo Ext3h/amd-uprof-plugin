@@ -16,10 +16,10 @@ import uprof_query
 SESSION = "C:/captures/run" if uprof_query.os.name == "nt" else "/captures/run"
 
 
-def next_calls(*argv, system_wide, unresolved=0, top_pid=None):
+def next_calls(*argv, system_wide, unresolved=0, top_process=None):
     args = uprof.build_parser().parse_args(["profile", "--session", SESSION, *argv])
     return uprof_query._next_calls(args, {"unresolved": unresolved}, system_wide=system_wide,
-                                   top_pid=top_pid)
+                                   top_process=top_process)
 
 
 def argv_of(call):
@@ -61,14 +61,24 @@ class NextSteeringTest(unittest.TestCase):
         self.assertEqual(bys(next_calls("--by", "process", system_wide=False)), ["module"])
 
     def test_a_system_wide_process_view_scopes_its_module_call_to_the_top_process(self):
-        calls = next_calls("--by", "process", system_wide=True, top_pid=4242)
+        calls = next_calls("--by", "process", system_wide=True, top_process=(4242, "app.exe"))
         self.assertEqual(bys(calls), ["module"])
         self.assertIn("--pid 4242", calls[0])
+
+    def test_a_top_process_without_a_pid_scopes_by_its_image_and_ends_the_chain(self):
+        calls = next_calls("--by", "process", system_wide=True, top_process=(None, "app.exe"))
+        self.assertEqual(bys(calls), ["module"])
+        self.assertIn("--image app.exe", calls[0])
+        follow = next_calls(*argv_of(calls[0]), system_wide=True)
+        self.assertEqual(bys(follow), ["function"])
+
+    def test_no_process_row_offers_no_unscoped_module_call(self):
+        self.assertEqual(next_calls("--by", "process", system_wide=True, top_process=None), [])
 
     def test_following_next_from_the_system_wide_process_ranking_never_loops(self):
         # process -> module --pid -> function --pid, never back to the process ranking.
         seen = ["process"]
-        calls = next_calls("--by", "process", system_wide=True, top_pid=4242)
+        calls = next_calls("--by", "process", system_wide=True, top_process=(4242, "app.exe"))
         while calls:
             self.assertEqual(len(calls), 1, calls)
             argv = argv_of(calls[0])
@@ -76,7 +86,7 @@ class NextSteeringTest(unittest.TestCase):
             by = argv[argv.index("--by") + 1]
             self.assertNotIn(by, seen)
             seen.append(by)
-            calls = next_calls(*argv, system_wide=True, top_pid=4242)
+            calls = next_calls(*argv, system_wide=True)
         self.assertEqual(seen, ["process", "module", "function"])
 
 

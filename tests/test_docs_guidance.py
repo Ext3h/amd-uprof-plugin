@@ -31,7 +31,7 @@ FIRST_CALL = (
 )
 REGION_MEANING = (
     "region = 4 KiB address page; samples are grouped by address, not by control "
-    "flow; a page may span unrelated code; the hot RVA is the precise attribution "
+    "flow; a page may span unrelated code; the hot RVA is the most precise attribution "
     "and the page is the coarse bucket"
 )
 

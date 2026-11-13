@@ -92,7 +92,7 @@ when neither a name nor a derived range covers them.
 
 **SPEC-59** Where function rows remain `unresolved` and no boundary source exists, fall back to `--by region`:
 region = 4 KiB address page; **SPEC-60** samples are grouped by address, not by control flow; **SPEC-61** a page may span
-unrelated code; **SPEC-62** the hot RVA is the precise attribution and the page is the coarse bucket. **SPEC-63** `line`
+unrelated code; **SPEC-62** the hot RVA is the most precise attribution and the page is the coarse bucket. **SPEC-63** `line`
 and `instruction` symbolize every module in scope, report per-scope agreement and coverage, and
 mark modules without usable symbols `<no symbol>` with the share of weight that covers.
 

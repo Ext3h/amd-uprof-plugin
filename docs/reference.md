@@ -305,7 +305,7 @@ Function is the semantic unit. A release binary often has no debug symbols, so `
 
 ### Region fallback — 4 KiB address pages
 
-`--by region` is the fallback only when the function rows are in the `unresolved` attribution and `function_source` is `none`, or when an explicitly requested page-level view needs it. region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket. The row keeps `sampled_addresses` so a page with many scattered addresses is distinguishable from a dense one, and `hot_rva`/`hot_samples`/`hot_sample_share` carry the sharpest address. When the hot RVA falls in a derived range, the row names that function and its source; otherwise `function_source` is `none`.
+`--by region` is the fallback only when the function rows are in the `unresolved` attribution and `function_source` is `none`, or when an explicitly requested page-level view needs it. region = 4 KiB address page; samples are grouped by address, not by control flow; a page may span unrelated code; the hot RVA is the most precise attribution and the page is the coarse bucket. The row keeps `sampled_addresses` so a page with many scattered addresses is distinguishable from a dense one, and `hot_rva`/`hot_samples`/`hot_sample_share` carry the sharpest address. When the hot RVA falls in a derived range, the row names that function and its source; otherwise `function_source` is `none`.
 
 ### Ranking and the hot row
 

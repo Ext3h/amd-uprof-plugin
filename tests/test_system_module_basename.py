@@ -128,6 +128,10 @@ class SystemModuleBasenameTest(unittest.TestCase):
         # Ambiguous fallback must return NULL (#87)
         self.assertIsNone(rows["d:/mirror/ambiguous.dll"]["isSystemModule"])
 
+    def test_system_module_meaning_states_cause_of_null(self):
+        import uprof_query
+        self.assertIn("ambiguous basename", uprof_query._SYSTEM_MODULE_MEANING)
+
 
 if __name__ == "__main__":
     unittest.main()

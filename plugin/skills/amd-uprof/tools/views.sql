@@ -677,9 +677,6 @@ ELSE $absent$
   SELECT CAST(NULL AS VARCHAR) AS basename, CAST(NULL AS BOOLEAN) AS "isSystemModule"
   WHERE false$absent$ END);
 
-CREATE OR REPLACE TEMP VIEW v_module_flags AS
-SELECT * FROM v_module_flags_exact;
-
 -- One row per whole-capture sample, before the process and time filters, with the module it landed
 -- in, the context that produced it (CPU for a dump, coreId for PMC) and whether that module is a
 -- kernel image. One dump row is one sample; a PMC row carries its event count. The ACHIEVED check

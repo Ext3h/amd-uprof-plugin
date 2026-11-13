@@ -400,7 +400,7 @@ _VIRTUALIZATION_QUERY: Final = (
     "'{0} {1}' -f [int]$d.VirtualizationBasedSecurityStatus, [int][bool]$c.HypervisorPresent")
 _WINDOWS_IBS_REMEDY: Final = (
     "remedy: turn off Hyper-V and VBS (as administrator: bcdedit /set hypervisorlaunchtype off, "
-    "then disable Memory integrity and reboot), or capture with --event cycles")
+    "then disable Memory integrity and reboot)")
 
 
 def ibs_unavailable_reason() -> str:
@@ -424,8 +424,7 @@ def ibs_unavailable_reason() -> str:
             return ("a hypervisor is present (Win32_ComputerSystem HypervisorPresent), so IBS "
                     "counters are not exposed; " + _WINDOWS_IBS_REMEDY)
         return ("no IBS counters are available although no hypervisor or VBS is active; check "
-                "that the CPU is AMD Zen with IBS and that uProf's driver is loaded, or capture "
-                "with --event cycles")
+                "that the CPU is AMD Zen with IBS and that uProf's driver is loaded")
     try:
         with open(Path("/proc/cpuinfo"), "r", encoding="utf-8", errors="replace") as handle:
             if " hypervisor" in handle.read():

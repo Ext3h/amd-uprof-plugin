@@ -168,8 +168,8 @@ Live unelevated path, reproduced 2026-11-07 on `fold_busy.exe`:
    column set only, and 5,726 samples for the captured PID.
 
 IBS fallback on this host: `collect --event ibs-op --seconds 1` printed
-`SAMPLER: falling back to cycle sampling (time-based); IBS unavailable: hypervisor/VBS is active
-(VBS running; check Win32_DeviceGuard: VirtualizationBasedSecurityStatus is 2 when running)`,
+`SAMPLER: falling back to cycle sampling (time-based); IBS unavailable: VBS is running
+(Win32_DeviceGuard VirtualizationBasedSecurityStatus 2), so IBS ...; remedy: ...`,
 then captured PMC at the 1 ms default (`interval=4700000`); after `translate`, `profile` showed
 the PMC column set and 1,143 samples. The fallback attaches to the target process, so the target
 must still be alive when the fallback collect runs.

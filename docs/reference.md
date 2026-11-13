@@ -196,8 +196,9 @@ An empty scope prints one `WARNING: no samples in the selected scope` on stderr 
 
 ### Achieved sample rate
 
-`profile` and `translate --ascii` print one `ACHIEVED:` line for every capture; the tail is present
-only when per-context statistics are available.
+`profile` and `translate --ascii` print one `ACHIEVED:` line for every capture, from the same query
+over the translated session, so both print the same text; the tail is present only when
+per-context statistics are available.
 
 Samples are counted over the whole capture, not the `--image`/`--pid` scope; CPUs come from the
 dump's `CPU_Number`, or from `UnifiedSampleSeries.coreId` for a PMC capture. The per-CPU figure divides by every CPU, so it is not the delivered cadence. For an attached
@@ -259,7 +260,7 @@ predicate.
 - **Verify translate symbolization.** Translate exits 0 even when it named nothing; read the `SYMBOLIZATION:` counts, not the exit status.
 - **Symbolizer passes.** Two invocations per module, both `llvm-symbolizer --obj=<exe> [--pdb=<pdb>] --relative-address --inlines --output-style=JSON` over `rvas.txt`: `--functions=linkage` (demangled signatures) and `--functions=short` (one identity per function across inline and out-of-line copies). Exit 1 is accepted when records were emitted, with a warning.
 - **Per-module Parquet** (`symbols.parquet`): `address VARCHAR, function VARCHAR, function_short VARCHAR, file VARCHAR, line INTEGER, containing_function VARCHAR`. `function`/`file`/`line` come from `Symbol[0]`, the innermost executed frame; `containing_function` comes from `Symbol[last]`, the outermost frame whose name uProf's `Function.id` carries. The combined artifact adds `module_name`; the fold cache `symbols.publics.csv` has `module_name, rva, name_count, names`.
-- **Fold cache.** On Windows, `llvm-pdbutil dump -section-headers` plus `-publics` yields public function starts; `(section, offset)` becomes an RVA and names are grouped by RVA. Every start carries its names, so a single-name start keeps its name (the instruction context's anchor); `name_count > 1` is a folded start, whose `names` lists up to four sorted names then `... (+N more)`. The line and instruction views ASOF-join each sampled RVA to the nearest preceding start per module and label a folded body `shared: ...` with attribution `shared`.
+- **Fold cache.** On Windows, `llvm-pdbutil dump -section-headers` plus `-publics` yields public function starts; `(section, offset)` becomes an RVA and `public-starts.sql` groups the names by RVA. Every start carries its names, so a single-name start keeps its name (the instruction context's anchor); `name_count > 1` is a folded start, whose `names` lists up to four sorted names then `... (+N more)`. The line and instruction views ASOF-join each sampled RVA to the nearest preceding start per module and label a folded body `shared: ...` with attribution `shared`.
 - **Temporary artifacts.** The printed `ARTIFACTS=<temp dir>` holds `module-NNNN/rvas.txt`, `symbols.jsonl`, `symbols.short.jsonl`, `symbols.parquet` and, with a PDB, `module-NNNN/symbols.publics.csv`. On success it is removed and `ARTIFACTS_CLEANED=` printed; on failure it is kept and `ARTIFACTS_KEPT=... (the run failed; kept for inspection)` printed (or the cleanup failure is named).
 
 ### Agreement metric

@@ -142,7 +142,7 @@ class MultiLineErrorTest(unittest.TestCase):
             with (
                 mock.patch.object(uprof_native, "require_uprof", return_value=Path("cli")),
                 mock.patch.object(uprof_native, "CliLog", return_value=log),
-                mock.patch.object(uprof_native, "run", return_value=failed),
+                mock.patch.object(uprof_native, "run_watched", return_value=failed),
             ):
                 lines = self.run_main(
                     ["translate", "--session", str(session), "--out-dir", str(Path(tmp) / "out")]

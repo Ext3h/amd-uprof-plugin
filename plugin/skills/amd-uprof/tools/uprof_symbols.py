@@ -33,7 +33,7 @@ from uprof_native import (
 from uprof_util import (
     UprofError,
     absolute,
-    check_session_meta_size,
+    is_remote_path,
     inline,
     one_line,
     read_text,
@@ -167,8 +167,9 @@ def resolve_image(
             candidate = Path(directory) / name
             if os.path.isfile(candidate):
                 return candidate, f"found in --image-path directory {directory}"
-    # os.path.isfile is False on any OSError, such as a capture path too long for the OS.
-    if module_path and os.path.isfile(module_path):
+    # os.path.isfile is False on any OSError, such as a capture path too long for the OS. A
+    # network or device path from the capture is never opened.
+    if module_path and not is_remote_path(module_path) and os.path.isfile(module_path):
         return Path(module_path), None
     return None, None
 
@@ -294,6 +295,19 @@ def image_build_mismatch(
     return None
 
 
+_PLAIN_PDB_NAME = re.compile(r"[^\\\\/:*?\"<>|\[\]]+\.pdb", re.IGNORECASE)
+
+
+def _plain_pdb_name(recorded: str, exe: str) -> str:
+    """The file name of the image's recorded PDB when it is a plain *.pdb name, else the name
+    beside the image. The name becomes a search pattern, so .., separators and glob
+    metacharacters from the image are never used."""
+    name = recorded.replace("\\", "/").rsplit("/", 1)[-1]
+    if _PLAIN_PDB_NAME.fullmatch(name):
+        return name
+    return Path(exe).stem + ".pdb"
+
+
 def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int | None, str | None]:
     """(PDB file name, GUID, age, PDB path as recorded) from the image's CodeView entry."""
     pdb_name = Path(exe).stem + ".pdb"
@@ -314,7 +328,7 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
                 continue
             value = match.group(1).strip()
             if key == "name":
-                pdb_name = Path(value).name
+                pdb_name = _plain_pdb_name(value, exe)
                 recorded = value
             elif key == "guid":
                 guid = _normalize_guid(value)
@@ -388,7 +402,6 @@ def _nt_symbol_path() -> NtSymbolPath:
 
 
 # translate records the command it ran in session.uprof as space-joined, unquoted arguments.
-_RECORDED_SYMBOL_CACHE = re.compile(r"--symbol-cache-dir\s+(.+?)(?=\s+--|\s*$)")
 
 
 def _unique_dirs(paths: Iterable[str | Path]) -> list[Path]:
@@ -400,21 +413,15 @@ def _unique_dirs(paths: Iterable[str | Path]) -> list[Path]:
     return list(result.values())
 
 
-def symbol_stores(session: str | Path | None) -> list[Path]:
-    """The symbol stores translate may have staged this session's PDBs into, besides srv* caches.
+def symbol_stores() -> list[Path]:
+    """The symbol store translate stages PDBs into besides srv* caches: the user's symbol cache.
 
-    translate stages a PDB as <store>/<pdb>/<GUID><age>/<pdb> under the --symbol-cache-dir it
-    recorded in session.uprof, by default the user's symbol cache. Existing directories only.
+    A --symbol-cache-dir recorded in session.uprof is not read: the capture names it, and a
+    store is walked and probed, so it could point the tools at a network share. A PDB staged with
+    a non-default translate --symbol-cache is found with profile --symbol-path. Existing
+    directories only.
     """
-    try:
-        if session:
-            check_session_meta_size(Path(session) / "session.uprof")
-        meta = json.loads(read_text(Path(session) / "session.uprof")) if session else None
-    except (UprofError, ValueError):
-        meta = None
-    command = str(meta.get("translateCommand") or "") if isinstance(meta, dict) else ""
-    match = _RECORDED_SYMBOL_CACHE.search(command)
-    return _unique_dirs([*([match.group(1)] if match else []), symbol_cache_dir()])
+    return _unique_dirs([symbol_cache_dir()])
 
 
 def _candidate_pdbs(
@@ -440,7 +447,7 @@ def _candidate_pdbs(
             candidates.extend(root / f"{module_guid}{age:X}" / name for name in names)
     candidates.extend(exe.parent / name for name in names)
     # The PDB path the image's CodeView entry records, as llvm-symbolizer would try it next.
-    if recorded_pdb is not None and recorded_pdb.is_absolute():
+    if recorded_pdb is not None and recorded_pdb.is_absolute() and not is_remote_path(recorded_pdb):
         candidates.append(recorded_pdb)
     nt_symbol_path = _nt_symbol_path()
     for directory in nt_symbol_path.dirs:
@@ -1354,8 +1361,13 @@ def _symbolize_worker(
                     f"matches {inline(basename)}"
                 )
             else:
+                where = (
+                    "is a network or device path the capture names, which is never opened,"
+                    if is_remote_path(module_path)
+                    else "is not on this host"
+                )
                 note = (
-                    f"{inline(module_path)} is not on this host and no --image-path image "
+                    f"{inline(module_path)} {where} and no --image-path image "
                     f"matches {inline(basename)}"
                 )
             evidence = ModuleEvidence(

@@ -632,7 +632,7 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO, args: 
         image_files=paths.image_files,
         image_dirs=paths.image_dirs,
         identities=_module_identities(connection),
-        symbol_stores=uprof_symbols.symbol_stores(args.session),
+        symbol_stores=uprof_symbols.symbol_stores(),
     )
     causes = {
         item.module_name: _evidence_cause(item) for item in evidence if item.outcome != "resolved"
@@ -776,6 +776,12 @@ def _derive_scope_ranges(
         path = str(module_path or "")
         if not path:
             info["absent_by_module"][name] = "the capture records no module path"
+            continue
+        if util.is_remote_path(path):
+            info["absent_by_module"][name] = (
+                f"{util.inline(path)} is a network or device path the capture names, which is "
+                "never opened; pass --image-path with a local copy"
+            )
             continue
         if not os.path.isfile(path):
             info["absent_by_module"][name] = f"{util.inline(path)} is not on this host"

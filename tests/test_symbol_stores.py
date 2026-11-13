@@ -62,13 +62,16 @@ class SymbolStoreTest(unittest.TestCase):
             GUID,
             AGE,
             symbol_dirs=symbol_dirs,
-            symbol_stores=uprof_symbols.symbol_stores(self.session),
+            symbol_stores=uprof_symbols.symbol_stores(),
         )
 
-    def test_the_recorded_translate_symbol_cache_is_searched(self):
+    def test_a_store_the_capture_records_is_searched_only_through_symbol_path(self):
+        # The capture names it, so it is not trusted as a store; the user passes it instead.
         self.custom_cache.mkdir()
         self.record_translate(self.custom_cache)
-        self.assertIn(self.stage(self.custom_cache), self.candidates())
+        staged = self.stage(self.custom_cache)
+        self.assertNotIn(staged, self.candidates())
+        self.assertIn(staged, self.candidates(symbol_dirs=[self.custom_cache]))
 
     def test_the_default_symbol_cache_is_searched(self):
         self.default_cache.mkdir()
@@ -80,12 +83,12 @@ class SymbolStoreTest(unittest.TestCase):
 
     def test_a_missing_store_adds_no_candidate(self):
         self.record_translate(self.custom_cache)
-        self.assertEqual(uprof_symbols.symbol_stores(self.session), [])
+        self.assertEqual(uprof_symbols.symbol_stores(), [])
 
     def test_staging_into_a_store_changes_the_search_identity(self):
         # An earlier build's PDB already created the <pdb> directory, so only its child changes.
         (self.default_cache / "ntdll.pdb").mkdir(parents=True)
-        stores = uprof_symbols.symbol_stores(self.session)
+        stores = uprof_symbols.symbol_stores()
         with mock.patch.dict(os.environ, {"UPROF_SESSION_CACHE_ROOT": str(self.root / "c")}):
             before = uprof_cache.search_identity(None, None, ["ntdll.dll"], stores)
             self.stage(self.default_cache)
@@ -97,7 +100,7 @@ class SymbolStoreTest(unittest.TestCase):
         for index in range(300):
             (self.default_cache / f"a{index:03d}.dll").mkdir(parents=True)
         (self.default_cache / "ntdll.pdb").mkdir()
-        stores = uprof_symbols.symbol_stores(self.session)
+        stores = uprof_symbols.symbol_stores()
         with mock.patch.dict(os.environ, {"UPROF_SESSION_CACHE_ROOT": str(self.root / "c")}):
             before = uprof_cache.search_identity(None, None, ["ntdll.dll"], stores)
             self.stage(self.default_cache)

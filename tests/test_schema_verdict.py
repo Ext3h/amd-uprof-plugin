@@ -40,7 +40,8 @@ class SchemaVerdictTest(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
 
-    def capture(self, function_columns="id UBIGINT, moduleId UINTEGER, name VARCHAR"):
+    def capture(self, function_columns="id UBIGINT, moduleId UINTEGER, name VARCHAR",
+                meta=PMC_META):
         connection = duckdb.connect(str(self.root / "cpu.db"))
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
@@ -52,7 +53,8 @@ class SchemaVerdictTest(unittest.TestCase):
                 f'"{EVENT_COLUMN}" DOUBLE)')
         finally:
             connection.close()
-        (self.root / "session.uprof").write_text(json.dumps(PMC_META), encoding="utf-8")
+        if meta is not None:
+            (self.root / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
         return self.root
 
     def schema(self, session):
@@ -65,6 +67,30 @@ class SchemaVerdictTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("CONTRACT: ", result.stderr)
         self.assertIn("UnifiedSampleSeries", result.stdout)
+
+    def test_the_verdict_names_the_pmc_mode_and_its_event_column(self):
+        result = self.schema(self.capture())
+        line = next(l for l in result.stderr.splitlines() if l.startswith("CONTRACT: "))
+        self.assertIn("PMC", line)
+        self.assertIn(EVENT_COLUMN, line)
+
+    def test_an_ibs_verdict_says_the_dump_is_checked_by_profile(self):
+        meta = {"collection": {"events": {"ibsEvents": {"op": True, "fetch": False,
+                                                        "opInterval": 1_000_000}},
+                               "target": {"systemWide": True}},
+                "auxiliary": {"ibsOpSampling": True}}
+        result = self.schema(self.capture(meta=meta))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(l for l in result.stderr.splitlines() if l.startswith("CONTRACT: "))
+        self.assertIn("IBS", line)
+        self.assertIn("dump is checked when profile reads it", line)
+
+    def test_an_unknown_mode_claims_only_the_common_tables(self):
+        result = self.schema(self.capture(meta=None))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(l for l in result.stderr.splitlines() if l.startswith("CONTRACT: "))
+        self.assertIn("mode unknown", line)
+        self.assertIn("only the tables and columns every mode reads", line)
 
     def test_a_missing_column_is_named_and_fails(self):
         result = self.schema(self.capture("id UBIGINT, moduleId UINTEGER"))

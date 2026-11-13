@@ -24,6 +24,7 @@ import uprof
 import uprof_query
 import uprof_shell
 from run_tests import HOST_SKIP
+from uprof_util import absolute
 
 ROOT = "C:\\caps" if os.name == "nt" else "/caps"
 
@@ -100,7 +101,8 @@ class RealShellNextTest(unittest.TestCase):
                 self.skipTest(HOST_SKIP + f"the interpreter or temp path is not plain: {part!r}")
         line = (f"{uprof_shell.quote(sys.executable)} {uprof_shell.quote(str(self.script))} "
                 + call[len(f"python {tool} "):])
-        expected = ["profile", "--session", str(Path(session).resolve()), "--by", "instruction",
+        # The call carries the session as uprof_util.absolute spells it (no 8.3 expansion).
+        expected = ["profile", "--session", str(absolute(session)), "--by", "instruction",
                     "--time-filter", "1:2", "--function", "ns::f;g", "--module", "a&b.dll",
                     "--json"]
         return line, expected

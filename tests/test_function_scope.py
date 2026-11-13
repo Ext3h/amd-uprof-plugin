@@ -92,8 +92,10 @@ class FunctionScopeProfileTest(unittest.TestCase):
         expected = self.scoped(session, "pdata_0x1050")
         spelled = str(FIXTURE).upper().replace("/", "\\")
         document = self.document(session, "--function", "pdata_0x1050", "--module", spelled)
-        self.assertEqual(document["legend"]["function_scope"]["parent"],
-                         expected["legend"]["function_scope"]["parent"])
+        # cpu_seconds follows the core frequency, which Linux reports anew for each run.
+        parents = [{key: value for key, value in doc["legend"]["function_scope"]["parent"].items()
+                    if key != "cpu_seconds"} for doc in (document, expected)]
+        self.assertEqual(parents[0], parents[1])
         self.assertEqual(document["legend"]["function_scope"]["module"], MODULE)
         self.assertEqual(sum(row["samples"] for row in document["rows"] if row.get("rva")), 3)
 

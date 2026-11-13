@@ -1,0 +1,4 @@
+defect_lab --class wait, ibs-cg, under the stressors
+without call graph: 15759141 ns per iteration
+with call graph: 15368633 ns per iteration
+slowdown: 0.98x

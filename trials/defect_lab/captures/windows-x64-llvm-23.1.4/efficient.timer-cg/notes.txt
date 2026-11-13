@@ -1,0 +1,3 @@
+defect_lab --class efficient, timer-cg, under the stressors
+without call graph: 0 ns per iteration
+with call graph: 0 ns per iteration

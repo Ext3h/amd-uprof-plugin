@@ -1,0 +1,4 @@
+defect_lab --class lock, timer-cg, under the stressors
+without call graph: 29 ns per iteration
+with call graph: 25 ns per iteration
+slowdown: 0.86x

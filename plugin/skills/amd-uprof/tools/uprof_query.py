@@ -738,44 +738,54 @@ def _cpu_seconds_interval(sampler: uprof_session.Sampler) -> float | None:
     return interval_s
 
 
-def _quote(text: str) -> str:
-    """Quote one shell argument; on Windows also protect %NAME% from cmd.exe expansion.
+def _command_arg(value: str, placeholder: str, data: dict[str, str]) -> str:
+    """value as one argument of a printed command, or the placeholder when it is not plain.
 
-    Plain text takes the quoting every shell reads alike; the caller's own non-plain arguments
-    keep the older quoting.
+    A value that is not plain (see uprof_shell) never enters the command; data records it under
+    the placeholder name, numbered when the same placeholder already holds another value.
     """
-    if uprof_shell.is_plain(text):
-        return uprof_shell.quote(text)
-    if os.name == "nt":
-        text = text.replace("%", "%%")
-    if text and all(char.isalnum() or char in "._-/:\\%+," for char in text):
+    text, line = uprof_shell.path_arg(value, placeholder)
+    if line is None:
         return text
-    return '"' + text.replace('"', '\\"') + '"'
+    name = placeholder.strip("<>")
+    key, index = name, 1
+    while data.get(key, value) != value:
+        index += 1
+        key = f"{name}_{index}"
+    data[key] = value
+    return f"<{key}>"
 
 
-def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
-    """A runnable drill-down command that keeps the session and the process/image scope."""
-    parts = ["python", _quote(str(TOOLS_DIR / "uprof.py")), "profile",
-             "--session", _quote(str(util.absolute(args.session))), "--by", by]
+def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False,
+                     data: dict[str, str] | None = None) -> str:
+    """A drill-down command that keeps the session and the process/image scope.
+
+    Every value goes through _command_arg, so a value that is not plain is a placeholder named
+    in data (the caller prints it as data, never inside the command).
+    """
+    data = {} if data is None else data
+    parts = ["python", _command_arg(str(TOOLS_DIR / "uprof.py"), "<UPROF_PY>", data), "profile",
+             "--session", _command_arg(str(util.absolute(args.session)), "<SESSION_DIR>", data),
+             "--by", by]
     if args.pid is not None:
         parts += ["--pid", str(args.pid)]
     elif args.image is not None and args.image != "%":
-        parts += ["--image", _quote(args.image)]
+        parts += ["--image", _command_arg(args.image, "<IMAGE>", data)]
     if args.time_filter:
-        parts += ["--time-filter", _quote(args.time_filter)]
+        parts += ["--time-filter", _command_arg(args.time_filter, "<TIME_FILTER>", data)]
     if getattr(args, "function", None):
-        parts += ["--function", _quote(args.function)]
+        parts += ["--function", _command_arg(args.function, "<FUNCTION>", data)]
         module = getattr(args, "module", None)
         if module:
-            parts += ["--module", _quote(module)]
+            parts += ["--module", _command_arg(module, "<MODULE>", data)]
         if getattr(args, "function_start", None) is not None:
             parts += ["--function-start", f"0x{args.function_start:X}"]
     if getattr(args, "symbol_path", None):
         for value in args.symbol_path:
-            parts += ["--symbol-path", _quote(value)]
+            parts += ["--symbol-path", _command_arg(value, "<SYMBOL_PATH>", data)]
     if getattr(args, "image_path", None):
         for value in args.image_path:
-            parts += ["--image-path", _quote(value)]
+            parts += ["--image-path", _command_arg(value, "<IMAGE_PATH>", data)]
     if args.top != "20":
         parts += ["--top", str(args.top)]
     if json_mode:
@@ -802,7 +812,8 @@ def _top_process(connection: object) -> tuple[int | None, str | None] | None:
 def _next_calls(args: argparse.Namespace,
                 row_attribution: dict[str, int] | None = None,
                 system_wide: bool = False,
-                top_process: tuple[int | None, str | None] | None = None) -> list[str]:
+                top_process: tuple[int | None, str | None] | None = None,
+                data: dict[str, str] | None = None) -> list[str]:
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
@@ -816,23 +827,24 @@ def _next_calls(args: argparse.Namespace,
     else its image name), so following NEXT never returns to the ranking; with neither, it offers
     no module call.
     """
-    calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
+    data = {} if data is None else data
+    calls = [_profile_command(args, by, data=data) for by in _NEXT_BY[args.by]]
     unscoped = _unscoped(args)
     if system_wide and unscoped and args.by in _PROCESS_STEERED:
-        calls.insert(0, _profile_command(args, "process"))
+        calls.insert(0, _profile_command(args, "process", data=data))
     if system_wide and unscoped and args.by == "process":
         pid, image = top_process or (None, None)
         if pid is None and not image:
             return []
         scoped = argparse.Namespace(**vars(args))
         scoped.pid, scoped.image = pid, (None if pid is not None else uprof_shell.image_pattern(image))
-        calls = [_profile_command(scoped, "module")]
+        calls = [_profile_command(scoped, "module", data=data)]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
-        calls.append(_profile_command(args, "region"))
+        calls.append(_profile_command(args, "region", data=data))
     if args.by == "line":
-        calls.append(_profile_command(args, "instruction", json_mode=True))
+        calls.append(_profile_command(args, "instruction", json_mode=True, data=data))
     if args.by == "instruction" and getattr(args, "function", None):
-        calls.append(_profile_command(args, "line"))
+        calls.append(_profile_command(args, "line", data=data))
     return calls
 
 
@@ -1189,6 +1201,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
                                          else _CPU_SECONDS_ATTACHED))
         else:
             absent["cpu_seconds"] = _cpu_seconds_absent(sampler)
+    next_data: dict[str, str] = {}
     result: dict[str, Any] = {
         "share_unit": "fraction",
         "share_scale": 1,
@@ -1197,8 +1210,10 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution, system_wide, top_process),
+        "next": _next_calls(args, row_attribution, system_wide, top_process, next_data),
     }
+    if next_data:
+        result["next_data"] = next_data
     if function_scope is not None:
         result["function_scope"] = _function_scope_json(
             function_scope, sample_interval_s, dump, tag_available)
@@ -1427,6 +1442,9 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool,
               ("READ", read)]
     if legend["next"]:
         fields.append(("NEXT", _next_text(legend["next"])))
+        # A value that could not go into the calls is named here as data, one field per
+        # placeholder.
+        fields += [(name, repr(value)) for name, value in legend.get("next_data", {}).items()]
     return fields
 
 
@@ -2123,12 +2141,13 @@ def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
     unsafe = [candidate for candidate in candidates
               if not uprof_shell.is_plain(str(candidate))]
     calls = []
+    data: dict[str, str] = {}
     for candidate in safe[:_CANDIDATE_LIMIT]:
         scoped = argparse.Namespace(**vars(args))
         scoped.session = str(candidate)
-        calls.append(_profile_command(scoped, args.by) if args.command == "profile"
-                     else f"python {_quote(str(TOOLS_DIR / 'uprof.py'))} schema --session "
-                          f"{_quote(str(candidate))}")
+        calls.append(_profile_command(scoped, args.by, data=data) if args.command == "profile"
+                     else f"python {_command_arg(str(TOOLS_DIR / 'uprof.py'), '<UPROF_PY>', data)}"
+                          f" schema --session {uprof_shell.quote(str(candidate))}")
     shown = "" if len(safe) <= _CANDIDATE_LIMIT else f" (first {_CANDIDATE_LIMIT})"
     parts = [f"{len(candidates)} captures below it{shown}"]
     if calls:
@@ -2138,7 +2157,7 @@ def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
         parts.append(f"{len(unsafe)} not offered as commands because their names hold "
                      f"characters a shell may expand{held}: " + ", ".join(repr(str(path))
                                                  for path in unsafe[:_CANDIDATE_LIMIT]))
-    return "; ".join(parts)
+    return "; ".join(parts) + "".join(f"\n{name}={value!r}" for name, value in data.items())
 
 
 def run_query_command(args: argparse.Namespace) -> None:

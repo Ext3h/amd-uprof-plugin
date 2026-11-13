@@ -29,7 +29,7 @@ Every `profile` call prints `METRIC`, `SANITY`, `SYMBOL_COVERAGE` and `KERNEL_CO
 | `translate` | copy the session, resolve symbols, optionally write the IBS ASCII dump |
 | `profile` | samples and time shares by process, module, function, 4 KiB region, source line or instruction; prints SANITY and ACHIEVED |
 | `anchor` | map a workload's QPC reading onto capture-relative seconds (negative = attach latency; `--freq` defaults to 10 MHz) |
-| `schema` | live table/column/type listing for drift checking |
+| `schema` | table/column/type listing and contract verdict |
 | `tools` | print every tool path and version against its minimum; fails on a missing required tool or a too-old one |
 
 Exit codes: 0 success, 2 `error: ...` (argparse also exits 2), 130 interrupted.

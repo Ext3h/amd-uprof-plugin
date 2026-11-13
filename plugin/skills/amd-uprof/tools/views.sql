@@ -133,6 +133,8 @@ SET VARIABLE schema_check_pid = CASE WHEN NOT getvariable('has_dump') THEN (
       AND lower(c.column_name) = lower(pmc_columns.column_name))
 ) ELSE 1 END;
 
+-- END OF THE EXPORT CONTRACT GUARD: the schema command runs this file up to this line.
+
 SET VARIABLE dump_guard = CASE
   WHEN NOT getvariable('has_dump') THEN 1
   WHEN NOT (SELECT count(*) > 0 FROM glob(getvariable('uprof_ibs_dump')))

@@ -157,6 +157,16 @@ def run_script(connection: Any, sql_path: Path) -> None:
         connection.execute(statement)
 
 
+def run_script_until(connection: Any, sql_path: Path, marker: str) -> None:
+    """Run the statements of sql_path that precede the line holding marker."""
+    text = _read_sql(sql_path)
+    end = text.find(marker)
+    if end < 0:
+        raise UprofError(f"{sql_path.name} has no '{marker}' line")
+    for statement in connection.extract_statements(text[:end]):
+        connection.execute(statement)
+
+
 @contextlib.contextmanager
 def open_query(cpu_db: Path, view_files: list[Path],
                variables: dict[str, str]) -> Iterator[Any]:

@@ -298,6 +298,19 @@ def image_build_mismatch(
 _PLAIN_PDB_NAME = re.compile(r"[^\\\\/:*?\"<>|\[\]]+\.pdb", re.IGNORECASE)
 
 
+# The note for a PE image whose debug directory llvm-readobj read and found without a PDB.
+NO_PDB_NOTE: Final = "the PE image's debug directory records no PDB"
+
+
+def _is_pe(path: str) -> bool:
+    """Whether the file starts with the MZ header of a PE image."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(2) == b"MZ"
+    except OSError:
+        return False
+
+
 def _plain_pdb_name(recorded: str, exe: str) -> str:
     """The file name of the image's recorded PDB when it is a plain *.pdb name, else the name
     beside the image. The name becomes a search pattern, so .., separators and glob
@@ -1010,15 +1023,19 @@ def symbolize_module(
             elif readobj_error:
                 evidence.note = readobj_error
                 evidence.remedy = image_remedy
-            else:
-                # No PDB can serve this image, so offering to stage one misleads; the symbolizer
-                # still reads DWARF or the COFF symbol table if the image carries them.
-                evidence.note = "the image's debug directory records no PDB"
+            elif _is_pe(exe_input):
+                # A PE image whose debug directory names no PDB has none to find or stage, so
+                # offering to stage one misleads; the symbolizer still reads embedded DWARF or
+                # the COFF symbol table.
+                evidence.note = NO_PDB_NOTE
                 evidence.remedy = (
-                    "no PDB can be found or staged for it; its export and .pdata names "
-                    "(profile --by function) are the finest available, and a third-party module "
-                    "with no symbols is a finding, not a blocker"
+                    "no PDB can be found or staged for it; a third-party module with no symbols "
+                    "is a finding, not a blocker"
                 )
+            else:
+                # Not a PE image: a separate debug file can still serve it, so the default
+                # debug-file remedy stays.
+                evidence.note = "the image's debug directory records no PDB"
             evidence.outcome = "no_debug_info" if found_debug_info is False else "readobj_failed"
             if pdb_files:
                 shown = ", ".join(os.fspath(path) for path in pdb_files)

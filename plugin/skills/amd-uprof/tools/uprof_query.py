@@ -522,8 +522,13 @@ def _module_identities(connection: object) -> dict[str, tuple[object, object]]:
     return {str(key): (value, image_size) for key, value, image_size in rows}
 
 
+_NO_PDB_CAUSE: Final = "the PE image records no PDB, so no PDB can be found or staged for it"
+
+
 def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
     """One-line per-module cause for SYMBOL_COVERAGE; the stderr evidence line has the detail."""
+    if evidence.note == uprof_symbols.NO_PDB_NOTE:
+        return _NO_PDB_CAUSE
     if evidence.outcome == "no_debug_info":
         return "no debug information is recorded for this module in the capture"
     if evidence.outcome == "no_pdb" and evidence.remedy:
@@ -957,6 +962,16 @@ _SYMBOL_PATH_REMEDY: Final = (
     "module's debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent "
     "PDB, the recorded CodeView path or the skill's local srv* cache scan is searched"
 )
+
+
+def _coverage_remedy(causes: dict[str, str] | None) -> str:
+    """The symbol-path remedy, unless every cause is an image recording no PDB, for which no
+    symbol or debug file can be found or staged."""
+    if causes and all(cause == _NO_PDB_CAUSE for cause in causes.values()):
+        return ""
+    return _SYMBOL_PATH_REMEDY
+
+
 # Report order is the caller-facing order of the repeatable path options.
 _SYMBOL_PATH_FLAGS: Final = (
     ("symbol_path", "--symbol-path"),
@@ -2504,7 +2519,7 @@ def _coverage_field(
         reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
         if reasons:
             text += f"; cause by module: {'; '.join(reasons)}"
-        return [("SYMBOL_COVERAGE", f"{text}; {_RANGE_UNRESOLVED_STOP}{_SYMBOL_PATH_REMEDY}")]
+        return [("SYMBOL_COVERAGE", f"{text}; {_RANGE_UNRESOLVED_STOP}{_coverage_remedy(causes)}")]
     scoped = (
         int(symbolizer["scoped_samples"])
         if (symbolized or by in FUNCTION_SCOPED) and symbolizer
@@ -2532,7 +2547,7 @@ def _coverage_field(
         if reasons:
             text += f"; cause by module: {'; '.join(reasons)}"
         stop = _NO_NAMED_FUNCTION_STOP if resolved == 0 else _UNRESOLVED_FUNCTION_STOP
-        return [("SYMBOL_COVERAGE", f"{text}; {stop}{_SYMBOL_PATH_REMEDY}")]
+        return [("SYMBOL_COVERAGE", f"{text}; {stop}{_coverage_remedy(causes)}")]
     unresolved = [value for value in values if int(value["samples"]) > int(value["named_samples"])]
     if not unresolved:
         return [("SYMBOL_COVERAGE", f"{db_text}; no module has unresolved samples")]
@@ -2554,7 +2569,7 @@ def _coverage_field(
         if any(int(value["named_samples"]) == 0 for value in unresolved)
         else _UNRESOLVED_FUNCTION_STOP
     )
-    remedy = _SYMBOL_PATH_REMEDY if causes else ""
+    remedy = _coverage_remedy(causes) if causes else ""
     return [
         ("SYMBOL_COVERAGE", f"{db_text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")
     ]

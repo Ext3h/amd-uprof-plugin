@@ -83,7 +83,7 @@ Only `collect` needs administrator or root rights, and only for AMDuProfCLI's ca
 | Path | What runs or is read elevated |
 |---|---|
 | interpreter and plugin code | `python` as the elevated shell resolves it, the standard library, `PYTHONPATH`, user site-packages, the plugin directory (its `__pycache__` is written there) |
-| AMDuProfCLI lookup and run | `AMDUPROF_CLI`, `PATH`, the Program Files or `/opt` installs; `--version`, then `collect` (argument list, no shell) |
+| AMDuProfCLI lookup and run | only the admin-writable installs: Program Files as HKLM records it, `/opt`, `/usr/local/bin`; `AMDUPROF_CLI` and `PATH` are ignored; `--version`, then `collect` (argument list, no shell) |
 | core frequency | `HKLM` registry, `/sys`, `/proc` (read only) |
 | elevation check, skill identity | read only |
 | IBS fallback cause (Windows) | PowerShell CIM query for VBS and hypervisor state |

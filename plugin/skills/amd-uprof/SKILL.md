@@ -254,7 +254,7 @@ Run `uprof.py tools` only when a command reports `MISSING`; each row is `<NAME>=
 
 | Tool | Windows | Linux |
 |---|---|---|
-| uProf CLI | `AMDUPROF_CLI`, `PATH`, then `C:\Program Files\AMD\AMDuProf\bin\AMDuProfCLI.exe` | `AMDUPROF_CLI`, `PATH`, then `/opt/AMDuProf_*/bin`, `/opt/AMD/uProf*/bin`, `/usr/local/bin` |
+| uProf CLI | `AMDUPROF_CLI`, `PATH` (unelevated only), then `C:\Program Files\AMD\AMDuProf\bin` | the same, then `/opt/AMDuProf_*/bin`, `/opt/AMD/uProf*/bin`, `/usr/local/bin` |
 | DuckDB | Python package `duckdb` 2.x | the same |
 | llvm-symbolizer | `LLVM_SYMBOLIZER`, `PATH`, then `C:\Program Files\LLVM\bin` | `LLVM_SYMBOLIZER`, `PATH`, then `/usr/lib/llvm-*/bin`, `/usr/bin` |
 | llvm-pdbutil | beside `llvm-symbolizer` or on `PATH`; fold cache (Windows only) | not used |

@@ -6,6 +6,7 @@ in session.uprof) or the default symbol cache; profile must find it there and un
 
 Run from the repository root: python tests/run_tests.py test_symbol_stores
 """
+# Spec: SPEC-26, SPEC-27
 
 import io
 import json

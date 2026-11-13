@@ -6,6 +6,7 @@ sampled_addresses and the hot RVA; the ordering cases pin the mode measure for -
 
 Run from the repository root: python tests/run_tests.py test_function_region_profile
 """
+# Spec: SPEC-31, SPEC-32
 
 import csv
 import json

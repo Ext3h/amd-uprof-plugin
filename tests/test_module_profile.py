@@ -7,6 +7,7 @@ function rather than every granularity.
 
 Run from the repository root: python tests/run_tests.py test_module_profile
 """
+# Spec: SPEC-30
 
 import json
 import subprocess

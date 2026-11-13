@@ -9,6 +9,7 @@ change; the load-bearing claims may not.
 
 Run from the repository root: python tests/run_tests.py test_docs_guidance
 """
+# Spec: SPEC-31, SPEC-32, SPEC-38
 
 import unittest
 from pathlib import Path

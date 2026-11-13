@@ -2,6 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_tools_report
 """
+# Spec: SPEC-18
 
 import contextlib
 import io

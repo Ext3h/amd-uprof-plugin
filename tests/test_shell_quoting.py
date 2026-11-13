@@ -43,9 +43,30 @@ CASES = [
     "C:/dir/sub:x",
     "key=value",
 ]
-NOT_PLAIN = ["", "-rf", "@resp", "C:\\dir\\", "\\\\server\\share", "a$b", "a$(calc)", "a`b",
-             "a%PATH%b", "a!b", 'a"b', "a\u201cb\u201d", "a\u201eb", "caf\u00e9", "a\tb",
-             "a\u202eb", "a|b", "a<b", "a>b", "a^b", "a*b", "a?b"]
+NOT_PLAIN = [
+    "",
+    "-rf",
+    "@resp",
+    "C:\\dir\\",
+    "\\\\server\\share",
+    "a$b",
+    "a$(calc)",
+    "a`b",
+    "a%PATH%b",
+    "a!b",
+    'a"b',
+    "a\u201cb\u201d",
+    "a\u201eb",
+    "caf\u00e9",
+    "a\tb",
+    "a\u202eb",
+    "a|b",
+    "a<b",
+    "a>b",
+    "a^b",
+    "a*b",
+    "a?b",
+]
 
 
 def echoed(stdout: str):
@@ -94,37 +115,47 @@ class RealShellTest(unittest.TestCase):
         for part in (sys.executable, str(self.script)):
             if not uprof_shell.is_plain(part):
                 self.skipTest(HOST_SKIP + f"the interpreter or temp path is not plain: {part!r}")
-        return " ".join(uprof_shell.quote(part) for part in (sys.executable, str(self.script),
-                                                            text))
+        return " ".join(
+            uprof_shell.quote(part) for part in (sys.executable, str(self.script), text)
+        )
 
     def check(self, run):
         for text in CASES:
             with self.subTest(text=text):
                 completed = run(self.command(text))
                 self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertEqual(echoed(completed.stdout), [text],
-                                 completed.stdout + completed.stderr)
+                self.assertEqual(
+                    echoed(completed.stdout), [text], completed.stdout + completed.stderr
+                )
 
     @unittest.skipIf(os.name == "nt", HOST_SKIP + "bash runs on the POSIX CI host")
     def test_bash(self):
         bash = shutil.which("bash")
         if not bash:
             self.skipTest(HOST_SKIP + "no bash on this host")
-        self.check(lambda line: subprocess.run([bash, "-c", line], capture_output=True,
-                                               text=True, encoding="utf-8"))
+        self.check(
+            lambda line: subprocess.run(
+                [bash, "-c", line], capture_output=True, text=True, encoding="utf-8"
+            )
+        )
 
     @unittest.skipUnless(os.name == "nt", HOST_SKIP + "PowerShell 5.1 runs on Windows")
     def test_powershell(self):
         powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / (
-            "System32/WindowsPowerShell/v1.0/powershell.exe")
+            "System32/WindowsPowerShell/v1.0/powershell.exe"
+        )
 
         def run(line):
             # A pasted line whose first token is quoted needs the call operator.
             script = ("& " + line) if line.startswith('"') else line
             encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-            return subprocess.run([str(powershell), "-NoProfile", "-NonInteractive",
-                                   "-EncodedCommand", encoded],
-                                  capture_output=True, text=True, encoding="utf-8")
+            return subprocess.run(
+                [str(powershell), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
         self.check(run)
 
     @unittest.skipUnless(os.name == "nt", HOST_SKIP + "cmd.exe runs on Windows")
@@ -132,8 +163,15 @@ class RealShellTest(unittest.TestCase):
         cmd = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/cmd.exe"
         # The string reaches CreateProcess verbatim; /s with outer quotes makes cmd.exe run the
         # line exactly as typed at its prompt, without /c's own quote stripping.
-        self.check(lambda line: subprocess.run(f'"{cmd}" /d /s /c "{line}"', capture_output=True,
-                                               text=True, encoding="utf-8", errors="replace"))
+        self.check(
+            lambda line: subprocess.run(
+                f'"{cmd}" /d /s /c "{line}"',
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        )
 
 
 if __name__ == "__main__":

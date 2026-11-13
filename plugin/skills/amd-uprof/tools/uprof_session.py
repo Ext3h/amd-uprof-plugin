@@ -19,6 +19,7 @@ PMC_EVENT = "event#0x3000076"
 IBS_OP_EVENT = "event#0x100000000f100"
 IBS_FETCH_EVENT = "event#0x100000000f000"
 
+
 @dataclass
 class Sampler:
     """What session.uprof records, and therefore what its sample shares mean.
@@ -124,8 +125,11 @@ def _ibs_os_mode(ibs: dict[str, Any] | None) -> str | None:
     """
     if not ibs:
         return None
-    bits = [name for name, enabled in (("opOs", ibs.get("op")), ("fetchOs", ibs.get("fetch")))
-            if enabled and ibs.get(name)]
+    bits = [
+        name
+        for name, enabled in (("opOs", ibs.get("op")), ("fetchOs", ibs.get("fetch")))
+        if enabled and ibs.get(name)
+    ]
     return ", ".join(bits) or None
 
 
@@ -134,13 +138,16 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
     if meta is None:
         return Sampler()
     if not meta:
-        return Sampler(metric="METRIC: session.uprof is not readable JSON -- metric basis not established")
+        return Sampler(
+            metric="METRIC: session.uprof is not readable JSON -- metric basis not established"
+        )
 
     columns = _registered_columns(meta)
     from_command = _event_from_command(meta)
     ibs = (meta.get("collection") or {}).get("events", {}).get("ibsEvents")
     is_ibs = bool((meta.get("auxiliary") or {}).get("ibsOpSampling")) or bool(
-        ibs and (ibs.get("op") or ibs.get("fetch")))
+        ibs and (ibs.get("op") or ibs.get("fetch"))
+    )
 
     if is_ibs:
         os_mode = _ibs_os_mode(ibs)
@@ -148,36 +155,61 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
             event = columns.get("IBS_ALL_OPS", IBS_OP_EVENT)
             interval = ibs.get("opInterval")
             if bool(ibs.get("opCycleCount")):
-                metric = (f"METRIC: IBS OP (IBS_ALL_OPS {event}, cycle-controlled interval {interval}) "
-                          "-- sample shares: core-cycle share (fixed cycles per sample), not "
-                          "wall time, not a per-op cost; tag-to-retire: share of tag-to-retire "
-                          "cycles summed over sampled ops (dispatch tag to retirement, "
-                          "queue/stalls included), clipped at 65535")
+                metric = (
+                    f"METRIC: IBS OP (IBS_ALL_OPS {event}, cycle-controlled interval {interval}) "
+                    "-- sample shares: core-cycle share (fixed cycles per sample), not "
+                    "wall time, not a per-op cost; tag-to-retire: share of tag-to-retire "
+                    "cycles summed over sampled ops (dispatch tag to retirement, "
+                    "queue/stalls included), clipped at 65535"
+                )
             else:
-                metric = (f"METRIC: IBS OP (IBS_ALL_OPS {event}, op-count interval {interval}) "
-                          "-- sample shares: dispatched-op frequency share (fixed dispatched "
-                          "ops per sample), not a per-op cost; tag-to-retire: share of "
-                          "tag-to-retire cycles summed over sampled ops (dispatch tag to "
-                          "retirement, queue/stalls included), clipped at 65535")
-            return Sampler(ibs_dump_kind="ibsop-event-dump", metric=metric, interval=interval,
-                           interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops",
-                           os_requested=os_mode is not None, os_mode=os_mode)
+                metric = (
+                    f"METRIC: IBS OP (IBS_ALL_OPS {event}, op-count interval {interval}) "
+                    "-- sample shares: dispatched-op frequency share (fixed dispatched "
+                    "ops per sample), not a per-op cost; tag-to-retire: share of "
+                    "tag-to-retire cycles summed over sampled ops (dispatch tag to "
+                    "retirement, queue/stalls included), clipped at 65535"
+                )
+            return Sampler(
+                ibs_dump_kind="ibsop-event-dump",
+                metric=metric,
+                interval=interval,
+                interval_units="cycles" if bool(ibs.get("opCycleCount")) else "ops",
+                os_requested=os_mode is not None,
+                os_mode=os_mode,
+            )
         if ibs and ibs.get("fetch"):
             event = columns.get("IBS_FETCH", IBS_FETCH_EVENT)
-            metric = (f"METRIC: IBS fetch (IBS_FETCH {event}, interval {ibs.get('fetchInterval')}) "
-                      "-- sample shares: fetch-sample frequency share (fixed fetch events per "
-                      "sample); fetch path unverified")
-            return Sampler(ibs_dump_kind="ibsfetch-event-dump", metric=metric,
-                           interval=ibs.get("fetchInterval"), interval_units="fetch",
-                           os_requested=os_mode is not None, os_mode=os_mode)
-        return Sampler(metric=(
-            "METRIC: IBS capture (details not recorded in session.uprof) -- sample shares: "
-            "not established; do not read them as time"),
-            os_requested=os_mode is not None, os_mode=os_mode)
+            metric = (
+                f"METRIC: IBS fetch (IBS_FETCH {event}, interval {ibs.get('fetchInterval')}) "
+                "-- sample shares: fetch-sample frequency share (fixed fetch events per "
+                "sample); fetch path unverified"
+            )
+            return Sampler(
+                ibs_dump_kind="ibsfetch-event-dump",
+                metric=metric,
+                interval=ibs.get("fetchInterval"),
+                interval_units="fetch",
+                os_requested=os_mode is not None,
+                os_mode=os_mode,
+            )
+        return Sampler(
+            metric=(
+                "METRIC: IBS capture (details not recorded in session.uprof) -- sample shares: "
+                "not established; do not read them as time"
+            ),
+            os_requested=os_mode is not None,
+            os_mode=os_mode,
+        )
 
-    pmc = [event for event in
-           ((meta.get("collection") or {}).get("events", {}).get("pmcEvents") or {}).get("pmcEventList") or []
-           if event]
+    pmc = [
+        event
+        for event in ((meta.get("collection") or {}).get("events", {}).get("pmcEvents") or {}).get(
+            "pmcEventList"
+        )
+        or []
+        if event
+    ]
     if pmc:
         mapped = columns.get("CYCLES_NOT_IN_HALT")
         event = next((entry for entry in pmc if entry.get("hwId") == 118), None)
@@ -192,7 +224,8 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
                 f"session.uprof is inconsistent: auxiliary.eventColumnIds maps "
                 f"CYCLES_NOT_IN_HALT to {mapped}, but the hwId {event.get('hwId')} entry in "
                 f"pmcEventList has encodedEventId {expected or 'none'}; re-run the capture or "
-                "regenerate session.uprof")
+                "regenerate session.uprof"
+            )
         if event.get("hwId") == 118:
             name = "CYCLES_NOT_IN_HALT"
         elif from_command:
@@ -201,25 +234,37 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
             name = f"hwId {event.get('hwId')}"
         cycle_shares = event.get("hwId") == 118 and bool(event.get("isSampling"))
         if cycle_shares:
-            metric = (f"METRIC: {name} ({column}, hwId {event.get('hwId')}, "
-                      f"interval {event.get('interval')}) -- sample shares: busy core-cycle "
-                      "share (fixed cycles per sample; halted excluded)")
+            metric = (
+                f"METRIC: {name} ({column}, hwId {event.get('hwId')}, "
+                f"interval {event.get('interval')}) -- sample shares: busy core-cycle "
+                "share (fixed cycles per sample; halted excluded)"
+            )
         else:
-            metric = (f"METRIC: {name} (hwId {event.get('hwId')}, interval {event.get('interval')}, "
-                      f"isSampling={event.get('isSampling')}) -- sample shares: not established; "
-                      "this PMC event is not the supported cycle event")
-        return Sampler(metric=metric, pmc=True, pmc_cycle_shares=cycle_shares,
-                       event_column=column, interval=event.get("interval"),
-                       interval_units="cycles", os_requested=bool(event.get("os")),
-                       os_mode="os" if event.get("os") else None)
+            metric = (
+                f"METRIC: {name} (hwId {event.get('hwId')}, interval {event.get('interval')}, "
+                f"isSampling={event.get('isSampling')}) -- sample shares: not established; "
+                "this PMC event is not the supported cycle event"
+            )
+        return Sampler(
+            metric=metric,
+            pmc=True,
+            pmc_cycle_shares=cycle_shares,
+            event_column=column,
+            interval=event.get("interval"),
+            interval_units="cycles",
+            os_requested=bool(event.get("os")),
+            os_mode="os" if event.get("os") else None,
+        )
 
     timer = _timer_sampler(meta)
     if timer is not None:
         return timer
 
     if from_command:
-        metric = (f"METRIC: {from_command} (from collectCommand; session.uprof records no PMC or IBS "
-                  "event) -- sample shares: not established")
+        metric = (
+            f"METRIC: {from_command} (from collectCommand; session.uprof records no PMC or IBS "
+            "event) -- sample shares: not established"
+        )
     else:
         metric = "METRIC: no PMC or IBS event recorded in session.uprof -- sample shares: not established"
     return Sampler(metric=metric)
@@ -247,9 +292,11 @@ def _timer_sampler(meta: dict[str, Any]) -> Sampler | None:
     column = None
     for category in (meta.get("auxiliary") or {}).get("eventColumnIds") or []:
         for event in category.get("events") or []:
-            if (event.get("name") == TIMER_EVENT_NAME
-                    and event.get("hwEventId") == TIMER_HW_EVENT_ID
-                    and event.get("encodedId") is not None):
+            if (
+                event.get("name") == TIMER_EVENT_NAME
+                and event.get("hwEventId") == TIMER_HW_EVENT_ID
+                and event.get("encodedId") is not None
+            ):
                 column = f"event#0x{int(event['encodedId']):x}"
                 break
         if column:
@@ -258,18 +305,27 @@ def _timer_sampler(meta: dict[str, Any]) -> Sampler | None:
         return None
     wide = records_true(((meta.get("collection") or {}).get("target") or {}).get("systemWide"))
     unverified = "; system-wide denominator and idle handling unverified" if wide else ""
-    metric = (f"METRIC: timer sampling ({TIMER_EVENT_NAME}, interval {interval_ms:g} ms) -- sample "
-              "shares: on-CPU time share of the sampled threads (one sample per timer tick that "
-              "found the thread running; kernel-mode ticks not established"
-              f"{unverified}), not cycles, not wall time; not available from a timer capture: "
-              "time_share, tag_to_retire_share, cycle cost, per-op cost, caller attribution into "
-              "external modules")
-    return Sampler(metric=metric, pmc=True, event_column=column, interval_units="ms",
-                   timer=True, interval_ms=interval_ms)
+    metric = (
+        f"METRIC: timer sampling ({TIMER_EVENT_NAME}, interval {interval_ms:g} ms) -- sample "
+        "shares: on-CPU time share of the sampled threads (one sample per timer tick that "
+        "found the thread running; kernel-mode ticks not established"
+        f"{unverified}), not cycles, not wall time; not available from a timer capture: "
+        "time_share, tag_to_retire_share, cycle cost, per-op cost, caller attribution into "
+        "external modules"
+    )
+    return Sampler(
+        metric=metric,
+        pmc=True,
+        event_column=column,
+        interval_units="ms",
+        timer=True,
+        interval_ms=interval_ms,
+    )
 
 
-def kernel_coverage_warning(sampler: Sampler, has_kernel_samples: bool,
-                            captured_samples: int | None = None) -> str | None:
+def kernel_coverage_warning(
+    sampler: Sampler, has_kernel_samples: bool, captured_samples: int | None = None
+) -> str | None:
     """The warning when the applied sampler requested OS mode but no sample is in a kernel image.
 
     has_kernel_samples covers the whole capture, before any process or time filter; a user-mode-only
@@ -281,25 +337,35 @@ def kernel_coverage_warning(sampler: Sampler, has_kernel_samples: bool,
         return None
     bit = sampler.os_mode or "OS mode"
     if captured_samples == 0:
-        return (f"no samples in the capture: the applied sampler requested OS mode ({bit}), but "
-                "the capture holds no sample of any kind, so kernel coverage cannot be assessed. "
-                "An attached process that exits before the first sample produces this; re-run "
-                "the capture if it was expected to have samples")
-    return (f"no kernel-image samples: the applied sampler requested OS mode ({bit}), but the "
-            "whole capture has no sample in any kernel image, so kernel-mode samples are absent. "
-            "If the capture was not elevated, only an elevated capture includes them")
+        return (
+            f"no samples in the capture: the applied sampler requested OS mode ({bit}), but "
+            "the capture holds no sample of any kind, so kernel coverage cannot be assessed. "
+            "An attached process that exits before the first sample produces this; re-run "
+            "the capture if it was expected to have samples"
+        )
+    return (
+        f"no kernel-image samples: the applied sampler requested OS mode ({bit}), but the "
+        "whole capture has no sample in any kernel image, so kernel-mode samples are absent. "
+        "If the capture was not elevated, only an elevated capture includes them"
+    )
 
 
-def verify_collect(session_dir: Path | str, event: str, interval: int, count_control: str,
-                   system_wide: bool, pids: list[int]) -> dict[str, Any]:
+def verify_collect(
+    session_dir: Path | str,
+    event: str,
+    interval: int,
+    count_control: str,
+    system_wide: bool,
+    pids: list[int],
+) -> dict[str, Any]:
     """Check the applied event against the request; return the metadata for printing."""
     meta = read_meta(session_dir)
     if not meta:
         raise UprofError(f"session.uprof is missing or unreadable in {session_dir}")
     target = (meta.get("collection") or {}).get("target") or {}
-    collection_event = ((meta.get("collection") or {}).get("events") or {})
+    collection_event = (meta.get("collection") or {}).get("events") or {}
     if event == "cycles":
-        pmc = ((collection_event.get("pmcEvents") or {}).get("pmcEventList") or [])
+        pmc = (collection_event.get("pmcEvents") or {}).get("pmcEventList") or []
         if not pmc:
             raise UprofError("no PMC event recorded; this is not a cycle capture")
         applied = pmc[0]
@@ -313,11 +379,14 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
             raise UprofError("capture is IBS, not PMC cycle counting")
     elif event == "timer":
         if _timer_sampler(meta) is None:
-            raise UprofError("no timer recorded (collection.events.timerInterval); this is not a "
-                             "timer capture")
+            raise UprofError(
+                "no timer recorded (collection.events.timerInterval); this is not a timer capture"
+            )
         if float(collection_event.get("timerInterval")) != interval:
-            raise UprofError(f"timer interval is {collection_event.get('timerInterval')} ms, "
-                             f"expected {interval} ms")
+            raise UprofError(
+                f"timer interval is {collection_event.get('timerInterval')} ms, "
+                f"expected {interval} ms"
+            )
     else:
         ibs = collection_event.get("ibsEvents") or {}
         if not ibs.get("op"):
@@ -327,14 +396,21 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
         if ibs.get("opInterval") != interval:
             raise UprofError(f"IBS interval is {ibs.get('opInterval')}, expected {interval}")
         if bool(ibs.get("opCycleCount")) != (count_control == "cycles"):
-            raise UprofError(f"IBS count control is opCycleCount={ibs.get('opCycleCount')}, "
-                             f"expected {count_control == 'cycles'} ({count_control})")
+            raise UprofError(
+                f"IBS count control is opCycleCount={ibs.get('opCycleCount')}, "
+                f"expected {count_control == 'cycles'} ({count_control})"
+            )
     if records_true(target.get("systemWide")) != system_wide:
-        raise UprofError(f"capture target mode is systemWide={target.get('systemWide')}, "
-                         f"expected {system_wide} (use -a or --process)")
+        raise UprofError(
+            f"capture target mode is systemWide={target.get('systemWide')}, "
+            f"expected {system_wide} (use -a or --process)"
+        )
     if not system_wide:
-        attached = {int(entry.get("processId")) for entry in target.get("attachedProcesses") or []
-                    if entry.get("processId") is not None}
+        attached = {
+            int(entry.get("processId"))
+            for entry in target.get("attachedProcesses") or []
+            if entry.get("processId") is not None
+        }
         missing = [pid for pid in pids if pid not in attached]
         if missing:
             raise UprofError("capture did not attach to PID(s): " + ", ".join(map(str, missing)))
@@ -342,30 +418,36 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
 
 
 def collect_summary(meta: dict[str, Any], event: str) -> str:
-    collection_event = ((meta.get("collection") or {}).get("events") or {})
+    collection_event = (meta.get("collection") or {}).get("events") or {}
     target = (meta.get("collection") or {}).get("target") or {}
     auxiliary = meta.get("auxiliary") or {}
     if event == "cycles":
         applied = (((collection_event.get("pmcEvents") or {}).get("pmcEventList")) or [{}])[0]
-        return (f"hwId={applied.get('hwId')} interval={applied.get('interval')} "
-                f"isSampling={applied.get('isSampling')} systemWide={target.get('systemWide')} "
-                f"ibsOpSampling={auxiliary.get('ibsOpSampling')}")
+        return (
+            f"hwId={applied.get('hwId')} interval={applied.get('interval')} "
+            f"isSampling={applied.get('isSampling')} systemWide={target.get('systemWide')} "
+            f"ibsOpSampling={auxiliary.get('ibsOpSampling')}"
+        )
     if event == "timer":
-        return (f"timerInterval={collection_event.get('timerInterval'):g} ms "
-                f"systemWide={target.get('systemWide')}")
+        return (
+            f"timerInterval={collection_event.get('timerInterval'):g} ms "
+            f"systemWide={target.get('systemWide')}"
+        )
     ibs = collection_event.get("ibsEvents") or {}
-    return (f"ibsOpSampling={auxiliary.get('ibsOpSampling')} ibsOp={ibs.get('op')} "
-            f"opInterval={ibs.get('opInterval')} opCycleCount={ibs.get('opCycleCount')} "
-            f"systemWide={target.get('systemWide')}")
+    return (
+        f"ibsOpSampling={auxiliary.get('ibsOpSampling')} ibsOp={ibs.get('op')} "
+        f"opInterval={ibs.get('opInterval')} opCycleCount={ibs.get('opCycleCount')} "
+        f"systemWide={target.get('systemWide')}"
+    )
 
 
 def _format_duration(seconds: float) -> str:
-    return (f"{seconds * 1e3:.3g} ms" if seconds >= 1e-3
-            else f"{seconds * 1e6:.3g} us")
+    return f"{seconds * 1e3:.3g} ms" if seconds >= 1e-3 else f"{seconds * 1e6:.3g} us"
 
 
-def requested_interval(sampler: Sampler, frequency_hz: float | None = None
-                       ) -> tuple[float | None, str, str]:
+def requested_interval(
+    sampler: Sampler, frequency_hz: float | None = None
+) -> tuple[float | None, str, str]:
     """The requested interval in seconds, the text naming it, and the ideal-rate note.
 
     interval_s is None for a work/fetch count or a cycle interval with no usable core frequency.
@@ -374,26 +456,32 @@ def requested_interval(sampler: Sampler, frequency_hz: float | None = None
     """
     if sampler.timer and sampler.interval_ms:
         interval_s = sampler.interval_ms / 1000.0
-        return (interval_s, f"timer {sampler.interval_ms:g} ms",
-                f"; ideal {1.0 / interval_s:,.0f}/s per running thread")
+        return (
+            interval_s,
+            f"timer {sampler.interval_ms:g} ms",
+            f"; ideal {1.0 / interval_s:,.0f}/s per running thread",
+        )
     if sampler.interval is None or sampler.interval_units is None:
         return None, "the session records no interval", ""
     if sampler.interval_units == "cycles":
         try:
             if frequency_hz is None:
                 from uprof_collect import _core_frequency
+
                 hertz, display, _source = _core_frequency()
             else:
                 hertz, display = float(frequency_hz), f"{frequency_hz / 1e6:g} MHz"
             interval_s = sampler.interval / hertz
-            requested = (f"{sampler.interval} cycles at {display} = "
-                         f"{_format_duration(interval_s)}")
+            requested = f"{sampler.interval} cycles at {display} = {_format_duration(interval_s)}"
             return interval_s, requested, f"; ideal {1.0 / interval_s:,.0f}/s per CPU"
         except Exception:
             return None, f"{sampler.interval} cycles (core frequency unavailable)", ""
     if sampler.interval_units == "ops":
-        return (None, f"{sampler.interval} dispatched ops",
-                "; the interval is a work count, so no time rate follows")
+        return (
+            None,
+            f"{sampler.interval} dispatched ops",
+            "; the interval is a work count, so no time rate follows",
+        )
     return None, f"{sampler.interval} fetch events", ""
 
 
@@ -408,6 +496,7 @@ def cycle_frequency_hz(sampler: Sampler) -> float | None:
         return None
     try:
         from uprof_collect import _core_frequency
+
         return float(_core_frequency()[0])
     except Exception:
         return None
@@ -422,10 +511,15 @@ def run_gap_limit_ns(sampler: Sampler, frequency_hz: float | None = None) -> flo
     return None if interval_s is None else _RUN_GAP_FACTOR * interval_s * 1e9
 
 
-def achieved_summary(samples: int, window_s: float | None, cpus: int, sampler: Sampler,
-                     contexts: list[ContextCadence] | None = None,
-                     context_label: str = "CPU",
-                     frequency_hz: float | None = None) -> str:
+def achieved_summary(
+    samples: int,
+    window_s: float | None,
+    cpus: int,
+    sampler: Sampler,
+    contexts: list[ContextCadence] | None = None,
+    context_label: str = "CPU",
+    frequency_hz: float | None = None,
+) -> str:
     """The `ACHIEVED` text: whole-capture rate and the busiest sampling context's cadence.
 
     The per-CPU rate divides every sample by every CPU in the capture, so idle CPUs and
@@ -439,34 +533,43 @@ def achieved_summary(samples: int, window_s: float | None, cpus: int, sampler: S
     ideal_per_s = None if interval_s is None else 1.0 / interval_s
 
     if window_s is None or window_s <= 0:
-        text = (f"{samples} samples; the capture records no usable duration, so the rate is "
-                f"not derivable (requested {requested}{ideal_note})")
+        text = (
+            f"{samples} samples; the capture records no usable duration, so the rate is "
+            f"not derivable (requested {requested}{ideal_note})"
+        )
     elif cpus:
         rate = samples / window_s / cpus
-        text = (f"{samples} samples, {window_s:.3f} s, {cpus} CPUs, {rate:,.2f}/s per CPU "
-                f"(requested {requested}{ideal_note})")
+        text = (
+            f"{samples} samples, {window_s:.3f} s, {cpus} CPUs, {rate:,.2f}/s per CPU "
+            f"(requested {requested}{ideal_note})"
+        )
     else:
         rate = samples / window_s
-        text = (f"{samples} samples, {window_s:.3f} s, {rate:,.2f}/s over the capture "
-                f"(requested {requested}{ideal_note}; the capture records no CPU id, so the "
-                "per-CPU rate is not derivable)")
+        text = (
+            f"{samples} samples, {window_s:.3f} s, {rate:,.2f}/s over the capture "
+            f"(requested {requested}{ideal_note}; the capture records no CPU id, so the "
+            "per-CPU rate is not derivable)"
+        )
 
     below = False
     if contexts:
         busiest = max(contexts, key=lambda context: context.samples)
         if busiest.samples > 0:
-            active = sum(1 for context in contexts
-                         if context.samples >= 0.1 * busiest.samples)
+            active = sum(1 for context in contexts if context.samples >= 0.1 * busiest.samples)
             if busiest.median_gap_ns is not None and busiest.median_gap_ns > 0:
                 delivered = 1e9 / busiest.median_gap_ns
                 gap_s = busiest.median_gap_ns / 1e9
-                text += (f"; busiest {context_label} {delivered:,.0f}/s "
-                         f"(median gap {_format_duration(gap_s)})")
+                text += (
+                    f"; busiest {context_label} {delivered:,.0f}/s "
+                    f"(median gap {_format_duration(gap_s)})"
+                )
             elif sampler.ibs_dump_kind is not None:
                 # The dump has timestamps, so no gap inside the limit means the context never
                 # sampled continuously: exactly the condition the warning exists for.
-                text += (f"; busiest {context_label} has no sampling run within "
-                         f"{_RUN_GAP_FACTOR:g}x the requested interval")
+                text += (
+                    f"; busiest {context_label} has no sampling run within "
+                    f"{_RUN_GAP_FACTOR:g}x the requested interval"
+                )
                 below = ideal_per_s is not None
             elif window_s is not None and window_s > 0:
                 delivered = busiest.samples / window_s
@@ -515,11 +618,12 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
     else:
         lines.append("START_TS=absent (no UTC conversion)")
     if relative < 0:
-        lines.append("NOTE=RELATIVE_S is negative: the reading precedes the capture start "
-                     "(attach latency); the capture does not cover it")
+        lines.append(
+            "NOTE=RELATIVE_S is negative: the reading precedes the capture start "
+            "(attach latency); the capture does not cover it"
+        )
     else:
-        lines.append("NOTE=RELATIVE_S is seconds from capture start, comparable to "
-                     "--time-filter")
+        lines.append("NOTE=RELATIVE_S is seconds from capture start, comparable to --time-filter")
     return lines
 
 

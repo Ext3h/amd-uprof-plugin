@@ -31,9 +31,20 @@ class FunctionScopeProfileTest(unittest.TestCase):
 
     def run_profile(self, session, *extra, by="instruction"):
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
-             str(session.path if isinstance(session, Session) else session), "--by", by, *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(session.path if isinstance(session, Session) else session),
+                "--by",
+                by,
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
@@ -94,8 +105,14 @@ class FunctionScopeProfileTest(unittest.TestCase):
         spelled = str(FIXTURE).upper().replace("/", "\\")
         document = self.document(session, "--function", "pdata_0x1050", "--module", spelled)
         # cpu_seconds follows the core frequency, which Linux reports anew for each run.
-        parents = [{key: value for key, value in doc["legend"]["function_scope"]["parent"].items()
-                    if key != "cpu_seconds"} for doc in (document, expected)]
+        parents = [
+            {
+                key: value
+                for key, value in doc["legend"]["function_scope"]["parent"].items()
+                if key != "cpu_seconds"
+            }
+            for doc in (document, expected)
+        ]
         self.assertEqual(parents[0], parents[1])
         self.assertEqual(document["legend"]["function_scope"]["module"], MODULE)
         self.assertEqual(sum(row["samples"] for row in document["rows"] if row.get("rva")), 3)
@@ -126,16 +143,21 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.assertEqual(remainder["samples"], 1)
         self.assertAlmostEqual(remainder["sample_share"], 1 / 9)
         self.assertAlmostEqual(remainder["parent_sample_share"], 1 / 4)
-        self.assertAlmostEqual(hot["parent_sample_share"]
-                               + remainder["parent_sample_share"], 1.0)
+        self.assertAlmostEqual(hot["parent_sample_share"] + remainder["parent_sample_share"], 1.0)
 
     def test_the_filtered_instruction_rows_pin_the_parent_relative_values(self):
         document = self.scoped(self.derived_session(), "pdata_0x1050")
-        rows = [(row["rva"], row["function"], row["file"], row["samples"])
-                for row in document["rows"]]
+        rows = [
+            (row["rva"], row["function"], row["file"], row["samples"]) for row in document["rows"]
+        ]
 
-        self.assertEqual(rows, [("0x1050", "fixture_second", "<no source line>", 2),
-                                ("0x1055", "fixture_second", "<no source line>", 1)])
+        self.assertEqual(
+            rows,
+            [
+                ("0x1050", "fixture_second", "<no source line>", 2),
+                ("0x1055", "fixture_second", "<no source line>", 1),
+            ],
+        )
         self.assertAlmostEqual(document["rows"][0]["parent_sample_share"], 2 / 3)
         self.assertAlmostEqual(document["rows"][1]["parent_sample_share"], 1 / 3)
 
@@ -165,8 +187,15 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.assertAlmostEqual(rows["0x201B"]["parent_sample_share"], 1 / 3)
 
     def test_function_start_selects_one_derived_range(self):
-        document = self.document(self.derived_session(), "--function", "fixture_entry",
-                                 "--module", MODULE, "--function-start", "0x1000")
+        document = self.document(
+            self.derived_session(),
+            "--function",
+            "fixture_entry",
+            "--module",
+            MODULE,
+            "--function-start",
+            "0x1000",
+        )
         self.assertEqual(document["legend"]["function_scope"]["function_start"], "0x1000")
 
     def test_the_filtered_view_offers_its_sibling_and_nothing_else(self):
@@ -200,18 +229,33 @@ class FunctionScopeProfileTest(unittest.TestCase):
         derived = self.derived_session()
         cases = [
             (["--function", "fixture_entry"], "--function needs --module"),
-            (["--function", "fixture_entry", "--module", MODULE, "--by", "module"],
-             "cannot be used with --by module"),
+            (
+                ["--function", "fixture_entry", "--module", MODULE, "--by", "module"],
+                "cannot be used with --by module",
+            ),
             (["--function", "nope", "--module", MODULE], "no function row matches"),
-            (["--function", "fixture_entry", "--module", MODULE, "--function-start", "zzz"],
-             "--function-start needs an RVA"),
+            (
+                ["--function", "fixture_entry", "--module", MODULE, "--function-start", "zzz"],
+                "--function-start needs an RVA",
+            ),
         ]
         for extra, expected in cases:
             with self.subTest(extra=extra):
                 result = subprocess.run(
-                    [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
-                     str(derived), "--by", "instruction", *extra],
-                    capture_output=True, text=True, encoding="utf-8")
+                    [
+                        sys.executable,
+                        str(TOOLS_DIR / "uprof.py"),
+                        "profile",
+                        "--session",
+                        str(derived),
+                        "--by",
+                        "instruction",
+                        *extra,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                )
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertIn(expected, result.stderr)
 
@@ -220,9 +264,23 @@ class FunctionScopeProfileTest(unittest.TestCase):
         session.module(1, FIXTURE, False).function(10, 1, "dup").function(11, 1, "dup")
         session.sample(1, 10, 0x101B, 1).sample(1, 11, 0x201B, 1)
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
-             str(session.write()), "--by", "instruction", "--function", "dup", "--module", MODULE],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(session.write()),
+                "--by",
+                "instruction",
+                "--function",
+                "dup",
+                "--module",
+                MODULE,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 2)
         self.assertIn("--function-start cannot separate them", result.stderr)
 

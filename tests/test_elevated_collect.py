@@ -17,10 +17,18 @@ import unittest
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
-ANALYSIS_MODULES = ("duckdb", "uprof_cache", "uprof_context", "uprof_db", "uprof_dump",
-                    "uprof_functions", "uprof_query", "uprof_symbols")
+ANALYSIS_MODULES = (
+    "duckdb",
+    "uprof_cache",
+    "uprof_context",
+    "uprof_db",
+    "uprof_dump",
+    "uprof_functions",
+    "uprof_query",
+    "uprof_symbols",
+)
 
-PROBE = textwrap.dedent('''
+PROBE = textwrap.dedent("""
     import json, os, shutil, subprocess, sys
     from pathlib import Path
     from unittest import mock
@@ -69,7 +77,7 @@ PROBE = textwrap.dedent('''
                            "--event", "ibs-op"])
     report.write_text(json.dumps({"code": code, "deletes": deletes,
                                   "modules": sorted(sys.modules)}), encoding="utf-8")
-''')
+""")
 
 
 class ElevatedCollectTest(unittest.TestCase):
@@ -82,11 +90,14 @@ class ElevatedCollectTest(unittest.TestCase):
         cls.out_dir = root / "out"
         cls.out_dir.mkdir()
         (cls.out_dir / "earlier.txt").write_text("keep", encoding="utf-8")
-        cls.result = subprocess.run([sys.executable, "-I", str(probe), str(TOOLS_DIR),
-                                  str(cls.out_dir), str(report)],
-                                 capture_output=True, text=True, encoding="utf-8", timeout=120)
-        cls.report = (json.loads(report.read_text(encoding="utf-8"))
-                      if report.is_file() else None)
+        cls.result = subprocess.run(
+            [sys.executable, "-I", str(probe), str(TOOLS_DIR), str(cls.out_dir), str(report)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+        )
+        cls.report = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else None
 
     @classmethod
     def tearDownClass(cls):
@@ -107,15 +118,23 @@ class ElevatedCollectTest(unittest.TestCase):
 
     def test_remedies_are_fixed_text(self):
         # With the paths the run chose replaced, stderr is exactly the tool's own text.
-        session = next(line.split("=", 1)[1] for line in self.result.stdout.splitlines()
-                       if line.startswith("SESSION="))
+        session = next(
+            line.split("=", 1)[1]
+            for line in self.result.stdout.splitlines()
+            if line.startswith("SESSION=")
+        )
         text = self.result.stderr.replace(session, "<CYCLES_DIR>").replace(
-            str(self.out_dir), "<OUT_DIR>")
-        self.assertEqual(text.splitlines(), [
-            "WARNING: <OUT_DIR> exists; uProf will create an AMDuProf-* subdirectory to avoid "
-            "the collision",
-            "NOTE: the failed IBS attempt is left in <OUT_DIR>; the cycle capture goes to "
-            "<CYCLES_DIR>"])
+            str(self.out_dir), "<OUT_DIR>"
+        )
+        self.assertEqual(
+            text.splitlines(),
+            [
+                "WARNING: <OUT_DIR> exists; uProf will create an AMDuProf-* subdirectory to avoid "
+                "the collision",
+                "NOTE: the failed IBS attempt is left in <OUT_DIR>; the cycle capture goes to "
+                "<CYCLES_DIR>",
+            ],
+        )
 
 
 if __name__ == "__main__":

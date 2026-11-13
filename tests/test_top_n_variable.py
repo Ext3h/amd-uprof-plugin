@@ -19,10 +19,7 @@ class TopNVariableTypeTest(unittest.TestCase):
             "function VARCHAR, module VARCHAR, "
             "hot_rva BIGINT, hot_samples BIGINT, total_samples BIGINT)"
         )
-        self.con.execute(
-            "CREATE TABLE v_region_rows ("
-            "attribution VARCHAR, samples BIGINT)"
-        )
+        self.con.execute("CREATE TABLE v_region_rows (attribution VARCHAR, samples BIGINT)")
 
     def tearDown(self):
         self.con.close()
@@ -44,8 +41,9 @@ class TopNVariableTypeTest(unittest.TestCase):
 
         current_type = self._top_n_type()
         self.assertNotEqual(
-            current_type, "VARCHAR",
-            f"top_n was rebound as VARCHAR instead of integer: {current_type}"
+            current_type,
+            "VARCHAR",
+            f"top_n was rebound as VARCHAR instead of integer: {current_type}",
         )
         self.assertIn(current_type, ("BIGINT", "INTEGER"))
         self.assertEqual(self._top_n_value(), 20)
@@ -59,8 +57,9 @@ class TopNVariableTypeTest(unittest.TestCase):
 
         current_type = self._top_n_type()
         self.assertNotEqual(
-            current_type, "VARCHAR",
-            f"top_n was rebound as VARCHAR instead of integer: {current_type}"
+            current_type,
+            "VARCHAR",
+            f"top_n was rebound as VARCHAR instead of integer: {current_type}",
         )
         self.assertIn(current_type, ("BIGINT", "INTEGER"))
         self.assertEqual(self._top_n_value(), 20)

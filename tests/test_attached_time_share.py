@@ -31,25 +31,28 @@ ALPHA_OFFSET = 4096
 BETA_OFFSET = 8192
 ALPHA = "alpha.exe"
 BETA = "beta.exe"
-TIME_MEANING = ("time share estimated from the gaps between per-sample timestamps within each "
-                "thread (PID, TID), so a thread that migrates between CPUs is counted once; the "
-                "gap includes off-CPU time and is charged to the ending sample, the first sample "
-                "per thread is ignored (no gap before it), and NULL sorts last; for a "
-                "cycle-controlled IBS capture sample_share (fixed cycles per sample) is the "
-                "CPU-cycle share and the better ranking")
+TIME_MEANING = (
+    "time share estimated from the gaps between per-sample timestamps within each "
+    "thread (PID, TID), so a thread that migrates between CPUs is counted once; the "
+    "gap includes off-CPU time and is charged to the ending sample, the first sample "
+    "per thread is ignored (no gap before it), and NULL sorts last; for a "
+    "cycle-controlled IBS capture sample_share (fixed cycles per sample) is the "
+    "CPU-cycle share and the better ranking"
+)
 
 
 def _dump_rows():
     """(delta_tick, cpu, module, offset) rows for the migrating attached thread."""
-    rows = [(0, 0, BETA, BETA_OFFSET), (1_000_000_000, 1, BETA, BETA_OFFSET),
-            (10_000_000_000, 0, BETA, BETA_OFFSET),
-            (11_000_000_000, 1, BETA, BETA_OFFSET),
-            (20_000_000_000, 0, BETA, BETA_OFFSET),
-            (21_000_000_000, 1, BETA, BETA_OFFSET)]
-    rows += [(9_000_000_000 + index * 1_000_000, 1, ALPHA, ALPHA_OFFSET)
-             for index in range(20)]
-    rows += [(19_000_000_000 + index * 1_000_000, 1, ALPHA, ALPHA_OFFSET)
-             for index in range(20)]
+    rows = [
+        (0, 0, BETA, BETA_OFFSET),
+        (1_000_000_000, 1, BETA, BETA_OFFSET),
+        (10_000_000_000, 0, BETA, BETA_OFFSET),
+        (11_000_000_000, 1, BETA, BETA_OFFSET),
+        (20_000_000_000, 0, BETA, BETA_OFFSET),
+        (21_000_000_000, 1, BETA, BETA_OFFSET),
+    ]
+    rows += [(9_000_000_000 + index * 1_000_000, 1, ALPHA, ALPHA_OFFSET) for index in range(20)]
+    rows += [(19_000_000_000 + index * 1_000_000, 1, ALPHA, ALPHA_OFFSET) for index in range(20)]
     return sorted(rows)
 
 
@@ -65,17 +68,17 @@ class AttachedTimeShareTest(unittest.TestCase):
 
     def _write_session(self, system_wide=False):
         meta = {
-            "translateCommand": ("AMDuProfCLI.exe translate -i session "
-                                 "--ascii ibsop-event-dump"),
+            "translateCommand": ("AMDuProfCLI.exe translate -i session --ascii ibsop-event-dump"),
             "collection": {
                 "schedule": {"elapsed": SPAN_NS // 1_000_000},
-                "events": {"ibsEvents": {
-                    "op": {"interval": 4_700_000},
-                    "opInterval": 4_700_000,
-                    "opCycleCount": True,
-                }},
-                "target": {"systemWide": system_wide,
-                           "attachedProcesses": [{"processId": 100}]},
+                "events": {
+                    "ibsEvents": {
+                        "op": {"interval": 4_700_000},
+                        "opInterval": 4_700_000,
+                        "opCycleCount": True,
+                    }
+                },
+                "target": {"systemWide": system_wide, "attachedProcesses": [{"processId": 100}]},
             },
             "auxiliary": {"ibsOpSampling": True},
         }
@@ -85,8 +88,9 @@ class AttachedTimeShareTest(unittest.TestCase):
         lines = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName"]
         for tick, cpu, module, offset in rows:
             lines.append(f"{tick},{cpu},{tid},{pid},{offset},{module}")
-        (self.session / "IbsOpDump.csv").write_text("\n".join(lines) + "\n",
-                                                     encoding="utf-8", newline="\n")
+        (self.session / "IbsOpDump.csv").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+        )
 
     def _write_dump(self):
         self._write_rows(_dump_rows())
@@ -96,43 +100,76 @@ class AttachedTimeShareTest(unittest.TestCase):
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
             connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
-            connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
-                               "functionId UBIGINT, moduleRVA UBIGINT)")
-            connection.execute("INSERT INTO Process VALUES (100, 'workload.exe'), "
-                               "(200, 'other.exe')")
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
+            connection.execute(
+                "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+                "functionId UBIGINT, moduleRVA UBIGINT)"
+            )
+            connection.execute(
+                "INSERT INTO Process VALUES (100, 'workload.exe'), (200, 'other.exe')"
+            )
             connection.execute(f"INSERT INTO Module VALUES (1, '{ALPHA}'), (2, '{BETA}')")
-            connection.execute("INSERT INTO Function VALUES "
-                               f"(10, 1, 'alpha_fn'), (20, 2, 'beta_fn')")
-            connection.execute(f"INSERT INTO UnifiedSampleSeries VALUES "
-                               f"(1, 10, {ALPHA_OFFSET}), (2, 20, {BETA_OFFSET})")
+            connection.execute(
+                f"INSERT INTO Function VALUES (10, 1, 'alpha_fn'), (20, 2, 'beta_fn')"
+            )
+            connection.execute(
+                f"INSERT INTO UnifiedSampleSeries VALUES "
+                f"(1, 10, {ALPHA_OFFSET}), (2, 20, {BETA_OFFSET})"
+            )
         finally:
             connection.close()
 
     def _variables(self):
         return {
-            "uprof_image": "%", "uprof_pid": "", "uprof_top": "20",
-            "uprof_time_start": "0", "uprof_time_end": "9223372036854775807",
+            "uprof_image": "%",
+            "uprof_pid": "",
+            "uprof_top": "20",
+            "uprof_time_start": "0",
+            "uprof_time_end": "9223372036854775807",
             "uprof_ibs_dump": str(self.session / "IbsOpDump.csv"),
             "uprof_event_column": "",
             "uprof_session_meta": str(self.session / "session.uprof"),
-            "uprof_tag_available": "false", "uprof_symbols": "", "uprof_aliases": "",
+            "uprof_tag_available": "false",
+            "uprof_symbols": "",
+            "uprof_aliases": "",
         }
 
     def _run_profile(self, *extra):
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile",
-             "--session", str(self.session), "--by", "function", *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(self.session),
+                "--by",
+                "function",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
     def _run_profile_failure(self):
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile",
-             "--session", str(self.session), "--by", "function"],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(self.session),
+                "--by",
+                "function",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 2, result.stderr)
         return result
 
@@ -140,8 +177,9 @@ class AttachedTimeShareTest(unittest.TestCase):
         return json.loads(self._run_profile("--json"))
 
     def test_weight_total_is_the_capture_span(self):
-        with uprof_db.open_query(self.session / "cpu.db", [TOOLS_DIR / "views.sql"],
-                                 self._variables()) as connection:
+        with uprof_db.open_query(
+            self.session / "cpu.db", [TOOLS_DIR / "views.sql"], self._variables()
+        ) as connection:
             total = connection.sql("SELECT sum(weight) FROM v_dump_weighted").fetchall()[0][0]
 
         # The per-CPU estimator sums 40 s over a 21 s span; per thread the two CPUs' gaps do not
@@ -184,11 +222,13 @@ class AttachedTimeShareTest(unittest.TestCase):
         # One row per thread, so every weight is NULL and the message must not be built from a
         # NULL argument.
         lines = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName"]
-        for index, tick in enumerate((0, 1_000_000_000, 2_000_000_000, 4_000_000_000,
-                                      8_000_000_000), start=1):
+        for index, tick in enumerate(
+            (0, 1_000_000_000, 2_000_000_000, 4_000_000_000, 8_000_000_000), start=1
+        ):
             lines.append(f"{tick},0,{index},100,{ALPHA_OFFSET},{ALPHA}")
-        (self.session / "IbsOpDump.csv").write_text("\n".join(lines) + "\n",
-                                                     encoding="utf-8", newline="\n")
+        (self.session / "IbsOpDump.csv").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+        )
 
         document = self._profile()
 
@@ -204,8 +244,9 @@ class AttachedTimeShareTest(unittest.TestCase):
         for index in range(10):
             tick = 10_500_000_000 + index * 1_000_000_000
             lines.append(f"{tick},1,4242,200,{ALPHA_OFFSET},{ALPHA}")
-        (self.session / "IbsOpDump.csv").write_text("\n".join(lines) + "\n",
-                                                     encoding="utf-8", newline="\n")
+        (self.session / "IbsOpDump.csv").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+        )
 
         output = self._run_profile()
 
@@ -219,8 +260,7 @@ class AttachedTimeShareTest(unittest.TestCase):
 
         document = self._profile()
 
-        self.assertIn("within each thread (PID, TID)",
-                      document["legend"]["columns"]["time_share"])
+        self.assertIn("within each thread (PID, TID)", document["legend"]["columns"]["time_share"])
         self.assertIn("OK (attached", document["SANITY"])
 
     def test_legend_states_the_thread_partition_and_the_cycle_basis(self):
@@ -229,19 +269,25 @@ class AttachedTimeShareTest(unittest.TestCase):
         self.assertEqual(legend["columns"]["time_share"], TIME_MEANING)
         self.assertEqual(legend["denominators"]["time_share"], "total_weight")
         self.assertIn("within each thread (PID, TID)", legend["columns"]["time_share"])
-        self.assertIn("counts fixed cycles per sample, so sample_share is the core-cycle share",
-                      legend["impact"]["estimate"])
+        self.assertIn(
+            "counts fixed cycles per sample, so sample_share is the core-cycle share",
+            legend["impact"]["estimate"],
+        )
 
     def test_headers_state_the_thread_partition(self):
         output = self._run_profile()
 
-        self.assertIn("time_share = per-thread time share (off-CPU gaps are charged to the "
-                      "ending sample)", output)
+        self.assertIn(
+            "time_share = per-thread time share (off-CPU gaps are charged to the ending sample)",
+            output,
+        )
         self.assertIn("sample_share orders the functions", output)
         self.assertIn("the partition is (PID, TID)", output)
         self.assertIn("exact DeltaTick-gap weights per (PID, TID)", output)
-        self.assertIn("sample_share (fixed cycles per sample) is the CPU-cycle share and the "
-                      "better ranking", output)
+        self.assertIn(
+            "sample_share (fixed cycles per sample) is the CPU-cycle share and the better ranking",
+            output,
+        )
 
 
 class CollectModeParseTest(unittest.TestCase):
@@ -252,11 +298,14 @@ class CollectModeParseTest(unittest.TestCase):
         session.mkdir()
         meta = {
             "collection": {
-                "events": {"ibsEvents": {"op": {"interval": 4_700_000},
-                                          "opInterval": 4_700_000,
-                                          "opCycleCount": True}},
-                "target": {"systemWide": value,
-                           "attachedProcesses": [{"processId": 100}]},
+                "events": {
+                    "ibsEvents": {
+                        "op": {"interval": 4_700_000},
+                        "opInterval": 4_700_000,
+                        "opCycleCount": True,
+                    }
+                },
+                "target": {"systemWide": value, "attachedProcesses": [{"processId": 100}]},
             },
             "auxiliary": {"ibsOpSampling": True},
         }

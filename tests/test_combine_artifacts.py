@@ -18,7 +18,8 @@ class CombineArtifactsTest(unittest.TestCase):
             connection.execute(
                 "CREATE TEMP TABLE rows(address VARCHAR, function VARCHAR, "
                 "function_short VARCHAR, file VARCHAR, line INTEGER, "
-                "containing_function VARCHAR)")
+                "containing_function VARCHAR)"
+            )
             connection.executemany("INSERT INTO rows VALUES (?, ?, ?, ?, ?, ?)", rows)
             connection.execute("COPY rows TO ? (FORMAT parquet)", [str(path)])
 
@@ -45,21 +46,24 @@ class CombineArtifactsTest(unittest.TestCase):
 
             symbols, publics = uprof_symbols._combine_artifacts(
                 [("b.exe", first), ("a.exe", second)],
-                [("b.exe", first_csv), ("a.exe", second_csv)], out)
+                [("b.exe", first_csv), ("a.exe", second_csv)],
+                out,
+            )
 
             self.assertTrue(symbols.is_file())
             self.assertIsNotNone(publics)
             with duckdb.connect() as connection:
                 rows = connection.execute(
-                    "SELECT module_name, address FROM read_parquet(?)",
-                    [str(symbols)]).fetchall()
+                    "SELECT module_name, address FROM read_parquet(?)", [str(symbols)]
+                ).fetchall()
                 joined = connection.execute(
-                    "SELECT module_name, rva, names FROM read_csv(?, header = true)",
-                    [str(publics)]).fetchall()
+                    "SELECT module_name, rva, names FROM read_csv(?, header = true)", [str(publics)]
+                ).fetchall()
             self.assertEqual(rows, [("b.exe", "0x20"), ("a.exe", "0x10")])
             # The Windows paths are joined only after the backslash-to-slash normalization.
-            self.assertEqual(joined, [("b.exe", 16, "alpha"), ("b.exe", 32, "beta"),
-                                      ("a.exe", 64, "gamma")])
+            self.assertEqual(
+                joined, [("b.exe", 16, "alpha"), ("b.exe", 32, "beta"), ("a.exe", 64, "gamma")]
+            )
 
 
 if __name__ == "__main__":

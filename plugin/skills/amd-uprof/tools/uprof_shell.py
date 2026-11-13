@@ -30,8 +30,13 @@ def is_plain(text: str) -> bool:
     a trailing backslash would escape the closing quote for the Windows argument parser, and
     bash collapses two backslashes inside "..." into one.
     """
-    return (bool(text) and all(char in PLAIN for char in text)
-            and text[0] not in "-@" and not text.endswith("\\") and "\\\\" not in text)
+    return (
+        bool(text)
+        and all(char in PLAIN for char in text)
+        and text[0] not in "-@"
+        and not text.endswith("\\")
+        and "\\\\" not in text
+    )
 
 
 def quote(text: str) -> str:

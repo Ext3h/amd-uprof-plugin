@@ -38,21 +38,48 @@ class ObjdumpParseTest(unittest.TestCase):
     def test_parses_addresses_and_instruction_text(self):
         decoded = uprof_context.parse_objdump(OBJDUMP, image_base=0x140000000)
 
-        self.assertEqual([item.rva for item in decoded],
-                         [0x1000, 0x1001, 0x1004, 0x1008, 0x100D, 0x1010, 0x1012,
-                          0x1015, 0x1018, 0x101B, 0x1021, 0x1024, 0x1025])
+        self.assertEqual(
+            [item.rva for item in decoded],
+            [
+                0x1000,
+                0x1001,
+                0x1004,
+                0x1008,
+                0x100D,
+                0x1010,
+                0x1012,
+                0x1015,
+                0x1018,
+                0x101B,
+                0x1021,
+                0x1024,
+                0x1025,
+            ],
+        )
         self.assertEqual(decoded[0].text, "pushq\t%rbp")
         self.assertEqual(decoded[9].text, "callq\t*0x1067(%rip)")
 
     def test_ignores_section_headers_and_symbol_labels(self):
         decoded = uprof_context.parse_objdump(OBJDUMP, image_base=0x140000000)
 
-        self.assertEqual([item.text for item in decoded],
-                         ["pushq\t%rbp", "movq\t%rsp, %rbp", "subq\t$0x20, %rsp",
-                          "movl\t$0x1, %eax", "addl\t$0x2, %eax", "xorl\t%ecx, %ecx",
-                          "movl\t%eax, -0x4(%rbp)", "addl\t$0x3, %eax",
-                          "movl\t%eax, -0x8(%rbp)", "callq\t*0x1067(%rip)",
-                          "addl\t$0x4, %eax", "leave", "retq"])
+        self.assertEqual(
+            [item.text for item in decoded],
+            [
+                "pushq\t%rbp",
+                "movq\t%rsp, %rbp",
+                "subq\t$0x20, %rsp",
+                "movl\t$0x1, %eax",
+                "addl\t$0x2, %eax",
+                "xorl\t%ecx, %ecx",
+                "movl\t%eax, -0x4(%rbp)",
+                "addl\t$0x3, %eax",
+                "movl\t%eax, -0x8(%rbp)",
+                "callq\t*0x1067(%rip)",
+                "addl\t$0x4, %eax",
+                "leave",
+                "retq",
+            ],
+        )
 
     def test_attaches_the_next_instruction_address(self):
         decoded = uprof_context.parse_objdump(OBJDUMP, image_base=0x140000000)
@@ -63,8 +90,10 @@ class ObjdumpParseTest(unittest.TestCase):
 
 class WindowSelectionTest(unittest.TestCase):
     def stream(self, count=100):
-        return [uprof_context.DecodedInstruction(0x1000 + index, f"insn{index}", None)
-                for index in range(count)]
+        return [
+            uprof_context.DecodedInstruction(0x1000 + index, f"insn{index}", None)
+            for index in range(count)
+        ]
 
     def test_last_thirty_two_before_and_thirty_two_after(self):
         window = uprof_context.select_window(self.stream(), 0x1000 + 50)
@@ -110,8 +139,10 @@ class DecodeWindowTest(unittest.TestCase):
 
     def run_objdump(self, output, returncode=0):
         return mock.patch.object(
-            uprof_context, "run",
-            return_value=subprocess.CompletedProcess(["llvm-objdump"], returncode, output, ""))
+            uprof_context,
+            "run",
+            return_value=subprocess.CompletedProcess(["llvm-objdump"], returncode, output, ""),
+        )
 
     def test_decode_rejects_a_hot_rva_that_is_not_a_boundary(self):
         build = uprof_context.BuildIdentity(0x140000000, 0, 0x100, 0x20B)
@@ -120,8 +151,13 @@ class DecodeWindowTest(unittest.TestCase):
         with self.run_objdump(OBJDUMP):
             with self.assertRaises(uprof_context.ContextOmission) as caught:
                 stream = uprof_context.decode_stream(
-                    "fixture.exe", build, anchor, 0x1003, self.SECTION_END,
-                    objdump="llvm-objdump.exe")
+                    "fixture.exe",
+                    build,
+                    anchor,
+                    0x1003,
+                    self.SECTION_END,
+                    objdump="llvm-objdump.exe",
+                )
                 uprof_context.select_window(stream, 0x1003)
 
         self.assertEqual(caught.exception.reason, "hot_rva_not_instruction_start")
@@ -132,8 +168,8 @@ class DecodeWindowTest(unittest.TestCase):
 
         with self.run_objdump(OBJDUMP):
             stream = uprof_context.decode_stream(
-                "fixture.exe", build, anchor, 0x1015, self.SECTION_END,
-                objdump="llvm-objdump.exe")
+                "fixture.exe", build, anchor, 0x1015, self.SECTION_END, objdump="llvm-objdump.exe"
+            )
             window = uprof_context.select_window(stream, 0x1015)
 
         self.assertEqual(window[0].rva, 0x1000)
@@ -144,8 +180,9 @@ class DecodeWindowTest(unittest.TestCase):
         anchor = uprof_context.Anchor("section", 0x1000)
 
         with self.run_objdump(OBJDUMP) as invoked:
-            uprof_context.decode_stream("fixture.exe", build, anchor, 0x1015, 0x1026,
-                                        objdump="llvm-objdump.exe")
+            uprof_context.decode_stream(
+                "fixture.exe", build, anchor, 0x1015, 0x1026, objdump="llvm-objdump.exe"
+            )
 
         self.assertIn("--stop-address=0x140001026", invoked.call_args[0][0])
 
@@ -155,8 +192,14 @@ class DecodeWindowTest(unittest.TestCase):
 
         with self.run_objdump("", returncode=1):
             with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.decode_stream("fixture.exe", build, anchor, 0x1015,
-                                            self.SECTION_END, objdump="llvm-objdump.exe")
+                uprof_context.decode_stream(
+                    "fixture.exe",
+                    build,
+                    anchor,
+                    0x1015,
+                    self.SECTION_END,
+                    objdump="llvm-objdump.exe",
+                )
 
         self.assertEqual(caught.exception.reason, "objdump_failed")
 

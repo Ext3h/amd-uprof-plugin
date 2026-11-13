@@ -60,14 +60,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(parsed.servers, ())
 
     def test_translate_gets_the_first_server_cache_and_the_server_entries(self):
-        value = (r"srv*https://a.example;srv**https://b.example;srv* C:\sym *https://c.example;"
-                 r"C:\plain")
+        value = (
+            r"srv*https://a.example;srv**https://b.example;srv* C:\sym *https://c.example;"
+            r"C:\plain"
+        )
 
         cache, servers = uprof_native.parse_symbol_path(value)
 
         self.assertEqual(cache, r"C:\sym")
-        self.assertEqual(servers, ["srv**https://b.example",
-                                   r"srv*C:\sym*https://c.example"])
+        self.assertEqual(servers, ["srv**https://b.example", r"srv*C:\sym*https://c.example"])
 
 
 class CallersAgreeTest(unittest.TestCase):
@@ -87,8 +88,7 @@ class CallersAgreeTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def candidates(self):
-        return uprof_symbols._candidate_pdbs(
-            self.root / "app" / "app.exe", "app.pdb", "ABCD", 1)
+        return uprof_symbols._candidate_pdbs(self.root / "app" / "app.exe", "app.pdb", "ABCD", 1)
 
     def test_discovery_reads_the_stripped_cache_root(self):
         self.assertIn(self.cache / "app.pdb" / "ABCD1" / "app.pdb", self.candidates())
@@ -103,8 +103,9 @@ class CallersAgreeTest(unittest.TestCase):
         self.assertIn(self.cache / "app.pdb" / "ABCD1" / "app.pdb", candidates)
 
     def test_the_cache_key_fingerprints_the_same_roots(self):
-        fingerprinted = {entry[0]
-                         for entry in uprof_cache.search_identity(None, None, [])["srv_caches"]}
+        fingerprinted = {
+            entry[0] for entry in uprof_cache.search_identity(None, None, [])["srv_caches"]
+        }
 
         self.assertIn(str(self.cache), fingerprinted)
         self.assertIn(str(self.plain), fingerprinted)
@@ -123,7 +124,8 @@ class CallersAgreeTest(unittest.TestCase):
 
     def test_the_unconsulted_url_is_reported_once(self):
         search = uprof_symbols._choose_pdb(
-            Path("llvm-pdbutil.exe"), self.root / "app" / "app.exe", "app.pdb", "ABCD", 1)
+            Path("llvm-pdbutil.exe"), self.root / "app" / "app.exe", "app.pdb", "ABCD", 1
+        )
 
         self.assertEqual(search.urls, ["https://symbols.example/store"])
 

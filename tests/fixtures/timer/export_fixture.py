@@ -21,8 +21,7 @@ HERE = Path(__file__).resolve().parent
 # Host paths of the captured image are replaced by this placeholder; tests pass the committed
 # image with --image-path.
 IMAGE_PLACEHOLDER = "c:\\fixture\\heap_churn.exe"
-TABLES = ("Process", "ProcessThread", "Module", "ModuleInstance", "Function",
-          "UnifiedSampleSeries")
+TABLES = ("Process", "ProcessThread", "Module", "ModuleInstance", "Function", "UnifiedSampleSeries")
 
 
 def _scrub(value: object) -> object:
@@ -40,23 +39,35 @@ def _reduced_meta(meta: dict) -> dict:
     return {
         "collectCommand": "AMDuProfCLI.exe collect --config tbp -o <OUT_DIR> heap_churn.exe",
         "collection": {
-            "events": {key: events.get(key) for key in (
-                "configName", "ibsEvents", "pmcEvents", "timerInterval", "timerSamplingMode")},
-            "schedule": {key: schedule.get(key) for key in (
-                "elapsed", "start", "end", "startTs", "endTs", "profileDuration")},
-            "target": {"systemWide": target.get("systemWide"),
-                       "launchApp": "heap_churn.exe"},
+            "events": {
+                key: events.get(key)
+                for key in (
+                    "configName",
+                    "ibsEvents",
+                    "pmcEvents",
+                    "timerInterval",
+                    "timerSamplingMode",
+                )
+            },
+            "schedule": {
+                key: schedule.get(key)
+                for key in ("elapsed", "start", "end", "startTs", "endTs", "profileDuration")
+            },
+            "target": {"systemWide": target.get("systemWide"), "launchApp": "heap_churn.exe"},
         },
-        "auxiliary": {"eventColumnIds": auxiliary.get("eventColumnIds"),
-                      "ibsOpSampling": auxiliary.get("ibsOpSampling"),
-                      "cores": auxiliary.get("cores")},
+        "auxiliary": {
+            "eventColumnIds": auxiliary.get("eventColumnIds"),
+            "ibsOpSampling": auxiliary.get("ibsOpSampling"),
+            "cores": auxiliary.get("cores"),
+        },
     }
 
 
 def main(session: Path) -> None:
     meta = json.loads((session / "session.uprof").read_text(encoding="utf-8-sig"))
-    (HERE / "session.uprof").write_text(json.dumps(_reduced_meta(meta), indent=1) + "\n",
-                                        encoding="utf-8")
+    (HERE / "session.uprof").write_text(
+        json.dumps(_reduced_meta(meta), indent=1) + "\n", encoding="utf-8"
+    )
     connection = duckdb.connect(str(session / "cpu.db"), read_only=True)
     tables = {}
     try:

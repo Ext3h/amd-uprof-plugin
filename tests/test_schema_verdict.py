@@ -24,9 +24,20 @@ TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-upr
 EVENT_COLUMN = "event#0x3000076"
 PMC_META = {
     "collection": {
-        "events": {"pmcEvents": {"pmcEventList": [{
-            "hwId": 118, "interval": 4_700_000, "isSampling": True,
-            "user": True, "os": True, "encodedEventId": 0x03000076}]}},
+        "events": {
+            "pmcEvents": {
+                "pmcEventList": [
+                    {
+                        "hwId": 118,
+                        "interval": 4_700_000,
+                        "isSampling": True,
+                        "user": True,
+                        "os": True,
+                        "encodedEventId": 0x03000076,
+                    }
+                ]
+            }
+        },
         "target": {"systemWide": True},
     },
     "auxiliary": {},
@@ -40,8 +51,9 @@ class SchemaVerdictTest(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
 
-    def capture(self, function_columns="id UBIGINT, moduleId UINTEGER, name VARCHAR",
-                meta=PMC_META):
+    def capture(
+        self, function_columns="id UBIGINT, moduleId UINTEGER, name VARCHAR", meta=PMC_META
+    ):
         connection = duckdb.connect(str(self.root / "cpu.db"))
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
@@ -50,7 +62,8 @@ class SchemaVerdictTest(unittest.TestCase):
             connection.execute(
                 "CREATE TABLE UnifiedSampleSeries (processId UINTEGER, threadId UINTEGER, "
                 "moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER, "
-                f'"{EVENT_COLUMN}" DOUBLE)')
+                f'"{EVENT_COLUMN}" DOUBLE)'
+            )
         finally:
             connection.close()
         if meta is not None:
@@ -58,9 +71,12 @@ class SchemaVerdictTest(unittest.TestCase):
         return self.root
 
     def schema(self, session):
-        return subprocess.run([sys.executable, str(TOOLS_DIR / "uprof.py"), "schema",
-                               "--session", str(session)],
-                              capture_output=True, text=True, encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(TOOLS_DIR / "uprof.py"), "schema", "--session", str(session)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
 
     def test_a_complete_export_prints_the_match_and_the_listing(self):
         result = self.schema(self.capture())
@@ -75,10 +91,13 @@ class SchemaVerdictTest(unittest.TestCase):
         self.assertIn(EVENT_COLUMN, line)
 
     def test_an_ibs_verdict_says_the_dump_is_checked_by_profile(self):
-        meta = {"collection": {"events": {"ibsEvents": {"op": True, "fetch": False,
-                                                        "opInterval": 1_000_000}},
-                               "target": {"systemWide": True}},
-                "auxiliary": {"ibsOpSampling": True}}
+        meta = {
+            "collection": {
+                "events": {"ibsEvents": {"op": True, "fetch": False, "opInterval": 1_000_000}},
+                "target": {"systemWide": True},
+            },
+            "auxiliary": {"ibsOpSampling": True},
+        }
         result = self.schema(self.capture(meta=meta))
         self.assertEqual(result.returncode, 0, result.stderr)
         line = next(l for l in result.stderr.splitlines() if l.startswith("CONTRACT: "))

@@ -27,22 +27,29 @@ TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-upr
 EVENT_COLUMN = "event#0x3000076"
 
 SAMPLE_PMC = "busy core-cycle share (fixed cycles per sample; halted excluded)"
-SAMPLE_PMC_UNSUPPORTED = ("not established (this PMC event is not the supported cycle event); "
-                          "capture --event cycles (CYCLES_NOT_IN_HALT, hwId 118) to make "
-                          "sample_share a core-cycle share")
-TIME_ABSENT_PMC = ("this export aggregates PMC samples per window; capture with --event ibs-op "
-                   "(IBS OP with per-sample timestamps) to get time_share")
+SAMPLE_PMC_UNSUPPORTED = (
+    "not established (this PMC event is not the supported cycle event); "
+    "capture --event cycles (CYCLES_NOT_IN_HALT, hwId 118) to make "
+    "sample_share a core-cycle share"
+)
+TIME_ABSENT_PMC = (
+    "this export aggregates PMC samples per window; capture with --event ibs-op "
+    "(IBS OP with per-sample timestamps) to get time_share"
+)
 SAMPLE_OP_CYCLES = "core-cycle share (fixed cycles per sample), not wall time"
 SAMPLE_OP_OPS = "dispatched-op frequency share (fixed dispatched ops per sample)"
 SAMPLE_FETCH = "fetch-sample frequency share (fixed fetch events per sample)"
-TIME_MEANING = ("time share estimated from the gaps between per-sample timestamps (idle/wait "
-                "is charged to the ending sample; the first sample per CPU is ignored, no gap "
-                "before it; NULL sorts last)")
-TAG_MEANING = ("share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to "
-               "retirement, queue/stalls included; 16-bit counter clipped at 65535); a total, "
-               "not per-op latency")
-CAVEAT = ("a raw share cannot separate a cheap operation run often from an expensive one run "
-          "rarely")
+TIME_MEANING = (
+    "time share estimated from the gaps between per-sample timestamps (idle/wait "
+    "is charged to the ending sample; the first sample per CPU is ignored, no gap "
+    "before it; NULL sorts last)"
+)
+TAG_MEANING = (
+    "share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to "
+    "retirement, queue/stalls included; 16-bit counter clipped at 65535); a total, "
+    "not per-op latency"
+)
+CAVEAT = "a raw share cannot separate a cheap operation run often from an expensive one run rarely"
 READ_TAIL = "the <other ...> row is last, not ranked"
 
 TAG_ABSENT = {
@@ -51,9 +58,11 @@ TAG_ABSENT = {
     "pmc-118-unsampled": "this export has no tag-to-retire counter",
     "ibsfetch": "this export has no tag-to-retire counter",
     "ibs-op-tagless": "this dump has no IbsTagToRetCtr column",
-    "ibs-op-empty-tag": ("IbsTagToRetCtr has no nonzero values in this dump, so every share is "
-                         "NULL; the tag-to-retire counter comes from an IBS OP capture "
-                         "(--event ibs-op), not from PMC or IBS fetch"),
+    "ibs-op-empty-tag": (
+        "IbsTagToRetCtr has no nonzero values in this dump, so every share is "
+        "NULL; the tag-to-retire counter comes from an IBS OP capture "
+        "(--event ibs-op), not from PMC or IBS fetch"
+    ),
 }
 TAG_ABSENT["ibs-op-zero-tag"] = TAG_ABSENT["ibs-op-empty-tag"]
 
@@ -93,8 +102,14 @@ MODES = {
         "tag": TAG_MEANING,
         "order_by": ["sample_share", "samples"],
         "gap_weighted": False,
-        "row_columns": ["process", "pid", "samples", "sample_share", "time_share",
-                        "tag_to_retire_share"],
+        "row_columns": [
+            "process",
+            "pid",
+            "samples",
+            "sample_share",
+            "time_share",
+            "tag_to_retire_share",
+        ],
         "metric": ["core-cycle share", "cycle-controlled", "not a per-op cost"],
     },
     "ibs-op-ops": {
@@ -103,8 +118,14 @@ MODES = {
         "tag": TAG_MEANING,
         "order_by": ["sample_share", "samples"],
         "gap_weighted": False,
-        "row_columns": ["process", "pid", "samples", "sample_share", "time_share",
-                        "tag_to_retire_share"],
+        "row_columns": [
+            "process",
+            "pid",
+            "samples",
+            "sample_share",
+            "time_share",
+            "tag_to_retire_share",
+        ],
         "metric": ["dispatched-op frequency share", "op-count", "not a per-op cost"],
     },
     "ibsfetch": {
@@ -170,11 +191,15 @@ def expected_read(mode):
         if spec["sample"].startswith(("dispatched-op", "fetch-sample")):
             read += f"; {CAVEAT}"
     elif spec["sample"].startswith("not established"):
-        read = ("sample_share is not established for this event; rows are ordered by raw sample "
-                "count only, not a time or impact claim")
+        read = (
+            "sample_share is not established for this event; rows are ordered by raw sample "
+            "count only, not a time or impact claim"
+        )
     elif spec["sample"].startswith("busy core-cycle"):
-        read = ("sample_share is the busy core-cycle share, so the sample order ranks where "
-                "cycles were spent")
+        read = (
+            "sample_share is the busy core-cycle share, so the sample order ranks where "
+            "cycles were spent"
+        )
     else:
         read = f"sample_share orders the rows: {spec['sample']}"
         if spec["sample"].startswith(("dispatched-op", "fetch-sample")):
@@ -230,17 +255,18 @@ class OutputLegendTest(unittest.TestCase):
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
             connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
             connection.execute(
                 "CREATE TABLE UnifiedSampleSeries (processId UINTEGER, threadId UINTEGER, "
                 "moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER, "
-                f'"{EVENT_COLUMN}" DOUBLE)')
+                f'"{EVENT_COLUMN}" DOUBLE)'
+            )
             connection.execute(r"INSERT INTO Process VALUES (100, 'c:\workload.exe')")
             connection.execute(r"INSERT INTO Module VALUES (1, 'c:\workload.exe')")
             connection.execute("INSERT INTO Function VALUES (1, 1, 'main')")
-            connection.execute(
-                "INSERT INTO UnifiedSampleSeries VALUES (100, 1, 1, 1, 4096, 0, 5)")
+            connection.execute("INSERT INTO UnifiedSampleSeries VALUES (100, 1, 1, 1, 4096, 0, 5)")
         finally:
             connection.close()
 
@@ -258,7 +284,7 @@ class OutputLegendTest(unittest.TestCase):
         }
         meta = {
             "translateCommand": "AMDuProfCLI.exe translate -i session --ascii "
-                                + ("ibsfetch-event-dump" if fetch else "ibsop-event-dump"),
+            + ("ibsfetch-event-dump" if fetch else "ibsop-event-dump"),
             "collection": {
                 "schedule": {"elapsed": 4000},
                 "events": {"ibsEvents": events},
@@ -271,10 +297,13 @@ class OutputLegendTest(unittest.TestCase):
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
             connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
-            connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
-                               "functionId UBIGINT, moduleRVA UBIGINT)")
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
+            connection.execute(
+                "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+                "functionId UBIGINT, moduleRVA UBIGINT)"
+            )
             connection.execute(r"INSERT INTO Process VALUES (100, 'c:\workload.exe')")
         finally:
             connection.close()
@@ -298,12 +327,14 @@ class OutputLegendTest(unittest.TestCase):
         """Two processes whose time and sample orders differ: B has fewer samples, more weight."""
         session = self.root / (name or ("ordering-fetch" if fetch else "ordering"))
         session.mkdir()
-        events = ({"op": False, "fetch": True, "fetchInterval": 500_000}
-                  if fetch else
-                  {"op": True, "fetch": False, "opInterval": 1_000_000, "opCycleCount": False})
+        events = (
+            {"op": False, "fetch": True, "fetchInterval": 500_000}
+            if fetch
+            else {"op": True, "fetch": False, "opInterval": 1_000_000, "opCycleCount": False}
+        )
         meta = {
             "translateCommand": "AMDuProfCLI.exe translate -i session --ascii "
-                                + ("ibsfetch-event-dump" if fetch else "ibsop-event-dump"),
+            + ("ibsfetch-event-dump" if fetch else "ibsop-event-dump"),
             "collection": {
                 "schedule": {"elapsed": 5},
                 "events": {"ibsEvents": events},
@@ -316,10 +347,13 @@ class OutputLegendTest(unittest.TestCase):
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
             connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
-            connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
-                               "functionId UBIGINT, moduleRVA UBIGINT)")
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
+            connection.execute(
+                "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+                "functionId UBIGINT, moduleRVA UBIGINT)"
+            )
             connection.execute("INSERT INTO Process VALUES (100, 'a.exe'), (200, 'b.exe')")
         finally:
             connection.close()
@@ -343,8 +377,14 @@ class OutputLegendTest(unittest.TestCase):
             "translateCommand": "AMDuProfCLI.exe translate -i session --ascii ibsop-event-dump",
             "collection": {
                 "schedule": {"elapsed": 5},
-                "events": {"ibsEvents": {"op": True, "fetch": False, "opInterval": 1_000_000,
-                                         "opCycleCount": False}},
+                "events": {
+                    "ibsEvents": {
+                        "op": True,
+                        "fetch": False,
+                        "opInterval": 1_000_000,
+                        "opCycleCount": False,
+                    }
+                },
                 "target": {"systemWide": True},
             },
             "auxiliary": {"ibsOpSampling": True},
@@ -354,12 +394,17 @@ class OutputLegendTest(unittest.TestCase):
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
             connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
-            connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
-                               "functionId UBIGINT, moduleRVA UBIGINT)")
-            connection.execute("INSERT INTO Process VALUES (100, 'a.exe'), (200, 'b.exe'), "
-                               "(300, 'c.exe'), (400, 'd.exe')")
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
+            connection.execute(
+                "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+                "functionId UBIGINT, moduleRVA UBIGINT)"
+            )
+            connection.execute(
+                "INSERT INTO Process VALUES (100, 'a.exe'), (200, 'b.exe'), "
+                "(300, 'c.exe'), (400, 'd.exe')"
+            )
         finally:
             connection.close()
         rows = [
@@ -370,15 +415,27 @@ class OutputLegendTest(unittest.TestCase):
             dump_row(4_999_999, 2, 300, "c.exe", tag=-4),
             dump_row(4_999_999, 3, 400, "d.exe", tag="1e5"),
         ]
-        (session / "IbsOpDump.csv").write_text("\n".join(rows) + "\n", encoding="utf-8",
-                                                newline="\n")
+        (session / "IbsOpDump.csv").write_text(
+            "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+        )
         return session
 
     def profile(self, session, *extra, by="process"):
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile",
-             "--session", str(session), "--by", by, *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(session),
+                "--by",
+                by,
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -390,10 +447,14 @@ class OutputLegendTest(unittest.TestCase):
         """
         prefix = "python "
         self.assertTrue(command.startswith(prefix), command)
-        interpreter = (f'"{sys.executable}"' if os.name == "nt"
-                       else shlex.quote(sys.executable))
-        return subprocess.run(interpreter + " " + command[len(prefix):], shell=True,
-                              capture_output=True, text=True, encoding="utf-8")
+        interpreter = f'"{sys.executable}"' if os.name == "nt" else shlex.quote(sys.executable)
+        return subprocess.run(
+            interpreter + " " + command[len(prefix) :],
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
 
     def test_markdown_legend_per_mode(self):
         for mode in MODES:
@@ -410,7 +471,8 @@ class OutputLegendTest(unittest.TestCase):
                 header = next(line for line in lines if line.startswith("| process"))
                 self.assertEqual(
                     [cell.strip() for cell in header.strip("|").split("|")],
-                    MODES[mode]["row_columns"])
+                    MODES[mode]["row_columns"],
+                )
 
     def test_json_legend_per_mode(self):
         for mode, spec in MODES.items():
@@ -442,16 +504,14 @@ class OutputLegendTest(unittest.TestCase):
                     self.assertNotIn("tag_to_retire_share", legend["columns"])
                     self.assertIn("tag_to_retire_share", legend["absent"])
                 if mode in TAG_ABSENT:
-                    self.assertEqual(legend["absent"]["tag_to_retire_share"],
-                                     TAG_ABSENT[mode])
+                    self.assertEqual(legend["absent"]["tag_to_retire_share"], TAG_ABSENT[mode])
                 self.assertEqual(list(document["rows"][0]), spec["row_columns"])
 
     def test_metric_per_mode(self):
         for mode, spec in MODES.items():
             with self.subTest(mode=mode):
                 output = self.profile(self.session(mode))
-                metric = next(line for line in output.splitlines()
-                              if line.startswith("METRIC: "))
+                metric = next(line for line in output.splitlines() if line.startswith("METRIC: "))
                 for fragment in spec["metric"]:
                     self.assertIn(fragment, metric)
 
@@ -463,7 +523,9 @@ class OutputLegendTest(unittest.TestCase):
         output = self.profile(self.session("pmc-unsupported"))
         self.assertIn(
             "READ: sample_share is not established for this event; rows are ordered by raw "
-            "sample count only, not a time or impact claim", output)
+            "sample count only, not a time or impact claim",
+            output,
+        )
         self.assertNotIn("time_share ranks", output)
         self.assertNotIn("hwId 118 sampling", output)
 
@@ -491,30 +553,43 @@ class OutputLegendTest(unittest.TestCase):
         output_order = [row["process"] for row in document["rows"]]
         self.assertEqual(output_order, ["a.exe", "b.exe"])
         variables = {
-            "uprof_image": "%", "uprof_pid": "", "uprof_top": "0",
-            "uprof_time_start": "0", "uprof_time_end": "9223372036854775807",
+            "uprof_image": "%",
+            "uprof_pid": "",
+            "uprof_top": "0",
+            "uprof_time_start": "0",
+            "uprof_time_end": "9223372036854775807",
             "uprof_ibs_dump": str(session / "IbsOpDump.csv"),
-            "uprof_event_column": "", "uprof_session_meta": str(session / "session.uprof"),
-            "uprof_tag_available": "", "uprof_symbols": "", "uprof_aliases": "",
+            "uprof_event_column": "",
+            "uprof_session_meta": str(session / "session.uprof"),
+            "uprof_tag_available": "",
+            "uprof_symbols": "",
+            "uprof_aliases": "",
         }
-        with uprof_db.open_query(session / "cpu.db", [TOOLS_DIR / "views.sql"],
-                                 variables) as connection:
-            view_order = [row[0] for row in connection.sql(
-                "SELECT process FROM v_process_rows ORDER BY sort_key, rn NULLS LAST").fetchall()]
+        with uprof_db.open_query(
+            session / "cpu.db", [TOOLS_DIR / "views.sql"], variables
+        ) as connection:
+            view_order = [
+                row[0]
+                for row in connection.sql(
+                    "SELECT process FROM v_process_rows ORDER BY sort_key, rn NULLS LAST"
+                ).fetchall()
+            ]
         self.assertEqual(view_order, output_order)
         # The time order is the reverse, so the sample ordering is doing real work.
-        self.assertEqual([row["process"] for row in sorted(
-            document["rows"], key=lambda row: row["time_share"], reverse=True)],
-            ["b.exe", "a.exe"])
+        self.assertEqual(
+            [
+                row["process"]
+                for row in sorted(document["rows"], key=lambda row: row["time_share"], reverse=True)
+            ],
+            ["b.exe", "a.exe"],
+        )
 
     def test_process_ordering_and_top_follow_the_gap_weighted_measure(self):
         session = self._write_ordering(fetch=True, name="ordering-fetch")
         document = json.loads(self.profile(session, "--top", "all", "--json"))
-        self.assertEqual([row["process"] for row in document["rows"]],
-                         ["b.exe", "a.exe"])
+        self.assertEqual([row["process"] for row in document["rows"]], ["b.exe", "a.exe"])
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "time_share")
-        self.assertEqual(document["legend"]["impact"]["order_by"],
-                         ["time_share", "samples"])
+        self.assertEqual(document["legend"]["impact"]["order_by"], ["time_share", "samples"])
         self.assertEqual(document["legend"]["impact"]["gap_weighted"], True)
 
         top = json.loads(self.profile(session, "--top", "1", "--json"))
@@ -523,8 +598,7 @@ class OutputLegendTest(unittest.TestCase):
     def test_module_ordering_and_top_follow_the_sample_measure(self):
         session = self._write_ordering(name="ordering-module-op")
         document = json.loads(self.profile(session, "--top", "all", "--json", by="module"))
-        self.assertEqual([row["module"] for row in document["rows"]],
-                         ["a.exe", "b.exe"])
+        self.assertEqual([row["module"] for row in document["rows"]], ["a.exe", "b.exe"])
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "sample_share")
 
         top = json.loads(self.profile(session, "--top", "1", "--json", by="module"))
@@ -534,8 +608,7 @@ class OutputLegendTest(unittest.TestCase):
     def test_module_ordering_and_top_follow_the_gap_weighted_measure(self):
         session = self._write_ordering(fetch=True, name="ordering-module-fetch")
         document = json.loads(self.profile(session, "--top", "all", "--json", by="module"))
-        self.assertEqual([row["module"] for row in document["rows"]],
-                         ["b.exe", "a.exe"])
+        self.assertEqual([row["module"] for row in document["rows"]], ["b.exe", "a.exe"])
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "time_share")
 
         top = json.loads(self.profile(session, "--top", "1", "--json", by="module"))
@@ -547,46 +620,64 @@ class OutputLegendTest(unittest.TestCase):
 
         def instruction_order(measure):
             variables = {
-                "uprof_image": "%", "uprof_pid": "", "uprof_top": "0",
-                "uprof_time_start": "0", "uprof_time_end": "9223372036854775807",
+                "uprof_image": "%",
+                "uprof_pid": "",
+                "uprof_top": "0",
+                "uprof_time_start": "0",
+                "uprof_time_end": "9223372036854775807",
                 "uprof_ibs_dump": str(session / "IbsOpDump.csv"),
-                "uprof_event_column": "", "uprof_session_meta": str(session / "session.uprof"),
-                "uprof_tag_available": "", "uprof_symbols": "", "uprof_aliases": "",
+                "uprof_event_column": "",
+                "uprof_session_meta": str(session / "session.uprof"),
+                "uprof_tag_available": "",
+                "uprof_symbols": "",
+                "uprof_aliases": "",
                 "uprof_primary_measure": measure,
             }
-            with uprof_db.open_query(session / "cpu.db", [TOOLS_DIR / "views.sql"],
-                                     variables) as connection:
-                return [row[0] for row in connection.sql(
-                    "SELECT module FROM v_instruction_rows "
-                    "ORDER BY sort_key, rn NULLS LAST").fetchall()]
+            with uprof_db.open_query(
+                session / "cpu.db", [TOOLS_DIR / "views.sql"], variables
+            ) as connection:
+                return [
+                    row[0]
+                    for row in connection.sql(
+                        "SELECT module FROM v_instruction_rows ORDER BY sort_key, rn NULLS LAST"
+                    ).fetchall()
+                ]
 
         self.assertEqual(instruction_order("sample_share"), ["a.exe", "b.exe"])
         self.assertEqual(instruction_order("time_share"), ["b.exe", "a.exe"])
 
     def test_instruction_legend_carries_the_sample_hot_caveat(self):
-        sample = json.loads(self.profile(
-            self._write_ordering(name="instruction-legend-op"), "--json", by="instruction"))
+        sample = json.loads(
+            self.profile(
+                self._write_ordering(name="instruction-legend-op"), "--json", by="instruction"
+            )
+        )
         impact = sample["legend"]["impact"]
         self.assertEqual(impact["primary_measure"], "sample_share")
         self.assertEqual(impact["order_by"], ["sample_share", "samples"])
         self.assertIn("first row is the sample-hot instruction", impact["sample_hot"])
         self.assertIn("agrees with the function or region hot_rva", impact["sample_hot"])
 
-        timed = json.loads(self.profile(
-            self._write_ordering(fetch=True, name="instruction-legend-fetch"),
-            "--json", by="instruction"))
+        timed = json.loads(
+            self.profile(
+                self._write_ordering(fetch=True, name="instruction-legend-fetch"),
+                "--json",
+                by="instruction",
+            )
+        )
         impact = timed["legend"]["impact"]
         self.assertEqual(impact["primary_measure"], "time_share")
         self.assertEqual(impact["order_by"], ["time_share", "samples"])
         self.assertIn("not sample-hot", impact["sample_hot"])
-        self.assertIn("do not read its first row as the sample-hot RVA",
-                      impact["sample_hot"])
+        self.assertIn("do not read its first row as the sample-hot RVA", impact["sample_hot"])
         self.assertIn("no single instruction exceeds", impact["sample_hot"])
 
     def test_tagless_and_empty_tag_absence(self):
-        for mode, reason in (("ibs-op-tagless", TAG_ABSENT["ibs-op-tagless"]),
-                             ("ibs-op-empty-tag", TAG_ABSENT["ibs-op-empty-tag"]),
-                             ("ibs-op-zero-tag", TAG_ABSENT["ibs-op-zero-tag"])):
+        for mode, reason in (
+            ("ibs-op-tagless", TAG_ABSENT["ibs-op-tagless"]),
+            ("ibs-op-empty-tag", TAG_ABSENT["ibs-op-empty-tag"]),
+            ("ibs-op-zero-tag", TAG_ABSENT["ibs-op-zero-tag"]),
+        ):
             with self.subTest(mode=mode):
                 output = self.profile(self.session(mode))
                 legend = json.loads(self.profile(self.session(mode), "--json"))["legend"]
@@ -617,8 +708,9 @@ class OutputLegendTest(unittest.TestCase):
         result = self.run_next(calls[0])
         self.assertEqual(result.returncode, 0, result.stderr)
 
-        image_document = json.loads(self.profile(self.session("ibs-op-ops"),
-                                                 "--image", "_:_workload.exe", "--json"))
+        image_document = json.loads(
+            self.profile(self.session("ibs-op-ops"), "--image", "_:_workload.exe", "--json")
+        )
         image_calls = image_document["legend"]["next"]
         self.assertTrue(all("--image _:_workload.exe" in call for call in image_calls))
         self.assertTrue(any("--by module" in call for call in image_calls))
@@ -628,10 +720,12 @@ class OutputLegendTest(unittest.TestCase):
         self.assertIn("scoped coverage (--image", result.stdout)
         # A % pattern is not plain in every shell (cmd.exe expands %NAME%), so it is a
         # placeholder in the call and named as data.
-        pattern_document = json.loads(self.profile(self.session("ibs-op-ops"),
-                                                   "--image", "%workload%", "--json"))
-        self.assertTrue(all("--image <IMAGE>" in call
-                            for call in pattern_document["legend"]["next"]))
+        pattern_document = json.loads(
+            self.profile(self.session("ibs-op-ops"), "--image", "%workload%", "--json")
+        )
+        self.assertTrue(
+            all("--image <IMAGE>" in call for call in pattern_document["legend"]["next"])
+        )
         self.assertEqual(pattern_document["legend"]["next_data"], {"IMAGE": "%workload%"})
 
         top_document = json.loads(self.profile(session, "--pid", "100", "--top", "1", "--json"))
@@ -644,8 +738,7 @@ class OutputLegendTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 session = self.session(mode)
                 output = self.profile(session, "--pid", "100", "--top", "2")
-                line = next(line for line in output.splitlines()
-                            if line.startswith("NEXT: "))
+                line = next(line for line in output.splitlines() if line.startswith("NEXT: "))
                 text = line.removeprefix("NEXT: ")
                 self.assertNotIn("; then", text)
                 commands = text.split(" && ")
@@ -673,8 +766,7 @@ class OutputLegendTest(unittest.TestCase):
         session = self._write_ordering()
         command = json.loads(self.profile(session, "--json"))["legend"]["next"][0]
         self.assertTrue(command.startswith("python "), command)
-        with mock.patch.dict(os.environ,
-                             {"PATH": str(fake_dir) + os.pathsep + os.environ["PATH"]}):
+        with mock.patch.dict(os.environ, {"PATH": str(fake_dir) + os.pathsep + os.environ["PATH"]}):
             result = self.run_next(command)
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -683,15 +775,13 @@ class OutputLegendTest(unittest.TestCase):
         session = self._write_ordering()
         document = json.loads(self.profile(session, "--by", "function", "--json"))
         self.assertEqual(document["legend"]["columns"]["attribution"], definition)
-        self.assertIn(f"attribution = {definition}",
-                      self.profile(session, "--by", "function"))
+        self.assertIn(f"attribution = {definition}", self.profile(session, "--by", "function"))
         process = json.loads(self.profile(session, "--json"))
         self.assertNotIn("attribution", process["legend"]["columns"])
 
     def test_time_share_header_warns_about_few_samples(self):
         output = self.profile(self.session("ibs-op-ops"))
-        row = next(line for line in output.splitlines()
-                   if line.startswith("TIME_SHARE: "))
+        row = next(line for line in output.splitlines() if line.startswith("TIME_SHARE: "))
         self.assertIn("with few samples the share is coarse, so check sample_share", row)
 
     def test_tag_clip_at_field_maximum(self):
@@ -713,8 +803,9 @@ class OutputLegendTest(unittest.TestCase):
         document = json.loads(self.profile(session, "--top", "all", "--json"))
         self.assertNotIn("tag_to_retire_share", document["rows"][0])
         self.assertNotIn("tag_to_retire_share", document["legend"]["columns"])
-        self.assertEqual(document["legend"]["absent"]["tag_to_retire_share"],
-                         TAG_ABSENT["ibs-op-zero-tag"])
+        self.assertEqual(
+            document["legend"]["absent"]["tag_to_retire_share"], TAG_ABSENT["ibs-op-zero-tag"]
+        )
         self.assertIn("no nonzero values", document["legend"]["absent"]["tag_to_retire_share"])
         output = self.profile(session)
         self.assertIn("TAG_TO_RETIRE_SHARE", output)

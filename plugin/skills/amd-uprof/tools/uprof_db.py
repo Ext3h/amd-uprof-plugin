@@ -28,7 +28,7 @@ def _statement_sql(duckdb: Any, statement: Any) -> str:
     text = statement.query
     data = text.encode("utf-8")
     for position, kind in duckdb.tokenize(text):
-        if kind == duckdb.token_type.operator and data[position:position + 1] == b";":
+        if kind == duckdb.token_type.operator and data[position : position + 1] == b";":
             return data[:position].decode("utf-8").rstrip()
     return text.rstrip()
 
@@ -39,7 +39,8 @@ def _duckdb() -> Any:
     except ImportError as exc:
         raise UprofError(
             "the DuckDB Python package is not installed; install it with: "
-            f"{sys.executable} -m pip install duckdb") from exc
+            f"{sys.executable} -m pip install duckdb"
+        ) from exc
     try:
         major = int(duckdb.__version__.split(".")[0])
     except (AttributeError, ValueError):
@@ -47,14 +48,17 @@ def _duckdb() -> Any:
     if major < 2:
         raise UprofError(
             f"DuckDB {duckdb.__version__} is too old; these queries need 2.x. Upgrade with: "
-            f"{sys.executable} -m pip install --upgrade duckdb")
+            f"{sys.executable} -m pip install --upgrade duckdb"
+        )
     return duckdb
 
 
 # No connection installs or loads a DuckDB extension on its own: a capture file or a path
 # must never make DuckDB fetch or run code that the skill did not ask for.
-_NO_AUTO_EXTENSIONS: Final = {"autoinstall_known_extensions": False,
-                              "autoload_known_extensions": False}
+_NO_AUTO_EXTENSIONS: Final = {
+    "autoinstall_known_extensions": False,
+    "autoload_known_extensions": False,
+}
 CAPTURE_ALIAS: Final = "uprof_capture"
 _SHOWN_OBJECTS: Final = 5
 
@@ -78,6 +82,7 @@ ORDER BY kind, name
 def memory_connection() -> Any:
     """An in-memory DuckDB connection that installs and loads no extension on its own."""
     import duckdb
+
     return duckdb.connect(config=dict(_NO_AUTO_EXTENSIONS))
 
 
@@ -87,6 +92,7 @@ def file_connection(path: Path | str) -> Any:
     DuckDB errors pass through unchanged so the caller can tell a storage version mismatch.
     """
     import duckdb
+
     return duckdb.connect(str(path), read_only=True, config=dict(_NO_AUTO_EXTENSIONS))
 
 
@@ -100,13 +106,15 @@ def _stored_sql_error(cpu_db: Path | str, objects: list[tuple[str, str]]) -> Upr
     more = len(objects) - _SHOWN_OBJECTS
     if more > 0:
         shown += f" and {more} more"
-    script, script_data = uprof_shell.path_arg(Path(__file__).resolve().parent / "uprof.py",
-                                               "<UPROF_PY>")
+    script, script_data = uprof_shell.path_arg(
+        Path(__file__).resolve().parent / "uprof.py", "<UPROF_PY>"
+    )
     lines = [
         f"{cpu_db} defines SQL objects that a uProf translation never writes ({shown}); the "
         "skill does not run SQL stored in a capture, so it is not queried",
         f"ALTERNATIVE: translate the raw capture again: python {script} translate --session "
-        "<RAW_SESSION_DIR> --out-dir <NEW_TR_DIR>"]
+        "<RAW_SESSION_DIR> --out-dir <NEW_TR_DIR>",
+    ]
     # A path that is not plain is a placeholder in the command and named here as data only.
     if script_data:
         lines.append(script_data)
@@ -168,8 +176,7 @@ def run_script_until(connection: Any, sql_path: Path, marker: str) -> None:
 
 
 @contextlib.contextmanager
-def open_query(cpu_db: Path, view_files: list[Path],
-               variables: dict[str, str]) -> Iterator[Any]:
+def open_query(cpu_db: Path, view_files: list[Path], variables: dict[str, str]) -> Iterator[Any]:
     duckdb = _duckdb()
     try:
         with connect(cpu_db) as connection:
@@ -187,8 +194,14 @@ def fetch_typed(connection: Any, sql_path: Path) -> tuple[list[str], list[str], 
     """Column names, type names and rows of the first SELECT in sql_path."""
     duckdb = _duckdb()
     text = _read_sql(sql_path)
-    select = next((statement for statement in connection.extract_statements(text)
-                   if statement.type == duckdb.StatementType.SELECT), None)
+    select = next(
+        (
+            statement
+            for statement in connection.extract_statements(text)
+            if statement.type == duckdb.StatementType.SELECT
+        ),
+        None,
+    )
     if select is None:
         return [], [], []
     relation = connection.sql(_statement_sql(duckdb, select))
@@ -201,11 +214,17 @@ def fetch(connection: Any, sql_path: Path) -> tuple[list[str], list[tuple]]:
     return columns, rows
 
 
-def output_rows(columns: Sequence[str], types: Sequence[str], rows: Sequence[tuple],
-                fields: Sequence[tuple[str, str]], json_mode: bool, out_path: Path | None,
-                legend: dict[str, object] | None = None,
-                contexts: Sequence[object | None] | None = None,
-                context_help: dict[str, object] | None = None) -> None:
+def output_rows(
+    columns: Sequence[str],
+    types: Sequence[str],
+    rows: Sequence[tuple],
+    fields: Sequence[tuple[str, str]],
+    json_mode: bool,
+    out_path: Path | None,
+    legend: dict[str, object] | None = None,
+    contexts: Sequence[object | None] | None = None,
+    context_help: dict[str, object] | None = None,
+) -> None:
     """Render an already fetched result with its header fields and write it.
 
     contexts adds the per-row context objects to JSON output only; context_help is the
@@ -218,12 +237,16 @@ def output_rows(columns: Sequence[str], types: Sequence[str], rows: Sequence[tup
     write_payload(text, out_path)
 
 
-def output(connection: Any, query_file: Path, fields: Sequence[tuple[str, str]],
-           json_mode: bool, out_path: Path | None,
-           legend: dict[str, object] | None = None,
-           contexts: Sequence[object | None] | None = None,
-           context_help: dict[str, object] | None = None) -> None:
+def output(
+    connection: Any,
+    query_file: Path,
+    fields: Sequence[tuple[str, str]],
+    json_mode: bool,
+    out_path: Path | None,
+    legend: dict[str, object] | None = None,
+    contexts: Sequence[object | None] | None = None,
+    context_help: dict[str, object] | None = None,
+) -> None:
     """Render the first SELECT of query_file with its header fields and write the result."""
     columns, types, rows = fetch_typed(connection, query_file)
-    output_rows(columns, types, rows, fields, json_mode, out_path, legend, contexts,
-                context_help)
+    output_rows(columns, types, rows, fields, json_mode, out_path, legend, contexts, context_help)

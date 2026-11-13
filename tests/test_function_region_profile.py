@@ -64,32 +64,39 @@ class Session:
         return self
 
     def write(self):
-        events = ({"op": False, "fetch": True, "fetchInterval": 500_000}
-                  if self.fetch else
-                  {"op": {"interval": 4_700_000}, "opInterval": 4_700_000, "opCycleCount": True})
+        events = (
+            {"op": False, "fetch": True, "fetchInterval": 500_000}
+            if self.fetch
+            else {"op": {"interval": 4_700_000}, "opInterval": 4_700_000, "opCycleCount": True}
+        )
         meta = {
             "translateCommand": "AMDuProfCLI.exe translate -i session --ascii "
-                                + ("ibsfetch-event-dump" if self.fetch else "ibsop-event-dump"),
-            "collection": {"schedule": {"elapsed": self.elapsed_ms},
-                           "events": {"ibsEvents": events},
-                           "target": {"systemWide": True}},
+            + ("ibsfetch-event-dump" if self.fetch else "ibsop-event-dump"),
+            "collection": {
+                "schedule": {"elapsed": self.elapsed_ms},
+                "events": {"ibsEvents": events},
+                "target": {"systemWide": True},
+            },
             "auxiliary": {"ibsOpSampling": not self.fetch},
         }
         (self.path / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
         connection = duckdb.connect(str(self.path / "cpu.db"))
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
-            connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR, "
-                               "isSystemModule BOOLEAN)")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
-            connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
-                               "functionId UBIGINT, moduleRVA UBIGINT)")
+            connection.execute(
+                "CREATE TABLE Module (id UINTEGER, path VARCHAR, isSystemModule BOOLEAN)"
+            )
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
+            connection.execute(
+                "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+                "functionId UBIGINT, moduleRVA UBIGINT)"
+            )
             connection.execute("INSERT INTO Process VALUES (100, 'workload.exe')")
             connection.executemany("INSERT INTO Module VALUES (?, ?, ?)", self.modules)
             connection.executemany("INSERT INTO Function VALUES (?, ?, ?)", self.functions)
-            connection.executemany("INSERT INTO UnifiedSampleSeries VALUES (?, ?, ?)",
-                                   self.unified)
+            connection.executemany("INSERT INTO UnifiedSampleSeries VALUES (?, ?, ?)", self.unified)
         finally:
             connection.close()
         name = "IbsFetchDump.csv" if self.fetch else "IbsOpDump.csv"
@@ -111,9 +118,20 @@ class FunctionRangeProfileTest(unittest.TestCase):
     def run_profile(self, session, *extra, by="function"):
         path = session.path if isinstance(session, Session) else session
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
-             str(path), "--by", by, *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(path),
+                "--by",
+                by,
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
@@ -147,8 +165,9 @@ class FunctionRangeProfileTest(unittest.TestCase):
 
         synthetic = rows["pdata_0x1050"]
         self.assertEqual(synthetic["samples"], 3)
-        self.assertEqual((synthetic["function_start"], synthetic["function_end"]),
-                         ("0x1050", "0x1062"))
+        self.assertEqual(
+            (synthetic["function_start"], synthetic["function_end"]), ("0x1050", "0x1062")
+        )
         self.assertEqual(synthetic["function_source"], "pdata")
         self.assertTrue(synthetic["function_derived"])
         self.assertEqual(synthetic["attribution"], "derived")
@@ -156,8 +175,10 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertEqual(synthetic["other_samples"], 1)
 
         self.assertEqual(rows["fixture_second"]["function_source"], "export")
-        self.assertEqual([row["function"] for row in document["rows"]],
-                         ["fixture_entry", "pdata_0x1050", "fixture_second"])
+        self.assertEqual(
+            [row["function"] for row in document["rows"]],
+            ["fixture_entry", "pdata_0x1050", "fixture_second"],
+        )
         ranges = document["legend"]["function_ranges"]
         self.assertEqual((ranges["derived_modules"], ranges["ranges"]), (1, 3))
         self.assertEqual(ranges["absent_by_module"], {})
@@ -166,14 +187,18 @@ class FunctionRangeProfileTest(unittest.TestCase):
         result = self.run_profile(self.fixture_session())
 
         self.assertIn("sample_share orders the functions", result.stdout)
-        self.assertIn("attribution = unique / derived (synthetic binary range) / unresolved",
-                      result.stdout)
-        self.assertIn("function_source = boundary source of the range: pdb_public, export, pdata",
-                      result.stdout)
+        self.assertIn(
+            "attribution = unique / derived (synthetic binary range) / unresolved", result.stdout
+        )
+        self.assertIn(
+            "function_source = boundary source of the range: pdb_public, export, pdata",
+            result.stdout,
+        )
         self.assertIn("FUNCTION_RANGES: ", result.stderr)
         self.assertIn("HOT_RVA: ", result.stdout)
-        self.assertIn("other_samples 1 = the function's 4 samples minus hot_samples 3",
-                      result.stdout)
+        self.assertIn(
+            "other_samples 1 = the function's 4 samples minus hot_samples 3", result.stdout
+        )
         # Every row is resolved, so the drill-down stops here and offers no region call; this
         # unscoped view of a system-wide capture names only the process ranking.
         next_lines = [line for line in result.stdout.splitlines() if line.startswith("NEXT: ")]
@@ -197,26 +222,32 @@ class FunctionRangeProfileTest(unittest.TestCase):
     def test_coverage_and_agreement_split_named_derived_and_unresolved(self):
         result = self.run_profile(self.fixture_session())
 
-        self.assertIn("rows named 6/9 samples (66.7%), derived 3/9 samples (33.3%) from a "
-                      "synthetic binary range, unresolved 0/9 samples (0.0%) (<no symbol>)",
-                      result.stdout)
+        self.assertIn(
+            "rows named 6/9 samples (66.7%), derived 3/9 samples (33.3%) from a "
+            "synthetic binary range, unresolved 0/9 samples (0.0%) (<no symbol>)",
+            result.stdout,
+        )
         self.assertIn("every scoped sample is attributed below module/RVA", result.stdout)
-        agreement = next(line for line in result.stdout.splitlines()
-                         if line.startswith("AGREEMENT: "))
+        agreement = next(
+            line for line in result.stdout.splitlines() if line.startswith("AGREEMENT: ")
+        )
         self.assertIn("named 6 samples", agreement)
         self.assertIn("derived 3 samples", agreement)
         self.assertIn("unresolved 0 samples", agreement)
         self.assertNotIn("unresolved=", agreement)
 
         legend = self.document(self.fixture_session("derived-json"))["legend"]["symbol_coverage"]
-        self.assertEqual(legend["profile_symbolizer"], {
-            "source": "the emitted rows: llvm-symbolizer names plus derived PE ranges",
-            "named_samples": 6,
-            "derived_samples": 3,
-            "resolved_samples": 9,
-            "unresolved_samples": 0,
-            "scoped_samples": 9,
-        })
+        self.assertEqual(
+            legend["profile_symbolizer"],
+            {
+                "source": "the emitted rows: llvm-symbolizer names plus derived PE ranges",
+                "named_samples": 6,
+                "derived_samples": 3,
+                "resolved_samples": 9,
+                "unresolved_samples": 0,
+                "scoped_samples": 9,
+            },
+        )
         self.assertTrue(legend["rows_drillable"])
 
     def test_a_fully_named_module_skips_derivation_and_says_so(self):
@@ -226,8 +257,10 @@ class FunctionRangeProfileTest(unittest.TestCase):
         session.write()
 
         document = self.document(session)
-        self.assertEqual(document["rows"][0]["function_reason"],
-                         "fully named from the uProf DB; function-range derivation skipped")
+        self.assertEqual(
+            document["rows"][0]["function_reason"],
+            "fully named from the uProf DB; function-range derivation skipped",
+        )
         self.assertEqual(document["legend"]["function_ranges"]["derived_modules"], 0)
         self.assertEqual(document["legend"]["function_ranges"]["absent_by_module"], {})
 
@@ -235,16 +268,16 @@ class FunctionRangeProfileTest(unittest.TestCase):
         legend = self.document(self.fixture_session())["legend"]
 
         self.assertNotIn("region", legend)
-        self.assertEqual(list(legend["function_ranges"]),
-                         ["source", "derived_modules", "ranges", "absent_by_module",
-                          "fallback", "meaning"])
+        self.assertEqual(
+            list(legend["function_ranges"]),
+            ["source", "derived_modules", "ranges", "absent_by_module", "fallback", "meaning"],
+        )
 
     def test_the_region_legend_carries_its_own_reduced_range_object(self):
         legend = self.document(self.fixture_session(), by="region")["legend"]
 
         self.assertNotIn("function_ranges", legend)
-        self.assertEqual(legend["region"]["function_ranges"],
-                         {"derived_modules": 1, "ranges": 3})
+        self.assertEqual(legend["region"]["function_ranges"], {"derived_modules": 1, "ranges": 3})
         self.assertIn("derived_function", legend["region"])
         self.assertEqual(legend["region"]["page_size"], 4096)
 
@@ -261,10 +294,14 @@ class FunctionRangeProfileTest(unittest.TestCase):
 
         document = self.document(session, by="region")
         rows = document["rows"]
-        self.assertEqual([(row["module"], row["page_start"]) for row in rows],
-                         [(module_key(FIXTURE), "0x1000"),
-                          (module_key(second), "0x1000"),
-                          (module_key(FIXTURE), "0x2000")])
+        self.assertEqual(
+            [(row["module"], row["page_start"]) for row in rows],
+            [
+                (module_key(FIXTURE), "0x1000"),
+                (module_key(second), "0x1000"),
+                (module_key(FIXTURE), "0x2000"),
+            ],
+        )
         first = rows[0]
         self.assertEqual((first["page_end"], first["sampled_addresses"]), ("0x2000", 2))
         self.assertEqual((first["hot_rva"], first["hot_samples"]), ("0x101B", 2))
@@ -274,8 +311,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertEqual(first["attribution"], "unique")
 
         outside = rows[2]
-        self.assertEqual((outside["sampled_addresses"], outside["hot_rva"]),
-                         (1, "0x201B"))
+        self.assertEqual((outside["sampled_addresses"], outside["hot_rva"]), (1, "0x201B"))
         self.assertEqual(outside["function_source"], "none")
         self.assertFalse(outside["function_derived"])
 
@@ -305,8 +341,10 @@ class FunctionRangeProfileTest(unittest.TestCase):
         session = self.ordering_session("fetch-pages", fetch=True, second_rva=0x201B)
 
         document = self.document(session, "--top", "1", by="region")
-        self.assertEqual([(row["module"], row["page_start"]) for row in document["rows"]],
-                         [(module_key(FIXTURE), "0x2000"), ("<other regions>", None)])
+        self.assertEqual(
+            [(row["module"], row["page_start"]) for row in document["rows"]],
+            [(module_key(FIXTURE), "0x2000"), ("<other regions>", None)],
+        )
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "time_share")
         self.assertEqual(document["legend"]["impact"]["order_by"], ["time_share", "samples"])
 
@@ -314,8 +352,9 @@ class FunctionRangeProfileTest(unittest.TestCase):
         session = self.ordering_session("fetch-functions", fetch=True, second_rva=0x1030)
 
         document = self.document(session, "--top", "1")
-        self.assertEqual([row["function"] for row in document["rows"]],
-                         ["fixture_second", "<other functions>"])
+        self.assertEqual(
+            [row["function"] for row in document["rows"]], ["fixture_second", "<other functions>"]
+        )
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "time_share")
 
         # The top row is time-hot, but HOT_RVA is the highest-sample address across all rows.
@@ -330,8 +369,10 @@ class FunctionRangeProfileTest(unittest.TestCase):
         session = self.ordering_session("cycle-order", fetch=False, second_rva=0x201B)
 
         document = self.document(session, "--top", "1", by="region")
-        self.assertEqual([(row["module"], row["page_start"]) for row in document["rows"]],
-                         [(module_key(FIXTURE), "0x1000"), ("<other regions>", None)])
+        self.assertEqual(
+            [(row["module"], row["page_start"]) for row in document["rows"]],
+            [(module_key(FIXTURE), "0x1000"), ("<other regions>", None)],
+        )
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "sample_share")
 
     def test_a_missing_module_is_explained_and_region_is_the_fallback(self):

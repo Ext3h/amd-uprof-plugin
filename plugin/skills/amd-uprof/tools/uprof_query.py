@@ -34,14 +34,16 @@ import uprof_symbols
 import uprof_util as util
 
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
-GRANULARITY_LABELS: Final = MappingProxyType({
-    "process": "per Process.id",
-    "module": "per module path",
-    "region": "per 4 KiB address page",
-    "function": "per derived function range (Function.id when no range)",
-    "line": "per file:line",
-    "instruction": "per module offset",
-})
+GRANULARITY_LABELS: Final = MappingProxyType(
+    {
+        "process": "per Process.id",
+        "module": "per module path",
+        "region": "per 4 KiB address page",
+        "function": "per derived function range (Function.id when no range)",
+        "line": "per file:line",
+        "instruction": "per module offset",
+    }
+)
 # Scopes that symbolize every module in scope. Function also runs symbolization so an accepted
 # PDB supplies public symbols to the range derivation.
 SYMBOLIZED: Final = ("function", "region", "line", "instruction")
@@ -59,7 +61,8 @@ def _rva_value(value: str) -> int:
         number = int(text, 16) if text.lower().startswith("0x") else int(text, 10)
     except ValueError as exc:
         raise util.UprofError(
-            f"--function-start needs an RVA as 0x hex or decimal; got {value!r}") from exc
+            f"--function-start needs an RVA as 0x hex or decimal; got {value!r}"
+        ) from exc
     if number < 0:
         raise util.UprofError(f"--function-start needs a non-negative RVA; got {value!r}")
     return number
@@ -81,13 +84,15 @@ def _check_args(args: argparse.Namespace) -> None:
         if args.by not in FUNCTION_SCOPED:
             raise util.UprofError(
                 "--function narrows --by instruction or --by line to one parent function; "
-                f"it cannot be used with --by {args.by}")
+                f"it cannot be used with --by {args.by}"
+            )
         if not function:
             raise util.UprofError("--function must not be empty")
         if not module:
             raise util.UprofError(
                 "--function needs --module naming the function row's module, so the filter "
-                "scope is explicit")
+                "scope is explicit"
+            )
         if start is not None:
             args.function_start = _rva_value(start)
 
@@ -126,8 +131,9 @@ def _time_range(args: argparse.Namespace) -> tuple[str, str]:
         return "0", _ALL_NS
     bounds = util.parse_time_filter(args.time_filter)
     if bounds is None:
-        raise util.UprofError("--time-filter needs T1:T2 in seconds from capture start "
-                              "(for example 0:10)")
+        raise util.UprofError(
+            "--time-filter needs T1:T2 in seconds from capture start (for example 0:10)"
+        )
     start, end = bounds
     if end <= start:
         raise util.UprofError(f"--time-filter needs T1 < T2; got {args.time_filter}")
@@ -143,10 +149,12 @@ def _out_path(args: argparse.Namespace, cpu_db: Path, session: Path) -> Path | N
         raise util.UprofError(f"output directory not found: {out_path.parent}")
     if out_path.is_dir():
         raise util.UprofError(f"output path is a directory: {out_path}")
-    paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
-                                      getattr(args, "image_path", None))
-    _guard_out_file(out_path, [cpu_db, session / "session.uprof", *paths.symbol_files,
-                               *paths.image_files])
+    paths = uprof_symbols.probe_paths(
+        getattr(args, "symbol_path", None), getattr(args, "image_path", None)
+    )
+    _guard_out_file(
+        out_path, [cpu_db, session / "session.uprof", *paths.symbol_files, *paths.image_files]
+    )
     return out_path
 
 
@@ -163,30 +171,40 @@ def _guard_out_file(out_path: Path | None, protected: list[Path | str], label: s
         if util.same_path(full, out_path):
             raise util.UprofError(
                 f"--out-file would overwrite {label}{full}, an input of this command; choose a "
-                "different --out-file path (for example a new file in the output directory)")
+                "different --out-file path (for example a new file in the output directory)"
+            )
 
 
-def _guard_out_file_images(out_path: Path | None, connection: object,
-                           args: argparse.Namespace) -> None:
+def _guard_out_file_images(
+    out_path: Path | None, connection: object, args: argparse.Namespace
+) -> None:
     """Refuse an --out-file that names a module image symbolization would read."""
     if out_path is None:
         return
-    paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
-                                      getattr(args, "image_path", None))
+    paths = uprof_symbols.probe_paths(
+        getattr(args, "symbol_path", None), getattr(args, "image_path", None)
+    )
     rows = connection.sql("SELECT DISTINCT path FROM Module WHERE path IS NOT NULL").fetchall()
     images = []
     for (module_path,) in rows:
-        image, _ = uprof_symbols.resolve_image(Path(str(module_path)).name, str(module_path),
-                                               paths.image_files, paths.image_dirs)
+        image, _ = uprof_symbols.resolve_image(
+            Path(str(module_path)).name, str(module_path), paths.image_files, paths.image_dirs
+        )
         if image is not None:
             images.append(image)
     _guard_out_file(out_path, images, "the module image ")
 
 
-def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: int,
-               time_start: str, time_end: str, event_column: str | None,
-               sample_interval_s: float | None = None,
-               primary_measure: str = "samples") -> dict[str, str]:
+def _variables(
+    args: argparse.Namespace,
+    dump: uprof_dump.DumpInfo | None,
+    top: int,
+    time_start: str,
+    time_end: str,
+    event_column: str | None,
+    sample_interval_s: float | None = None,
+    primary_measure: str = "samples",
+) -> dict[str, str]:
     meta_path = util.absolute(args.session) / "session.uprof"
     return {
         "uprof_image": args.image if args.image is not None else "%",
@@ -211,8 +229,9 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
         "uprof_detail_views": "true" if args.by in FUNCTION_SCOPED else "false",
         "uprof_function": getattr(args, "function", None) or "",
         "uprof_function_module": getattr(args, "module", None) or "",
-        "uprof_function_start": ("" if getattr(args, "function_start", None) is None
-                                 else str(args.function_start)),
+        "uprof_function_start": (
+            "" if getattr(args, "function_start", None) is None else str(args.function_start)
+        ),
     }
 
 
@@ -249,18 +268,21 @@ def _owner_and_cause(line: str, prefix: str) -> tuple[str, str] | None:
     """
     if not line.startswith(prefix):
         return None
-    rest = line[len(prefix):]
+    rest = line[len(prefix) :]
     start = rest.find(" (")
     while start >= 0:
-        name, tail = rest[:start], rest[start + 2:]
+        name, tail = rest[:start], rest[start + 2 :]
         end = tail.find("): ")
         while end >= 0:
             if _module_key(Path(tail[:end].replace("\\", "/")).name) == _module_key(
-                    Path(name.replace("\\", "/")).name):
-                return name, tail[end + 3:]
+                Path(name.replace("\\", "/")).name
+            ):
+                return name, tail[end + 3 :]
             end = tail.find("): ", end + 1)
         start = rest.find(" (", start + 1)
     return None
+
+
 _RANGES_LINE = re.compile(r"^FUNCTION_RANGES: (.+?): (\d+) ranges from ")
 _LISTED_MODULES = 5
 
@@ -282,8 +304,12 @@ class _SymbolDiagnostics(io.TextIOBase):
     --symbol-path/--image-path adds, so the advice would only invite a re-run.
     """
 
-    def __init__(self, target: TextIO, scope_module: str | None = None,
-                 quiet: set[str] | frozenset[str] = frozenset()):
+    def __init__(
+        self,
+        target: TextIO,
+        scope_module: str | None = None,
+        quiet: set[str] | frozenset[str] = frozenset(),
+    ):
         self.target = target
         self.scope = _module_key(scope_module) if scope_module else None
         self.quiet = {_module_key(module) for module in quiet}
@@ -333,8 +359,11 @@ class _SymbolDiagnostics(io.TextIOBase):
         parsed = [item for item in parsed if item[0] is None or self._in_scope(item[0])]
         unresolved = {item[0] for item in parsed if item[1] == "no_symbols"}
         # A quiet module counts as unresolved, but its symbol-path advice is not printed.
-        parsed = [item for item in parsed
-                  if not (item[1] == "no_symbols" and _module_key(item[0]) in self.quiet)]
+        parsed = [
+            item
+            for item in parsed
+            if not (item[1] == "no_symbols" and _module_key(item[0]) in self.quiet)
+        ]
         groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
         for owner, kind, line, key in parsed:
             if kind in ("no_symbols", "no_ranges", "ranges"):
@@ -360,14 +389,16 @@ class _SymbolDiagnostics(io.TextIOBase):
         if len(members) == 1:
             return members[0][1]
         names = [Path(owner.replace("\\", "/")).name for owner, _line in members]
-        more = (f" and {len(names) - _LISTED_MODULES} more"
-                if len(names) > _LISTED_MODULES else "")
+        more = f" and {len(names) - _LISTED_MODULES} more" if len(names) > _LISTED_MODULES else ""
         if kind == "ranges":
             counts = [int(_RANGES_LINE.match(line).group(2)) for _owner, line in members]
-            listed = ", ".join(f"{name} {count}" for name, count
-                               in zip(names[:_LISTED_MODULES], counts))
-            return (f"FUNCTION_RANGES: {sum(counts)} ranges from {len(members)} module images "
-                    f"({listed}{more})")
+            listed = ", ".join(
+                f"{name} {count}" for name, count in zip(names[:_LISTED_MODULES], counts)
+            )
+            return (
+                f"FUNCTION_RANGES: {sum(counts)} ranges from {len(members)} module images "
+                f"({listed}{more})"
+            )
         listed = ", ".join(names[:_LISTED_MODULES]) + more
         what = "no symbols resolved" if kind == "no_symbols" else "no function range derived"
         return f"WARNING: {what} for {len(members)} modules ({listed}): {cause}"
@@ -377,29 +408,45 @@ def _fully_named_modules(coverage: dict[str, Any] | None) -> set[str]:
     """Modules whose every scoped sample has a uProf DB function name."""
     if coverage is None:
         return set()
-    return {str(row["module_name"]) for row in coverage["rows"]
-            if int(row["samples"]) == int(row["named_samples"])}
+    return {
+        str(row["module_name"])
+        for row in coverage["rows"]
+        if int(row["samples"]) == int(row["named_samples"])
+    }
 
 
 def _create_file_views(connection: object, variables: dict[str, str]) -> None:
     """Create the artifact source views over the per-run files that exist."""
     sources = (
-        ("uprof_symbols", "uprof_symbols_source",
-         "SELECT * FROM read_parquet(getvariable('uprof_symbols'))"),
-        ("uprof_aliases", "uprof_aliases_source",
-         "SELECT * FROM read_csv(getvariable('uprof_aliases'), header = true, all_varchar = true)"),
-        ("uprof_pdbs", "uprof_pdbs_source",
-         "SELECT * FROM read_csv(getvariable('uprof_pdbs'), header = true, all_varchar = true)"),
-        ("uprof_functions", "uprof_functions_source",
-         "SELECT * FROM read_csv(getvariable('uprof_functions'), header = true, all_varchar = true)"),
+        (
+            "uprof_symbols",
+            "uprof_symbols_source",
+            "SELECT * FROM read_parquet(getvariable('uprof_symbols'))",
+        ),
+        (
+            "uprof_aliases",
+            "uprof_aliases_source",
+            "SELECT * FROM read_csv(getvariable('uprof_aliases'), header = true, all_varchar = true)",
+        ),
+        (
+            "uprof_pdbs",
+            "uprof_pdbs_source",
+            "SELECT * FROM read_csv(getvariable('uprof_pdbs'), header = true, all_varchar = true)",
+        ),
+        (
+            "uprof_functions",
+            "uprof_functions_source",
+            "SELECT * FROM read_csv(getvariable('uprof_functions'), header = true, all_varchar = true)",
+        ),
     )
     for variable, view, select in sources:
         if variables.get(variable):
             connection.execute(f"CREATE OR REPLACE TEMP VIEW {view} AS {select}")
 
 
-def _apply_symbol_hit(cache: object, connection: object, key: str,
-                      variables: dict[str, str], stream: TextIO) -> tuple[bool, dict[str, str]]:
+def _apply_symbol_hit(
+    cache: object, connection: object, key: str, variables: dict[str, str], stream: TextIO
+) -> tuple[bool, dict[str, str]]:
     """Apply a symbol cache hit; any read failure disables the cache and returns False."""
     try:
         causes, replay = cache.symbol_meta(key)
@@ -415,8 +462,9 @@ def _apply_symbol_hit(cache: object, connection: object, key: str,
         return False, {}
 
 
-def _apply_range_hit(cache: object, connection: object, key: str,
-                     variables: dict[str, str], stream: TextIO):
+def _apply_range_hit(
+    cache: object, connection: object, key: str, variables: dict[str, str], stream: TextIO
+):
     """Apply a range cache hit; any read failure disables the cache and returns False."""
     try:
         info, replay = cache.range_meta(key)
@@ -433,8 +481,12 @@ def _apply_range_hit(cache: object, connection: object, key: str,
 
 def _module_debug_info(connection: object) -> dict[str, bool]:
     """Module.foundDebugInfo keyed by the full normalized path and its basename, when present."""
-    columns = {str(row[0]).lower() for row in connection.execute(
-        "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'").fetchall()}
+    columns = {
+        str(row[0]).lower()
+        for row in connection.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'"
+        ).fetchall()
+    }
     if "founddebuginfo" not in columns:
         return {}
     rows = connection.execute("""
@@ -453,15 +505,20 @@ def _module_debug_info(connection: object) -> dict[str, bool]:
 
 def _module_identities(connection: object) -> dict[str, tuple[object, object]]:
     """Module.checksum and Module.size keyed by module key, for the columns the capture has."""
-    columns = {str(row[0]).lower() for row in connection.execute(
-        "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'").fetchall()}
+    columns = {
+        str(row[0]).lower()
+        for row in connection.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'"
+        ).fetchall()
+    }
     if "checksum" not in columns and "size" not in columns:
         return {}
     checksum = "max(checksum)" if "checksum" in columns else "NULL"
     size = "max(size)" if "size" in columns else "NULL"
     rows = connection.execute(
         f"SELECT module_key(path), {checksum}, {size} FROM Module "
-        "WHERE COALESCE(path, '') <> '' GROUP BY 1").fetchall()
+        "WHERE COALESCE(path, '') <> '' GROUP BY 1"
+    ).fetchall()
     return {str(key): (value, image_size) for key, value, image_size in rows}
 
 
@@ -472,8 +529,10 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
     if evidence.outcome == "no_pdb":
         if evidence.symbolizer and evidence.symbolizer.errors:
             return f"no PDB found; llvm-symbolizer: {evidence.symbolizer.errors[0][1]}"
-        return ("no PDB found beside the module, at the recorded CodeView path or in a local "
-                "srv* cache; _NT_SYMBOL_PATH is not read by llvm-symbolizer")
+        return (
+            "no PDB found beside the module, at the recorded CodeView path or in a local "
+            "srv* cache; _NT_SYMBOL_PATH is not read by llvm-symbolizer"
+        )
     if evidence.outcome == "readobj_failed":
         return f"llvm-readobj could not read the debug directory: {evidence.note or 'unknown'}"
     if evidence.outcome == "module_missing":
@@ -491,7 +550,8 @@ def _artifact_dir(stream: TextIO) -> Path:
     except OSError as exc:
         raise util.UprofError(
             f"cannot create the symbol artifact directory in {tempfile.gettempdir()}: {exc}; "
-            "check free space and permissions on the temp directory") from exc
+            "check free space and permissions on the temp directory"
+        ) from exc
     print(f"ARTIFACTS={path}", file=stream)
     return path
 
@@ -514,10 +574,16 @@ def _pdb_identities(pdbs: Path | None, evidence: list) -> list[dict[str, object]
                 except OSError:
                     continue
                 item = by_module.get(module)
-                result.append({"module": module, "path": str(Path(path).resolve()),
-                               "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
-                               "guid": getattr(item, "image_guid", None),
-                               "age": getattr(item, "image_age", None)})
+                result.append(
+                    {
+                        "module": module,
+                        "path": str(Path(path).resolve()),
+                        "size": stat.st_size,
+                        "mtime_ns": stat.st_mtime_ns,
+                        "guid": getattr(item, "image_guid", None),
+                        "age": getattr(item, "image_age", None),
+                    }
+                )
     except OSError:
         return []
     return result
@@ -525,15 +591,18 @@ def _pdb_identities(pdbs: Path | None, evidence: list) -> list[dict[str, object]
 
 def _bind_ambiguous_modules(connection: object, variables: dict[str, str]) -> None:
     """Bind the module names the capture maps to more than one image version for views.sql."""
-    names = [str(row[0]) for row in connection.execute(
-        "SELECT DISTINCT module_key(path) FROM Module WHERE path IS NOT NULL").fetchall()]
+    names = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT DISTINCT module_key(path) FROM Module WHERE path IS NOT NULL"
+        ).fetchall()
+    ]
     value = chr(2).join(uprof_cache.ambiguous_modules(connection, names))
     variables["uprof_ambiguous_modules"] = value
     uprof_db.set_variables(connection, {"uprof_ambiguous_modules": value})
 
 
-def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
-                     args: argparse.Namespace):
+def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO, args: argparse.Namespace):
     """Symbolize every module in scope.
 
     Returns the artifact variables, per-module causes, whether a transient tool failure
@@ -550,20 +619,29 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
         if module_name not in modules:
             modules[module_name] = [module_path, []]
         modules[module_name][1].append(rva)
-    paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
-                                      getattr(args, "image_path", None))
+    paths = uprof_symbols.probe_paths(
+        getattr(args, "symbol_path", None), getattr(args, "image_path", None)
+    )
     symbols, publics, pdbs, evidence = uprof_symbols.symbolize_modules(
-        [(name, path, rvas) for name, (path, rvas) in modules.items()], artifacts,
-        stream=stream, debug_info=_module_debug_info(connection),
-        symbol_files=paths.symbol_files, symbol_dirs=paths.symbol_dirs,
-        image_files=paths.image_files, image_dirs=paths.image_dirs,
+        [(name, path, rvas) for name, (path, rvas) in modules.items()],
+        artifacts,
+        stream=stream,
+        debug_info=_module_debug_info(connection),
+        symbol_files=paths.symbol_files,
+        symbol_dirs=paths.symbol_dirs,
+        image_files=paths.image_files,
+        image_dirs=paths.image_dirs,
         identities=_module_identities(connection),
-        symbol_stores=uprof_symbols.symbol_stores(args.session))
-    causes = {item.module_name: _evidence_cause(item) for item in evidence
-              if item.outcome != "resolved"}
+        symbol_stores=uprof_symbols.symbol_stores(args.session),
+    )
+    causes = {
+        item.module_name: _evidence_cause(item) for item in evidence if item.outcome != "resolved"
+    }
     for name in ambiguous:
-        causes[name] = ("image version is ambiguous in the capture; the IBS dump rows carry "
-                        "the module name, not Module.id, so it was not symbolized")
+        causes[name] = (
+            "image version is ambiguous in the capture; the IBS dump rows carry "
+            "the module name, not Module.id, so it was not symbolized"
+        )
 
     def transient(item) -> bool:
         if item.outcome in ("module_missing", "readobj_failed"):
@@ -583,17 +661,27 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
                 continue
             try:
                 stat = Path(path).stat()
-                probes[path] = {"path": path, "exists": True, "size": stat.st_size,
-                                "mtime_ns": stat.st_mtime_ns}
+                probes[path] = {
+                    "path": path,
+                    "exists": True,
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                }
             except OSError:
                 probes[path] = {"path": path, "exists": False}
             if len(probes) >= 4096:
                 break
-    return {
-        "uprof_symbols": str(symbols) if symbols else "",
-        "uprof_aliases": str(publics) if publics else "",
-        "uprof_pdbs": str(pdbs) if pdbs else "",
-    }, causes, transient_failure, _pdb_identities(pdbs, evidence), list(probes.values())
+    return (
+        {
+            "uprof_symbols": str(symbols) if symbols else "",
+            "uprof_aliases": str(publics) if publics else "",
+            "uprof_pdbs": str(pdbs) if pdbs else "",
+        },
+        causes,
+        transient_failure,
+        _pdb_identities(pdbs, evidence),
+        list(probes.values()),
+    )
 
 
 def _pool_workers(module_count: int) -> int | None:
@@ -613,23 +701,29 @@ def _readobj_for(module_count: int) -> str | None:
     return uprof_context.find_readobj() if _pool_workers(module_count) is not None else None
 
 
-def _derive_candidates(candidates: list[tuple[str, str]],
-                       publics_by_module: dict[str, list], readobj: str | None):
+def _derive_candidates(
+    candidates: list[tuple[str, str]], publics_by_module: dict[str, list], readobj: str | None
+):
     """Derive ranges in module order, in a process pool when more than one module needs it.
 
     parse_image is Python/GIL-bound, so threads cannot help; a process pool keeps the per-module
     cache and output order. A pool that cannot start, or whose workers die, falls back to the
     sequential loop once so a crash cannot silently drop every range.
     """
-    starts = {name: uprof_functions.public_starts_from_names(publics_by_module.get(name, []))
-              for name, _path in candidates}
+    starts = {
+        name: uprof_functions.public_starts_from_names(publics_by_module.get(name, []))
+        for name, _path in candidates
+    }
     workers = _pool_workers(len(candidates))
     if workers is not None:
         try:
             with ProcessPoolExecutor(max_workers=workers) as pool:
-                futures = [pool.submit(uprof_functions.derive_module_ranges, name, path,
-                                       starts[name], readobj)
-                           for name, path in candidates]
+                futures = [
+                    pool.submit(
+                        uprof_functions.derive_module_ranges, name, path, starts[name], readobj
+                    )
+                    for name, path in candidates
+                ]
                 results = []
                 for future in futures:
                     try:
@@ -646,15 +740,17 @@ def _derive_candidates(candidates: list[tuple[str, str]],
     results = []
     for name, path in candidates:
         try:
-            results.append(uprof_functions.derive_module_ranges(name, path, starts[name],
-                                                               readobj=readobj))
+            results.append(
+                uprof_functions.derive_module_ranges(name, path, starts[name], readobj=readobj)
+            )
         except Exception as exc:  # noqa: BLE001 - reported as the module's reason
             results.append(exc)
     return results
 
 
-def _derive_scope_ranges(connection: object, artifacts: Path | None,
-                         stream: TextIO) -> tuple[Path | None, dict[str, Any]]:
+def _derive_scope_ranges(
+    connection: object, artifacts: Path | None, stream: TextIO
+) -> tuple[Path | None, dict[str, Any]]:
     """Derive function ranges for modules whose samples uProf did not name.
 
     Only a module with at least one empty Function.name and an on-disk file is read; a fully
@@ -674,7 +770,8 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
         if name in ambiguous:
             info["absent_by_module"][name] = (
                 "image version is ambiguous in the capture; the IBS dump rows carry the "
-                "module name, not Module.id, so no range was derived")
+                "module name, not Module.id, so no range was derived"
+            )
             continue
         path = str(module_path or "")
         if not path:
@@ -689,14 +786,18 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
             if readobj is None:
                 readobj = uprof_context.find_readobj() or ""
             mismatch = uprof_symbols.image_build_mismatch(
-                path, identity[0], identity[1], Path(readobj) if readobj else None)
+                path, identity[0], identity[1], Path(readobj) if readobj else None
+            )
             if mismatch:
-                reason = (f"wrong_build: {mismatch}; put the captured build at {path} and re-run "
-                          "profile --by function, or run profile --by module, which needs no "
-                          "image")
+                reason = (
+                    f"wrong_build: {mismatch}; put the captured build at {path} and re-run "
+                    "profile --by function, or run profile --by module, which needs no "
+                    "image"
+                )
                 info["absent_by_module"][name] = reason
-                print(f"WARNING: no function range derived for {name} ({path}): {reason}",
-                      file=stream)
+                print(
+                    f"WARNING: no function range derived for {name} ({path}): {reason}", file=stream
+                )
                 continue
         candidates.append((name, path))
     # One read of the combined public-symbol artifact for every module that will be derived.
@@ -707,7 +808,8 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
         rows_publics = connection.execute(
             "SELECT module_name, rva, names FROM v_public_starts "
             f"WHERE module_name IN ({placeholders})",
-            [name for name, _path in candidates]).fetchall()
+            [name for name, _path in candidates],
+        ).fetchall()
         for module_name, rva, names in rows_publics:
             publics_by_module.setdefault(str(module_name), []).append((rva, names))
     results = _derive_candidates(candidates, publics_by_module, _readobj_for(len(candidates)))
@@ -715,14 +817,12 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
         if isinstance(result, BaseException):
             reason = f"range derivation failed: {result}"
             info["absent_by_module"][name] = reason
-            print(f"WARNING: no function range derived for {name} ({path}): {reason}",
-                  file=stream)
+            print(f"WARNING: no function range derived for {name} ({path}): {reason}", file=stream)
             continue
         if not result.ranges:
             reason = result.reason or "no function range"
             info["absent_by_module"][name] = reason
-            print(f"WARNING: no function range derived for {name} ({path}): {reason}",
-                  file=stream)
+            print(f"WARNING: no function range derived for {name} ({path}): {reason}", file=stream)
             continue
         ranges.extend(result.ranges)
         info["modules"] += 1
@@ -730,8 +830,9 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
     info["ranges"] = len(ranges)
     if not ranges:
         return None, info
-    target = artifacts if artifacts is not None else Path(
-        tempfile.mkdtemp(prefix="uprof-functions-"))
+    target = (
+        artifacts if artifacts is not None else Path(tempfile.mkdtemp(prefix="uprof-functions-"))
+    )
     return uprof_functions.write_ranges_csv(target / "functions.csv", ranges), info
 
 
@@ -739,56 +840,71 @@ def _dump_field(dump: uprof_dump.DumpInfo) -> str:
     size_mb = round(dump.path.stat().st_size / (1024 * 1024), 1)
     filter_note = f" (time filter {dump.time_filter})" if dump.time_filter else ""
     if dump.source == "generated":
-        return (f"{dump.path}, {size_mb} MB; cache {dump.cache_dir} generated "
-                f"({dump.reason}{filter_note}); the source session is untouched")
+        return (
+            f"{dump.path}, {size_mb} MB; cache {dump.cache_dir} generated "
+            f"({dump.reason}{filter_note}); the source session is untouched"
+        )
     if dump.source == "reused":
-        return (f"{dump.path}, {size_mb} MB; cache {dump.cache_dir} reused "
-                f"({dump.reason}{filter_note})")
+        return (
+            f"{dump.path}, {size_mb} MB; cache {dump.cache_dir} reused ({dump.reason}{filter_note})"
+        )
     return f"{dump.path}, {size_mb} MB; {dump.reason}"
 
 
 _TIME_SHARE_MEANING: Final = (
     "time share estimated from the gaps between per-sample timestamps (idle/wait is charged to "
-    "the ending sample; the first sample per CPU is ignored, no gap before it; NULL sorts last)")
+    "the ending sample; the first sample per CPU is ignored, no gap before it; NULL sorts last)"
+)
 # An attached thread's samples span whichever CPUs it ran on; partitioning by TID keeps its
 # migrating gaps from being counted once per CPU. The gap includes time the thread was off-CPU.
 _TIME_SHARE_MEANING_ATTACHED: Final = (
     "time share estimated from the gaps between per-sample timestamps within each thread "
     "(PID, TID), so a thread that migrates between CPUs is counted once; the gap includes "
     "off-CPU time and is charged to the ending sample, the first sample per thread is ignored "
-    "(no gap before it), and NULL sorts last")
-_CYCLE_BASIS: Final = ("; for a cycle-controlled IBS capture sample_share (fixed cycles per "
-                       "sample) is the CPU-cycle share and the better ranking")
+    "(no gap before it), and NULL sorts last"
+)
+_CYCLE_BASIS: Final = (
+    "; for a cycle-controlled IBS capture sample_share (fixed cycles per "
+    "sample) is the CPU-cycle share and the better ranking"
+)
 _TAG_SHARE_MEANING: Final = (
     "share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, "
-    "queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency")
+    "queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency"
+)
 # Only for frequency shares: those count sampled operations, not fixed work per sample.
-_SAMPLE_CAVEAT: Final = ("a raw share cannot separate a cheap operation run often from an "
-                         "expensive one run rarely")
+_SAMPLE_CAVEAT: Final = (
+    "a raw share cannot separate a cheap operation run often from an expensive one run rarely"
+)
 _SYSTEM_MODULE_MEANING: Final = (
-    "Module.isSystemModule: true = OS-shipped module, false = not OS-shipped")
+    "Module.isSystemModule: true = OS-shipped module, false = not OS-shipped"
+)
 # A cycle interval is time only at a frequency; the session records the interval in cycles, not
 # the frequency of the capture machine.
 _CPU_SECONDS_MEANING: Final = (
     "sampled CPU seconds = samples x the requested cycle interval / this machine's reported core "
     "frequency (the session records no frequency, so a capture from other hardware is "
-    "approximate); CPU time, not wall-clock elapsed time")
+    "approximate); CPU time, not wall-clock elapsed time"
+)
 # Timer captures: one sample is one timer tick that found the thread running. Neither samples x
 # the requested interval nor samples x the achieved tick period reproduced in-process CPU time
 # within 5% (1 ms: -13% to +0.2%; 10 ms: -31% to -12%), so cpu_seconds is not emitted.
 _TIMER_SHARE_MEANING: Final = (
     "on-CPU time share of the sampled threads (one sample per timer tick that found the thread "
-    "running)")
+    "running)"
+)
 _TIMER_CPU_SECONDS_ABSENT: Final = (
     "on the reference host, samples x interval was 13% low to 0.2% high at 1 ms and 31% to 12% "
     "low at 10 ms against the workload's own CPU time, so no seconds are derived; for a cost in "
-    "seconds, multiply sample_share by the workload's measured CPU time")
+    "seconds, multiply sample_share by the workload's measured CPU time"
+)
 _TIMER_ABSENT_TIME_SHARE: Final = "a timer capture has no per-sample timestamps"
 _TIMER_ABSENT_TAG: Final = "a timer capture has no tag-to-retire counter"
 _CPU_SECONDS_SYSTEM_WIDE: Final = (
-    "; a system-wide capture sums CPU time across cores, and halted cycles are excluded")
+    "; a system-wide capture sums CPU time across cores, and halted cycles are excluded"
+)
 _CPU_SECONDS_ATTACHED: Final = (
-    "; an attached thread's off-CPU time is not sampled, so this is its running CPU time")
+    "; an attached thread's off-CPU time is not sampled, so this is its running CPU time"
+)
 _NEXT_BY: Final = {
     "process": ("module",),
     "module": ("function",),
@@ -801,24 +917,29 @@ _NEXT_BY: Final = {
 _PROCESS_STEERED: Final = ("module", "function", "region")
 _REGION_MEANING: Final = (
     "4 KiB address page; samples are grouped by address, not by control flow; a page may span "
-    "unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket")
+    "unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket"
+)
 _NO_NAMED_FUNCTION_STOP: Final = (
     "a module with no source names is covered by derived function ranges: use profile --by "
     "function, which derives boundaries from the binary (.pdata, PE exports, PDB publics) with "
-    "LLVM; do not write a PE parser, map .pdata by hand or disassemble")
+    "LLVM; do not write a PE parser, map .pdata by hand or disassemble"
+)
 _UNRESOLVED_FUNCTION_STOP: Final = (
     "unresolved samples are covered by derived function ranges: use profile --by function, which "
     "derives boundaries from the binary (.pdata, PE exports, PDB publics) with LLVM; do not write "
-    "a PE parser, map .pdata by hand or disassemble")
+    "a PE parser, map .pdata by hand or disassemble"
+)
 _RANGE_UNRESOLVED_STOP: Final = (
     "no named or derived range covers these samples; function_reason and "
     "legend.function_ranges.absent_by_module name why, and --by region is the page fallback "
-    "where no boundary source exists")
+    "where no boundary source exists"
+)
 _SYMBOL_PATH_REMEDY: Final = (
     "; remedy: pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, "
     "or --image-path <file|dir> when the module image is not at its recorded path, or place the "
     "module's debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent "
-    "PDB, the recorded CodeView path or the skill's local srv* cache scan is searched")
+    "PDB, the recorded CodeView path or the skill's local srv* cache scan is searched"
+)
 # Report order is the caller-facing order of the repeatable path options.
 _SYMBOL_PATH_FLAGS: Final = (
     ("symbol_path", "--symbol-path"),
@@ -826,17 +947,18 @@ _SYMBOL_PATH_FLAGS: Final = (
 )
 
 
-def _sample_share_meaning(sampler: uprof_session.Sampler,
-                          dump: uprof_dump.DumpInfo | None) -> str:
+def _sample_share_meaning(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None) -> str:
     """What sample_share is a fraction of in this capture mode."""
     if sampler.timer:
         return _TIMER_SHARE_MEANING
     if dump is None:
         if sampler.pmc_cycle_shares:
             return "busy core-cycle share (fixed cycles per sample; halted excluded)"
-        return ("not established (this PMC event is not the supported cycle event); capture "
-                "--event cycles (CYCLES_NOT_IN_HALT, hwId 118) to make sample_share a "
-                "core-cycle share")
+        return (
+            "not established (this PMC event is not the supported cycle event); capture "
+            "--event cycles (CYCLES_NOT_IN_HALT, hwId 118) to make sample_share a "
+            "core-cycle share"
+        )
     if sampler.ibs_dump_kind == "ibsfetch-event-dump":
         return "fetch-sample frequency share (fixed fetch events per sample)"
     if sampler.interval_units == "ops":
@@ -877,17 +999,24 @@ def _command_arg(value: str, placeholder: str, data: dict[str, str]) -> str:
     return f"<{key}>"
 
 
-def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False,
-                     data: dict[str, str] | None = None) -> str:
+def _profile_command(
+    args: argparse.Namespace, by: str, json_mode: bool = False, data: dict[str, str] | None = None
+) -> str:
     """A drill-down command that keeps the session and the process/image scope.
 
     Every value goes through _command_arg, so a value that is not plain is a placeholder named
     in data (the caller prints it as data, never inside the command).
     """
     data = {} if data is None else data
-    parts = ["python", _command_arg(str(TOOLS_DIR / "uprof.py"), "<UPROF_PY>", data), "profile",
-             "--session", _command_arg(str(util.absolute(args.session)), "<SESSION_DIR>", data),
-             "--by", by]
+    parts = [
+        "python",
+        _command_arg(str(TOOLS_DIR / "uprof.py"), "<UPROF_PY>", data),
+        "profile",
+        "--session",
+        _command_arg(str(util.absolute(args.session)), "<SESSION_DIR>", data),
+        "--by",
+        by,
+    ]
     if args.pid is not None:
         parts += ["--pid", str(args.pid)]
     elif args.image is not None and args.image != "%":
@@ -916,25 +1045,27 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False,
 
 def _unscoped(args: argparse.Namespace) -> bool:
     """No --pid, --image or --function narrows the rows to one process or function."""
-    return (args.pid is None and args.image in (None, "%")
-            and not getattr(args, "function", None))
+    return args.pid is None and args.image in (None, "%") and not getattr(args, "function", None)
 
 
 def _top_process(connection: object) -> tuple[int | None, str | None] | None:
     """(PID, image name) of the top-ranked process row, or None when there is no process row."""
-    rows = connection.execute("SELECT pid, process FROM v_process_rows WHERE sort_key = 0 "
-                              "ORDER BY rn LIMIT 1").fetchall()
+    rows = connection.execute(
+        "SELECT pid, process FROM v_process_rows WHERE sort_key = 0 ORDER BY rn LIMIT 1"
+    ).fetchall()
     if not rows:
         return None
     pid, name = rows[0]
     return (None if pid is None else int(pid)), (None if name is None else str(name))
 
 
-def _next_calls(args: argparse.Namespace,
-                row_attribution: dict[str, int] | None = None,
-                system_wide: bool = False,
-                top_process: tuple[int | None, str | None] | None = None,
-                data: dict[str, str] | None = None) -> list[str]:
+def _next_calls(
+    args: argparse.Namespace,
+    row_attribution: dict[str, int] | None = None,
+    system_wide: bool = False,
+    top_process: tuple[int | None, str | None] | None = None,
+    data: dict[str, str] | None = None,
+) -> list[str]:
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
@@ -958,7 +1089,10 @@ def _next_calls(args: argparse.Namespace,
         if pid is None and not image:
             return []
         scoped = argparse.Namespace(**vars(args))
-        scoped.pid, scoped.image = pid, (None if pid is not None else uprof_shell.image_pattern(image))
+        scoped.pid, scoped.image = (
+            pid,
+            (None if pid is not None else uprof_shell.image_pattern(image)),
+        )
         calls = [_profile_command(scoped, "module", data=data)]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region", data=data))
@@ -982,8 +1116,9 @@ def _cpu_seconds_absent(sampler: uprof_session.Sampler) -> str:
     return "the core frequency is unavailable on this machine"
 
 
-def _primary_measure(sampler: uprof_session.Sampler,
-                     dump: uprof_dump.DumpInfo | None) -> tuple[str, str]:
+def _primary_measure(
+    sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None
+) -> tuple[str, str]:
     """The column that orders rows and --top for this capture, and why.
 
     A fixed unit per sample makes sample_share the ranking: a cycle-controlled or op-count IBS
@@ -991,24 +1126,35 @@ def _primary_measure(sampler: uprof_session.Sampler,
     unsupported PMC event leaves sample_share not established, so raw samples order the rows.
     """
     if sampler.timer:
-        return "sample_share", ("this timer capture counts one timer tick per sample, so "
-                                "sample_share is the on-CPU time share")
+        return "sample_share", (
+            "this timer capture counts one timer tick per sample, so "
+            "sample_share is the on-CPU time share"
+        )
     if dump is None:
         if sampler.pmc_cycle_shares:
-            return "sample_share", ("this PMC cycle capture counts fixed cycles per sample, so "
-                                    "sample_share is the busy core-cycle share")
-        return "samples", ("sample_share is not established for this PMC event, so rows are "
-                           "ordered by raw sample count")
-    if (sampler.ibs_dump_kind == "ibsop-event-dump"
-            and sampler.interval_units in ("cycles", "ops")):
+            return "sample_share", (
+                "this PMC cycle capture counts fixed cycles per sample, so "
+                "sample_share is the busy core-cycle share"
+            )
+        return "samples", (
+            "sample_share is not established for this PMC event, so rows are "
+            "ordered by raw sample count"
+        )
+    if sampler.ibs_dump_kind == "ibsop-event-dump" and sampler.interval_units in ("cycles", "ops"):
         if sampler.interval_units == "cycles":
-            return "sample_share", ("this cycle-controlled IBS capture counts fixed cycles per "
-                                    "sample, so sample_share is the core-cycle share")
-        return "sample_share", ("this op-count IBS capture counts a fixed number of dispatched "
-                                "ops per sample, so sample_share is the dispatched-op frequency "
-                                "share")
-    return "time_share", ("this gap-weighted (time-based) capture has per-sample timestamps, so "
-                          "time_share ranks where time went")
+            return "sample_share", (
+                "this cycle-controlled IBS capture counts fixed cycles per "
+                "sample, so sample_share is the core-cycle share"
+            )
+        return "sample_share", (
+            "this op-count IBS capture counts a fixed number of dispatched "
+            "ops per sample, so sample_share is the dispatched-op frequency "
+            "share"
+        )
+    return "time_share", (
+        "this gap-weighted (time-based) capture has per-sample timestamps, so "
+        "time_share ranks where time went"
+    )
 
 
 def _share_value(part: Any, whole: Any) -> float | None:
@@ -1018,9 +1164,12 @@ def _share_value(part: Any, whole: Any) -> float | None:
     return float(part) / float(whole)
 
 
-def _function_scope_json(scope: dict[str, Any], sample_interval_s: float | None,
-                         dump: uprof_dump.DumpInfo | None,
-                         tag_available: bool) -> dict[str, Any]:
+def _function_scope_json(
+    scope: dict[str, Any],
+    sample_interval_s: float | None,
+    dump: uprof_dump.DumpInfo | None,
+    tag_available: bool,
+) -> dict[str, Any]:
     """The JSON form of the parent-unit measurement for a filtered instruction/line view."""
     start = scope["function_start"]
     end = scope["function_end"]
@@ -1034,13 +1183,19 @@ def _function_scope_json(scope: dict[str, Any], sample_interval_s: float | None,
         "parent": {
             "samples": int(scope["samples"] or 0),
             "sample_share": _share_value(scope["samples"], scope["total_samples"]),
-            "time_share": (_share_value(scope["weight"], scope["total_weight"])
-                           if dump is not None else None),
+            "time_share": (
+                _share_value(scope["weight"], scope["total_weight"]) if dump is not None else None
+            ),
             "tag_to_retire_share": (
                 _share_value(scope["tag_cycles"], scope["total_tag_cycles"])
-                if tag_available else None),
-            "cpu_seconds": (None if sample_interval_s is None
-                            else float(scope["samples"] or 0) * sample_interval_s),
+                if tag_available
+                else None
+            ),
+            "cpu_seconds": (
+                None
+                if sample_interval_s is None
+                else float(scope["samples"] or 0) * sample_interval_s
+            ),
             "shares_are": "of the scoped capture",
         },
         "denominators": {
@@ -1051,11 +1206,15 @@ def _function_scope_json(scope: dict[str, Any], sample_interval_s: float | None,
             "parent_time_share": "parent_weight",
             "parent_tag_to_retire_share": "parent_tag_cycles",
         },
-        "measurement": ("the parent totals are the sum of this function's own rows from the "
-                        "same capture (a sum/join, not a new capture or profiling run)"),
-        "child_shares": ("sample_share/time_share/tag_to_retire_share are relative to the scoped "
-                         "capture; parent_sample_share/parent_time_share/"
-                         "parent_tag_to_retire_share are relative to the parent function"),
+        "measurement": (
+            "the parent totals are the sum of this function's own rows from the "
+            "same capture (a sum/join, not a new capture or profiling run)"
+        ),
+        "child_shares": (
+            "sample_share/time_share/tag_to_retire_share are relative to the scoped "
+            "capture; parent_sample_share/parent_time_share/"
+            "parent_tag_to_retire_share are relative to the parent function"
+        ),
     }
 
 
@@ -1074,37 +1233,60 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
                function_source, function_derived, attribution, function_id,
                samples, weight, tag_cycles, total_samples, total_weight, total_tag_cycles
         FROM v_function_scope""").fetchall()
-    wanted = (f"--function {args.function!r} --module {args.module!r}"
-              + ("" if getattr(args, "function_start", None) is None
-                 else f" --function-start 0x{args.function_start:X}"))
+    wanted = f"--function {args.function!r} --module {args.module!r}" + (
+        ""
+        if getattr(args, "function_start", None) is None
+        else f" --function-start 0x{args.function_start:X}"
+    )
     if not rows:
         raise util.UprofError(
             f"no function row matches {wanted}; copy the function, module and function_start "
             "cells from a --by function row (the filter uses the same --pid/--image/"
-            "--time-filter scope)")
+            "--time-filter scope)"
+        )
     if len(rows) > 1:
         starts = sorted(f"0x{row[3]:X}" for row in rows if row[3] is not None)
         if not starts:
             raise util.UprofError(
                 f"{wanted} matches {len(rows)} function rows with no derived range; neither row "
-                "has a function_start, so --function-start cannot separate them")
+                "has a function_start, so --function-start cannot separate them"
+            )
         raise util.UprofError(
             f"{wanted} matches {len(rows)} function rows; add --function-start <RVA> to choose "
-            f"one (function_start: {', '.join(starts)})")
-    (module_name, function_name, range_kind, start, end, source, derived, attribution,
-     function_id, samples, weight, tag_cycles, total_samples, total_weight,
-     total_tag_cycles) = rows[0]
+            f"one (function_start: {', '.join(starts)})"
+        )
+    (
+        module_name,
+        function_name,
+        range_kind,
+        start,
+        end,
+        source,
+        derived,
+        attribution,
+        function_id,
+        samples,
+        weight,
+        tag_cycles,
+        total_samples,
+        total_weight,
+        total_tag_cycles,
+    ) = rows[0]
     if range_kind == "range":
-        scope_filter = (f"module {module_name!r} + RVA in [0x{start:X},0x{end:X}); "
-                        f"function_source={source}"
-                        + (", synthetic derived name" if derived else ", source name"))
+        scope_filter = (
+            f"module {module_name!r} + RVA in [0x{start:X},0x{end:X}); "
+            f"function_source={source}"
+            + (", synthetic derived name" if derived else ", source name")
+        )
     elif function_id is not None:
-        scope_filter = (f"module {module_name!r} + uProf Function.id {function_id} (no derived "
-                        "range)")
+        scope_filter = (
+            f"module {module_name!r} + uProf Function.id {function_id} (no derived range)"
+        )
     else:
         raise util.UprofError(
             f"{wanted} has no derived range and no uProf Function.id; there is no address set "
-            "to filter the instruction or line rows to; use --by region for the page view")
+            "to filter the instruction or line rows to; use --by region for the page view"
+        )
     return {
         "module": module_name,
         "function": function_name,
@@ -1120,8 +1302,10 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
         "total_samples": int(total_samples or 0),
         "total_weight": total_weight,
         "total_tag_cycles": total_tag_cycles,
-        "filter": (scope_filter + "; only samples inside this function are counted, and the rows "
-                   "are a subset of the scoped capture, not a re-measurement"),
+        "filter": (
+            scope_filter + "; only samples inside this function are counted, and the rows "
+            "are a subset of the scoped capture, not a re-measurement"
+        ),
     }
 
 
@@ -1130,56 +1314,76 @@ def _percent_share(part: Any, whole: Any) -> str:
     return "an absent share" if share is None else f"{100.0 * share:.1f}%"
 
 
-def _function_scope_fields(scope: dict[str, Any], legend: dict[str, Any],
-                           sample_interval_s: float | None,
-                           timer: bool = False) -> list[tuple[str, str]]:
+def _function_scope_fields(
+    scope: dict[str, Any],
+    legend: dict[str, Any],
+    sample_interval_s: float | None,
+    timer: bool = False,
+) -> list[tuple[str, str]]:
     """The explicit filter and the parent-unit measurement, with every denominator named.
 
     A timer capture states its missing measures once, in METRIC, so PARENT does not repeat them.
     """
-    parent = [f"{scope['samples']} samples",
-              f"sample_share {_percent_share(scope['samples'], scope['total_samples'])} of the "
-              "scoped capture"]
+    parent = [
+        f"{scope['samples']} samples",
+        f"sample_share {_percent_share(scope['samples'], scope['total_samples'])} of the "
+        "scoped capture",
+    ]
     absent = legend.get("absent", {})
     if "time_share" in legend.get("columns", {}):
-        parent.append("time_share "
-                      f"{_percent_share(scope['weight'], scope['total_weight'])} of the scoped "
-                      "capture")
+        parent.append(
+            "time_share "
+            f"{_percent_share(scope['weight'], scope['total_weight'])} of the scoped "
+            "capture"
+        )
     elif not timer:
         parent.append(f"time_share absent ({absent.get('time_share', 'not applicable')})")
     if "tag_to_retire_share" in legend.get("columns", {}):
-        parent.append("tag_to_retire_share "
-                      f"{_percent_share(scope['tag_cycles'], scope['total_tag_cycles'])} of the "
-                      "scoped capture")
+        parent.append(
+            "tag_to_retire_share "
+            f"{_percent_share(scope['tag_cycles'], scope['total_tag_cycles'])} of the "
+            "scoped capture"
+        )
     elif not timer:
-        parent.append("tag_to_retire_share absent "
-                      f"({absent.get('tag_to_retire_share', 'not applicable')})")
+        parent.append(
+            f"tag_to_retire_share absent ({absent.get('tag_to_retire_share', 'not applicable')})"
+        )
     if sample_interval_s is not None:
         seconds = float(scope["samples"]) * sample_interval_s
         parent.append(f"cpu_seconds {seconds:.3f} s (parent samples x interval)")
     else:
         default = _TIMER_CPU_SECONDS_ABSENT if timer else "not applicable"
         parent.append(f"cpu_seconds absent ({absent.get('cpu_seconds', default)})")
-    shares = ("child sample_share uses the capture denominator, parent_sample_share uses the "
-              "parent totals" if timer else
-              "child sample_share/time_share/tag_to_retire_share use the capture denominators, "
-              "parent_sample_share/parent_time_share/parent_tag_to_retire_share use the parent "
-              "totals")
-    parent_text = ("; ".join(parent)
-                   + "; the parent totals are the sum of this function's own rows (a sum/join, "
-                     f"not a new measurement); {shares}")
+    shares = (
+        "child sample_share uses the capture denominator, parent_sample_share uses the "
+        "parent totals"
+        if timer
+        else "child sample_share/time_share/tag_to_retire_share use the capture denominators, "
+        "parent_sample_share/parent_time_share/parent_tag_to_retire_share use the parent "
+        "totals"
+    )
+    parent_text = (
+        "; ".join(parent)
+        + "; the parent totals are the sum of this function's own rows (a sum/join, "
+        f"not a new measurement); {shares}"
+    )
     return [("FILTER", scope["filter"]), ("PARENT", parent_text)]
 
 
-def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
-            has_tag: bool, tag_available: bool,
-            args: argparse.Namespace, system_wide: bool,
-            sample_interval_s: float | None = None,
-            has_system_module: bool | None = None,
-            range_info: dict[str, Any] | None = None,
-            row_attribution: dict[str, int] | None = None,
-            function_scope: dict[str, Any] | None = None,
-            top_process: tuple[int | None, str | None] | None = None) -> dict[str, Any]:
+def _legend(
+    sampler: uprof_session.Sampler,
+    dump: uprof_dump.DumpInfo | None,
+    has_tag: bool,
+    tag_available: bool,
+    args: argparse.Namespace,
+    system_wide: bool,
+    sample_interval_s: float | None = None,
+    has_system_module: bool | None = None,
+    range_info: dict[str, Any] | None = None,
+    row_attribution: dict[str, int] | None = None,
+    function_scope: dict[str, Any] | None = None,
+    top_process: tuple[int | None, str | None] | None = None,
+) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -1193,71 +1397,90 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
     }
     denominators: dict[str, str] = {"sample_share": "total_samples"}
     if args.by == "function":
-        columns["attribution"] = ("unique / derived (synthetic binary range) / unresolved (no "
-                                  "symbol)")
-        columns["function_start"] = ("first RVA of the derived function range (inclusive); NULL "
-                                     "when no range was derived")
+        columns["attribution"] = (
+            "unique / derived (synthetic binary range) / unresolved (no symbol)"
+        )
+        columns["function_start"] = (
+            "first RVA of the derived function range (inclusive); NULL when no range was derived"
+        )
         columns["function_end"] = "address after the function range (exclusive)"
-        columns["function_source"] = ("boundary source of the range: pdb_public, export, pdata "
-                                      "or none (no boundary source; the row falls back to uProf "
-                                      "Function.id or is unresolved)")
-        columns["function_derived"] = ("true when the displayed name is synthetic "
-                                       "(sub_<rva>/pdata_<start>), not a source symbol")
-        columns["hot_rva"] = ("highest-sample RVA in the function; ties pick the lowest RVA; the "
-                              "precise attribution inside the range")
+        columns["function_source"] = (
+            "boundary source of the range: pdb_public, export, pdata "
+            "or none (no boundary source; the row falls back to uProf "
+            "Function.id or is unresolved)"
+        )
+        columns["function_derived"] = (
+            "true when the displayed name is synthetic "
+            "(sub_<rva>/pdata_<start>), not a source symbol"
+        )
+        columns["hot_rva"] = (
+            "highest-sample RVA in the function; ties pick the lowest RVA; the "
+            "precise attribution inside the range"
+        )
         columns["hot_samples"] = "samples at hot_rva"
-        columns["other_samples"] = ("samples outside hot_rva: samples - hot_samples; the rest of "
-                                    "the function, not a second hot address")
-        columns["hot_sample_share"] = ("hot_rva's samples as a share of the scoped capture "
-                                       "total")
-        columns["function_reason"] = ("why this row has no derived range "
-                                      "(function_start/function_end are NULL)")
+        columns["other_samples"] = (
+            "samples outside hot_rva: samples - hot_samples; the rest of "
+            "the function, not a second hot address"
+        )
+        columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
+        columns["function_reason"] = (
+            "why this row has no derived range (function_start/function_end are NULL)"
+        )
     elif args.by in ("line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
         if function_scope is not None:
             columns["parent_sample_share"] = (
-                "row samples as a share of the selected parent function's samples, not the "
-                "capture")
+                "row samples as a share of the selected parent function's samples, not the capture"
+            )
             denominators["parent_sample_share"] = "parent_samples"
             if dump is not None:
                 columns["parent_time_share"] = (
                     "row gap weight as a share of the selected parent function's gap weight, not "
-                    "the capture")
+                    "the capture"
+                )
                 denominators["parent_time_share"] = "parent_weight"
             if tag_available:
                 columns["parent_tag_to_retire_share"] = (
                     "row tag-to-retire cycles as a share of the selected parent function's "
-                    "tag-to-retire cycles, not the capture")
+                    "tag-to-retire cycles, not the capture"
+                )
                 denominators["parent_tag_to_retire_share"] = "parent_tag_cycles"
     elif args.by == "region":
-        columns["attribution"] = ("hot_rva: unique / shared (folded names) / derived (synthetic "
-                                  "binary range) / unresolved (no symbol)")
+        columns["attribution"] = (
+            "hot_rva: unique / shared (folded names) / derived (synthetic "
+            "binary range) / unresolved (no symbol)"
+        )
         columns["region"] = _REGION_MEANING
         columns["sampled_addresses"] = "distinct RVAs with samples in the page"
         columns["hot_rva"] = "highest-sample RVA in the page; ties pick the lowest RVA"
         columns["hot_samples"] = "samples at hot_rva"
-        columns["hot_sample_share"] = ("hot_rva's samples as a share of the scoped capture "
-                                       "total")
-        columns["function_source"] = ("hot_rva's boundary source: pdb_public, export, pdata or "
-                                      "none (no range covers hot_rva)")
-        columns["function_derived"] = ("true when the hot function name is synthetic "
-                                       "(sub_<rva>/pdata_<start>), not a source symbol")
-        columns["symbol_reason"] = ("why function/file/line are NULL for hot_rva")
+        columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
+        columns["function_source"] = (
+            "hot_rva's boundary source: pdb_public, export, pdata or none (no range covers hot_rva)"
+        )
+        columns["function_derived"] = (
+            "true when the hot function name is synthetic "
+            "(sub_<rva>/pdata_<start>), not a source symbol"
+        )
+        columns["symbol_reason"] = "why function/file/line are NULL for hot_rva"
     absent: dict[str, str] = {}
     if sampler.timer:
         absent["time_share"] = _TIMER_ABSENT_TIME_SHARE
         absent["tag_to_retire_share"] = _TIMER_ABSENT_TAG
     elif dump is None:
-        absent["time_share"] = ("this export aggregates PMC samples per window; capture with "
-                                "--event ibs-op (IBS OP with per-sample timestamps) to get "
-                                "time_share")
+        absent["time_share"] = (
+            "this export aggregates PMC samples per window; capture with "
+            "--event ibs-op (IBS OP with per-sample timestamps) to get "
+            "time_share"
+        )
         absent["tag_to_retire_share"] = "this export has no tag-to-retire counter"
     else:
         if system_wide:
             columns["time_share"] = _TIME_SHARE_MEANING
         else:
-            columns["time_share"] = (_TIME_SHARE_MEANING_ATTACHED
-                                     + (_CYCLE_BASIS if _cycle_controlled(sampler) else ""))
+            columns["time_share"] = _TIME_SHARE_MEANING_ATTACHED + (
+                _CYCLE_BASIS if _cycle_controlled(sampler) else ""
+            )
         denominators["time_share"] = "total_weight"
         if tag_available:
             columns["tag_to_retire_share"] = _TAG_SHARE_MEANING
@@ -1268,7 +1491,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             absent["tag_to_retire_share"] = (
                 "IbsTagToRetCtr has no nonzero values in this dump, so every share is NULL; "
                 "the tag-to-retire counter comes from an IBS OP capture (--event ibs-op), not "
-                "from PMC or IBS fetch")
+                "from PMC or IBS fetch"
+            )
         else:
             absent["tag_to_retire_share"] = "this export has no tag-to-retire counter"
     # A PMC sample is a fixed cycle count, so the sample order ranks cycles when the event is the
@@ -1277,45 +1501,59 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         order_by = ["samples"]
         gap_weighted = False
         if sampler.timer:
-            estimate = ("sample_share is the on-CPU time share (one timer tick per sample), so "
-                        "the sample count ranks where CPU time was spent")
+            estimate = (
+                "sample_share is the on-CPU time share (one timer tick per sample), so "
+                "the sample count ranks where CPU time was spent"
+            )
         elif sampler.pmc_cycle_shares:
-            estimate = ("sample_share is the busy core-cycle share (fixed cycles per sample, "
-                        "halted excluded), so the sample count ranks where cycles were spent")
+            estimate = (
+                "sample_share is the busy core-cycle share (fixed cycles per sample, "
+                "halted excluded), so the sample count ranks where cycles were spent"
+            )
         else:
-            estimate = ("row order is raw sample count only; sample_share is not established, "
-                        "so this is not a time or impact claim")
+            estimate = (
+                "row order is raw sample count only; sample_share is not established, "
+                "so this is not a time or impact claim"
+            )
     else:
         order_by = ["time_share", "samples"]
         gap_weighted = True
         if system_wide:
-            estimate = ("time_share is a time share estimated from the gaps between per-sample "
-                        "timestamps; idle/wait is charged to the ending sample, the first sample "
-                        "per CPU is ignored (no gap before it), and NULL sorts last")
+            estimate = (
+                "time_share is a time share estimated from the gaps between per-sample "
+                "timestamps; idle/wait is charged to the ending sample, the first sample "
+                "per CPU is ignored (no gap before it), and NULL sorts last"
+            )
         else:
-            estimate = ("time_share is a time share estimated from the gaps between per-sample "
-                        "timestamps within each thread (PID, TID), so a migrating thread is "
-                        "counted once; off-CPU time is charged to the ending sample, the first "
-                        "sample per thread is ignored (no gap before it), and NULL sorts last"
-                        + (_CYCLE_BASIS if _cycle_controlled(sampler) else ""))
+            estimate = (
+                "time_share is a time share estimated from the gaps between per-sample "
+                "timestamps within each thread (PID, TID), so a migrating thread is "
+                "counted once; off-CPU time is charged to the ending sample, the first "
+                "sample per thread is ignored (no gap before it), and NULL sorts last"
+                + (_CYCLE_BASIS if _cycle_controlled(sampler) else "")
+            )
     if args.by in ("module", "region", "function"):
         if args.by == "module":
-            columns["hot_rva"] = ("highest-sample RVA in the module; ties pick the lowest RVA; "
-                                  "the precise attribution inside the module")
+            columns["hot_rva"] = (
+                "highest-sample RVA in the module; ties pick the lowest RVA; "
+                "the precise attribution inside the module"
+            )
             columns["hot_samples"] = "samples at hot_rva"
-            columns["other_samples"] = ("samples outside hot_rva: samples - hot_samples; the "
-                                        "rest of the module, not a second hot address")
-            columns["hot_sample_share"] = ("hot_rva's samples as a share of the scoped capture "
-                                           "total")
+            columns["other_samples"] = (
+                "samples outside hot_rva: samples - hot_samples; the "
+                "rest of the module, not a second hot address"
+            )
+            columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
         if has_system_module:
             columns["isSystemModule"] = _SYSTEM_MODULE_MEANING
         else:
-            absent["isSystemModule"] = ("this export has no Module.isSystemModule column; "
-                                        "third-party cannot be classified")
+            absent["isSystemModule"] = (
+                "this export has no Module.isSystemModule column; third-party cannot be classified"
+            )
         if sample_interval_s is not None:
-            columns["cpu_seconds"] = (_CPU_SECONDS_MEANING
-                                      + (_CPU_SECONDS_SYSTEM_WIDE if system_wide
-                                         else _CPU_SECONDS_ATTACHED))
+            columns["cpu_seconds"] = _CPU_SECONDS_MEANING + (
+                _CPU_SECONDS_SYSTEM_WIDE if system_wide else _CPU_SECONDS_ATTACHED
+            )
         else:
             absent["cpu_seconds"] = _cpu_seconds_absent(sampler)
     next_data: dict[str, str] = {}
@@ -1333,23 +1571,32 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         result["next_data"] = next_data
     if function_scope is not None:
         result["function_scope"] = _function_scope_json(
-            function_scope, sample_interval_s, dump, tag_available)
+            function_scope, sample_interval_s, dump, tag_available
+        )
     if args.by in ("process", "module", "function", "region"):
         measure, reason = _primary_measure(sampler, dump)
         result["impact"]["order_by"] = [measure] + ([] if measure == "samples" else ["samples"])
         result["impact"]["gap_weighted"] = measure == "time_share"
         result["impact"]["primary_measure"] = measure
         result["impact"]["primary_measure_reason"] = reason
-        noun = {"process": "processes", "module": "modules", "function": "functions",
-                "region": "pages"}[args.by]
+        noun = {
+            "process": "processes",
+            "module": "modules",
+            "function": "functions",
+            "region": "pages",
+        }[args.by]
         result["impact"]["estimate"] = (
             f"{reason}; --top selects the highest rows by {measure}, so the default 20 already "
-            f"carries the hot {noun}")
+            f"carries the hot {noun}"
+        )
         if args.by in ("function", "region"):
-            precise = ("hot_rva is the highest-sample RVA inside the function"
-                       if args.by == "function"
-                       else ("hot_rva is the highest-sample RVA inside the page and the precise "
-                             "attribution"))
+            precise = (
+                "hot_rva is the highest-sample RVA inside the function"
+                if args.by == "function"
+                else (
+                    "hot_rva is the highest-sample RVA inside the page and the precise attribution"
+                )
+            )
             result["impact"]["estimate"] += f"; {precise}"
     if args.by == "instruction":
         measure, reason = _primary_measure(sampler, dump)
@@ -1358,34 +1605,43 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         result["impact"]["primary_measure"] = measure
         result["impact"]["primary_measure_reason"] = reason
         result["impact"]["estimate"] = (
-            f"{reason}; --top selects the highest instruction rows by {measure}")
+            f"{reason}; --top selects the highest instruction rows by {measure}"
+        )
         if measure == "time_share":
             result["impact"]["sample_hot"] = (
                 "this instruction table is time_share-ordered, not sample-hot: do not read its "
                 "first row as the sample-hot RVA or claim that no single instruction exceeds a "
                 "sample threshold; the function or region hot_rva and hot_samples are the "
-                "sample-hot attribution")
+                "sample-hot attribution"
+            )
         else:
             result["impact"]["sample_hot"] = (
                 "this instruction table is sample-ordered, so its first row is the sample-hot "
-                "instruction and agrees with the function or region hot_rva")
+                "instruction and agrees with the function or region hot_rva"
+            )
     if args.by == "function":
         info = range_info or {}
         result["function_ranges"] = {
-            "source": ("PE runtime-function starts (.pdata), PE exports and PDB public symbols, "
-                       "read with LLVM; a range ends at the next boundary in the same executable "
-                       "section or at its end"),
+            "source": (
+                "PE runtime-function starts (.pdata), PE exports and PDB public symbols, "
+                "read with LLVM; a range ends at the next boundary in the same executable "
+                "section or at its end"
+            ),
             "derived_modules": int(info.get("modules", 0)),
             "ranges": int(info.get("ranges", 0)),
             "absent_by_module": info.get("absent_by_module") or {},
-            "fallback": ("a fully named module is not read, so its rows keep the uProf Function.id "
-                         "grouping and function_reason says derivation was skipped; a module with "
-                         "no derived range groups by Function.id and function_reason says why no "
-                         "range exists"),
-            "meaning": ("function is the semantic unit; the tool derives the boundaries, so a "
-                        "consumer must not write a PE parser or map .pdata by hand; region is "
-                        "the fallback when no boundary source exists or a diffuse page view is "
-                        "wanted"),
+            "fallback": (
+                "a fully named module is not read, so its rows keep the uProf Function.id "
+                "grouping and function_reason says derivation was skipped; a module with "
+                "no derived range groups by Function.id and function_reason says why no "
+                "range exists"
+            ),
+            "meaning": (
+                "function is the semantic unit; the tool derives the boundaries, so a "
+                "consumer must not write a PE parser or map .pdata by hand; region is "
+                "the fallback when no boundary source exists or a diffuse page view is "
+                "wanted"
+            ),
         }
     if args.by == "region":
         info = range_info or {}
@@ -1398,15 +1654,22 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             "hot_rva": "highest-sample RVA in the page; ties pick the lowest RVA",
             "hot_samples": "samples at hot_rva",
             "hot_sample_share": "hot_samples / total_samples",
-            "function_source": ("hot_rva's boundary source: pdb_public, export, pdata or none "
-                                "(no range covers hot_rva)"),
-            "function_derived": ("true when the hot function name is synthetic, not a source "
-                                 "symbol"),
+            "function_source": (
+                "hot_rva's boundary source: pdb_public, export, pdata or none "
+                "(no range covers hot_rva)"
+            ),
+            "function_derived": (
+                "true when the hot function name is synthetic, not a source symbol"
+            ),
             "symbol_reason": "why function/file/line are NULL for the hot RVA",
-            "derived_function": ("the hot RVA carries its derived function when a range covers "
-                                 "it; region is the fallback when no boundary source exists"),
-            "function_ranges": {"derived_modules": int(info.get("modules", 0)),
-                                "ranges": int(info.get("ranges", 0))},
+            "derived_function": (
+                "the hot RVA carries its derived function when a range covers "
+                "it; region is the fallback when no boundary source exists"
+            ),
+            "function_ranges": {
+                "derived_modules": int(info.get("modules", 0)),
+                "ranges": int(info.get("ranges", 0)),
+            },
         }
     return result
 
@@ -1423,10 +1686,12 @@ def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
             read = f"sample_share orders the functions: {reason}"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
-        read += ("; hot_rva is the highest-sample RVA inside the function; function_start and "
-                 "function_end delimit the derived range; a name with function_derived=true is "
-                 "synthetic (sub_/pdata_), derived from the binary, not a source symbol; "
-                 "function_reason explains a row with no derived range")
+        read += (
+            "; hot_rva is the highest-sample RVA inside the function; function_start and "
+            "function_end delimit the derived range; a name with function_derived=true is "
+            "synthetic (sub_/pdata_), derived from the binary, not a source symbol; "
+            "function_reason explains a row with no derived range"
+        )
         if "tag_to_retire_share" in legend["columns"]:
             read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
@@ -1442,11 +1707,13 @@ def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
             read = f"sample_share orders the pages: {reason}"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
-        read += ("; hot_rva is the precise attribution inside the page and sampled_addresses "
-                 "shows whether the page is a tight cluster or a diffuse bucket; hot_rva's "
-                 "function_source names the boundary source and function_derived=true marks a "
-                 "synthetic binary name; a page may span unrelated code, so do not read it as a "
-                 "contiguous region, hot path or basic block")
+        read += (
+            "; hot_rva is the precise attribution inside the page and sampled_addresses "
+            "shows whether the page is a tight cluster or a diffuse bucket; hot_rva's "
+            "function_source names the boundary source and function_derived=true marks a "
+            "synthetic binary name; a page may span unrelated code, so do not read it as a "
+            "contiguous region, hot path or basic block"
+        )
         if "tag_to_retire_share" in legend["columns"]:
             read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
@@ -1458,16 +1725,20 @@ def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
         if system_wide:
             read = "time_share ranks where time went; sample_share is not a per-op cost"
         else:
-            read = ("time_share ranks where each thread's elapsed time went (PID, TID partition, "
-                    "so a migrating thread is counted once); sample_share is not a per-op cost")
+            read = (
+                "time_share ranks where each thread's elapsed time went (PID, TID partition, "
+                "so a migrating thread is counted once); sample_share is not a per-op cost"
+            )
         if "tag_to_retire_share" in legend["columns"]:
             read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
     elif measure == "sample_share":
         if sample.startswith("busy core-cycle"):
-            read = ("sample_share is the busy core-cycle share, so the sample order ranks where "
-                    "cycles were spent")
+            read = (
+                "sample_share is the busy core-cycle share, so the sample order ranks where "
+                "cycles were spent"
+            )
         else:
             read = f"sample_share orders the rows: {sample}"
             if sample.startswith(("dispatched-op", "fetch-sample")):
@@ -1477,21 +1748,28 @@ def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
     elif sample == _TIMER_SHARE_MEANING:
         read = f"sample_share orders the rows: {sample}"
     elif sample.startswith("not established"):
-        read = ("sample_share is not established for this event; rows are ordered by raw sample "
-                "count only, not a time or impact claim")
+        read = (
+            "sample_share is not established for this event; rows are ordered by raw sample "
+            "count only, not a time or impact claim"
+        )
     else:
-        read = ("sample_share is the busy core-cycle share, so the sample order ranks where "
-                "cycles were spent")
+        read = (
+            "sample_share is the busy core-cycle share, so the sample order ranks where "
+            "cycles were spent"
+        )
     if "sample_hot" in legend["impact"]:
         read += f"; {legend['impact']['sample_hot']}"
     if "function_scope" in legend:
         # A timer capture names its missing shares once, in METRIC.
         timer = legend["absent"].get("time_share") == _TIMER_ABSENT_TIME_SHARE
-        shares = ("sample_share stays" if timer
-                  else "sample_share/time_share/tag_to_retire_share stay")
-        read += (f"; the rows are only the selected function: {shares} relative to the scoped "
-                 "capture, while parent_* are relative to the parent function, and every other "
-                 "function is excluded")
+        shares = (
+            "sample_share stays" if timer else "sample_share/time_share/tag_to_retire_share stay"
+        )
+        read += (
+            f"; the rows are only the selected function: {shares} relative to the scoped "
+            "capture, while parent_* are relative to the parent function, and every other "
+            "function is excluded"
+        )
     read += "; the <other ...> row is last, not ranked"
     return read
 
@@ -1501,8 +1779,9 @@ def _next_text(calls: list[str]) -> str:
     return " && ".join(calls)
 
 
-def _legend_fields(legend: dict[str, Any], system_wide: bool,
-                   timer: bool = False, top_row: str | None = None) -> list[tuple[str, str]]:
+def _legend_fields(
+    legend: dict[str, Any], system_wide: bool, timer: bool = False, top_row: str | None = None
+) -> list[tuple[str, str]]:
     """The short legend: columns and unit, what to read, and runnable next calls.
 
     A timer capture states its missing measures once, in METRIC, so COLUMNS does not repeat them.
@@ -1516,32 +1795,50 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool,
         if system_wide:
             parts.append("time_share = time share")
         else:
-            parts.append("time_share = per-thread time share (off-CPU gaps are charged to the "
-                         "ending sample)")
+            parts.append(
+                "time_share = per-thread time share (off-CPU gaps are charged to the ending sample)"
+            )
     elif not timer:
         parts.append(f"time_share absent ({legend['absent']['time_share']})")
     if "tag_to_retire_share" in legend["columns"]:
         parts.append("tag_to_retire_share = tag-to-retire cycle share")
     elif not timer:
-        parts.append(f"tag_to_retire_share absent "
-                     f"({legend['absent']['tag_to_retire_share']})")
+        parts.append(f"tag_to_retire_share absent ({legend['absent']['tag_to_retire_share']})")
     if "function_scope" in legend:
-        for key in ("parent_sample_share", "parent_time_share",
-                    "parent_tag_to_retire_share"):
+        for key in ("parent_sample_share", "parent_time_share", "parent_tag_to_retire_share"):
             if key in legend["columns"]:
                 parts.append(f"{key} = {legend['columns'][key]}")
     if "function_ranges" in legend:
-        for key in ("function_start", "function_end", "function_source", "function_derived",
-                    "hot_rva", "hot_samples", "other_samples", "hot_sample_share",
-                    "function_reason"):
+        for key in (
+            "function_start",
+            "function_end",
+            "function_source",
+            "function_derived",
+            "hot_rva",
+            "hot_samples",
+            "other_samples",
+            "hot_sample_share",
+            "function_reason",
+        ):
             if key in legend["columns"]:
                 parts.append(f"{key} = {legend['columns'][key]}")
     if "region" in legend["columns"]:
-        for key in ("region", "sampled_addresses", "hot_rva", "hot_samples", "hot_sample_share",
-                    "function_source", "function_derived", "symbol_reason"):
+        for key in (
+            "region",
+            "sampled_addresses",
+            "hot_rva",
+            "hot_samples",
+            "hot_sample_share",
+            "function_source",
+            "function_derived",
+            "symbol_reason",
+        ):
             parts.append(f"{key} = {legend['columns'][key]}")
-    if ("hot_rva" in legend["columns"] and "attribution" not in legend["columns"]
-            and "region" not in legend["columns"]):
+    if (
+        "hot_rva" in legend["columns"]
+        and "attribution" not in legend["columns"]
+        and "region" not in legend["columns"]
+    ):
         for key in ("hot_rva", "hot_samples", "other_samples", "hot_sample_share"):
             parts.append(f"{key} = {legend['columns'][key]}")
     if "isSystemModule" in legend["columns"]:
@@ -1555,8 +1852,10 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool,
     read = _read_text(legend, system_wide)
     if top_row:
         read += f"; {top_row}"
-    fields = [("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
-              ("READ", read)]
+    fields = [
+        ("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
+        ("READ", read),
+    ]
     if legend["next"]:
         fields.append(("NEXT", _next_text(legend["next"])))
         # A value that could not go into the calls is named here as data, one field per
@@ -1565,120 +1864,207 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool,
     return fields
 
 
-def _header_fields(args: argparse.Namespace, sampler: uprof_session.Sampler,
-                   dump: uprof_dump.DumpInfo | None, has_tag: bool,
-                   tag_available: bool, system_wide: bool) -> list[tuple[str, str]]:
+def _header_fields(
+    args: argparse.Namespace,
+    sampler: uprof_session.Sampler,
+    dump: uprof_dump.DumpInfo | None,
+    has_tag: bool,
+    tag_available: bool,
+    system_wide: bool,
+) -> list[tuple[str, str]]:
     """Detailed capture fields carried above the table and in the JSON document."""
-    fields = [("VERSION", util.skill_identity()),
-              ("METRIC", sampler.metric.removeprefix("METRIC: "))]
+    fields = [
+        ("VERSION", util.skill_identity()),
+        ("METRIC", sampler.metric.removeprefix("METRIC: ")),
+    ]
     if sampler.timer:
         # METRIC already names the measures a timer capture lacks; no TIME_SHARE or
         # TAG_TO_RETIRE_SHARE field repeats them.
-        fields.append(("DUMP", "none; a timer capture has no IBS ASCII dump, so samples are the "
-                               f"UnifiedSampleSeries {uprof_session.TIMER_EVENT_NAME} counts"))
+        fields.append(
+            (
+                "DUMP",
+                "none; a timer capture has no IBS ASCII dump, so samples are the "
+                f"UnifiedSampleSeries {uprof_session.TIMER_EVENT_NAME} counts",
+            )
+        )
     elif dump is None:
         if sampler.pmc_cycle_shares:
-            share = ("sample_share is the busy core-cycle share (fixed cycles per sample; "
-                     "halted excluded)")
+            share = (
+                "sample_share is the busy core-cycle share (fixed cycles per sample; "
+                "halted excluded)"
+            )
         else:
-            share = ("sample_share is not established for this PMC event; capture --event cycles "
-                     "(CYCLES_NOT_IN_HALT, hwId 118) to make it a core-cycle share")
-        fields.append(("DUMP", "none; this PMC capture has no IBS ASCII dump, so samples are the "
-                               f"UnifiedSampleSeries event-column counts; {share}"))
-        fields.append(("TIME_SHARE", "not applicable; this export aggregates PMC samples per "
-                                     "window, so time_share is omitted; capture with --event "
-                                     "ibs-op (IBS OP with per-sample timestamps) to get it"))
-        fields.append(("TAG_TO_RETIRE_SHARE", "not applicable; this export has no tag-to-retire "
-                                              "counter, so tag_to_retire_share is omitted"))
+            share = (
+                "sample_share is not established for this PMC event; capture --event cycles "
+                "(CYCLES_NOT_IN_HALT, hwId 118) to make it a core-cycle share"
+            )
+        fields.append(
+            (
+                "DUMP",
+                "none; this PMC capture has no IBS ASCII dump, so samples are the "
+                f"UnifiedSampleSeries event-column counts; {share}",
+            )
+        )
+        fields.append(
+            (
+                "TIME_SHARE",
+                "not applicable; this export aggregates PMC samples per "
+                "window, so time_share is omitted; capture with --event "
+                "ibs-op (IBS OP with per-sample timestamps) to get it",
+            )
+        )
+        fields.append(
+            (
+                "TAG_TO_RETIRE_SHARE",
+                "not applicable; this export has no tag-to-retire "
+                "counter, so tag_to_retire_share is omitted",
+            )
+        )
     else:
         fields.append(("DUMP", _dump_field(dump)))
         dump_dir = dump.path.parent
         session_full = util.absolute(args.session)
         if os.path.normcase(os.fspath(dump_dir)) != os.path.normcase(os.fspath(session_full)):
-            fields.append(("DB", f"only the dump in {dump_dir} is valid; cpu.db must come from "
-                                 f"the original session ({session_full / 'cpu.db'})"))
-        window = ("the whole capture" if args.time_filter is None
-                  else f"the time filter {args.time_filter}")
+            fields.append(
+                (
+                    "DB",
+                    f"only the dump in {dump_dir} is valid; cpu.db must come from "
+                    f"the original session ({session_full / 'cpu.db'})",
+                )
+            )
+        window = (
+            "the whole capture"
+            if args.time_filter is None
+            else f"the time filter {args.time_filter}"
+        )
         if system_wide:
-            fields.append(("TIME_SHARE", "share of time estimated from the per-sample DeltaTick "
-                                         f"gaps within {window}; an estimate: idle/wait is "
-                                         "charged to the ending sample, the first sample per CPU "
-                                         "inside the window is ignored (no gap before it), and "
-                                         "NULL sorts last; with few samples the share is coarse, "
-                                         "so check sample_share"))
+            fields.append(
+                (
+                    "TIME_SHARE",
+                    "share of time estimated from the per-sample DeltaTick "
+                    f"gaps within {window}; an estimate: idle/wait is "
+                    "charged to the ending sample, the first sample per CPU "
+                    "inside the window is ignored (no gap before it), and "
+                    "NULL sorts last; with few samples the share is coarse, "
+                    "so check sample_share",
+                )
+            )
         else:
-            cycle_basis = ("; for this cycle-controlled capture sample_share (fixed cycles per "
-                           "sample) is the CPU-cycle share and the better ranking"
-                           if _cycle_controlled(sampler) else "")
-            fields.append(("TIME_SHARE", "share of elapsed thread time estimated from the "
-                                         "per-sample DeltaTick gaps within "
-                                         f"{window}; the partition is (PID, TID), so a thread that "
-                                         "migrates between CPUs is counted once; an estimate: "
-                                         "idle/wait, including off-CPU time, is charged to the "
-                                         "ending sample, the first sample per thread inside the "
-                                         "window is ignored (no gap before it), and NULL sorts "
-                                         "last; with few samples the share is coarse, so check "
-                                         f"sample_share{cycle_basis}"))
+            cycle_basis = (
+                "; for this cycle-controlled capture sample_share (fixed cycles per "
+                "sample) is the CPU-cycle share and the better ranking"
+                if _cycle_controlled(sampler)
+                else ""
+            )
+            fields.append(
+                (
+                    "TIME_SHARE",
+                    "share of elapsed thread time estimated from the "
+                    "per-sample DeltaTick gaps within "
+                    f"{window}; the partition is (PID, TID), so a thread that "
+                    "migrates between CPUs is counted once; an estimate: "
+                    "idle/wait, including off-CPU time, is charged to the "
+                    "ending sample, the first sample per thread inside the "
+                    "window is ignored (no gap before it), and NULL sorts "
+                    "last; with few samples the share is coarse, so check "
+                    f"sample_share{cycle_basis}",
+                )
+            )
         if sampler.ibs_dump_kind == "ibsop-event-dump":
             if not has_tag:
-                fields.append(("TAG_TO_RETIRE_SHARE", "not available for this dump: no "
-                                                      "IbsTagToRetCtr column; sample_share and "
-                                                      "time_share are unaffected"))
+                fields.append(
+                    (
+                        "TAG_TO_RETIRE_SHARE",
+                        "not available for this dump: no "
+                        "IbsTagToRetCtr column; sample_share and "
+                        "time_share are unaffected",
+                    )
+                )
             elif tag_available:
-                fields.append(("TAG_TO_RETIRE_SHARE", "share of tag-to-retire cycles summed "
-                                                      "over sampled ops (AMD tag at dispatch to "
-                                                      "retirement, queue/stalls included; 16-bit "
-                                                      "counter clipped at 65535); a total, not "
-                                                      "per-op latency: a higher share means more "
-                                                      "total tag-to-retire cycles, not a higher "
-                                                      "per-op cost"))
+                fields.append(
+                    (
+                        "TAG_TO_RETIRE_SHARE",
+                        "share of tag-to-retire cycles summed "
+                        "over sampled ops (AMD tag at dispatch to "
+                        "retirement, queue/stalls included; 16-bit "
+                        "counter clipped at 65535); a total, not "
+                        "per-op latency: a higher share means more "
+                        "total tag-to-retire cycles, not a higher "
+                        "per-op cost",
+                    )
+                )
             else:
-                fields.append(("TAG_TO_RETIRE_SHARE", "not available for this dump: IbsTagToRetCtr "
-                                                      "has no nonzero values, so every "
-                                                      "tag_to_retire_share is NULL; the "
-                                                      "tag-to-retire counter comes from an IBS OP "
-                                                      "capture (--event ibs-op), not from PMC or "
-                                                      "IBS fetch; sample_share and time_share are "
-                                                      "unaffected"))
+                fields.append(
+                    (
+                        "TAG_TO_RETIRE_SHARE",
+                        "not available for this dump: IbsTagToRetCtr "
+                        "has no nonzero values, so every "
+                        "tag_to_retire_share is NULL; the "
+                        "tag-to-retire counter comes from an IBS OP "
+                        "capture (--event ibs-op), not from PMC or "
+                        "IBS fetch; sample_share and time_share are "
+                        "unaffected",
+                    )
+                )
         else:
-            fields.append(("TAG_TO_RETIRE_SHARE", "not applicable; this export has no "
-                                                  "tag-to-retire counter, so "
-                                                  "tag_to_retire_share is omitted"))
+            fields.append(
+                (
+                    "TAG_TO_RETIRE_SHARE",
+                    "not applicable; this export has no "
+                    "tag-to-retire counter, so "
+                    "tag_to_retire_share is omitted",
+                )
+            )
     if sampler.timer:
-        weights = ("timer sample counts from UnifiedSampleSeries; sample_share is the on-CPU "
-                   "time share")
+        weights = (
+            "timer sample counts from UnifiedSampleSeries; sample_share is the on-CPU time share"
+        )
     elif dump is None:
         if sampler.pmc_cycle_shares:
-            weights = ("PMC sample counts from UnifiedSampleSeries; sample_share is the busy "
-                       "core-cycle share")
+            weights = (
+                "PMC sample counts from UnifiedSampleSeries; sample_share is the busy "
+                "core-cycle share"
+            )
         else:
-            weights = ("PMC sample counts from UnifiedSampleSeries; sample_share is not "
-                       "established for this event")
+            weights = (
+                "PMC sample counts from UnifiedSampleSeries; sample_share is not "
+                "established for this event"
+            )
     else:
         if system_wide:
-            window = ("whole capture" if args.time_filter is None
-                      else f"time filter {args.time_filter} (first sample per CPU inside the "
-                           "window excluded)")
-            weights = ("exact DeltaTick-gap weights per CPU_Number (the first sample per CPU is "
-                       "ignored, no gap before it; gap time is charged to the later sample); "
-                       f"{window}; sample_share is the dump's raw sample share and time_share "
-                       "weights the same rows by gap")
+            window = (
+                "whole capture"
+                if args.time_filter is None
+                else f"time filter {args.time_filter} (first sample per CPU inside the "
+                "window excluded)"
+            )
+            weights = (
+                "exact DeltaTick-gap weights per CPU_Number (the first sample per CPU is "
+                "ignored, no gap before it; gap time is charged to the later sample); "
+                f"{window}; sample_share is the dump's raw sample share and time_share "
+                "weights the same rows by gap"
+            )
         else:
-            window = ("whole capture" if args.time_filter is None
-                      else f"time filter {args.time_filter} (first sample per thread inside the "
-                           "window excluded)")
-            weights = ("exact DeltaTick-gap weights per (PID, TID) (the first sample per thread "
-                       "is ignored, no gap before it; gap time, including off-CPU time, is charged "
-                       "to the later sample); "
-                       f"{window}; sample_share is the dump's raw sample share and time_share "
-                       "weights the same rows by gap")
+            window = (
+                "whole capture"
+                if args.time_filter is None
+                else f"time filter {args.time_filter} (first sample per thread inside the "
+                "window excluded)"
+            )
+            weights = (
+                "exact DeltaTick-gap weights per (PID, TID) (the first sample per thread "
+                "is ignored, no gap before it; gap time, including off-CPU time, is charged "
+                "to the later sample); "
+                f"{window}; sample_share is the dump's raw sample share and time_share "
+                "weights the same rows by gap"
+            )
     fields.append(("WEIGHTS", f"{weights}; --by {args.by}: {GRANULARITY_LABELS[args.by]}"))
     return fields
 
 
-
-def _dump_contexts(connection: object, gap_limit_ns: float | None
-                   ) -> list[uprof_session.ContextCadence]:
+def _dump_contexts(
+    connection: object, gap_limit_ns: float | None
+) -> list[uprof_session.ContextCadence]:
     """Per-context sample counts and median gaps.
 
     The context is the weighting context of v_dump_context: a CPU for a system-wide capture and a
@@ -1694,23 +2080,25 @@ def _dump_contexts(connection: object, gap_limit_ns: float | None
         "ORDER BY delta_tick) AS gap FROM v_dump_context) "
         f"SELECT context_pid, context, count(*), median(gap){limit} "
         "FROM gaps GROUP BY context_pid, context",
-        parameters).fetchall()
-    return [uprof_session.ContextCadence(int(row[2] or 0),
-                                         None if row[3] is None else float(row[3]))
-            for row in rows]
+        parameters,
+    ).fetchall()
+    return [
+        uprof_session.ContextCadence(int(row[2] or 0), None if row[3] is None else float(row[3]))
+        for row in rows
+    ]
 
 
-def _capture_scan(connection: object,
-                  check_kernel: bool) -> tuple[int, int, bool | None]:
+def _capture_scan(connection: object, check_kernel: bool) -> tuple[int, int, bool | None]:
     """Whole-capture sample count, context count and kernel coverage from one scan.
 
     The kernel flag is only projected when asked for; the module join is then part of the same
     scan the totals need. None means the flag was not requested.
     """
-    kernel = ("COALESCE(bool_or(kernel_image), false)" if check_kernel else "NULL")
+    kernel = "COALESCE(bool_or(kernel_image), false)" if check_kernel else "NULL"
     rows = connection.sql(
         "SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT), count(DISTINCT context), "
-        f"{kernel} FROM v_capture_modules").fetchall()
+        f"{kernel} FROM v_capture_modules"
+    ).fetchall()
     if not rows:
         return 0, 0, None if not check_kernel else False
     samples = int(rows[0][0] or 0)
@@ -1724,16 +2112,18 @@ def _capture_scan(connection: object,
 _TIMER_WINDOW_NS: Final = 1_000_000
 
 
-def _timer_contexts(connection: object,
-                    sampler: uprof_session.Sampler) -> list[uprof_session.ContextCadence]:
+def _timer_contexts(
+    connection: object, sampler: uprof_session.Sampler
+) -> list[uprof_session.ContextCadence]:
     """Per-thread sample counts and the median gap between a thread's sampled windows.
 
     A thread is (processId, threadId); gaps above the run-gap limit are time the thread was not
     running and are left out of the median, as for a dump's DeltaTick gaps.
     """
     column = sampler.event_column or ""
-    if not column.startswith("event#0x") or not all(c in "0123456789abcdef"
-                                                    for c in column[len("event#0x"):]):
+    if not column.startswith("event#0x") or not all(
+        c in "0123456789abcdef" for c in column[len("event#0x") :]
+    ):
         return []
     limit_ns = uprof_session.run_gap_limit_ns(sampler)
     limit = "NULL" if limit_ns is None else str(int(limit_ns // _TIMER_WINDOW_NS))
@@ -1748,10 +2138,14 @@ def _timer_contexts(connection: object,
               FROM w)
             SELECT CAST(sum(n) AS BIGINT),
                    median(gap) FILTER (WHERE gap > 0 AND ({limit} IS NULL OR gap <= {limit}))
-            FROM g GROUP BY p, t''').fetchall()
-    return [uprof_session.ContextCadence(
-        int(samples or 0), None if gap is None else float(gap) * _TIMER_WINDOW_NS)
-        for samples, gap in rows]
+            FROM g GROUP BY p, t'''
+    ).fetchall()
+    return [
+        uprof_session.ContextCadence(
+            int(samples or 0), None if gap is None else float(gap) * _TIMER_WINDOW_NS
+        )
+        for samples, gap in rows
+    ]
 
 
 # Below this many scoped samples the normal approximation of a share's interval is not stated.
@@ -1764,32 +2158,46 @@ def _top_row_precision(connection: object, by: str) -> str | None:
     n is the scoped sample count. At p = 0 or 1, or below the minimum n, the interval is not
     stated because the normal approximation does not hold there.
     """
-    keys = {"process": ("process",), "module": ("module",), "function": ("function",),
-            "line": ("file", "line"), "instruction": ("module", "rva"),
-            "region": ("module", "page_start")}[by]
+    keys = {
+        "process": ("process",),
+        "module": ("module",),
+        "function": ("function",),
+        "line": ("file", "line"),
+        "instruction": ("module", "rva"),
+        "region": ("module", "page_start"),
+    }[by]
     selected = ", ".join(f'"{key}"' for key in keys)
-    rows = connection.sql(f"SELECT {selected}, samples, total_samples FROM v_{by}_rows "
-                          "WHERE rn = 1").fetchall()
+    rows = connection.sql(
+        f"SELECT {selected}, samples, total_samples FROM v_{by}_rows WHERE rn = 1"
+    ).fetchall()
     if not rows or not rows[0][-1]:
         return None
-    parts = [f"0x{value:X}" if isinstance(value, int) and key in ("rva", "page_start")
-             else ("<unresolved>" if value is None else str(value))
-             for key, value in zip(keys, rows[0])]
+    parts = [
+        f"0x{value:X}"
+        if isinstance(value, int) and key in ("rva", "page_start")
+        else ("<unresolved>" if value is None else str(value))
+        for key, value in zip(keys, rows[0])
+    ]
     name = ":".join(parts) if by == "line" else " ".join(parts)
     samples, total = int(rows[0][-2] or 0), int(rows[0][-1])
     share = samples / total
     if total < _PRECISION_MIN_SAMPLES or share in (0.0, 1.0):
         return f"top row {name} {100.0 * share:.1f}% (n={total}; no interval)"
     half = 1.96 * math.sqrt(share * (1.0 - share) / total)
-    return (f"top row {name} {100.0 * share:.1f}% ±{100.0 * half:.1f} points "
-            f"(95% binomial, n={total})")
+    return (
+        f"top row {name} {100.0 * share:.1f}% ±{100.0 * half:.1f} points (95% binomial, n={total})"
+    )
 
 
-def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace,
-                    sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
-                    check_kernel: bool = False,
-                    timer_contexts: list[uprof_session.ContextCadence] | None = None,
-                    ) -> tuple[tuple[str, str], int, bool | None]:
+def _achieved_field(
+    connection: object,
+    has_dump: bool,
+    args: argparse.Namespace,
+    sampler: uprof_session.Sampler,
+    dump: uprof_dump.DumpInfo | None,
+    check_kernel: bool = False,
+    timer_contexts: list[uprof_session.ContextCadence] | None = None,
+) -> tuple[tuple[str, str], int, bool | None]:
     """The achieved sampling rate over the whole capture, independent of the scope filter.
 
     The same scan returns the whole-capture sample count and, when check_kernel is set, whether
@@ -1806,21 +2214,22 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
     if has_dump:
         wide = uprof_session.system_wide(args.session)
         label = "CPU" if wide else "thread"
-        contexts = _dump_contexts(connection,
-                                  uprof_session.run_gap_limit_ns(sampler, frequency_hz))
+        contexts = _dump_contexts(connection, uprof_session.run_gap_limit_ns(sampler, frequency_hz))
         if dump is not None and dump.time_filter:
             bounds = util.parse_time_filter(dump.time_filter)
             if bounds is not None:
                 window_s = float(bounds[1] - bounds[0])
     elif sampler.timer:
-        contexts = timer_contexts if timer_contexts is not None else _timer_contexts(
-            connection, sampler)
+        contexts = (
+            timer_contexts if timer_contexts is not None else _timer_contexts(connection, sampler)
+        )
         label = "thread"
     else:
         # PMC carries no per-sample timestamps, so a core's samples/s is its whole cadence.
         per_core = connection.sql(
             "SELECT context, CAST(COALESCE(sum(samples), 0) AS BIGINT) "
-            "FROM v_capture_modules GROUP BY context").fetchall()
+            "FROM v_capture_modules GROUP BY context"
+        ).fetchall()
         contexts = [uprof_session.ContextCadence(int(row[1] or 0)) for row in per_core]
         label = "core"
     if window_s is None and elapsed_ms is not None:
@@ -1828,8 +2237,12 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
             window_s = int(elapsed_ms) / 1000.0
         except (TypeError, ValueError):
             window_s = None
-    field = ("ACHIEVED", uprof_session.achieved_summary(samples, window_s, cpus, sampler,
-                                                        contexts, label, frequency_hz))
+    field = (
+        "ACHIEVED",
+        uprof_session.achieved_summary(
+            samples, window_s, cpus, sampler, contexts, label, frequency_hz
+        ),
+    )
     return field, samples, kernel_covered
 
 
@@ -1839,13 +2252,17 @@ def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: st
     The time window is taken from the same values bound to SQL, so an empty --time-filter or a
     defaulted sentinel end cannot make Python and the view disagree about whether it is filtered.
     """
-    return ((args.image is not None and args.image != "%")
-            or args.pid is not None
-            or time_start != "0" or time_end != _ALL_NS)
+    return (
+        (args.image is not None and args.image != "%")
+        or args.pid is not None
+        or time_start != "0"
+        or time_end != _ALL_NS
+    )
 
 
-def _dump_sanity(connection: object, has_dump: bool, scope_filtered: bool,
-                 system_wide: bool) -> tuple[str | None, int]:
+def _dump_sanity(
+    connection: object, has_dump: bool, scope_filtered: bool, system_wide: bool
+) -> tuple[str | None, int]:
     """The sanity message and the dump's non-null IbsTagToRetCtr value count.
 
     v_scope_sanity is only read for a system-wide capture: an attached one yields no scoped
@@ -1874,9 +2291,12 @@ def _capture_windowed(session: Path) -> bool:
     return uprof_dump.recorded_time_filter(session) is not None
 
 
-def _kernel_coverage_field(sampler: uprof_session.Sampler, kernel_covered: bool | None,
-                           windowed: bool = False,
-                           captured_samples: int | None = None) -> list[tuple[str, str]]:
+def _kernel_coverage_field(
+    sampler: uprof_session.Sampler,
+    kernel_covered: bool | None,
+    windowed: bool = False,
+    captured_samples: int | None = None,
+) -> list[tuple[str, str]]:
     """Whole-capture kernel coverage, checked only when the applied sampler requested OS mode.
 
     kernel_covered comes from the ACHIEVED scan and None means it was not determined. windowed
@@ -1886,8 +2306,7 @@ def _kernel_coverage_field(sampler: uprof_session.Sampler, kernel_covered: bool 
     """
     if not sampler.os_requested or windowed or kernel_covered is None:
         return []
-    warning = uprof_session.kernel_coverage_warning(
-        sampler, kernel_covered, captured_samples)
+    warning = uprof_session.kernel_coverage_warning(sampler, kernel_covered, captured_samples)
     return [] if warning is None else [("KERNEL_COVERAGE", warning)]
 
 
@@ -1905,17 +2324,21 @@ def _coverage_values(connection: object) -> dict[str, Any] | None:
 
 def _symbol_path_flags(args: argparse.Namespace) -> list[str]:
     """The explicit symbol/image path flags passed to profile, in contract order, deduplicated."""
-    return list(dict.fromkeys(
-        flag for attribute, flag in _SYMBOL_PATH_FLAGS
-        if getattr(args, attribute, None)))
+    return list(
+        dict.fromkeys(
+            flag for attribute, flag in _SYMBOL_PATH_FLAGS if getattr(args, attribute, None)
+        )
+    )
 
 
-def _symbol_coverage_legend(coverage: dict[str, Any],
-                            symbolizer: dict[str, Any] | None,
-                            symbolized: bool,
-                            flags: list[str],
-                            by: str | None = None,
-                            row_attribution: dict[str, int] | None = None) -> dict[str, Any]:
+def _symbol_coverage_legend(
+    coverage: dict[str, Any],
+    symbolizer: dict[str, Any] | None,
+    symbolized: bool,
+    flags: list[str],
+    by: str | None = None,
+    row_attribution: dict[str, int] | None = None,
+) -> dict[str, Any]:
     """The JSON form of SYMBOL_COVERAGE: each channel separately, its counts and the flags used.
 
     The profile rows come from the symbolizer channel; the uProf DB channel is the Function.name
@@ -1959,14 +2382,16 @@ def _symbol_coverage_legend(coverage: dict[str, Any],
     return entry
 
 
-def _coverage_field(connection: object,
-                    causes: dict[str, str] | None = None,
-                    symbolizer: dict[str, Any] | None = None,
-                    symbolized: bool = False,
-                    flags: list[str] | None = None,
-                    coverage: dict[str, Any] | None = None,
-                    by: str | None = None,
-                    row_attribution: dict[str, int] | None = None) -> list[tuple[str, str]]:
+def _coverage_field(
+    connection: object,
+    causes: dict[str, str] | None = None,
+    symbolizer: dict[str, Any] | None = None,
+    symbolized: bool = False,
+    flags: list[str] | None = None,
+    coverage: dict[str, Any] | None = None,
+    by: str | None = None,
+    row_attribution: dict[str, int] | None = None,
+) -> list[tuple[str, str]]:
     """Disclose how many scoped samples resolve to a named function, and per module.
 
     Two channels exist. coverage.sql reads cpu.db Function.name, which uProf wrote at translate
@@ -2000,38 +2425,53 @@ def _coverage_field(connection: object,
         def percent(samples: int) -> str:
             return f"{100.0 * samples / scoped:.1f}%"
 
-        text = (f"uProf DB {db_text}; rows named {named_rows}/{scoped} samples "
-                f"({percent(named_rows)}), derived {derived}/{scoped} samples "
-                f"({percent(derived)}) from a synthetic binary range, unresolved "
-                f"{unresolved}/{scoped} samples ({percent(unresolved)}) (<no symbol>){flag_text}")
+        text = (
+            f"uProf DB {db_text}; rows named {named_rows}/{scoped} samples "
+            f"({percent(named_rows)}), derived {derived}/{scoped} samples "
+            f"({percent(derived)}) from a synthetic binary range, unresolved "
+            f"{unresolved}/{scoped} samples ({percent(unresolved)}) (<no symbol>){flag_text}"
+        )
         if unresolved == 0:
-            return [("SYMBOL_COVERAGE",
-                     f"{text}; every scoped sample is attributed below module/RVA; a derived row "
-                     "is actionable at its hot RVA")]
+            return [
+                (
+                    "SYMBOL_COVERAGE",
+                    f"{text}; every scoped sample is attributed below module/RVA; a derived row "
+                    "is actionable at its hot RVA",
+                )
+            ]
         reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
         if reasons:
             text += f"; cause by module: {'; '.join(reasons)}"
         return [("SYMBOL_COVERAGE", f"{text}; {_RANGE_UNRESOLVED_STOP}{_SYMBOL_PATH_REMEDY}")]
-    scoped = int(symbolizer["scoped_samples"]) if (symbolized or by in FUNCTION_SCOPED) and symbolizer else 0
+    scoped = (
+        int(symbolizer["scoped_samples"])
+        if (symbolized or by in FUNCTION_SCOPED) and symbolizer
+        else 0
+    )
     unresolved_samples = int(symbolizer["unresolved_samples"]) if scoped else 0
     resolved = max(scoped - unresolved_samples, 0)
     both = scoped > 0 and (bool(flags) or resolved != named or by in FUNCTION_SCOPED)
     if both:
-        text = (f"uProf DB {db_text}; profile symbolizer {resolved}/{scoped} samples "
-                f"({100.0 * resolved / scoped:.1f}%) resolve below module/RVA"
-                + (f" (flags: {', '.join(flags)})" if flags else ""))
+        text = (
+            f"uProf DB {db_text}; profile symbolizer {resolved}/{scoped} samples "
+            f"({100.0 * resolved / scoped:.1f}%) resolve below module/RVA"
+            + (f" (flags: {', '.join(flags)})" if flags else "")
+        )
         if resolved == scoped:
-            return [("SYMBOL_COVERAGE",
-                     f"{text}; every scoped sample is drillable below module/RVA; the uProf DB "
-                     "share reflects only what translate recorded, and profile's symbol paths "
-                     "affect the rows, not that share")]
+            return [
+                (
+                    "SYMBOL_COVERAGE",
+                    f"{text}; every scoped sample is drillable below module/RVA; the uProf DB "
+                    "share reflects only what translate recorded, and profile's symbol paths "
+                    "affect the rows, not that share",
+                )
+            ]
         reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
         if reasons:
             text += f"; cause by module: {'; '.join(reasons)}"
         stop = _NO_NAMED_FUNCTION_STOP if resolved == 0 else _UNRESOLVED_FUNCTION_STOP
         return [("SYMBOL_COVERAGE", f"{text}; {stop}{_SYMBOL_PATH_REMEDY}")]
-    unresolved = [value for value in values
-                  if int(value["samples"]) > int(value["named_samples"])]
+    unresolved = [value for value in values if int(value["samples"]) > int(value["named_samples"])]
     if not unresolved:
         return [("SYMBOL_COVERAGE", f"{db_text}; no module has unresolved samples")]
     parts = []
@@ -2042,15 +2482,20 @@ def _coverage_field(connection: object,
         share = 100.0 * (samples - named_samples) / samples
         cause = (causes or {}).get(value["module_name"])
         reason = f"; cause: {cause}" if cause else ""
-        parts.append(f"{value['module_name']} {samples - named_samples}/{samples} "
-                     f"({share:.1f}% unresolved, {kind}{reason})")
+        parts.append(
+            f"{value['module_name']} {samples - named_samples}/{samples} "
+            f"({share:.1f}% unresolved, {kind}{reason})"
+        )
     # A module with no names at all is the case that provokes a manual PE/.pdata mapping.
-    stop = (_NO_NAMED_FUNCTION_STOP
-            if any(int(value["named_samples"]) == 0 for value in unresolved)
-            else _UNRESOLVED_FUNCTION_STOP)
+    stop = (
+        _NO_NAMED_FUNCTION_STOP
+        if any(int(value["named_samples"]) == 0 for value in unresolved)
+        else _UNRESOLVED_FUNCTION_STOP
+    )
     remedy = _SYMBOL_PATH_REMEDY if causes else ""
-    return [("SYMBOL_COVERAGE",
-             f"{db_text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")]
+    return [
+        ("SYMBOL_COVERAGE", f"{db_text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")
+    ]
 
 
 def _tag_nonzero(connection: object) -> int:
@@ -2059,8 +2504,7 @@ def _tag_nonzero(connection: object) -> int:
     The column can be present with every cell zero; then every tag share is NULL rather than
     zero, so the profile says the counter carried no nonzero value.
     """
-    rows = connection.sql(
-        "SELECT count(*) FILTER (WHERE tag_cycles > 0) FROM v_dump").fetchall()
+    rows = connection.sql("SELECT count(*) FILTER (WHERE tag_cycles > 0) FROM v_dump").fetchall()
     return int(rows[0][0] or 0) if rows else 0
 
 
@@ -2084,19 +2528,26 @@ def _scope_warning(connection: object, image_pattern: str | None = None) -> list
     if empty and empty[0][0] == 0:
         message = "no samples in the selected scope; the process or time filter matched nothing"
         if image_pattern not in (None, "%"):
-            message = ("no samples in the selected scope; --image selects process base images "
-                       "(Process.name), not modules or module paths")
-            names = [row[0] for row in connection.execute(
-                "SELECT DISTINCT name FROM Process WHERE COALESCE(name, '') <> '' "
-                "ORDER BY name").fetchall()]
+            message = (
+                "no samples in the selected scope; --image selects process base images "
+                "(Process.name), not modules or module paths"
+            )
+            names = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT DISTINCT name FROM Process WHERE COALESCE(name, '') <> '' ORDER BY name"
+                ).fetchall()
+            ]
             if names:
                 shown = ", ".join(names[:10]) + (" ..." if len(names) > 10 else "")
                 message += f"; available images in this capture: {shown}"
             else:
                 message += "; this capture records no process image names"
             if _looks_like_module(image_pattern):
-                message += ("; the pattern looks like a module name: --image scopes process image "
-                            "names, not modules; use --by module or --function ... --module")
+                message += (
+                    "; the pattern looks like a module name: --image scopes process image "
+                    "names, not modules; use --by module or --function ... --module"
+                )
         fields.append(("WARNING", message))
         print(f"WARNING: {message}", file=sys.stderr)
     return fields
@@ -2120,8 +2571,8 @@ def _row_attribution(connection: object, by: str) -> dict[str, int]:
     try:
         connection.execute("SET VARIABLE top_n = ?", [0])
         rows = connection.execute(
-            f"SELECT attribution, CAST(sum(samples) AS BIGINT) FROM {view} "
-            "GROUP BY attribution").fetchall()
+            f"SELECT attribution, CAST(sum(samples) AS BIGINT) FROM {view} GROUP BY attribution"
+        ).fetchall()
     finally:
         connection.execute("SET VARIABLE top_n = ?", [previous])
     counts = {"named": 0, "derived": 0, "unresolved": 0}
@@ -2162,77 +2613,109 @@ def _hot_rva_field(connection: object) -> list[tuple[str, str]]:
     hot = int(hot_samples or 0)
     other = int(samples or 0) - hot
     share = f"{100.0 * hot / total:.1f}%" if total else "an absent share"
-    return [("HOT_RVA", (f"{module or '<unknown module>'} {function or '<unresolved>'} at "
-                         f"{hot_rva} with {hot} samples ({share} of the scoped capture); "
-                         f"other_samples {other} = the function's {int(samples or 0)} samples "
-                         f"minus hot_samples {hot}; the highest-sample address across the "
-                         "function rows, not the top function row's hot_rva"))]
+    return [
+        (
+            "HOT_RVA",
+            (
+                f"{module or '<unknown module>'} {function or '<unresolved>'} at "
+                f"{hot_rva} with {hot} samples ({share} of the scoped capture); "
+                f"other_samples {other} = the function's {int(samples or 0)} samples "
+                f"minus hot_samples {hot}; the highest-sample address across the "
+                "function rows, not the top function row's hot_rva"
+            ),
+        )
+    ]
 
 
-def _agreement_text(connection: object,
-                    values: dict[str, Any] | None = None,
-                    by: str | None = None,
-                    row_attribution: dict[str, int] | None = None) -> str | None:
+def _agreement_text(
+    connection: object,
+    values: dict[str, Any] | None = None,
+    by: str | None = None,
+    row_attribution: dict[str, int] | None = None,
+) -> str | None:
     values = values if values is not None else _agreement_values(connection)
     if by in RANGE_SCOPES and row_attribution is not None and row_attribution["scoped"] > 0:
         scoped = row_attribution["scoped"]
-        text = (f"sample attribution from the emitted rows: named {row_attribution['named']} "
-                f"samples (unique or shared; uProf Function.name or a named binary range), "
-                f"derived {row_attribution['derived']} samples (synthetic binary range), "
-                f"unresolved {row_attribution['unresolved']} samples (<no symbol>), of "
-                f"{scoped} scoped"
-                + ("; region rows count each page's samples under its hot-RVA attribution"
-                   if by == "region" else ""))
+        text = (
+            f"sample attribution from the emitted rows: named {row_attribution['named']} "
+            f"samples (unique or shared; uProf Function.name or a named binary range), "
+            f"derived {row_attribution['derived']} samples (synthetic binary range), "
+            f"unresolved {row_attribution['unresolved']} samples (<no symbol>), of "
+            f"{scoped} scoped"
+            + (
+                "; region rows count each page's samples under its hot-RVA attribution"
+                if by == "region"
+                else ""
+            )
+        )
         if values is None:
             return text
-        return text + ("; symbolizer names are the containing function (llvm-symbolizer's "
-                       "outermost frame), the name uProf Function.id carries, so inline "
-                       "instances are not counted as mismatches; "
-                       f"mismatch_rate={_percent_text(values, 'mismatch_rate')} (sample-weighted "
-                       f"mismatched_samples/compared_samples = {values['mismatched_samples']}/"
-                       f"{values['compared_samples']}); name_mismatches={values['name_mismatches']} "
-                       f"addresses of {values['compared_addresses']} compared")
-    if values is None:
-        return None
-
-    return ("line/instruction coordinates are the innermost (executed) frame; symbolizer names are "
-            "the containing function (llvm-symbolizer's outermost frame), the name uProf "
-            "Function.id carries, so inline instances are not counted as mismatches; "
+        return text + (
+            "; symbolizer names are the containing function (llvm-symbolizer's "
+            "outermost frame), the name uProf Function.id carries, so inline "
+            "instances are not counted as mismatches; "
             f"mismatch_rate={_percent_text(values, 'mismatch_rate')} (sample-weighted "
             f"mismatched_samples/compared_samples = {values['mismatched_samples']}/"
             f"{values['compared_samples']}); name_mismatches={values['name_mismatches']} "
-            f"addresses of {values['compared_addresses']} compared; unresolved="
-            f"{values['unresolved']} addresses, {values['unresolved_samples']} samples "
-            f"(<no symbol>, {_percent_text(values, 'unresolved_pct')} of "
-            f"{values['scoped_samples']} scoped)")
+            f"addresses of {values['compared_addresses']} compared"
+        )
+    if values is None:
+        return None
+
+    return (
+        "line/instruction coordinates are the innermost (executed) frame; symbolizer names are "
+        "the containing function (llvm-symbolizer's outermost frame), the name uProf "
+        "Function.id carries, so inline instances are not counted as mismatches; "
+        f"mismatch_rate={_percent_text(values, 'mismatch_rate')} (sample-weighted "
+        f"mismatched_samples/compared_samples = {values['mismatched_samples']}/"
+        f"{values['compared_samples']}); name_mismatches={values['name_mismatches']} "
+        f"addresses of {values['compared_addresses']} compared; unresolved="
+        f"{values['unresolved']} addresses, {values['unresolved_samples']} samples "
+        f"(<no symbol>, {_percent_text(values, 'unresolved_pct')} of "
+        f"{values['scoped_samples']} scoped)"
+    )
 
 
 def _percent_text(values: dict[str, Any], key: str) -> str:
     return "n/a (no denominator)" if values[key] is None else f"{values[key]}%"
 
 
-def _write_profile(connection: object, args: argparse.Namespace,
-                   fields: list[tuple[str, str]], out_path: Path | None,
-                   legend: dict[str, object] | None = None) -> None:
+def _write_profile(
+    connection: object,
+    args: argparse.Namespace,
+    fields: list[tuple[str, str]],
+    out_path: Path | None,
+    legend: dict[str, object] | None = None,
+) -> None:
     """Render the profile; instruction JSON fetches its SELECT once and joins contexts to it."""
     if args.json and args.by == "instruction":
         columns, types, rows = uprof_db.fetch_typed(
-            connection, TOOLS_DIR / "profile-instruction.sql")
-        paths = uprof_symbols.probe_paths(getattr(args, "symbol_path", None),
-                                          getattr(args, "image_path", None))
+            connection, TOOLS_DIR / "profile-instruction.sql"
+        )
+        paths = uprof_symbols.probe_paths(
+            getattr(args, "symbol_path", None), getattr(args, "image_path", None)
+        )
         debug_dirs = tuple(os.fspath(path) for path in paths.debug_dirs)
         contexts = uprof_context.instruction_contexts(
-            connection, columns, rows, debug_dirs=debug_dirs, fallback_paths=debug_dirs,
-            image_files=paths.image_files, image_dirs=paths.image_dirs)
+            connection,
+            columns,
+            rows,
+            debug_dirs=debug_dirs,
+            fallback_paths=debug_dirs,
+            image_files=paths.image_files,
+            image_dirs=paths.image_dirs,
+        )
         help_text = uprof_context.context_help(legend or {})
         summary = uprof_context.context_omission_summary(contexts)
         if summary:
             print(f"CONTEXT: {summary}", file=sys.stderr)
-        uprof_db.output_rows(columns, types, rows, fields, args.json, out_path,
-                             legend, contexts, help_text)
+        uprof_db.output_rows(
+            columns, types, rows, fields, args.json, out_path, legend, contexts, help_text
+        )
         return
-    uprof_db.output(connection, TOOLS_DIR / f"profile-{args.by}.sql", fields, args.json,
-                    out_path, legend)
+    uprof_db.output(
+        connection, TOOLS_DIR / f"profile-{args.by}.sql", fields, args.json, out_path, legend
+    )
 
 
 # How deep and how many translated captures a --session without cpu.db is searched for and
@@ -2268,25 +2751,29 @@ def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
     named as data (escaped by repr) only, never inside a command.
     """
     safe = [candidate for candidate in candidates if uprof_shell.is_plain(str(candidate))]
-    unsafe = [candidate for candidate in candidates
-              if not uprof_shell.is_plain(str(candidate))]
+    unsafe = [candidate for candidate in candidates if not uprof_shell.is_plain(str(candidate))]
     calls = []
     data: dict[str, str] = {}
     for candidate in safe[:_CANDIDATE_LIMIT]:
         scoped = argparse.Namespace(**vars(args))
         scoped.session = str(candidate)
-        calls.append(_profile_command(scoped, args.by, data=data) if args.command == "profile"
-                     else f"python {_command_arg(str(TOOLS_DIR / 'uprof.py'), '<UPROF_PY>', data)}"
-                          f" schema --session {uprof_shell.quote(str(candidate))}")
+        calls.append(
+            _profile_command(scoped, args.by, data=data)
+            if args.command == "profile"
+            else f"python {_command_arg(str(TOOLS_DIR / 'uprof.py'), '<UPROF_PY>', data)}"
+            f" schema --session {uprof_shell.quote(str(candidate))}"
+        )
     shown = "" if len(safe) <= _CANDIDATE_LIMIT else f" (first {_CANDIDATE_LIMIT})"
     parts = [f"{len(candidates)} captures below it{shown}"]
     if calls:
         parts.append("run one of: " + " ; ".join(calls))
     if unsafe:
         held = "" if len(unsafe) <= _CANDIDATE_LIMIT else f" (first {_CANDIDATE_LIMIT})"
-        parts.append(f"{len(unsafe)} not offered as commands because their names hold "
-                     f"characters a shell may expand{held}: " + ", ".join(repr(str(path))
-                                                 for path in unsafe[:_CANDIDATE_LIMIT]))
+        parts.append(
+            f"{len(unsafe)} not offered as commands because their names hold "
+            f"characters a shell may expand{held}: "
+            + ", ".join(repr(str(path)) for path in unsafe[:_CANDIDATE_LIMIT])
+        )
     return "; ".join(parts) + "".join(f"\n{name}={value!r}" for name, value in data.items())
 
 
@@ -2294,14 +2781,20 @@ def _contract_verdict(sampler: uprof_session.Sampler) -> str:
     """What the schema command's contract guard checked, for the capture's mode."""
     if sampler.timer or sampler.pmc:
         mode = "a timer capture" if sampler.timer else "a PMC capture"
-        return (f"cpu.db has every table and column profile requires for {mode}, including its "
-                f"event column {sampler.event_column}")
+        return (
+            f"cpu.db has every table and column profile requires for {mode}, including its "
+            f"event column {sampler.event_column}"
+        )
     if sampler.ibs_dump_kind:
-        return ("cpu.db has every table and column profile requires for an IBS capture; the IBS "
-                "dump is checked when profile reads it")
-    return ("mode unknown (no IBS, PMC or timer sampler in session.uprof, or no session.uprof): "
-            "only the tables and "
-            "columns every mode reads were checked")
+        return (
+            "cpu.db has every table and column profile requires for an IBS capture; the IBS "
+            "dump is checked when profile reads it"
+        )
+    return (
+        "mode unknown (no IBS, PMC or timer sampler in session.uprof, or no session.uprof): "
+        "only the tables and "
+        "columns every mode reads were checked"
+    )
 
 
 # The line in views.sql that ends the export contract guard.
@@ -2315,12 +2808,16 @@ def run_query_command(args: argparse.Namespace) -> None:
     if not cpu_db.is_file():
         candidates = _session_candidates(session)
         if candidates:
-            raise util.UprofError(f"cpu.db not found: {cpu_db}; --session must be one translated "
-                                  f"capture, and {_candidate_calls(args, candidates)}")
+            raise util.UprofError(
+                f"cpu.db not found: {cpu_db}; --session must be one translated "
+                f"capture, and {_candidate_calls(args, candidates)}"
+            )
         session_arg, data = uprof_shell.path_arg(session, "<SESSION_DIR>")
-        raise util.UprofError(f"cpu.db not found: {cpu_db} (run translate --session "
-                              f"{session_arg} --out-dir <COPY_DIR> first, then query the "
-                              "original session)" + (f"\n{data}" if data else ""))
+        raise util.UprofError(
+            f"cpu.db not found: {cpu_db} (run translate --session "
+            f"{session_arg} --out-dir <COPY_DIR> first, then query the "
+            "original session)" + (f"\n{data}" if data else "")
+        )
     out_path = _out_path(args, cpu_db, session)
 
     if args.command == "schema":
@@ -2329,8 +2826,10 @@ def run_query_command(args: argparse.Namespace) -> None:
         # error; the CONTRACT line names exactly what was checked.
         sampler = uprof_session.derive_sampler(session)
         column_mode = sampler.pmc or sampler.timer
-        variables = {"uprof_ibs_dump": "" if column_mode else "<dump>",
-                     "uprof_event_column": sampler.event_column or ""}
+        variables = {
+            "uprof_ibs_dump": "" if column_mode else "<dump>",
+            "uprof_event_column": sampler.event_column or "",
+        }
         with uprof_db.open_query(cpu_db, [], variables) as connection:
             uprof_db.output(connection, TOOLS_DIR / "schema.sql", [], False, out_path)
             uprof_db.run_script_until(connection, TOOLS_DIR / "views.sql", _CONTRACT_END)
@@ -2346,19 +2845,26 @@ def run_query_command(args: argparse.Namespace) -> None:
         if args.time_filter:
             raise uprof_native.failure(
                 "--time-filter applies to IBS dump captures; a timer capture is windowed at "
-                "translate time", ["timer window", "whole capture"], session=session)
+                "translate time",
+                ["timer window", "whole capture"],
+                session=session,
+            )
         connection = uprof_db.connect(cpu_db)
         try:
             found = connection.execute(
                 "SELECT count(*) FROM information_schema.columns WHERE table_name = "
-                "'UnifiedSampleSeries' AND column_name = ?", [sampler.event_column]).fetchall()
+                "'UnifiedSampleSeries' AND column_name = ?",
+                [sampler.event_column],
+            ).fetchall()
         finally:
             connection.close()
         if not found or not found[0][0]:
             raise uprof_native.failure(
                 f"cpu.db UnifiedSampleSeries has no {sampler.event_column} column, the "
                 f"{uprof_session.TIMER_EVENT_NAME} samples session.uprof records",
-                ["translate without dump"], session=session)
+                ["translate without dump"],
+                session=session,
+            )
         dump = None
     elif sampler.pmc:
         if args.time_filter:
@@ -2366,7 +2872,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 "--time-filter cannot be applied to a PMC capture: this export aggregates PMC "
                 "samples per window and carries no "
                 "per-sample timestamps, so the window cannot be selected; capture with "
-                "--event ibs-op to use --time-filter")
+                "--event ibs-op to use --time-filter"
+            )
         dump = None
     else:
         dump = uprof_dump.resolve_dump(session, sampler)
@@ -2374,8 +2881,11 @@ def run_query_command(args: argparse.Namespace) -> None:
     # None keeps the CSV path, so a missing column or a write failure still reaches the views.
     if dump is not None:
         _guard_out_file(out_path, [dump.path], "the IBS dump ")
-        _guard_out_file(out_path, list(uprof_dump.samples_parquet_files(dump, session)),
-                        "the Parquet dump copy ")
+        _guard_out_file(
+            out_path,
+            list(uprof_dump.samples_parquet_files(dump, session)),
+            "the Parquet dump copy ",
+        )
     samples = uprof_dump.samples_parquet(dump, session) if dump is not None else None
     capture_windowed = _capture_windowed(session)
 
@@ -2384,11 +2894,21 @@ def run_query_command(args: argparse.Namespace) -> None:
     function_scoped = getattr(args, "function", None) is not None
     # A view filtered to one module reports symbolization diagnostics for that module only.
     diagnostics_scope = getattr(args, "module", None) if function_scoped else None
-    sample_interval_s = (_cpu_seconds_interval(sampler)
-                         if args.by in ("module", "region", "function") or function_scoped
-                         else None)
-    variables = _variables(args, dump, top, time_start, time_end, sampler.event_column,
-                           sample_interval_s, primary_measure)
+    sample_interval_s = (
+        _cpu_seconds_interval(sampler)
+        if args.by in ("module", "region", "function") or function_scoped
+        else None
+    )
+    variables = _variables(
+        args,
+        dump,
+        top,
+        time_start,
+        time_end,
+        sampler.event_column,
+        sample_interval_s,
+        primary_measure,
+    )
     variables["uprof_ibs_parquet"] = "" if samples is None else str(samples)
     artifacts: Path | None = None
     cache: uprof_cache.SessionCache | None = None
@@ -2420,13 +2940,16 @@ def run_query_command(args: argparse.Namespace) -> None:
                         symbol_hit = False
                     if range_needed:
                         try:
-                            cache_range_key = uprof_cache.build_ranges_key(connection,
-                                                                           cache_symbol_key)
+                            cache_range_key = uprof_cache.build_ranges_key(
+                                connection, cache_symbol_key
+                            )
                         except Exception as exc:  # noqa: BLE001
                             cache.disable(exc)
                             cache_range_key = ""
                         range_hit = cache.lookup("range_runs", cache_range_key) and symbol_hit
-                if (not symbol_hit or (range_needed and not range_hit)) and not cache.ensure_write():
+                if (
+                    not symbol_hit or (range_needed and not range_hit)
+                ) and not cache.ensure_write():
                     symbol_hit = False
                     range_hit = False
                 # The cache keeps the raw symbolization text; the diagnostics filter condenses
@@ -2441,7 +2964,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 if symbol_hit:
                     try:
                         symbol_hit, causes = _apply_symbol_hit(
-                            cache, connection, cache_symbol_key, variables, symbol_out)
+                            cache, connection, cache_symbol_key, variables, symbol_out
+                        )
                     finally:
                         symbol_out.flush()
                     if symbol_hit:
@@ -2456,7 +2980,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                     symbol_stream = _Tee(symbol_out)
                     try:
                         symbols, causes, symbol_transient, pdb_identity, probe_identity = (
-                            _symbolize_scope(connection, artifacts, symbol_stream, args))
+                            _symbolize_scope(connection, artifacts, symbol_stream, args)
+                        )
                     finally:
                         symbol_out.flush()
                     variables.update(symbols)
@@ -2466,13 +2991,18 @@ def run_query_command(args: argparse.Namespace) -> None:
                     symbolizer = _agreement_values(connection)
                     if symbols.get("uprof_symbols") and not symbol_transient:
                         cache.store_symbols(
-                            cache_symbol_key, Path(symbols["uprof_symbols"]),
+                            cache_symbol_key,
+                            Path(symbols["uprof_symbols"]),
                             Path(symbols["uprof_aliases"])
-                            if symbols.get("uprof_aliases") else None,
-                            Path(symbols["uprof_pdbs"])
-                            if symbols.get("uprof_pdbs") else None,
-                            causes, symbol_stream.text, symbol_transient, pdb_identity,
-                            probe_identity)
+                            if symbols.get("uprof_aliases")
+                            else None,
+                            Path(symbols["uprof_pdbs"]) if symbols.get("uprof_pdbs") else None,
+                            causes,
+                            symbol_stream.text,
+                            symbol_transient,
+                            pdb_identity,
+                            probe_identity,
+                        )
 
             range_info: dict[str, Any] | None = None
             row_attribution: dict[str, int] | None = None
@@ -2482,7 +3012,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 if range_hit:
                     try:
                         range_hit, range_info = _apply_range_hit(
-                            cache, connection, cache_range_key, variables, range_out)
+                            cache, connection, cache_range_key, variables, range_out
+                        )
                     finally:
                         range_out.flush()
                 if not range_hit:
@@ -2491,18 +3022,18 @@ def run_query_command(args: argparse.Namespace) -> None:
                     range_stream = _Tee(range_out)
                     try:
                         functions_path, range_info = _derive_scope_ranges(
-                            connection, artifacts, range_stream)
+                            connection, artifacts, range_stream
+                        )
                     finally:
                         range_out.flush()
                     if functions_path is not None:
                         variables["uprof_functions"] = str(functions_path)
-                        uprof_db.set_variables(connection,
-                                               {"uprof_functions": str(functions_path)})
-                        _create_file_views(connection,
-                                           {"uprof_functions": str(functions_path)})
+                        uprof_db.set_variables(connection, {"uprof_functions": str(functions_path)})
+                        _create_file_views(connection, {"uprof_functions": str(functions_path)})
                     if not symbol_transient:
-                        cache.store_ranges(cache_range_key, functions_path, range_info,
-                                           range_stream.text)
+                        cache.store_ranges(
+                            cache_range_key, functions_path, range_info, range_stream.text
+                        )
                 attempted = chr(2).join(range_info.get("attempted", []))
                 variables["uprof_range_attempted"] = attempted
                 uprof_db.set_variables(connection, {"uprof_range_attempted": attempted})
@@ -2516,55 +3047,94 @@ def run_query_command(args: argparse.Namespace) -> None:
                     cache.release()
 
             sanity_message, tag_values = _dump_sanity(
-                connection, dump is not None,
-                _scope_filter_active(args, time_start, time_end), system_wide)
+                connection,
+                dump is not None,
+                _scope_filter_active(args, time_start, time_end),
+                system_wide,
+            )
             tag_rows = connection.sql("SELECT getvariable('has_tag')").fetchall()
             has_tag = bool(tag_rows and tag_rows[0][0])
             module_rows = connection.sql("SELECT getvariable('has_system_module')").fetchall()
             has_system_module = bool(module_rows and module_rows[0][0])
-            tag_available = (sampler.ibs_dump_kind == "ibsop-event-dump" and has_tag
-                             and tag_values > 0
-                             and _tag_nonzero(connection) > 0)
-            uprof_db.set_variables(connection, {
-                "uprof_tag_available": "true" if tag_available else "false"})
-            timer_contexts = (_timer_contexts(connection, sampler) if sampler.timer else None)
-            top_process = (_top_process(connection)
-                           if system_wide and args.by == "process" and _unscoped(args) else None)
-            legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
-                             sample_interval_s, has_system_module, range_info, row_attribution,
-                             function_scope, top_process)
+            tag_available = (
+                sampler.ibs_dump_kind == "ibsop-event-dump"
+                and has_tag
+                and tag_values > 0
+                and _tag_nonzero(connection) > 0
+            )
+            uprof_db.set_variables(
+                connection, {"uprof_tag_available": "true" if tag_available else "false"}
+            )
+            timer_contexts = _timer_contexts(connection, sampler) if sampler.timer else None
+            top_process = (
+                _top_process(connection)
+                if system_wide and args.by == "process" and _unscoped(args)
+                else None
+            )
+            legend = _legend(
+                sampler,
+                dump,
+                has_tag,
+                tag_available,
+                args,
+                system_wide,
+                sample_interval_s,
+                has_system_module,
+                range_info,
+                row_attribution,
+                function_scope,
+                top_process,
+            )
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             top_row = _top_row_precision(connection, args.by) if sampler.timer else None
             # The filter and its parent measurement precede the reading rule; both sit directly
             # below METRIC, after VERSION, before the detailed fields.
             fields[2:2] = _legend_fields(legend, system_wide, sampler.timer, top_row)
             if function_scope is not None:
-                fields[2:2] = _function_scope_fields(function_scope, legend, sample_interval_s,
-                                                     sampler.timer)
+                fields[2:2] = _function_scope_fields(
+                    function_scope, legend, sample_interval_s, sampler.timer
+                )
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
             check_kernel = sampler.os_requested and not capture_windowed
             achieved, captured_samples, kernel_covered = _achieved_field(
-                connection, dump is not None, args, sampler, dump, check_kernel, timer_contexts)
+                connection, dump is not None, args, sampler, dump, check_kernel, timer_contexts
+            )
             if achieved:
                 fields.append(achieved)
-            fields.extend(_kernel_coverage_field(
-                sampler, kernel_covered, capture_windowed, captured_samples))
+            fields.extend(
+                _kernel_coverage_field(sampler, kernel_covered, capture_windowed, captured_samples)
+            )
             if args.by == "function":
                 fields.extend(_hot_rva_field(connection))
             coverage = db_coverage if db_coverage is not None else _coverage_values(connection)
             flags = _symbol_path_flags(args)
-            fields.extend(_coverage_field(
-                connection, causes, symbolizer, symbolized, flags, coverage,
-                by=args.by, row_attribution=row_attribution))
+            fields.extend(
+                _coverage_field(
+                    connection,
+                    causes,
+                    symbolizer,
+                    symbolized,
+                    flags,
+                    coverage,
+                    by=args.by,
+                    row_attribution=row_attribution,
+                )
+            )
             if coverage is not None:
                 legend["symbol_coverage"] = _symbol_coverage_legend(
-                    coverage, symbolizer, symbolized, flags,
-                    by=args.by, row_attribution=row_attribution)
+                    coverage,
+                    symbolizer,
+                    symbolized,
+                    flags,
+                    by=args.by,
+                    row_attribution=row_attribution,
+                )
             fields.extend(_scope_warning(connection, args.image))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(
-                    connection, symbolizer, by=args.by, row_attribution=row_attribution)
+                    connection, symbolizer, by=args.by, row_attribution=row_attribution
+                )
                 if agreement:
                     fields.append(("AGREEMENT", agreement))
             _write_profile(connection, args, fields, out_path, legend)
@@ -2572,8 +3142,9 @@ def run_query_command(args: argparse.Namespace) -> None:
     finally:
         if artifacts is not None:
             if not success:
-                print(f"ARTIFACTS_KEPT={artifacts} (the run failed; kept for inspection)",
-                      file=stream)
+                print(
+                    f"ARTIFACTS_KEPT={artifacts} (the run failed; kept for inspection)", file=stream
+                )
             else:
                 try:
                     shutil.rmtree(artifacts)
@@ -2582,8 +3153,10 @@ def run_query_command(args: argparse.Namespace) -> None:
                 else:
                     reason = None
                 if artifacts.exists():
-                    print(f"ARTIFACTS_KEPT={artifacts} "
-                          f"(cleanup failed: {reason or 'the directory still exists'})",
-                          file=stream)
+                    print(
+                        f"ARTIFACTS_KEPT={artifacts} "
+                        f"(cleanup failed: {reason or 'the directory still exists'})",
+                        file=stream,
+                    )
                 else:
                     print(f"ARTIFACTS_CLEANED={artifacts}", file=stream)

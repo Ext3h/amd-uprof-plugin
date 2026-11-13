@@ -75,7 +75,7 @@ def pe_checksum(data):
     the CheckSum field itself, and adds the file length.
     """
     field = int.from_bytes(data[0x3C:0x40], "little") + 4 + 20 + 64
-    recorded = int.from_bytes(data[field:field + 4], "little")
+    recorded = int.from_bytes(data[field : field + 4], "little")
     padded = data + b"\0" * (len(data) % 2)
     total = 0
     for offset in range(0, len(padded), 2):
@@ -149,8 +149,13 @@ class PeCoffSymbolTableTest(FixtureTestCase):
     """Row 2: a PE with a COFF symbol table and no PDB."""
 
     def test_readobj_reports_the_symbol_table_and_both_function_names(self):
-        output = readobj("--file-headers", "--sections", "--symbols",
-                         "--coff-debug-directory", F.PE / "fixture_coff.exe")
+        output = readobj(
+            "--file-headers",
+            "--sections",
+            "--symbols",
+            "--coff-debug-directory",
+            F.PE / "fixture_coff.exe",
+        )
         self.assertRegex(output, r"PointerToSymbolTable: 0x[1-9A-Fa-f]")
         self.assertIn("fixture_helper", output)
         self.assertIn("fixture_entry", output)
@@ -159,21 +164,22 @@ class PeCoffSymbolTableTest(FixtureTestCase):
 
     def test_image_debug_directory_records_no_pdb(self):
         name, guid, age = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_coff.exe"), F.READOBJ)
+            os.fspath(F.PE / "fixture_coff.exe"), F.READOBJ
+        )
         self.assertEqual(name, "fixture_coff.pdb")
         self.assertIsNone(guid)
         self.assertIsNone(age)
 
     def test_symbolizer_names_both_starts_without_lines(self):
-        resolved = frames(F.symbolizer_records(F.PE / "fixture_coff.exe",
-                                               [F.PE_HELPER, F.PE_ENTRY]))
+        resolved = frames(
+            F.symbolizer_records(F.PE / "fixture_coff.exe", [F.PE_HELPER, F.PE_ENTRY])
+        )
         self.assert_names_no_line(resolved[F.PE_HELPER], "fixture_helper")
         self.assert_names_no_line(resolved[F.PE_ENTRY], "fixture_entry")
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
     def test_production_keeps_the_coff_names_and_reports_no_pdb(self):
-        module, records, stream = F.production(F.PE / "fixture_coff.exe",
-                                               [F.PE_HELPER, F.PE_ENTRY])
+        module, records, stream = F.production(F.PE / "fixture_coff.exe", [F.PE_HELPER, F.PE_ENTRY])
         self.assertIsNone(module.pdb)
         self.assertIn("PDB=none", stream)
         self.assertEqual(module.evidence.outcome, "readobj_failed")
@@ -183,8 +189,9 @@ class PeCoffSymbolTableTest(FixtureTestCase):
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
     def test_production_reports_no_debug_info_when_the_database_records_none(self):
-        module, _, _ = F.production(F.PE / "fixture_coff.exe", [F.PE_HELPER],
-                                    found_debug_info=False)
+        module, _, _ = F.production(
+            F.PE / "fixture_coff.exe", [F.PE_HELPER], found_debug_info=False
+        )
         self.assertEqual(module.evidence.outcome, "no_debug_info")
 
 
@@ -194,32 +201,31 @@ class PeFullPdbTest(FixtureTestCase):
 
     def test_image_debug_directory_names_the_pdb_guid_and_age(self):
         name, guid, age = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
+            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ
+        )
         self.assertEqual(F.embedded_basename(name or ""), "fixture_full.pdb")
         self.assertIsNotNone(guid)
         self.assertIsNotNone(age)
 
     def test_pdb_signature_matches_and_the_probe_accepts_it(self):
         _, image_guid, image_age = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
-        guid, age, error = uprof_symbols._pdb_signature(
-            F.PDBUTIL, F.PE / "fixture_full.pdb")
+            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ
+        )
+        guid, age, error = uprof_symbols._pdb_signature(F.PDBUTIL, F.PE / "fixture_full.pdb")
         self.assertEqual((guid, age, error), (image_guid, str(image_age), None))
-        probe = uprof_symbols._probe_pdb(F.PDBUTIL, F.PE / "fixture_full.pdb",
-                                         image_guid, image_age)
+        probe = uprof_symbols._probe_pdb(
+            F.PDBUTIL, F.PE / "fixture_full.pdb", image_guid, image_age
+        )
         self.assertEqual(probe.status, "accepted")
 
     def test_probe_rejects_a_matching_guid_with_another_age(self):
-        _, guid, age = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
-        probe = uprof_symbols._probe_pdb(F.PDBUTIL, F.PE / "fixture_full.pdb",
-                                         guid, age + 1)
+        _, guid, age = uprof_symbols._readobj_info(os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
+        probe = uprof_symbols._probe_pdb(F.PDBUTIL, F.PE / "fixture_full.pdb", guid, age + 1)
         self.assertEqual(probe.status, "mismatch")
         self.assertIn("GUID matches", probe.detail)
 
     def test_probe_trusts_a_guid_age_cache_key_when_the_pdb_age_differs(self):
-        _, guid, age = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
+        _, guid, age = uprof_symbols._readobj_info(os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
         key_age = age + 1  # image age for the key; the PDB keeps its own age
         with tempfile.TemporaryDirectory() as root:
             cache = Path(root) / f"{guid}{key_age:X}"
@@ -232,20 +238,21 @@ class PeFullPdbTest(FixtureTestCase):
     def test_publics_give_both_function_starts(self):
         with tempfile.TemporaryDirectory() as root:
             out = Path(root) / "publics.csv"
-            starts, shared = uprof_symbols.public_symbols(
-                out, F.PE / "fixture_full.pdb", F.PDBUTIL)
+            starts, shared = uprof_symbols.public_symbols(out, F.PE / "fixture_full.pdb", F.PDBUTIL)
             with open(out, encoding="utf-8", newline="") as handle:
                 rows = {int(row["rva"]): row["names"] for row in csv.DictReader(handle)}
         self.assertEqual((starts, shared), (2, 0))
-        self.assertEqual(rows, {F.PE_HELPER: "fixture_helper",
-                                F.PE_ENTRY: "fixture_entry"})
+        self.assertEqual(rows, {F.PE_HELPER: "fixture_helper", F.PE_ENTRY: "fixture_entry"})
 
     @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_symbolizer_resolves_both_functions_and_the_body_line(self):
-        resolved = frames(F.symbolizer_records(
-            F.PE / "fixture_full.exe",
-            [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY],
-            pdb=F.PE / "fixture_full.pdb"))
+        resolved = frames(
+            F.symbolizer_records(
+                F.PE / "fixture_full.exe",
+                [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY],
+                pdb=F.PE / "fixture_full.pdb",
+            )
+        )
         self.assert_names_line(resolved[F.PE_HELPER], "fixture_helper", 2)
         self.assert_names_line(resolved[F.PE_ENTRY], "fixture_entry", 6)
         self.assert_names_line(resolved[F.PE_ENTRY_BODY], "fixture_entry", 7)
@@ -254,8 +261,8 @@ class PeFullPdbTest(FixtureTestCase):
     @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_accepts_the_adjacent_pdb_and_reports_folds(self):
         module, records, stream = F.production(
-            F.PE / "fixture_full.exe",
-            [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY])
+            F.PE / "fixture_full.exe", [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY]
+        )
         self.assertEqual(Path(module.pdb).name, "fixture_full.pdb")
         self.assertIn("PDB_MATCH=yes", stream)
         self.assertIn("FOLDS: 0 shared starts of 2", stream)
@@ -268,8 +275,7 @@ class PeFullPdbTest(FixtureTestCase):
     @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_searches_a_symbol_directory_for_the_pdb(self):
         exe = self.temporary_copy(F.PE / "fixture_full.exe")
-        module, records, stream = F.production(exe, [F.PE_ENTRY],
-                                               symbol_dirs=[F.PE])
+        module, records, stream = F.production(exe, [F.PE_ENTRY], symbol_dirs=[F.PE])
         self.assertEqual(Path(module.pdb).name, "fixture_full.pdb")
         self.assertIn("PDB_MATCH=yes", stream)
         self.assert_names_line(frames(records)[F.PE_ENTRY], "fixture_entry", 6)
@@ -278,14 +284,12 @@ class PeFullPdbTest(FixtureTestCase):
     @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_accepts_a_guid_age_cache_key_directory(self):
         exe = self.temporary_copy(F.PE / "fixture_full.exe")
-        _, guid, age = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
+        _, guid, age = uprof_symbols._readobj_info(os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
         with tempfile.TemporaryDirectory() as root:
             cache = Path(root) / f"{guid}{age:X}"
             cache.mkdir()
             shutil.copyfile(F.PE / "fixture_full.pdb", cache / "fixture_full.pdb")
-            module, records, stream = F.production(exe, [F.PE_ENTRY],
-                                                   symbol_dirs=[root])
+            module, records, stream = F.production(exe, [F.PE_ENTRY], symbol_dirs=[root])
         self.assertEqual(Path(module.pdb).name, "fixture_full.pdb")
         self.assertIn("PDB_MATCH=yes", stream)
         self.assert_names_line(frames(records)[F.PE_ENTRY], "fixture_entry", 6)
@@ -297,19 +301,21 @@ class PeMismatchedPdbTest(FixtureTestCase):
 
     def test_image_names_the_wrong_pdb_that_sits_beside_it(self):
         name, guid, age = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ)
+            os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ
+        )
         self.assertEqual(F.embedded_basename(name or ""), "fixture_other.pdb")
         self.assertIsNotNone(guid)
         self.assertIsNotNone(age)
 
     def test_probe_rejects_the_other_pdb_with_the_guid_in_the_detail(self):
         _, image_guid, image_age = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ)
-        other_guid, _, _ = uprof_symbols._pdb_signature(
-            F.PDBUTIL, F.PE / "fixture_other.pdb")
+            os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ
+        )
+        other_guid, _, _ = uprof_symbols._pdb_signature(F.PDBUTIL, F.PE / "fixture_other.pdb")
         self.assertNotEqual(other_guid, image_guid)
         probe = uprof_symbols._probe_pdb(
-            F.PDBUTIL, F.PE / "fixture_other.pdb", image_guid, image_age)
+            F.PDBUTIL, F.PE / "fixture_other.pdb", image_guid, image_age
+        )
         self.assertEqual(probe.status, "mismatch")
         self.assertEqual(probe.pdb_guid, other_guid)
         self.assertIn(other_guid, probe.detail)
@@ -317,21 +323,21 @@ class PeMismatchedPdbTest(FixtureTestCase):
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
     def test_production_reports_no_debug_info_when_the_only_pdb_is_rejected(self):
-        module, _, _ = F.production(F.PE / "fixture_mismatch.exe", [F.PE_HELPER],
-                                    found_debug_info=False)
+        module, _, _ = F.production(
+            F.PE / "fixture_mismatch.exe", [F.PE_HELPER], found_debug_info=False
+        )
         self.assertEqual(module.evidence.outcome, "no_debug_info")
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
     def test_production_reports_no_accepted_pdb(self):
-        module, records, stream = F.production(F.PE / "fixture_mismatch.exe",
-                                               [F.PE_ENTRY])
+        module, records, stream = F.production(F.PE / "fixture_mismatch.exe", [F.PE_ENTRY])
         self.assertIsNone(module.pdb)
         self.assertEqual(module.evidence.outcome, "no_pdb")
         self.assertIn("PDB=none", stream)
         _, image_guid, _ = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ)
-        other_guid, _, _ = uprof_symbols._pdb_signature(
-            F.PDBUTIL, F.PE / "fixture_other.pdb")
+            os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ
+        )
+        other_guid, _, _ = uprof_symbols._pdb_signature(F.PDBUTIL, F.PE / "fixture_other.pdb")
         probes = module.evidence.search.probes
         mismatch = [probe for probe in probes if probe.status == "mismatch"]
         self.assertEqual(len(mismatch), 1)
@@ -348,25 +354,28 @@ class PePublicOnlyPdbTest(FixtureTestCase):
         summary = pdbutil("dump", "--summary", F.PE / "fixture_public.pdb")
         self.assertIn("Has Publics: true", summary)
         self.assertIn("Has Types: true", summary)
-        self.assertIn("Showing 0 records",
-                      pdbutil("dump", "--types", F.PE / "fixture_public.pdb"))
+        self.assertIn("Showing 0 records", pdbutil("dump", "--types", F.PE / "fixture_public.pdb"))
 
     def test_publics_give_both_function_starts(self):
         with tempfile.TemporaryDirectory() as root:
             out = Path(root) / "publics.csv"
             starts, shared = uprof_symbols.public_symbols(
-                out, F.PE / "fixture_public.pdb", F.PDBUTIL)
+                out, F.PE / "fixture_public.pdb", F.PDBUTIL
+            )
             with open(out, encoding="utf-8", newline="") as handle:
                 rows = {int(row["rva"]): row["names"] for row in csv.DictReader(handle)}
         self.assertEqual((starts, shared), (2, 0))
-        self.assertEqual(rows, {F.PE_HELPER: "fixture_helper",
-                                F.PE_ENTRY: "fixture_entry"})
+        self.assertEqual(rows, {F.PE_HELPER: "fixture_helper", F.PE_ENTRY: "fixture_entry"})
 
     @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_symbolizer_names_both_starts_without_lines(self):
-        resolved = frames(F.symbolizer_records(
-            F.PE / "fixture_public.exe", [F.PE_HELPER, F.PE_ENTRY],
-            pdb=F.PE / "fixture_public.pdb"))
+        resolved = frames(
+            F.symbolizer_records(
+                F.PE / "fixture_public.exe",
+                [F.PE_HELPER, F.PE_ENTRY],
+                pdb=F.PE / "fixture_public.pdb",
+            )
+        )
         self.assert_names_no_line(resolved[F.PE_HELPER], "fixture_helper")
         self.assert_names_no_line(resolved[F.PE_ENTRY], "fixture_entry")
 
@@ -374,7 +383,8 @@ class PePublicOnlyPdbTest(FixtureTestCase):
     @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_accepts_the_public_pdb(self):
         module, records, stream = F.production(
-            F.PE / "fixture_public.exe", [F.PE_HELPER, F.PE_ENTRY])
+            F.PE / "fixture_public.exe", [F.PE_HELPER, F.PE_ENTRY]
+        )
         self.assertEqual(Path(module.pdb).name, "fixture_public.pdb")
         self.assertIn("PDB_MATCH=yes", stream)
         resolved = frames(records)
@@ -387,27 +397,31 @@ class PeDwarfTest(FixtureTestCase):
     """Row 6: a Windows PE carrying DWARF instead of CodeView."""
 
     def test_image_has_dwarf_sections_and_no_pdb_record(self):
-        output = readobj("--file-headers", "--sections", "--coff-debug-directory",
-                         F.PE / "fixture_pe_dwarf.exe")
+        output = readobj(
+            "--file-headers", "--sections", "--coff-debug-directory", F.PE / "fixture_pe_dwarf.exe"
+        )
         self.assertIn(".debug_info", output)
         self.assertIn(".debug_line", output)
         self.assertNotIn("PDBGUID", output)
         _, guid, _ = uprof_symbols._readobj_info(
-            os.fspath(F.PE / "fixture_pe_dwarf.exe"), F.READOBJ)
+            os.fspath(F.PE / "fixture_pe_dwarf.exe"), F.READOBJ
+        )
         self.assertIsNone(guid)
 
     def test_symbolizer_resolves_file_and_line(self):
-        resolved = frames(F.symbolizer_records(
-            F.PE / "fixture_pe_dwarf.exe",
-            [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY]))
+        resolved = frames(
+            F.symbolizer_records(
+                F.PE / "fixture_pe_dwarf.exe", [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY]
+            )
+        )
         self.assert_names_line(resolved[F.PE_HELPER], "fixture_helper", 2)
         self.assert_names_line(resolved[F.PE_ENTRY], "fixture_entry", 6)
         self.assert_names_line(resolved[F.PE_ENTRY_BODY], "fixture_entry", 7)
 
     def test_production_runs_the_symbolizer_without_a_pdb(self):
         module, records, stream = F.production(
-            F.PE / "fixture_pe_dwarf.exe",
-            [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY])
+            F.PE / "fixture_pe_dwarf.exe", [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY]
+        )
         self.assertIsNone(module.pdb)
         # PDB discovery is Windows-only, so only Windows reports a PDB outcome in the stream.
         if os.name == "nt":
@@ -430,14 +444,16 @@ class ElfDwarfTest(FixtureTestCase):
         self.assertIn(".debug_line", output)
 
     def test_symbolizer_resolves_functions_file_and_line(self):
-        self.assert_dwarf_lines(F.symbolizer_records(
-            F.ELF / "fixture_dwarf",
-            [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY]))
+        self.assert_dwarf_lines(
+            F.symbolizer_records(
+                F.ELF / "fixture_dwarf", [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY]
+            )
+        )
 
     def test_context_symbolizer_reads_the_same_dwarf(self):
         symbols = uprof_context.symbolize_rvas(
-            str(F.ELF / "fixture_dwarf"),
-            [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY])
+            str(F.ELF / "fixture_dwarf"), [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY]
+        )
         self.assertEqual(symbols[F.ELF_HELPER].function, "fixture_helper")
         self.assertEqual(symbols[F.ELF_HELPER].line, 2)
         self.assertEqual(symbols[F.ELF_ENTRY].function, "fixture_entry")
@@ -446,8 +462,8 @@ class ElfDwarfTest(FixtureTestCase):
 
     def test_production_symbolizes_elf_dwarf_without_a_pdb(self):
         module, records, stream = F.production(
-            F.ELF / "fixture_dwarf",
-            [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY])
+            F.ELF / "fixture_dwarf", [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY]
+        )
         self.assertIsNone(module.pdb)
         # PDB discovery is Windows-only, so only Windows reports a PDB outcome in the stream.
         if os.name == "nt":
@@ -456,7 +472,8 @@ class ElfDwarfTest(FixtureTestCase):
 
     def test_function_ranges_report_the_elf_image_as_not_pe(self):
         derivation = uprof_functions.derive_module_ranges(
-            "fixture_dwarf", str(F.ELF / "fixture_dwarf"), readobj=str(F.READOBJ))
+            "fixture_dwarf", str(F.ELF / "fixture_dwarf"), readobj=str(F.READOBJ)
+        )
         self.assertEqual(derivation.ranges, [])
         self.assertTrue(derivation.reason.startswith("not_pe:"), derivation.reason)
 
@@ -466,8 +483,7 @@ class ElfSharedObjectTest(FixtureTestCase):
     """Row 8: a shared object with DWARF and .dynsym; row 10's .dynsym-only variant."""
 
     def test_shared_object_exposes_dynsym_and_dwarf(self):
-        output = readobj("--file-headers", "--sections", "--dyn-syms",
-                         F.ELF / "fixture_shared.so")
+        output = readobj("--file-headers", "--sections", "--dyn-syms", F.ELF / "fixture_shared.so")
         self.assertIn("Type: SharedObject", output)
         self.assertIn(".dynsym", output)
         self.assertIn(".debug_info", output)
@@ -475,21 +491,26 @@ class ElfSharedObjectTest(FixtureTestCase):
         self.assertIn("fixture_entry", output)
 
     def test_symbolizer_resolves_shared_object_dwarf(self):
-        resolved = frames(F.symbolizer_records(
-            F.ELF / "fixture_shared.so",
-            [F.ELF_SHARED_HELPER, F.ELF_SHARED_ENTRY, F.ELF_SHARED_BODY]))
+        resolved = frames(
+            F.symbolizer_records(
+                F.ELF / "fixture_shared.so",
+                [F.ELF_SHARED_HELPER, F.ELF_SHARED_ENTRY, F.ELF_SHARED_BODY],
+            )
+        )
         self.assert_names_line(resolved[F.ELF_SHARED_HELPER], "fixture_helper", 2)
         self.assert_names_line(resolved[F.ELF_SHARED_ENTRY], "fixture_entry", 6)
         self.assert_names_line(resolved[F.ELF_SHARED_BODY], "fixture_entry", 7)
 
     def test_dynsym_only_shared_object_gives_names_without_lines(self):
-        output = readobj("--file-headers", "--sections", "--dyn-syms",
-                         F.ELF / "fixture_dynsym.so")
+        output = readobj("--file-headers", "--sections", "--dyn-syms", F.ELF / "fixture_dynsym.so")
         self.assertIn(".dynsym", output)
         self.assertNotIn(".debug_info", output)
         self.assertNotIn(".symtab ", output)
-        resolved = frames(F.symbolizer_records(
-            F.ELF / "fixture_dynsym.so", [F.ELF_SHARED_HELPER, F.ELF_SHARED_ENTRY]))
+        resolved = frames(
+            F.symbolizer_records(
+                F.ELF / "fixture_dynsym.so", [F.ELF_SHARED_HELPER, F.ELF_SHARED_ENTRY]
+            )
+        )
         self.assert_names_no_line(resolved[F.ELF_SHARED_HELPER], "fixture_helper")
         self.assert_names_no_line(resolved[F.ELF_SHARED_ENTRY], "fixture_entry")
 
@@ -507,38 +528,41 @@ class ElfSeparateDebugTest(FixtureTestCase):
         self.assertIn(".debug_line", debug_file)
 
     def test_symbolizer_follows_the_adjacent_debuglink_sidecar(self):
-        self.assert_dwarf_lines(F.symbolizer_records(
-            F.ELF / "fixture_debuglink",
-            [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY]))
+        self.assert_dwarf_lines(
+            F.symbolizer_records(
+                F.ELF / "fixture_debuglink", [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY]
+            )
+        )
 
     def test_buildid_names_the_separate_debug_file(self):
         build_id = (F.ELF / "build-id.txt").read_text(encoding="utf-8").strip()
         notes = readobj("--notes", F.ELF / "fixture_buildid")
         self.assertIn(f"Build ID: {build_id}", notes)
-        debug_file = (F.ELF / "debug" / "buildid" / ".build-id" / build_id[:2]
-                      / f"{build_id[2:]}.debug")
+        debug_file = (
+            F.ELF / "debug" / "buildid" / ".build-id" / build_id[:2] / f"{build_id[2:]}.debug"
+        )
         self.assertTrue(debug_file.is_file(), debug_file)
 
     def test_symbolizer_uses_the_buildid_debug_root(self):
         root = F.ELF / "debug" / "buildid"
-        without = frames(F.symbolizer_records(
-            F.ELF / "fixture_buildid", [F.ELF_ENTRY]))
+        without = frames(F.symbolizer_records(F.ELF / "fixture_buildid", [F.ELF_ENTRY]))
         self.assertFalse(without[F.ELF_ENTRY].get("Line"))
-        with_root = frames(F.symbolizer_records(
-            F.ELF / "fixture_buildid", [F.ELF_ENTRY], debug_dirs=[root]))
+        with_root = frames(
+            F.symbolizer_records(F.ELF / "fixture_buildid", [F.ELF_ENTRY], debug_dirs=[root])
+        )
         self.assert_names_line(with_root[F.ELF_ENTRY], "fixture_entry", 6)
 
     def test_production_passes_the_buildid_debug_root_to_the_symbolizer(self):
         module, records, stream = F.production(
-            F.ELF / "fixture_buildid", [F.ELF_ENTRY],
-            symbol_dirs=[F.ELF / "debug" / "buildid"])
+            F.ELF / "fixture_buildid", [F.ELF_ENTRY], symbol_dirs=[F.ELF / "debug" / "buildid"]
+        )
         self.assertIsNone(module.pdb)
         self.assert_names_line(frames(records)[F.ELF_ENTRY], "fixture_entry", 6)
 
     def test_production_uses_a_debuglink_sidecar_by_adjacency(self):
         module, records, stream = F.production(
-            F.ELF / "fixture_debuglink",
-            [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY])
+            F.ELF / "fixture_debuglink", [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY]
+        )
         self.assertIsNone(module.pdb)
         self.assert_dwarf_lines(records)
 
@@ -550,8 +574,7 @@ class ElfSeparateDebugTest(FixtureTestCase):
             target.parent.mkdir(parents=True)
             shutil.copyfile(F.ELF / "fixture_debuglink.debug", target)
             missing, missing_records, _ = F.production(binary, [F.ELF_ENTRY])
-            module, records, _ = F.production(binary, [F.ELF_ENTRY],
-                                              symbol_dirs=[root])
+            module, records, _ = F.production(binary, [F.ELF_ENTRY], symbol_dirs=[root])
         self.assertFalse(frames(missing_records)[F.ELF_ENTRY].get("Line"))
         self.assertIsNone(module.pdb)
         self.assert_names_line(frames(records)[F.ELF_ENTRY], "fixture_entry", 6)
@@ -560,7 +583,8 @@ class ElfSeparateDebugTest(FixtureTestCase):
         debug_file = F.ELF / "fixture_debuglink.debug"
         root = F.ELF / "debug" / "buildid"
         debug_dirs, fallback = uprof_symbols.symbolizer_search_paths(
-            [debug_file, F.PE / "fixture_full.pdb"], [root])
+            [debug_file, F.PE / "fixture_full.pdb"], [root]
+        )
         self.assertEqual(debug_dirs, [str(root), str(debug_file.parent)])
         self.assertEqual(fallback, debug_dirs)
 
@@ -583,14 +607,16 @@ class ElfSymbolTableTest(FixtureTestCase):
             self.assertRegex(entry, r"Size: [1-9][0-9]*")
 
     def test_symbolizer_names_both_starts_without_lines(self):
-        resolved = frames(F.symbolizer_records(
-            F.ELF / "fixture_symtab", [F.ELF_HELPER, F.ELF_ENTRY]))
+        resolved = frames(
+            F.symbolizer_records(F.ELF / "fixture_symtab", [F.ELF_HELPER, F.ELF_ENTRY])
+        )
         self.assert_names_no_line(resolved[F.ELF_HELPER], "fixture_helper")
         self.assert_names_no_line(resolved[F.ELF_ENTRY], "fixture_entry")
 
     def test_production_keeps_the_names_without_lines(self):
         module, records, stream = F.production(
-            F.ELF / "fixture_symtab", [F.ELF_HELPER, F.ELF_ENTRY])
+            F.ELF / "fixture_symtab", [F.ELF_HELPER, F.ELF_ENTRY]
+        )
         self.assertIsNone(module.pdb)
         resolved = frames(records)
         self.assert_names_no_line(resolved[F.ELF_HELPER], "fixture_helper")
@@ -643,9 +669,12 @@ class CompressedAndSplitDwarfTest(FixtureTestCase):
 
     @unittest.skipIf(NO_ZLIB, NO_ZLIB or "")
     def test_symbolizer_decompresses_and_resolves_lines(self):
-        resolved = frames(F.symbolizer_records(
-            F.ELF / "fixture_compressed",
-            [F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY]))
+        resolved = frames(
+            F.symbolizer_records(
+                F.ELF / "fixture_compressed",
+                [F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY],
+            )
+        )
         self.assert_names_line(resolved[F.ELF_COMPRESSED_HELPER], "fixture_helper", 2)
         self.assert_names_line(resolved[F.ELF_COMPRESSED_ENTRY], "fixture_entry", 6)
         self.assert_names_line(resolved[F.ELF_COMPRESSED_BODY], "fixture_entry", 7)
@@ -658,9 +687,12 @@ class CompressedAndSplitDwarfTest(FixtureTestCase):
         dwo_sections = readobj("--sections", dwo)
         self.assertIn(".debug_info.dwo", dwo_sections)
         self.assertIn(".debug_str.dwo", dwo_sections)
-        resolved = frames(F.symbolizer_records(
-            F.ELF / "fixture_split",
-            [F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY]))
+        resolved = frames(
+            F.symbolizer_records(
+                F.ELF / "fixture_split",
+                [F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY],
+            )
+        )
         self.assert_names_line(resolved[F.ELF_COMPRESSED_HELPER], "fixture_helper", 2)
         self.assert_names_line(resolved[F.ELF_COMPRESSED_ENTRY], "fixture_entry", 6)
         self.assert_names_line(resolved[F.ELF_COMPRESSED_BODY], "fixture_entry", 7)
@@ -671,13 +703,10 @@ class CompressedAndSplitDwarfTest(FixtureTestCase):
                 if NO_ZLIB and image.name == "fixture_compressed":
                     self.skipTest(NO_ZLIB)
                 module, records, _ = F.production(
-                    image, [F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY,
-                            F.ELF_COMPRESSED_BODY])
+                    image, [F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY]
+                )
                 self.assertIsNone(module.pdb)
                 resolved = frames(records)
-                self.assert_names_line(resolved[F.ELF_COMPRESSED_HELPER],
-                                       "fixture_helper", 2)
-                self.assert_names_line(resolved[F.ELF_COMPRESSED_ENTRY],
-                                       "fixture_entry", 6)
-                self.assert_names_line(resolved[F.ELF_COMPRESSED_BODY],
-                                       "fixture_entry", 7)
+                self.assert_names_line(resolved[F.ELF_COMPRESSED_HELPER], "fixture_helper", 2)
+                self.assert_names_line(resolved[F.ELF_COMPRESSED_ENTRY], "fixture_entry", 6)
+                self.assert_names_line(resolved[F.ELF_COMPRESSED_BODY], "fixture_entry", 7)

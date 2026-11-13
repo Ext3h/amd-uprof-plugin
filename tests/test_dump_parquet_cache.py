@@ -23,10 +23,15 @@ ROWS = [
     "4,1,8,100,64,c:\\workload.exe,12",
 ]
 VARIABLES = {
-    "uprof_image": "%", "uprof_pid": "", "uprof_top": "20",
-    "uprof_time_start": "0", "uprof_time_end": "9223372036854775807",
-    "uprof_event_column": "", "uprof_tag_available": "false",
-    "uprof_symbols": "", "uprof_aliases": "",
+    "uprof_image": "%",
+    "uprof_pid": "",
+    "uprof_top": "20",
+    "uprof_time_start": "0",
+    "uprof_time_end": "9223372036854775807",
+    "uprof_event_column": "",
+    "uprof_tag_available": "false",
+    "uprof_symbols": "",
+    "uprof_aliases": "",
 }
 
 
@@ -48,8 +53,10 @@ def _session(directory: Path, dump: Path) -> Path:
         connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
         connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
         connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)")
-        connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
-                           "functionId UBIGINT, moduleRVA UBIGINT)")
+        connection.execute(
+            "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+            "functionId UBIGINT, moduleRVA UBIGINT)"
+        )
     finally:
         connection.close()
     return directory
@@ -71,11 +78,13 @@ class SamplesParquetTest(unittest.TestCase):
             try:
                 columns = ", ".join(f'"{name}"' for name in uprof_dump.SAMPLE_COLUMNS)
                 copied = connection.execute(
-                    f"SELECT {columns} FROM read_parquet(?) ORDER BY \"DeltaTick\"",
-                    [str(target)]).fetchall()
+                    f'SELECT {columns} FROM read_parquet(?) ORDER BY "DeltaTick"', [str(target)]
+                ).fetchall()
                 original = connection.execute(
                     f"SELECT {columns} FROM read_csv(?, header = true, all_varchar = true) "
-                    "ORDER BY \"DeltaTick\"", [str(dump)]).fetchall()
+                    'ORDER BY "DeltaTick"',
+                    [str(dump)],
+                ).fetchall()
             finally:
                 connection.close()
             self.assertEqual(copied, original)
@@ -94,8 +103,9 @@ class SamplesParquetTest(unittest.TestCase):
             self.assertEqual(rebuilt, first)
             with duckdb.connect() as connection:
                 rows = connection.execute(
-                    "SELECT count(*), max(CAST(\"Offset\" AS BIGINT)) FROM read_parquet(?)",
-                    [str(first)]).fetchall()
+                    'SELECT count(*), max(CAST("Offset" AS BIGINT)) FROM read_parquet(?)',
+                    [str(first)],
+                ).fetchall()
             self.assertEqual(rows, [(1, 80)])
 
     def test_a_dump_without_the_tag_column_falls_back_to_the_csv(self):
@@ -130,8 +140,11 @@ class SamplesParquetTest(unittest.TestCase):
                     self.assertIsNone(uprof_dump.samples_parquet(info, directory))
                 self.assertEqual(calls, first)
 
-            dump.write_text("DeltaTick,CPU_Number,TID,PID,Offset,ModuleName\n"
-                            "9,0,7,100,80,m.dll\n", encoding="utf-8", newline="\n")
+            dump.write_text(
+                "DeltaTick,CPU_Number,TID,PID,Offset,ModuleName\n9,0,7,100,80,m.dll\n",
+                encoding="utf-8",
+                newline="\n",
+            )
             with mock.patch.object(uprof_dump, "_sha256_file", side_effect=counting):
                 with contextlib.redirect_stderr(io.StringIO()):
                     self.assertIsNone(uprof_dump.samples_parquet(info, directory))
@@ -162,8 +175,9 @@ class SamplesParquetTest(unittest.TestCase):
 
             with mock.patch.dict(sys.modules, {"duckdb": FakeDuckDB}):
                 with self.assertRaises(KeyboardInterrupt):
-                    uprof_dump._build_samples(dump, target, meta, unsupported, directory,
-                                              "sha", key)
+                    uprof_dump._build_samples(
+                        dump, target, meta, unsupported, directory, "sha", key
+                    )
 
             self.assertEqual(list(directory.glob("*.parquet.tmp")), [])
 
@@ -174,10 +188,12 @@ class ViewsSourceTest(unittest.TestCase):
         variables["uprof_session_meta"] = str(self.session / "session.uprof")
         variables["uprof_ibs_dump"] = str(self.dump)
         variables["uprof_ibs_parquet"] = "" if parquet is None else str(parquet)
-        with uprof_db.open_query(self.session / "cpu.db", [TOOLS_DIR / "views.sql"],
-                                 variables) as connection:
+        with uprof_db.open_query(
+            self.session / "cpu.db", [TOOLS_DIR / "views.sql"], variables
+        ) as connection:
             return connection.execute(
-                "SELECT * FROM v_dump ORDER BY delta_tick, tag_cycles NULLS LAST").fetchall()
+                "SELECT * FROM v_dump ORDER BY delta_tick, tag_cycles NULLS LAST"
+            ).fetchall()
 
     def test_the_parquet_copy_produces_the_same_rows_as_the_csv(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -246,8 +262,9 @@ class SamplesMetadataTest(unittest.TestCase):
         self.assertEqual(rebuilt, self.target)
         self.assertGreater(self.target.stat().st_size, 0)
         with duckdb.connect() as connection:
-            rows = connection.execute("SELECT count(*) FROM read_parquet(?)",
-                                      [str(self.target)]).fetchone()[0]
+            rows = connection.execute(
+                "SELECT count(*) FROM read_parquet(?)", [str(self.target)]
+            ).fetchone()[0]
         self.assertEqual(rows, len(ROWS))
 
     def test_a_corrupt_same_size_copy_is_rebuilt(self):

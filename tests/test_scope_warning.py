@@ -18,8 +18,10 @@ from pathlib import Path
 from test_function_region_profile import FIXTURE, Session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
-MODULE_HINT = ("the pattern looks like a module name: --image scopes process image names, not "
-               "modules; use --by module or --function ... --module")
+MODULE_HINT = (
+    "the pattern looks like a module name: --image scopes process image names, not "
+    "modules; use --by module or --function ... --module"
+)
 
 
 class ScopeWarningTest(unittest.TestCase):
@@ -38,9 +40,20 @@ class ScopeWarningTest(unittest.TestCase):
 
     def run_profile(self, *extra):
         return subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session",
-             str(self.session), "--by", "module", *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(self.session),
+                "--by",
+                "module",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
 
     def test_the_empty_scope_warning_reaches_stderr_with_json_and_out_file(self):
         out_file = self.root / "profile.json"
@@ -61,8 +74,9 @@ class ScopeWarningTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WARNING: no samples in the selected scope", result.stderr)
-        self.assertIn("WARNING: no samples in the selected scope",
-                      out_file.read_text(encoding="utf-8"))
+        self.assertIn(
+            "WARNING: no samples in the selected scope", out_file.read_text(encoding="utf-8")
+        )
 
     def test_a_process_image_pattern_does_not_get_the_module_hint(self):
         result = self.run_profile("--image", "other.exe")
@@ -76,8 +90,10 @@ class ScopeWarningTest(unittest.TestCase):
         result = self.run_profile("--pid", "999")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("WARNING: no samples in the selected scope; the process or time filter "
-                      "matched nothing", result.stderr)
+        self.assertIn(
+            "WARNING: no samples in the selected scope; the process or time filter matched nothing",
+            result.stderr,
+        )
 
 
 if __name__ == "__main__":

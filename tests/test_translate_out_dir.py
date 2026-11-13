@@ -50,9 +50,10 @@ class TranslateOutDirTest(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def translate(self, *, force):
-        with mock.patch.object(uprof_native, "require_uprof",
-                               return_value=Path("AMDuProfCLI")), \
-                mock.patch.object(uprof_native, "run", side_effect=self.fake_run):
+        with (
+            mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
+            mock.patch.object(uprof_native, "run", side_effect=self.fake_run),
+        ):
             uprof_native.translate(self.session, self.out, force=force)
 
     def test_existing_cpu_db_is_refused_without_force(self):
@@ -76,7 +77,7 @@ class TranslateOutDirTest(unittest.TestCase):
                     leftover.mkdir()
                     (leftover / "old.prd").write_bytes(b"old")
 
-                with redirect_stdout(io.StringIO()),                         self.assertRaisesRegex(UprofError, "--force"):
+                with redirect_stdout(io.StringIO()), self.assertRaisesRegex(UprofError, "--force"):
                     self.translate(force=False)
 
                 self.assertFalse((self.out / "cpu.db").exists(), "translate ran")
@@ -103,6 +104,7 @@ def _short_path(path):
     if os.name != "nt":
         return None
     import ctypes
+
     buffer = ctypes.create_unicode_buffer(32768)
     if not ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer)):
         return None
@@ -126,10 +128,11 @@ class AliasedOutDirTest(unittest.TestCase):
         def fake_run(command, **_kwargs):
             self.fail("translate ran AMDuProfCLI on an --out-dir that overlaps --session")
 
-        with mock.patch.object(uprof_native, "require_uprof",
-                               return_value=Path("AMDuProfCLI")), \
-                mock.patch.object(uprof_native, "run", side_effect=fake_run), \
-                redirect_stdout(io.StringIO()):
+        with (
+            mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
+            mock.patch.object(uprof_native, "run", side_effect=fake_run),
+            redirect_stdout(io.StringIO()),
+        ):
             with self.assertRaisesRegex(UprofError, "--out-dir"):
                 uprof_native.translate(self.session, out, force=force)
         self.assertEqual((self.session / "session.uprof").read_bytes(), b"session")
@@ -139,6 +142,7 @@ class AliasedOutDirTest(unittest.TestCase):
         if os.name != "nt":
             self.skipTest("host: junctions exist on Windows only")
         import _winapi
+
         link = self.root / "junction"
         _winapi.CreateJunction(str(self.session), str(link))
         self.assert_refused_and_intact(link)
@@ -213,10 +217,10 @@ class SymbolizationCountsTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "cpu.db"
         connection = duckdb.connect(str(self.db))
+        connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR, foundDebugInfo BOOLEAN)")
         connection.execute(
-            "CREATE TABLE Module(id INTEGER, path VARCHAR, foundDebugInfo BOOLEAN)")
-        connection.execute(
-            "INSERT INTO Module VALUES (1, 'a', true), (2, 'b', false), (3, 'c', false)")
+            "INSERT INTO Module VALUES (1, 'a', true), (2, 'b', false), (3, 'c', false)"
+        )
         connection.execute("CREATE TABLE Function(id INTEGER)")
         connection.execute("INSERT INTO Function VALUES (1), (2), (3), (4)")
         connection.close()
@@ -253,12 +257,12 @@ class TranslateSymbolizationWarningTest(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "Translation finished\n", "")
 
             stream = io.StringIO()
-            with mock.patch.object(uprof_native, "require_uprof",
-                                   return_value=Path("AMDuProfCLI")), \
-                    mock.patch.object(uprof_native, "run", side_effect=fake_run), \
-                    mock.patch.object(uprof_native, "symbolization_counts",
-                                      return_value=(1166, 0, 0)), \
-                    redirect_stdout(stream):
+            with (
+                mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
+                mock.patch.object(uprof_native, "run", side_effect=fake_run),
+                mock.patch.object(uprof_native, "symbolization_counts", return_value=(1166, 0, 0)),
+                redirect_stdout(stream),
+            ):
                 uprof_native.translate(session, out)
 
         text = stream.getvalue()

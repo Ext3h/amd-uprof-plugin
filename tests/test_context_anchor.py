@@ -129,7 +129,8 @@ class WindingAndExportParseTest(unittest.TestCase):
 
     def test_unwind_without_runtime_functions_is_empty(self):
         self.assertEqual(
-            uprof_context.parse_image(FILE_HEADERS + "\nUnwindInformation [\n]\n").unwind_starts, [])
+            uprof_context.parse_image(FILE_HEADERS + "\nUnwindInformation [\n]\n").unwind_starts, []
+        )
 
     def test_export_names_and_rvas_are_paired_per_block(self):
         exports = uprof_context.parse_image(FILE_HEADERS + "\n" + EXPORTS).exports
@@ -137,7 +138,9 @@ class WindingAndExportParseTest(unittest.TestCase):
         self.assertEqual(exports, [(0x1000, "fixture_entry"), (0x2010, None)])
 
     def test_export_without_a_name_keeps_its_rva(self):
-        self.assertEqual(uprof_context.parse_image(FILE_HEADERS + "\n" + EXPORTS).exports[1], (0x2010, None))
+        self.assertEqual(
+            uprof_context.parse_image(FILE_HEADERS + "\n" + EXPORTS).exports[1], (0x2010, None)
+        )
 
 
 class AnchorSelectionTest(unittest.TestCase):
@@ -146,7 +149,8 @@ class AnchorSelectionTest(unittest.TestCase):
 
     def test_nearest_pdb_public_start_at_or_below_wins(self):
         anchor = uprof_context.select_anchor(
-            0x1015, self.sections, [(0x1000, "entry"), (0x1010, "hot"), (0x1020, "after")])
+            0x1015, self.sections, [(0x1000, "entry"), (0x1010, "hot"), (0x1020, "after")]
+        )
 
         self.assertEqual(anchor.kind, "pdb_public")
         self.assertEqual(anchor.rva, 0x1010)
@@ -154,33 +158,44 @@ class AnchorSelectionTest(unittest.TestCase):
 
     def test_pdata_start_is_used_and_labelled_pdata(self):
         anchor = uprof_context.select_anchor(
-            0x1015, self.sections, [], pdata_starts=[(0x1000, None), (0x1010, None)])
+            0x1015, self.sections, [], pdata_starts=[(0x1000, None), (0x1010, None)]
+        )
 
         self.assertEqual(anchor, uprof_context.Anchor("pdata", 0x1010))
 
     def test_export_start_is_used_and_labelled_export(self):
         anchor = uprof_context.select_anchor(
-            0x1015, self.sections, [], export_starts=[(0x1000, "entry"), (0x1010, "hot")])
+            0x1015, self.sections, [], export_starts=[(0x1000, "entry"), (0x1010, "hot")]
+        )
 
         self.assertEqual(anchor, uprof_context.Anchor("export", 0x1010, "hot"))
 
     def test_nearest_source_wins_across_sources(self):
         anchor = uprof_context.select_anchor(
-            0x1015, self.sections, [(0x1005, "public")],
-            pdata_starts=[(0x1010, None)], export_starts=[(0x1000, "export")])
+            0x1015,
+            self.sections,
+            [(0x1005, "public")],
+            pdata_starts=[(0x1010, None)],
+            export_starts=[(0x1000, "export")],
+        )
 
         self.assertEqual(anchor, uprof_context.Anchor("pdata", 0x1010))
 
     def test_a_tie_prefers_the_named_export(self):
         anchor = uprof_context.select_anchor(
-            0x1015, self.sections, [(0x1010, "public")],
-            pdata_starts=[(0x1010, None)], export_starts=[(0x1010, "export")])
+            0x1015,
+            self.sections,
+            [(0x1010, "public")],
+            pdata_starts=[(0x1010, None)],
+            export_starts=[(0x1010, "export")],
+        )
 
         self.assertEqual(anchor, uprof_context.Anchor("export", 0x1010, "export"))
 
     def test_a_tie_without_an_export_prefers_the_pdb_public(self):
         anchor = uprof_context.select_anchor(
-            0x1015, self.sections, [(0x1010, "public")], pdata_starts=[(0x1010, None)])
+            0x1015, self.sections, [(0x1010, "public")], pdata_starts=[(0x1010, None)]
+        )
 
         self.assertEqual(anchor, uprof_context.Anchor("pdb_public", 0x1010, "public"))
 
@@ -192,8 +207,12 @@ class AnchorSelectionTest(unittest.TestCase):
 
     def test_start_in_another_section_is_ignored(self):
         anchor = uprof_context.select_anchor(
-            0x1010, self.sections, [(0x3000, "data")],
-            pdata_starts=[(0x3000, None)], export_starts=[(0x3000, "data")])
+            0x1010,
+            self.sections,
+            [(0x3000, "data")],
+            pdata_starts=[(0x3000, None)],
+            export_starts=[(0x3000, "data")],
+        )
 
         self.assertEqual(anchor.kind, "section")
         self.assertEqual(anchor.rva, 0x1000)
@@ -205,22 +224,29 @@ class AnchorSelectionTest(unittest.TestCase):
         self.assertEqual(anchor.rva, 0x1000)
 
     def test_cap_applies_to_the_section_fallback(self):
-        sections = [uprof_context.PeSection(0x1000, uprof_context.ANCHOR_DISTANCE_CAP + 0x2000,
-                                           True)]
+        sections = [
+            uprof_context.PeSection(0x1000, uprof_context.ANCHOR_DISTANCE_CAP + 0x2000, True)
+        ]
         with self.assertRaises(uprof_context.ContextOmission) as caught:
             uprof_context.select_anchor(
-                0x1000 + uprof_context.ANCHOR_DISTANCE_CAP + 1, sections, [])
+                0x1000 + uprof_context.ANCHOR_DISTANCE_CAP + 1, sections, []
+            )
 
         self.assertEqual(caught.exception.reason, "anchor_too_far")
 
     def test_cap_applies_to_a_distant_start_from_any_source(self):
-        sections = [uprof_context.PeSection(0x1000, uprof_context.ANCHOR_DISTANCE_CAP + 0x2000,
-                                           True)]
+        sections = [
+            uprof_context.PeSection(0x1000, uprof_context.ANCHOR_DISTANCE_CAP + 0x2000, True)
+        ]
         hot = 0x1000 + uprof_context.ANCHOR_DISTANCE_CAP + 1
         with self.assertRaises(uprof_context.ContextOmission) as caught:
             uprof_context.select_anchor(
-                hot, sections, [(0x1000, "entry")], pdata_starts=[(0x1000, None)],
-                export_starts=[(0x1000, "entry")])
+                hot,
+                sections,
+                [(0x1000, "entry")],
+                pdata_starts=[(0x1000, None)],
+                export_starts=[(0x1000, "entry")],
+            )
 
         self.assertEqual(caught.exception.reason, "anchor_too_far")
 
@@ -236,8 +262,7 @@ class AnchorSelectionTest(unittest.TestCase):
             uprof_context.DecodedInstruction(0x1004, "add", 4),
             uprof_context.DecodedInstruction(0x1008, "retq", 1),
         ]
-        self.assertEqual(
-            len(uprof_context.select_window(instructions, 0x1004)), 3)
+        self.assertEqual(len(uprof_context.select_window(instructions, 0x1004)), 3)
         with self.assertRaises(uprof_context.ContextOmission) as caught:
             uprof_context.select_window(instructions, 0x1002)
         self.assertEqual(caught.exception.reason, "hot_rva_not_instruction_start")

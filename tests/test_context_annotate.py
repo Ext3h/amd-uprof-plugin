@@ -54,11 +54,11 @@ class SymbolizerTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, SYMBOLS, "")
         with mock.patch.object(uprof_context, "run", return_value=completed) as invoked:
             symbols = uprof_context.symbolize_rvas(
-                "fixture.exe", [0x1010, 0x1014, 0x1010],
-                symbolizer="llvm-symbolizer.exe")
+                "fixture.exe", [0x1010, 0x1014, 0x1010], symbolizer="llvm-symbolizer.exe"
+            )
 
         self.assertEqual(symbols[0x1010].function, "main")
-        command, = invoked.call_args[0]
+        (command,) = invoked.call_args[0]
         self.assertIn("--relative-address", command)
         self.assertIn("--output-style=JSON", command)
         self.assertEqual(invoked.call_args[1]["input_text"], "0x1010\n0x1014\n")
@@ -73,21 +73,26 @@ class SymbolizerTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 1, "", "boom")
         with mock.patch.object(uprof_context, "run", return_value=completed):
             with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.symbolize_rvas("fixture.exe", [0x1010],
-                                             symbolizer="llvm-symbolizer.exe")
+                uprof_context.symbolize_rvas(
+                    "fixture.exe", [0x1010], symbolizer="llvm-symbolizer.exe"
+                )
 
         self.assertEqual(caught.exception.reason, "symbolizer_failed")
         self.assertIn("exited 1", caught.exception.detail)
 
     def test_the_json_error_is_the_symbolizer_omission_detail(self):
-        text = json.dumps({"Address": "0x1010",
-                           "Error": {"Message": "'C:\\x\\fixture.pdb': no such file or "
-                                                "directory"}})
+        text = json.dumps(
+            {
+                "Address": "0x1010",
+                "Error": {"Message": "'C:\\x\\fixture.pdb': no such file or directory"},
+            }
+        )
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 1, text, "")
         with mock.patch.object(uprof_context, "run", return_value=completed):
             with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.symbolize_rvas("fixture.exe", [0x1010],
-                                             symbolizer="llvm-symbolizer.exe")
+                uprof_context.symbolize_rvas(
+                    "fixture.exe", [0x1010], symbolizer="llvm-symbolizer.exe"
+                )
 
         self.assertEqual(caught.exception.reason, "symbolizer_failed")
         self.assertIn("exited 1", caught.exception.detail)
@@ -96,34 +101,49 @@ class SymbolizerTest(unittest.TestCase):
     def test_debug_file_directories_reach_the_symbolizer(self):
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, SYMBOLS, "")
         with mock.patch.object(uprof_context, "run", return_value=completed) as invoked:
-            uprof_context.symbolize_rvas("fixture.exe", [0x1010],
-                                         symbolizer="llvm-symbolizer.exe",
-                                         debug_dirs=["C:/debug", "C:/more"])
+            uprof_context.symbolize_rvas(
+                "fixture.exe",
+                [0x1010],
+                symbolizer="llvm-symbolizer.exe",
+                debug_dirs=["C:/debug", "C:/more"],
+            )
 
-        command, = invoked.call_args[0]
+        (command,) = invoked.call_args[0]
         self.assertIn("--debug-file-directory=C:/debug", command)
         self.assertIn("--debug-file-directory=C:/more", command)
 
     def test_fallback_debug_paths_reach_the_symbolizer(self):
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, SYMBOLS, "")
         with mock.patch.object(uprof_context, "run", return_value=completed) as invoked:
-            uprof_context.symbolize_rvas("fixture.exe", [0x1010],
-                                         symbolizer="llvm-symbolizer.exe",
-                                         fallback_paths=["C:/fallback"])
+            uprof_context.symbolize_rvas(
+                "fixture.exe",
+                [0x1010],
+                symbolizer="llvm-symbolizer.exe",
+                fallback_paths=["C:/fallback"],
+            )
 
-        command, = invoked.call_args[0]
+        (command,) = invoked.call_args[0]
         self.assertIn("--fallback-debug-path=C:/fallback", command)
 
     def test_all_empty_symbol_records_are_a_wrong_build_pdb(self):
-        text = "\n".join(json.dumps(
-            {"Address": hex(0x1010 + offset),
-             "Symbol": [{"FunctionName": "", "Line": 0}]}) for offset in range(2)) + "\n"
+        text = (
+            "\n".join(
+                json.dumps(
+                    {"Address": hex(0x1010 + offset), "Symbol": [{"FunctionName": "", "Line": 0}]}
+                )
+                for offset in range(2)
+            )
+            + "\n"
+        )
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, text, "")
         with mock.patch.object(uprof_context, "run", return_value=completed):
             with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.symbolize_rvas("fixture.exe", [0x1010, 0x1011],
-                                             pdb="C:/cache/fixture.pdb",
-                                             symbolizer="llvm-symbolizer.exe")
+                uprof_context.symbolize_rvas(
+                    "fixture.exe",
+                    [0x1010, 0x1011],
+                    pdb="C:/cache/fixture.pdb",
+                    symbolizer="llvm-symbolizer.exe",
+                )
 
         self.assertEqual(caught.exception.reason, "symbolizer_failed")
         self.assertIn("fixture.pdb", caught.exception.detail)
@@ -133,7 +153,8 @@ class SymbolizerTest(unittest.TestCase):
 class IbsTest(unittest.TestCase):
     def test_present_fields_follow_the_whitelist_order(self):
         fields = uprof_context.present_ibs_fields(
-            {"IbsTagToRetCtr", "DataSrc", "NotWhitelisted", "IbsDcMiss"})
+            {"IbsTagToRetCtr", "DataSrc", "NotWhitelisted", "IbsDcMiss"}
+        )
 
         self.assertEqual(fields, ("DataSrc", "IbsDcMiss", "IbsTagToRetCtr"))
 
@@ -141,13 +162,11 @@ class IbsTest(unittest.TestCase):
         self.assertEqual(uprof_context.present_ibs_fields(set()), ())
 
     def test_absent_fields_are_omitted(self):
-        summary = uprof_context.ibs_summary(
-            IBS_RECORD, ("DataSrc", "IbsDcMiss", "IbsTagToRetCtr"))
+        summary = uprof_context.ibs_summary(IBS_RECORD, ("DataSrc", "IbsDcMiss", "IbsTagToRetCtr"))
 
         self.assertEqual(summary["DataSrc"], {"0": 4, "0x3": 6})
         self.assertEqual(summary["IbsDcMiss"], {"set": 2, "of": 10})
-        self.assertEqual(summary["IbsTagToRetCtr"],
-                         {"samples": 9, "sum": 144, "max": 31})
+        self.assertEqual(summary["IbsTagToRetCtr"], {"samples": 9, "sum": 144, "max": 31})
         self.assertNotIn("CacheHitSt", summary)
         self.assertNotIn("IbsOpBrnMisp", summary)
 
@@ -185,7 +204,7 @@ class IbsTest(unittest.TestCase):
     def test_tag_to_retire_is_clipped_at_the_16_bit_maximum(self):
         expressions = " ".join(uprof_context.ibs_expression("IbsTagToRetCtr"))
 
-        self.assertIn("LEAST(TRY_CAST(\"IbsTagToRetCtr\" AS BIGINT), 65535)", expressions)
+        self.assertIn('LEAST(TRY_CAST("IbsTagToRetCtr" AS BIGINT), 65535)', expressions)
 
     def test_no_dump_means_no_ibs_rows(self):
         connection = mock.Mock()
@@ -220,11 +239,10 @@ class IbsScopeTest(unittest.TestCase):
         self.connection = duckdb.connect()
         self.addCleanup(self.connection.close)
         self.connection.execute(
-            "CREATE OR REPLACE TEMP MACRO module_key(p) "
-            "AS replace(lower(p), chr(92), '/')")
+            "CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')"
+        )
         self.connection.execute("CREATE TABLE Process(id INTEGER, name VARCHAR)")
-        self.connection.execute(
-            "INSERT INTO Process VALUES (4524, 'a.exe'), (7132, 'b.exe')")
+        self.connection.execute("INSERT INTO Process VALUES (4524, 'a.exe'), (7132, 'b.exe')")
         self.connection.execute("SET VARIABLE uprof_ibs_dump = ?", [str(self.dump)])
         self.set_scope(time_start=0, time_end=1000, pid="", image="%")
 
@@ -268,13 +286,13 @@ class ModuleRowTest(unittest.TestCase):
         self.connection = duckdb.connect()
         self.addCleanup(self.connection.close)
         self.connection.execute(
-            "CREATE OR REPLACE TEMP MACRO module_key(p) "
-            "AS replace(lower(p), chr(92), '/')")
-        self.connection.execute(
-            "CREATE TABLE Module(path VARCHAR, checksum BIGINT, size UBIGINT)")
+            "CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')"
+        )
+        self.connection.execute("CREATE TABLE Module(path VARCHAR, checksum BIGINT, size UBIGINT)")
         self.connection.execute(
             "INSERT INTO Module VALUES ('C:\\app\\fixture.exe', 11, 8192), "
-            "('C:/app/fixture.exe', 22, 16384)")
+            "('C:/app/fixture.exe', 22, 16384)"
+        )
 
     def test_the_checksum_and_size_belong_to_the_choice_of_path(self):
         row = uprof_context._module_row(self.connection, "c:/app/fixture.exe", True, True)

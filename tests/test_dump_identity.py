@@ -36,8 +36,11 @@ class DumpIdentityTest(unittest.TestCase):
         patches = [
             mock.patch.object(uprof_dump, "cache_dir", return_value=self.root / "cache" / "k"),
             mock.patch.object(uprof_dump, "require_uprof", return_value=Path("AMDuProfCLI")),
-            mock.patch.object(uprof_dump, "translate_command",
-                              side_effect=lambda _uprof, out, **_kw: ["AMDuProfCLI", str(out)]),
+            mock.patch.object(
+                uprof_dump,
+                "translate_command",
+                side_effect=lambda _uprof, out, **_kw: ["AMDuProfCLI", str(out)],
+            ),
             mock.patch.object(uprof_dump, "run", side_effect=self.fake_run),
         ]
         for patch in patches:
@@ -117,8 +120,9 @@ class DumpIdentityTest(unittest.TestCase):
         cache.parent.mkdir(mode=0o700)
         cache.mkdir(mode=0o700)
         (cache / DUMP_FILENAMES[KIND]).write_bytes(b"other")
-        (cache / "cache.json").write_text(json.dumps(
-            {"kind": KIND, "timeFilter": "", "capture": []}), encoding="utf-8")
+        (cache / "cache.json").write_text(
+            json.dumps({"kind": KIND, "timeFilter": "", "capture": []}), encoding="utf-8"
+        )
 
         # Not reused: generation runs, and the fake translates no raw file into an empty dump.
         with self.assertRaisesRegex(UprofError, "empty"):

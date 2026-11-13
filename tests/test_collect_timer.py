@@ -39,10 +39,13 @@ def options(**overrides):
 def dry_run(opts):
     """collect with --dry-run: prints the lines, runs no capture."""
     out = io.StringIO()
-    with mock.patch.object(uprof_collect, "find_uprof", return_value=None), \
-            mock.patch.object(uprof_collect, "is_admin", return_value=False), \
-            mock.patch.object(uprof_collect, "run", side_effect=AssertionError("no capture")), \
-            contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+    with (
+        mock.patch.object(uprof_collect, "find_uprof", return_value=None),
+        mock.patch.object(uprof_collect, "is_admin", return_value=False),
+        mock.patch.object(uprof_collect, "run", side_effect=AssertionError("no capture")),
+        contextlib.redirect_stdout(out),
+        contextlib.redirect_stderr(io.StringIO()),
+    ):
         uprof_collect.collect(opts)
     return out.getvalue().splitlines()
 
@@ -54,7 +57,8 @@ def command_line(lines):
 class TimerCollectTest(unittest.TestCase):
     def test_the_parser_accepts_the_timer_event_and_a_launch(self):
         args = uprof.build_parser().parse_args(
-            ["collect", "--out-dir", "out", "--event", "timer", "--launch", "app.exe", "-x", "1"])
+            ["collect", "--out-dir", "out", "--event", "timer", "--launch", "app.exe", "-x", "1"]
+        )
         self.assertEqual(args.event, "timer")
         self.assertEqual(args.launch, ["app.exe", "-x", "1"])
 
@@ -65,10 +69,12 @@ class TimerCollectTest(unittest.TestCase):
         self.assertIn("SAMPLE_INTERVAL=1ms", "\n".join(lines))
 
     def test_the_sample_interval_sets_the_timer_in_milliseconds(self):
-        self.assertIn("event=timer,interval=10", command_line(dry_run(options(
-            sample_interval="10ms"))))
-        self.assertIn("event=timer,interval=2", command_line(dry_run(options(
-            sample_interval="2000us"))))
+        self.assertIn(
+            "event=timer,interval=10", command_line(dry_run(options(sample_interval="10ms")))
+        )
+        self.assertIn(
+            "event=timer,interval=2", command_line(dry_run(options(sample_interval="2000us")))
+        )
 
     def test_a_sub_millisecond_interval_is_refused(self):
         with self.assertRaises(UprofError) as caught:
@@ -92,8 +98,7 @@ class TimerCollectTest(unittest.TestCase):
 
     def test_a_launch_puts_the_resolved_app_last(self):
         command = command_line(dry_run(options(launch=[str(APP), "-x", "1"])))
-        self.assertTrue(command.endswith(f" {uprof_shell.quote(str(APP.resolve()))} -x 1"),
-                        command)
+        self.assertTrue(command.endswith(f" {uprof_shell.quote(str(APP.resolve()))} -x 1"), command)
         self.assertNotIn(" -a ", command)
 
     def test_a_launch_app_must_be_an_existing_file(self):
@@ -133,8 +138,9 @@ class TimerCollectTest(unittest.TestCase):
                 command_line(dry_run(options(launch=[str(APP), argument])))
 
     def test_the_parser_keeps_an_empty_launch_distinct(self):
-        args = uprof.build_parser().parse_args(["collect", "--out-dir", "o", "--event", "timer",
-                                                "--launch"])
+        args = uprof.build_parser().parse_args(
+            ["collect", "--out-dir", "o", "--event", "timer", "--launch"]
+        )
         self.assertEqual(args.launch, [])
         args = uprof.build_parser().parse_args(["collect", "--out-dir", "o"])
         self.assertIsNone(args.launch)
@@ -156,20 +162,28 @@ class TimerCollectTest(unittest.TestCase):
             return subprocess.CompletedProcess(command, 1, "", "stop here")
 
         opts = options(dry_run=False, launch=[str(APP), "-x"])
-        with mock.patch.object(uprof_collect, "run", side_effect=fake_run), \
-                contextlib.redirect_stdout(io.StringIO()):
-            uprof_collect._run_cli("AMDuProfCLI", uprof_collect._event_args(opts, "timer", 1),
-                                   uprof_collect._target_args(opts)[0], opts)
+        with (
+            mock.patch.object(uprof_collect, "run", side_effect=fake_run),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            uprof_collect._run_cli(
+                "AMDuProfCLI",
+                uprof_collect._event_args(opts, "timer", 1),
+                uprof_collect._target_args(opts)[0],
+                opts,
+            )
         self.assertEqual(calls[0][:4], ["AMDuProfCLI", "collect", "-e", "event=timer,interval=1"])
         self.assertEqual(calls[0][-2:], [str(APP.resolve()), "-x"])
 
 
 class TimerAlternativesTest(unittest.TestCase):
     def test_both_timer_alternatives_are_uprof_collect_calls(self):
-        with mock.patch.object(uprof_native, "find_uprof",
-                               return_value=Path("C:/Program Files/AMD/AMDuProfCLI.exe")):
-            message = str(uprof_native.failure("cause", ["timer capture",
-                                                         "timer capture (launch)"]))
+        with mock.patch.object(
+            uprof_native, "find_uprof", return_value=Path("C:/Program Files/AMD/AMDuProfCLI.exe")
+        ):
+            message = str(
+                uprof_native.failure("cause", ["timer capture", "timer capture (launch)"])
+            )
         lines = [line for line in message.splitlines() if line.startswith("ALTERNATIVE: ")]
         self.assertEqual(len(lines), 2)
         for line in lines:
@@ -192,14 +206,16 @@ class TimerVerifyTest(unittest.TestCase):
         return json.loads(FIXTURE_META.read_text(encoding="utf-8"))
 
     def test_a_launched_timer_session_passes(self):
-        meta = uprof_session.verify_collect(self.session(self.fixture_meta()), "timer", 1, "op",
-                                            False, [])
+        meta = uprof_session.verify_collect(
+            self.session(self.fixture_meta()), "timer", 1, "op", False, []
+        )
         self.assertIn("timerInterval=1", uprof_session.collect_summary(meta, "timer"))
 
     def test_a_different_interval_fails(self):
         with self.assertRaises(UprofError) as caught:
-            uprof_session.verify_collect(self.session(self.fixture_meta()), "timer", 10, "op",
-                                         False, [])
+            uprof_session.verify_collect(
+                self.session(self.fixture_meta()), "timer", 10, "op", False, []
+            )
         self.assertIn("timer interval", str(caught.exception))
 
     def test_a_session_without_a_timer_fails(self):

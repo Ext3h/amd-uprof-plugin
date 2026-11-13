@@ -24,8 +24,8 @@ def _pe_identity(path: Path) -> tuple[int, int]:
     data = path.read_bytes()
     pe = int.from_bytes(data[0x3C:0x40], "little")
     optional = pe + 24
-    size_of_image = int.from_bytes(data[optional + 56:optional + 60], "little")
-    checksum = int.from_bytes(data[optional + 64:optional + 68], "little")
+    size_of_image = int.from_bytes(data[optional + 56 : optional + 60], "little")
+    checksum = int.from_bytes(data[optional + 64 : optional + 68], "little")
     return checksum, size_of_image
 
 
@@ -98,8 +98,11 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
         absent = document["legend"]["function_ranges"]["absent_by_module"]
         self.assertEqual(len(absent), 1, absent)
         self.assertTrue(next(iter(absent.values())).startswith("wrong_build: "), absent)
-        lines = [line for line in stderr.splitlines()
-                 if line.startswith("WARNING: no function range derived")]
+        lines = [
+            line
+            for line in stderr.splitlines()
+            if line.startswith("WARNING: no function range derived")
+        ]
         self.assertEqual(len(lines), 1, stderr)
         self.assertIn("wrong_build: ", lines[0])
         self.assertIn("--by module", lines[0])

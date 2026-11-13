@@ -28,8 +28,9 @@ print(json.dumps([uprof_cache.ATTACH_TIMEOUT_S, uprof_cache.MAX_BYTES, uprof_cac
 
 def limits(extra_env):
     env = dict(os.environ, PYTHONPATH=str(TOOLS_DIR), **extra_env)
-    completed = subprocess.run([sys.executable, "-c", PROBE], env=env, capture_output=True,
-                               text=True, encoding="utf-8")
+    completed = subprocess.run(
+        [sys.executable, "-c", PROBE], env=env, capture_output=True, text=True, encoding="utf-8"
+    )
     return completed
 
 
@@ -40,9 +41,13 @@ class CacheLimitsTest(unittest.TestCase):
         self.assertEqual(json.loads(completed.stdout), [30.0, 1024 * 1024 * 1024, 7.0])
 
     def test_the_former_tunables_have_no_effect(self):
-        completed = limits({"UPROF_SESSION_CACHE_MAX_MB": "1",
-                            "UPROF_SESSION_CACHE_TTL_DAYS": "0",
-                            "UPROF_SESSION_CACHE_TIMEOUT": "0"})
+        completed = limits(
+            {
+                "UPROF_SESSION_CACHE_MAX_MB": "1",
+                "UPROF_SESSION_CACHE_TTL_DAYS": "0",
+                "UPROF_SESSION_CACHE_TIMEOUT": "0",
+            }
+        )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(completed.stdout), [30.0, 1024 * 1024 * 1024, 7.0])
 

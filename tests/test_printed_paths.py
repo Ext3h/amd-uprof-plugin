@@ -61,8 +61,9 @@ class RecaptureTest(unittest.TestCase):
 class FailureAlternativesTest(unittest.TestCase):
     def test_a_hostile_session_is_a_placeholder_in_every_alternative(self):
         with mock.patch.object(uprof_native, "find_uprof", return_value=None):
-            message = str(uprof_native.failure("cause", ["whole capture", "timer window"],
-                                               session=HOSTILE))
+            message = str(
+                uprof_native.failure("cause", ["whole capture", "timer window"], session=HOSTILE)
+            )
         for line in command_lines(message):
             self.assertNotIn("$(calc)", line)
         self.assertIn("--session <SESSION_DIR>", message)
@@ -80,8 +81,9 @@ class TranslateRemedyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="uprof-remedy-") as temp:
             session = Path(temp) / name
             session.mkdir()
-            args = uprof.build_parser().parse_args(["profile", "--session", str(session),
-                                                    "--by", "module"])
+            args = uprof.build_parser().parse_args(
+                ["profile", "--session", str(session), "--by", "module"]
+            )
             with self.assertRaises(UprofError) as caught:
                 uprof_query.run_query_command(args)
             return str(caught.exception), str(session)
@@ -103,11 +105,15 @@ class CommandLineTest(unittest.TestCase):
     def command_output(self, out_dir):
         options = uprof_collect.CollectOptions(out_dir=out_dir, dry_run=True)
         out = io.StringIO()
-        with mock.patch.object(uprof_collect, "find_uprof", return_value=None), \
-                mock.patch.object(uprof_collect, "_resolve_interval",
-                                  return_value=(1_000_000, "INTERVAL=1000000")), \
-                mock.patch.object(uprof_collect, "is_admin", return_value=True), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        with (
+            mock.patch.object(uprof_collect, "find_uprof", return_value=None),
+            mock.patch.object(
+                uprof_collect, "_resolve_interval", return_value=(1_000_000, "INTERVAL=1000000")
+            ),
+            mock.patch.object(uprof_collect, "is_admin", return_value=True),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             uprof_collect.collect(options)
         return out.getvalue().splitlines()
 

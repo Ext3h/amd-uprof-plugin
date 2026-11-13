@@ -38,19 +38,20 @@ class HostileCaptureDbTest(unittest.TestCase):
         self.session.mkdir()
         (self.session / "session.uprof").write_text(
             '{"collection": {"target": {"systemWide": true}}, "translateCommand": ""}',
-            encoding="utf-8")
+            encoding="utf-8",
+        )
         self.cpu_db = self.session / "cpu.db"
 
     def capture(self, *statements):
         import duckdb
+
         connection = duckdb.connect(str(self.cpu_db))
         try:
             connection.execute("CREATE TABLE Module (id INTEGER, path VARCHAR)")
             connection.execute("INSERT INTO Module VALUES (1, 'C:/App/App.exe')")
             connection.execute("CREATE TABLE Function (id INTEGER, name VARCHAR)")
             for statement in statements:
-                connection.execute(statement.replace("SECRET_PATH",
-                                                     self.secret.as_posix()))
+                connection.execute(statement.replace("SECRET_PATH", self.secret.as_posix()))
         finally:
             connection.close()
 
@@ -66,18 +67,20 @@ class HostileCaptureDbTest(unittest.TestCase):
 
     def test_a_macro_shadowing_a_builtin_is_refused(self):
         message = self.refused(
-            "CREATE MACRO lower(x) AS (SELECT content FROM read_text('SECRET_PATH'))")
+            "CREATE MACRO lower(x) AS (SELECT content FROM read_text('SECRET_PATH'))"
+        )
         self.assertIn("lower", message)
 
     def test_a_view_is_refused(self):
         message = self.refused(
-            "CREATE VIEW Process AS SELECT content AS name FROM read_text('SECRET_PATH')")
+            "CREATE VIEW Process AS SELECT content AS name FROM read_text('SECRET_PATH')"
+        )
         self.assertIn("Process", message)
 
     def test_a_generated_column_is_refused(self):
         message = self.refused(
-            "CREATE TABLE Process (id INTEGER, name VARCHAR AS "
-            "(CAST(id AS VARCHAR) || 'x'))")
+            "CREATE TABLE Process (id INTEGER, name VARCHAR AS (CAST(id AS VARCHAR) || 'x'))"
+        )
         self.assertIn("Process.name", message)
 
     def test_the_refusal_names_a_runnable_alternative(self):
@@ -90,8 +93,9 @@ class HostileCaptureDbTest(unittest.TestCase):
         self.capture()
         with uprof_db.connect(self.cpu_db) as connection:
             self.assertEqual(connection.execute("SELECT lower('X')").fetchall(), [("x",)])
-            self.assertEqual(connection.execute("SELECT path FROM Module").fetchall(),
-                             [("C:/App/App.exe",)])
+            self.assertEqual(
+                connection.execute("SELECT path FROM Module").fetchall(), [("C:/App/App.exe",)]
+            )
 
     def test_the_capture_cannot_be_written(self):
         self.capture()
@@ -104,12 +108,14 @@ class HostileCaptureDbTest(unittest.TestCase):
         with uprof_db.connect(self.cpu_db) as connection:
             settings = connection.execute(
                 "SELECT current_setting('autoinstall_known_extensions'), "
-                "current_setting('autoload_known_extensions')").fetchone()
+                "current_setting('autoload_known_extensions')"
+            ).fetchone()
         self.assertEqual(settings, (False, False))
         with uprof_db.memory_connection() as connection:
             settings = connection.execute(
                 "SELECT current_setting('autoinstall_known_extensions'), "
-                "current_setting('autoload_known_extensions')").fetchone()
+                "current_setting('autoload_known_extensions')"
+            ).fetchone()
         self.assertEqual(settings, (False, False))
 
     def test_translate_counts_do_not_run_capture_sql(self):
@@ -119,9 +125,12 @@ class HostileCaptureDbTest(unittest.TestCase):
     def test_profile_output_carries_no_local_file_content(self):
         self.capture("CREATE MACRO lower(x) AS (SELECT content FROM read_text('SECRET_PATH'))")
         completed = subprocess.run(
-            [sys.executable, str(TOOLS / "uprof.py"), "schema", "--session",
-             str(self.session)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace")
+            [sys.executable, str(TOOLS / "uprof.py"), "schema", "--session", str(self.session)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         self.assertNotEqual(completed.returncode, 0)
         self.assertNotIn(SECRET, completed.stdout + completed.stderr)
         self.assertIn("lower", completed.stderr)
@@ -134,11 +143,15 @@ class ConnectionSitesTest(unittest.TestCase):
             if path.name == "uprof_db.py":
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"))
-            calls += [f"{path.name}:{node.lineno}" for node in ast.walk(tree)
-                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                      and node.func.attr == "connect"
-                      and isinstance(node.func.value, ast.Name)
-                      and node.func.value.id == "duckdb"]
+            calls += [
+                f"{path.name}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "connect"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "duckdb"
+            ]
         self.assertEqual(calls, [])
 
 

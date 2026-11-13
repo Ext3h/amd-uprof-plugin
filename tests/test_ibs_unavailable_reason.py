@@ -27,10 +27,13 @@ def windows_reason(stdout, returncode=0, raises=False):
             raise UprofError("powershell timed out after 60s")
         return subprocess.CompletedProcess(command, returncode, stdout, "")
 
-    with mock.patch.object(uprof_native, "IS_WINDOWS", True), \
-            mock.patch.object(uprof_native, "_system_directory",
-                              return_value=Path("C:/Windows/System32")), \
-            mock.patch.object(uprof_native, "run", side_effect=fake_run):
+    with (
+        mock.patch.object(uprof_native, "IS_WINDOWS", True),
+        mock.patch.object(
+            uprof_native, "_system_directory", return_value=Path("C:/Windows/System32")
+        ),
+        mock.patch.object(uprof_native, "run", side_effect=fake_run),
+    ):
         reason = uprof_native.ibs_unavailable_reason()
     return reason, calls
 
@@ -47,9 +50,15 @@ class WindowsCauseTest(unittest.TestCase):
     def test_the_query_reads_both_cim_classes_without_a_profile(self):
         _, calls = windows_reason("2 1")
         command = " ".join(map(str, calls[0]))
-        for part in ("powershell", "-NoProfile", "-NonInteractive", "Win32_DeviceGuard",
-                     "VirtualizationBasedSecurityStatus", "Win32_ComputerSystem",
-                     "HypervisorPresent"):
+        for part in (
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "Win32_DeviceGuard",
+            "VirtualizationBasedSecurityStatus",
+            "Win32_ComputerSystem",
+            "HypervisorPresent",
+        ):
             self.assertIn(part, command)
 
     def test_the_remedy_does_not_repeat_the_cycle_fallback(self):
@@ -78,8 +87,11 @@ class WindowsCauseTest(unittest.TestCase):
         self.assertIn("no hypervisor or VBS is active", reason)
 
     def test_an_unreadable_state_says_so(self):
-        for case in ({"stdout": "", "returncode": 1}, {"stdout": "", "raises": True},
-                     {"stdout": "Zugriff verweigert"}):
+        for case in (
+            {"stdout": "", "returncode": 1},
+            {"stdout": "", "raises": True},
+            {"stdout": "Zugriff verweigert"},
+        ):
             with self.subTest(case=case):
                 reason, _ = windows_reason(**case)
                 self.assertIn("could not be read", reason)
@@ -87,9 +99,11 @@ class WindowsCauseTest(unittest.TestCase):
 
 class LinuxCauseTest(unittest.TestCase):
     def test_a_loaded_kvm_module_is_a_possibility_not_the_cause(self):
-        with mock.patch.object(uprof_native, "IS_WINDOWS", False), \
-                mock.patch("builtins.open", mock.mock_open(read_data="flags : fpu sse2\n")), \
-                mock.patch.object(Path, "glob", return_value=iter([Path("/sys/module/kvm")])):
+        with (
+            mock.patch.object(uprof_native, "IS_WINDOWS", False),
+            mock.patch("builtins.open", mock.mock_open(read_data="flags : fpu sse2\n")),
+            mock.patch.object(Path, "glob", return_value=iter([Path("/sys/module/kvm")])),
+        ):
             reason = uprof_native.ibs_unavailable_reason()
         self.assertIn("KVM", reason)
         self.assertIn("may", reason)

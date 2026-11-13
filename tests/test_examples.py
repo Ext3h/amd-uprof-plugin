@@ -79,8 +79,9 @@ class ExamplesLayoutTest(unittest.TestCase):
         self.assertFalse((REPO / "plugin" / "examples").exists())
         for scenario in ("timer-heap-churn", "ibs-trial-9"):
             with self.subTest(scenario=scenario):
-                self.assertIn(f"]({scenario}/README.md)",
-                              (EXAMPLES / "README.md").read_text(encoding="utf-8"))
+                self.assertIn(
+                    f"]({scenario}/README.md)", (EXAMPLES / "README.md").read_text(encoding="utf-8")
+                )
                 self.assertTrue((EXAMPLES / scenario / "README.md").is_file())
 
     def test_ibs_scenario_is_marked_not_reproducible(self):
@@ -104,8 +105,9 @@ class ExamplesLayoutTest(unittest.TestCase):
         self.assertIn("--by module", steps[0])
         for step in steps:
             self.assertNotIn("SKILL.md", step)
-        self.assertEqual([re.search(r"--by (\w+)", step).group(1) for step in steps],
-                         _expected()["calls"])
+        self.assertEqual(
+            [re.search(r"--by (\w+)", step).group(1) for step in steps], _expected()["calls"]
+        )
 
     def test_every_share_in_the_answer_follows_from_expected_json(self):
         expected = _expected()
@@ -147,15 +149,21 @@ class TimerScenarioTest(unittest.TestCase):
 
     @classmethod
     def args(cls, command):
-        return [arg.replace("<SESSION_DIR>", str(cls.session))
-                   .replace("<FIXTURE_DIR>", str(timer_fixture.IMAGE_DIR))
-                for arg in shlex.split(command)]
+        return [
+            arg.replace("<SESSION_DIR>", str(cls.session)).replace(
+                "<FIXTURE_DIR>", str(timer_fixture.IMAGE_DIR)
+            )
+            for arg in shlex.split(command)
+        ]
 
     @classmethod
     def run_documented(cls, command):
         result = subprocess.run(
             [sys.executable, str(SKILL_DIR / "tools" / "uprof.py"), *cls.args(command)],
-            capture_output=True, text=True, encoding="utf-8")
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         if result.returncode != 0:
             raise AssertionError(f"{command} exited {result.returncode}: {result.stderr}")
         return result.stdout
@@ -164,18 +172,19 @@ class TimerScenarioTest(unittest.TestCase):
     def rows(text):
         lines = [line for line in text.splitlines() if line.startswith("| ")]
         header = [cell.strip() for cell in lines[0].strip("|").split("|")]
-        return [dict(zip(header, (cell.strip() for cell in line.strip("|").split("|"))))
-                for line in lines[2:]]
+        return [
+            dict(zip(header, (cell.strip() for cell in line.strip("|").split("|"))))
+            for line in lines[2:]
+        ]
 
     def output(self, by):
-        index = next(i for i, command in enumerate(self.commands)
-                     if f"--by {by}" in command)
+        index = next(i for i, command in enumerate(self.commands) if f"--by {by}" in command)
         return self.outputs[index]
 
     def test_the_second_call_is_the_first_calls_next_line(self):
         next_line = re.search(r"^NEXT: (.*)$", self.output("module"), re.M).group(1)
         printed = shlex.split(next_line, posix=False)
-        tail = printed[printed.index("profile"):]
+        tail = printed[printed.index("profile") :]
         documented = self.args(self.commands[1])
         self.assertEqual([arg.strip('"') for arg in tail], documented)
 
@@ -184,14 +193,18 @@ class TimerScenarioTest(unittest.TestCase):
         total = self.expected["total_samples"]
         own = self.expected["modules"][self.expected["own_module"]]["samples"]
         self.assertIn(self.expected["metric_prefix"], module)
-        self.assertIn(f"top row {self.expected['own_module']} {_percent(own, total)}% "
-                      f"±{_half_width(own, total)} points (95% binomial, n={total})", module)
+        self.assertIn(
+            f"top row {self.expected['own_module']} {_percent(own, total)}% "
+            f"±{_half_width(own, total)} points (95% binomial, n={total})",
+            module,
+        )
         rows = {row["module"]: row for row in self.rows(module)}
         for name, values in self.expected["modules"].items():
             with self.subTest(module=name):
                 self.assertEqual(int(rows[name]["samples"]), values["samples"])
-                self.assertEqual(rows[name]["isSystemModule"],
-                                 str(values["isSystemModule"]).lower())
+                self.assertEqual(
+                    rows[name]["isSystemModule"], str(values["isSystemModule"]).lower()
+                )
         self.assertEqual(sum(int(row["samples"]) for row in rows.values()), total)
 
     def test_functions_and_hot_rva(self):
@@ -203,20 +216,25 @@ class TimerScenarioTest(unittest.TestCase):
             with self.subTest(function=name):
                 self.assertEqual(samples.get(name), count)
         hot = self.expected["hot_rva"]
-        self.assertRegex(function, rf"(?m)^HOT_RVA: .* at {hot['rva']} with {hot['samples']} "
-                                   r"samples")
+        self.assertRegex(
+            function,
+            rf"(?m)^HOT_RVA: .* at {hot['rva']} with {hot['samples']} "
+            r"samples",
+        )
 
     def test_hash_block_lines(self):
         # The split between the loop's lines depends on the line table, so only the line set,
         # the top line and the total are pinned.
         lines = self.expected["hash_block_lines"]
         rows = self.rows(self.output("line"))
-        top = rows[:len(lines["lines"])]
+        top = rows[: len(lines["lines"])]
         self.assertEqual({row["file"] for row in top}, {lines["file"]})
         self.assertEqual(sorted(int(row["line"]) for row in top), lines["lines"])
         self.assertEqual(int(top[0]["line"]), lines["top_line"])
-        self.assertEqual(sum(int(row["samples"]) for row in top),
-                         self.expected["functions"][self.expected["top_function"]])
+        self.assertEqual(
+            sum(int(row["samples"]) for row in top),
+            self.expected["functions"][self.expected["top_function"]],
+        )
 
 
 if __name__ == "__main__":

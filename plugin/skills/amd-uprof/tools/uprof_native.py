@@ -22,10 +22,26 @@ from pathlib import Path
 from typing import Final
 
 import uprof_shell
-from uprof_session import (ContextCadence, achieved_summary, cycle_frequency_hz, derive_sampler,
-                           read_meta, run_gap_limit_ns, system_wide)
-from uprof_util import (COPY_DIRS, DUMP_FILENAMES, UprofError, absolute, contains,
-                        copy_session, parse_time_filter, skill_identity, tail_lines)
+from uprof_session import (
+    ContextCadence,
+    achieved_summary,
+    cycle_frequency_hz,
+    derive_sampler,
+    read_meta,
+    run_gap_limit_ns,
+    system_wide,
+)
+from uprof_util import (
+    COPY_DIRS,
+    DUMP_FILENAMES,
+    UprofError,
+    absolute,
+    contains,
+    copy_session,
+    parse_time_filter,
+    skill_identity,
+    tail_lines,
+)
 
 IS_WINDOWS = os.name == "nt"
 TRANSLATE_TIMEOUT: Final = 4 * 60 * 60
@@ -38,6 +54,7 @@ LLVM_MINIMUM: Final = (23,)
 
 
 # ---------------------------------------------------------------- tool discovery
+
 
 def _first_existing(candidates: Iterable[str | os.PathLike[str] | None]) -> Path | None:
     for path in candidates:
@@ -111,8 +128,11 @@ def find_uprof() -> Path | None:
     env = os.environ.get("AMDUPROF_CLI")
     candidates: list[str | os.PathLike[str] | None] = [env, _which("AMDuProfCLI")]
     if IS_WINDOWS:
-        for base in (os.environ.get("ProgramW6432"), os.environ.get("ProgramFiles"),
-                     os.environ.get("ProgramFiles(x86)")):
+        for base in (
+            os.environ.get("ProgramW6432"),
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+        ):
             if base:
                 candidates.append(Path(base) / "AMD" / "AMDuProf" / "bin" / "AMDuProfCLI.exe")
     else:
@@ -151,8 +171,11 @@ LINUX_LLVM_INSTALL: Final = "wget https://apt.llvm.org/llvm.sh && sudo bash llvm
 def require_uprof() -> Path:
     found = find_uprof()
     if not found:
-        hint = ("install AMD uProf, or set AMDUPROF_CLI to AMDuProfCLI.exe"
-                if IS_WINDOWS else "install AMD uProf, or set AMDUPROF_CLI to the AMDuProfCLI binary")
+        hint = (
+            "install AMD uProf, or set AMDUPROF_CLI to AMDuProfCLI.exe"
+            if IS_WINDOWS
+            else "install AMD uProf, or set AMDUPROF_CLI to the AMDuProfCLI binary"
+        )
         raise UprofError(f"AMDuProfCLI not found; {hint}")
     # Only --version is evidence: an install path naming a release is not the binary's version.
     cause = uprof_version_cause(found, _first_version_line(found, "--version"))
@@ -161,8 +184,9 @@ def require_uprof() -> Path:
     return found
 
 
-def failure(cause: str, labels: Iterable[str], *,
-            session: str | os.PathLike[str] | None = None) -> UprofError:
+def failure(
+    cause: str, labels: Iterable[str], *, session: str | os.PathLike[str] | None = None
+) -> UprofError:
     """An unsupported case: the cause, then one runnable ALTERNATIVE line per applicable option.
 
     The tool never switches capture or analysis mode on its own, so the caller chooses. Lines are
@@ -171,31 +195,48 @@ def failure(cause: str, labels: Iterable[str], *,
     <PLACEHOLDER>, so an option is the same text wherever it is offered.
     """
     found = find_uprof()
-    cli, cli_data = (uprof_shell.path_arg(found, "<AMDUPROFCLI>") if found
-                     else ("<AMDUPROFCLI>", None))
-    script, script_data = uprof_shell.path_arg(Path(__file__).resolve().parent / "uprof.py",
-                                               "<UPROF_PY>")
+    cli, cli_data = (
+        uprof_shell.path_arg(found, "<AMDUPROFCLI>") if found else ("<AMDUPROFCLI>", None)
+    )
+    script, script_data = uprof_shell.path_arg(
+        Path(__file__).resolve().parent / "uprof.py", "<UPROF_PY>"
+    )
     tool = "python " + script
-    known, known_data = (uprof_shell.path_arg(absolute(session), "<SESSION_DIR>") if session
-                         else ("<SESSION_DIR>", None))
-    then = (f"; {tool} translate --session <NEW_OUT_DIR> --out-dir <NEW_TR_DIR>; "
-            f"{tool} profile --session <NEW_TR_DIR> --by process")
+    known, known_data = (
+        uprof_shell.path_arg(absolute(session), "<SESSION_DIR>")
+        if session
+        else ("<SESSION_DIR>", None)
+    )
+    then = (
+        f"; {tool} translate --session <NEW_OUT_DIR> --out-dir <NEW_TR_DIR>; "
+        f"{tool} profile --session <NEW_TR_DIR> --by process"
+    )
     chains = {
-        "timer capture": (f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer"
-                          + then),
-        "timer capture (launch)": (f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> "
-                                   "--event timer --launch <APP>" + then),
-        "timer window": (f"{tool} translate --session {known} --out-dir <NEW_TR_DIR> "
-                         f"--time-filter <T1>:<T2>; {tool} profile --session <NEW_TR_DIR> "
-                         "--by process"),
-        "translate without dump": (f"{tool} translate --session {known} --out-dir <NEW_TR_DIR>; "
-                                   f"{tool} profile --session <NEW_TR_DIR> --by process"),
+        "timer capture": (
+            f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer" + then
+        ),
+        "timer capture (launch)": (
+            f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> "
+            "--event timer --launch <APP>" + then
+        ),
+        "timer window": (
+            f"{tool} translate --session {known} --out-dir <NEW_TR_DIR> "
+            f"--time-filter <T1>:<T2>; {tool} profile --session <NEW_TR_DIR> "
+            "--by process"
+        ),
+        "translate without dump": (
+            f"{tool} translate --session {known} --out-dir <NEW_TR_DIR>; "
+            f"{tool} profile --session <NEW_TR_DIR> --by process"
+        ),
         "whole capture": f"{tool} profile --session {known} --by process",
-        "Zen host": (f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> --process <PID> "
-                     "--event <ibs-op|cycles>" + then),
+        "Zen host": (
+            f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> --process <PID> "
+            "--event <ibs-op|cycles>" + then
+        ),
     }
-    lines = [cause] + [f"ALTERNATIVE: {label}: {chains[label]}"
-                       for label in sorted(set(labels), key=str.lower)]
+    lines = [cause] + [
+        f"ALTERNATIVE: {label}: {chains[label]}" for label in sorted(set(labels), key=str.lower)
+    ]
     # A path that is not plain is a placeholder in the commands and named here as data only.
     lines += [data for data in (cli_data, script_data, known_data) if data]
     return UprofError("\n".join(lines))
@@ -214,7 +255,8 @@ def require_symbolizer() -> Path:
 # Symbolization derives function ranges with llvm-readobj on every OS; llvm-pdbutil reads the
 # PDB fold cache on Windows only.
 SYMBOLIZE_TOOLS: Final = ("llvm-symbolizer", "llvm-readobj") + (
-    ("llvm-pdbutil",) if IS_WINDOWS else ())
+    ("llvm-pdbutil",) if IS_WINDOWS else ()
+)
 # Instruction context symbolizes, reads imports with llvm-readobj and decodes with llvm-objdump.
 CONTEXT_TOOLS: Final = ("llvm-symbolizer", "llvm-readobj", "llvm-objdump")
 
@@ -223,8 +265,9 @@ def parse_version(text: str | None) -> tuple[int, ...] | None:
     """The dotted version after the word "version", else the first dotted number in text."""
     if not text:
         return None
-    match = (re.search(r"(?i)\bversion[:\s-]*v?(\d+(?:\.\d+)*)", text)
-             or re.search(r"(\d+(?:\.\d+)+)", text))
+    match = re.search(r"(?i)\bversion[:\s-]*v?(\d+(?:\.\d+)*)", text) or re.search(
+        r"(\d+(?:\.\d+)+)", text
+    )
     return tuple(int(part) for part in match.group(1).split(".")) if match else None
 
 
@@ -232,8 +275,9 @@ def _minimum_text(minimum: tuple[int, ...]) -> str:
     return ".".join(str(part) for part in minimum)
 
 
-def _version_cause(path: Path, version: str | None, minimum: tuple[int, ...], tool: str,
-                   why: str, remedy: str) -> str | None:
+def _version_cause(
+    path: Path, version: str | None, minimum: tuple[int, ...], tool: str, why: str, remedy: str
+) -> str | None:
     """None when version meets minimum, else one line with the cause and the alternatives."""
     found = parse_version(version)
     if found is not None and found >= minimum:
@@ -249,20 +293,28 @@ def _version_cause(path: Path, version: str | None, minimum: tuple[int, ...], to
 def uprof_version_cause(path: Path, version: str | None) -> str | None:
     floor = _minimum_text(UPROF_MINIMUM)
     return _version_cause(
-        path, version, UPROF_MINIMUM, "AMD uProf",
+        path,
+        version,
+        UPROF_MINIMUM,
+        "AMD uProf",
         "older releases do not write cpu.db as DuckDB by default, which the analysis reads",
         f"install AMD uProf {floor} or later from https://www.amd.com/en/developer/uprof.html, "
-        f"or set AMDUPROF_CLI to an AMDuProfCLI of uProf {floor} or later")
+        f"or set AMDUPROF_CLI to an AMDuProfCLI of uProf {floor} or later",
+    )
 
 
 def llvm_version_cause(path: Path, version: str | None) -> str | None:
     floor = _minimum_text(LLVM_MINIMUM)
     install = "winget upgrade --id LLVM.LLVM" if IS_WINDOWS else LINUX_LLVM_INSTALL
     return _version_cause(
-        path, version, LLVM_MINIMUM, "LLVM",
+        path,
+        version,
+        LLVM_MINIMUM,
+        "LLVM",
         "llvm-symbolizer --pdb and llvm-objdump --no-symbolize-operands need it",
         f"{install}, or set LLVM_SYMBOLIZER to an llvm-symbolizer of LLVM {floor} or later "
-        "whose directory holds the other LLVM tools")
+        "whose directory holds the other LLVM tools",
+    )
 
 
 class SymbolizerUnsupported(UprofError):
@@ -303,11 +355,19 @@ def tool_operand(path: str | os.PathLike[str]) -> str:
     return os.path.abspath(os.fspath(path))
 
 
-def run(command: Sequence[str], timeout: int | None = None, input_text: str | None = None,
-        ) -> subprocess.CompletedProcess[str]:
+def run(
+    command: Sequence[str],
+    timeout: int | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a native tool with UTF-8 text output and no console-window flash."""
-    kwargs = {"capture_output": True, "text": True, "encoding": "utf-8",
-              "errors": "replace", "timeout": timeout}
+    kwargs = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": timeout,
+    }
     if input_text is not None:
         kwargs["input"] = input_text
     if IS_WINDOWS:
@@ -324,7 +384,9 @@ def print_output(completed: subprocess.CompletedProcess[str]) -> None:
     if completed.stdout:
         print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
     if completed.stderr:
-        print(completed.stderr, end="" if completed.stderr.endswith("\n") else "\n", file=sys.stderr)
+        print(
+            completed.stderr, end="" if completed.stderr.endswith("\n") else "\n", file=sys.stderr
+        )
 
 
 def failure_detail(completed: subprocess.CompletedProcess[str]) -> str:
@@ -355,9 +417,11 @@ class CliLog:
 
     @staticmethod
     def _logs() -> list[Path]:
-        roots = dict.fromkeys(Path(root) for root in (os.environ.get("TMP"),
-                                                      os.environ.get("TEMP"),
-                                                      tempfile.gettempdir()) if root)
+        roots = dict.fromkeys(
+            Path(root)
+            for root in (os.environ.get("TMP"), os.environ.get("TEMP"), tempfile.gettempdir())
+            if root
+        )
         return sorted({path for root in roots for path in root.glob("*-AMDuProfCLI.log")})
 
     def appended(self) -> tuple[Path | None, str]:
@@ -379,28 +443,35 @@ class CliLog:
 def recapture_commands(session: Path) -> tuple[str, str, str | None]:
     """Cycle and IBS collect commands writing next to session, for a capture that holds nothing
     to translate, and the data lines for any path that had to become a placeholder."""
-    script, script_data = uprof_shell.path_arg(Path(__file__).resolve().with_name("uprof.py"),
-                                               "<UPROF_PY>")
+    script, script_data = uprof_shell.path_arg(
+        Path(__file__).resolve().with_name("uprof.py"), "<UPROF_PY>"
+    )
     out_dir, out_data = uprof_shell.path_arg(f"{session}-recapture", "<NEW_OUT_DIR>")
     cycles = f"python {script} collect --out-dir {out_dir} --seconds 60"
     data = "\n".join(line for line in (script_data, out_data) if line) or None
     return cycles, cycles + " --event ibs-op", data
 
 
-def translate_failure(what: str, completed: subprocess.CompletedProcess[str],
-                      log: CliLog, session: Path) -> str:
+def translate_failure(
+    what: str, completed: subprocess.CompletedProcess[str], log: CliLog, session: Path
+) -> str:
     """One line for a failed AMDuProfCLI translate, naming the cause the CLI log gives."""
     detail = failure_detail(completed)
     code = completed.returncode
-    crash = " (AMDuProfCLI crashed: access violation (0xC0000005))" \
-        if code in ACCESS_VIOLATION_EXITS else ""
+    crash = (
+        " (AMDuProfCLI crashed: access violation (0xC0000005))"
+        if code in ACCESS_VIOLATION_EXITS
+        else ""
+    )
     log_path, log_text = log.appended()
     if NO_CATEGORY_LOG in log_text:
         cycles, ibs, data = recapture_commands(session)
-        return (f"{what} failed with {code}{crash}: the session has no translatable sample "
-                "category (per the AMDuProfCLI log), so it holds no samples to translate; "
-                f"remedy: capture again with {cycles} (cycles) or {ibs} (IBS), then translate "
-                "that session" + (f"\n{data}" if data else ""))
+        return (
+            f"{what} failed with {code}{crash}: the session has no translatable sample "
+            "category (per the AMDuProfCLI log), so it holds no samples to translate; "
+            f"remedy: capture again with {cycles} (cycles) or {ibs} (IBS), then translate "
+            "that session" + (f"\n{data}" if data else "")
+        )
     if crash and log_path:
         return f"{what} failed with {code}{crash}: {detail}; AMDuProfCLI log: {log_path}"
     return f"{what} failed with {code}{crash}: {detail}"
@@ -460,7 +531,7 @@ def parse_nt_symbol_path(value: str | None) -> NtSymbolPath:
         kind = parts[0].lower()
         if kind in ("srv", "symsrv"):
             # symsrv*<dll>*<stores>: the second element names the DLL, not a store.
-            slots = parts[2 if kind == "symsrv" else 1:]
+            slots = parts[2 if kind == "symsrv" else 1 :]
             caches += [store for store in slots[:-1] if store and not _is_url(store)]
             upstreams += [store for store in slots[-1:] if store]
             if kind == "srv" and len(slots) >= 2:
@@ -471,8 +542,9 @@ def parse_nt_symbol_path(value: str | None) -> NtSymbolPath:
             caches += [part for part in parts[1:] if part]
         elif len(parts) == 1 and not _is_url(entry):
             dirs.append(entry)
-    return NtSymbolPath(_unique(caches), _unique(upstreams), _unique(dirs), tuple(servers),
-                        download_cache)
+    return NtSymbolPath(
+        _unique(caches), _unique(upstreams), _unique(dirs), tuple(servers), download_cache
+    )
 
 
 def parse_symbol_path(value: str | None) -> tuple[str | None, list[str]]:
@@ -496,10 +568,12 @@ _VIRTUALIZATION_QUERY: Final = (
     "$d = Get-CimInstance -Namespace root/Microsoft/Windows/DeviceGuard "
     "-ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue; "
     "$c = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop; "
-    "'{0} {1}' -f [int]$d.VirtualizationBasedSecurityStatus, [int][bool]$c.HypervisorPresent")
+    "'{0} {1}' -f [int]$d.VirtualizationBasedSecurityStatus, [int][bool]$c.HypervisorPresent"
+)
 _WINDOWS_IBS_REMEDY: Final = (
     "remedy: turn off Hyper-V and VBS (as administrator: bcdedit /set hypervisorlaunchtype off, "
-    "then disable Memory integrity and reboot)")
+    "then disable Memory integrity and reboot)"
+)
 
 
 def ibs_unavailable_reason() -> str:
@@ -507,26 +581,44 @@ def ibs_unavailable_reason() -> str:
     if IS_WINDOWS:
         try:
             # By absolute path: a bare name is also looked up in the current directory.
-            powershell = (_system_directory() / "WindowsPowerShell" / "v1.0"
-                          / "powershell.exe")
-            completed = run([str(powershell), "-NoProfile", "-NonInteractive", "-Command",
-                             _VIRTUALIZATION_QUERY], timeout=60)
-            match = (re.fullmatch(r"\s*(\d+)\s+(\d+)\s*", completed.stdout or "")
-                     if completed.returncode == 0 else None)
+            powershell = _system_directory() / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+            completed = run(
+                [
+                    str(powershell),
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    _VIRTUALIZATION_QUERY,
+                ],
+                timeout=60,
+            )
+            match = (
+                re.fullmatch(r"\s*(\d+)\s+(\d+)\s*", completed.stdout or "")
+                if completed.returncode == 0
+                else None
+            )
         except UprofError:
             match = None
         if match is None:
-            return ("no IBS counters are available, and the VBS/hypervisor state could not be "
-                    "read (Win32_DeviceGuard, Win32_ComputerSystem); " + _WINDOWS_IBS_REMEDY)
+            return (
+                "no IBS counters are available, and the VBS/hypervisor state could not be "
+                "read (Win32_DeviceGuard, Win32_ComputerSystem); " + _WINDOWS_IBS_REMEDY
+            )
         vbs_status, hypervisor = int(match.group(1)), int(match.group(2))
         if vbs_status == 2:
-            return ("VBS is running (Win32_DeviceGuard VirtualizationBasedSecurityStatus 2), so "
-                    "IBS counters are not exposed; " + _WINDOWS_IBS_REMEDY)
+            return (
+                "VBS is running (Win32_DeviceGuard VirtualizationBasedSecurityStatus 2), so "
+                "IBS counters are not exposed; " + _WINDOWS_IBS_REMEDY
+            )
         if hypervisor:
-            return ("a hypervisor is present (Win32_ComputerSystem HypervisorPresent), so IBS "
-                    "counters are not exposed; " + _WINDOWS_IBS_REMEDY)
-        return ("no IBS counters are available although no hypervisor or VBS is active; check "
-                "that the CPU is AMD Zen with IBS and that uProf's driver is loaded")
+            return (
+                "a hypervisor is present (Win32_ComputerSystem HypervisorPresent), so IBS "
+                "counters are not exposed; " + _WINDOWS_IBS_REMEDY
+            )
+        return (
+            "no IBS counters are available although no hypervisor or VBS is active; check "
+            "that the CPU is AMD Zen with IBS and that uProf's driver is loaded"
+        )
     try:
         with open(Path("/proc/cpuinfo"), "r", encoding="utf-8", errors="replace") as handle:
             if " hypervisor" in handle.read():
@@ -534,8 +626,10 @@ def ibs_unavailable_reason() -> str:
     except OSError:
         pass
     if any(Path("/sys/module").glob("kvm*")):
-        return ("no IBS counters are available; the KVM kernel module is loaded, which may "
-                "hide them, or check the kernel and perf permissions")
+        return (
+            "no IBS counters are available; the KVM kernel module is loaded, which may "
+            "hide them, or check the kernel and perf permissions"
+        )
     return "no IBS counters are available; check the kernel, virtualization and perf permissions"
 
 
@@ -547,17 +641,25 @@ def _first_version_line(path: Path, *args: str) -> str | None:
         return None
     if completed.returncode != 0:
         return None
-    lines = [line.strip() for line
-             in ((completed.stdout or "") + "\n" + (completed.stderr or "")).splitlines()
-             if line.strip()]
+    lines = [
+        line.strip()
+        for line in ((completed.stdout or "") + "\n" + (completed.stderr or "")).splitlines()
+        if line.strip()
+    ]
     if not lines:
         return None
     return next((line for line in lines if "version" in line.lower()), lines[0])
 
 
-def _tool_row(name: str, path: Path | None, version: str | None,
-              missing: str = "not found", minimum: tuple[int, ...] | None = None,
-              too_old: str | None = None, display: str | None = None) -> str:
+def _tool_row(
+    name: str,
+    path: Path | None,
+    version: str | None,
+    missing: str = "not found",
+    minimum: tuple[int, ...] | None = None,
+    too_old: str | None = None,
+    display: str | None = None,
+) -> str:
     """One `tools` row; missing is the cause (and remedy) printed when path is absent, too_old
     the cause when version is below minimum or unreadable, and display replaces the printed
     version text without changing the verdict."""
@@ -566,7 +668,9 @@ def _tool_row(name: str, path: Path | None, version: str | None,
     row = f"{name}={path}; version={display or version or 'unavailable'}"
     if minimum is not None:
         status = "TOO OLD" if parse_version(version) else "UNREADABLE"
-        row += f"; minimum={_minimum_text(minimum)}; " + (f"{status}: {too_old}" if too_old else "ok")
+        row += f"; minimum={_minimum_text(minimum)}; " + (
+            f"{status}: {too_old}" if too_old else "ok"
+        )
     return row
 
 
@@ -593,6 +697,7 @@ def tool_report() -> None:
     objdump = find_sibling(symbolizer, "llvm-objdump")
     try:
         import duckdb
+
         version = duckdb.__version__
         try:
             major = int(version.split(".")[0])
@@ -601,8 +706,10 @@ def tool_report() -> None:
         if major < 2:
             duckdb_version = None
             duckdb_short = None
-            duckdb_hint = (f"DuckDB {version} is too old (need 2.x); upgrade with: "
-                           f"{sys.executable} -m pip install --upgrade duckdb")
+            duckdb_hint = (
+                f"DuckDB {version} is too old (need 2.x); upgrade with: "
+                f"{sys.executable} -m pip install --upgrade duckdb"
+            )
         else:
             duckdb_version = f"duckdb {version} (python)"
             duckdb_short = version
@@ -613,8 +720,16 @@ def tool_report() -> None:
         duckdb_hint = f"DuckDB Python module (install with: {sys.executable} -m pip install duckdb)"
     too_old: list[str] = []
 
-    def row(name: str, path: Path | None, version: str | None, minimum: tuple[int, ...],
-            cause_of, tool: str, missing: str = "not found", display: str | None = None) -> str:
+    def row(
+        name: str,
+        path: Path | None,
+        version: str | None,
+        minimum: tuple[int, ...],
+        cause_of,
+        tool: str,
+        missing: str = "not found",
+        display: str | None = None,
+    ) -> str:
         cause = cause_of(path, version) if path else None
         if cause:
             too_old.append(tool)
@@ -625,20 +740,36 @@ def tool_report() -> None:
         return row(name, path, version, LLVM_MINIMUM, llvm_version_cause, tool, missing)
 
     uprof_line = _first_version_line(uprof, "--version") if uprof else None
-    print(row("UPROF", uprof, uprof_line, UPROF_MINIMUM, uprof_version_cause, "AMDuProfCLI",
-              display=_uprof_version(uprof, uprof_line)))
+    print(
+        row(
+            "UPROF",
+            uprof,
+            uprof_line,
+            UPROF_MINIMUM,
+            uprof_version_cause,
+            "AMDuProfCLI",
+            display=_uprof_version(uprof, uprof_line),
+        )
+    )
     print(f"DUCKDB={duckdb_version or ''}; version={duckdb_short or 'MISSING (not installed)'}")
     print(llvm_row("SYMBOLIZER", symbolizer, "llvm-symbolizer"))
     print(llvm_row("PDBUTIL", pdbutil, "llvm-pdbutil"))
     print(llvm_row("READOBJ", readobj, "llvm-readobj"))
-    print(llvm_row("OBJDUMP", objdump, "llvm-objdump",
-                   "llvm-objdump is not beside llvm-symbolizer or on PATH; instruction context "
-                   "is omitted; remedy: install LLVM or add its bin directory to PATH; "
-                   "module/RVA rows still work"))
+    print(
+        llvm_row(
+            "OBJDUMP",
+            objdump,
+            "llvm-objdump",
+            "llvm-objdump is not beside llvm-symbolizer or on PATH; instruction context "
+            "is omitted; remedy: install LLVM or add its bin directory to PATH; "
+            "module/RVA rows still work",
+        )
+    )
     failures = []
     if too_old:
-        failures.append("TOO OLD or UNREADABLE " + ", ".join(too_old)
-                        + " (each row names the remedy)")
+        failures.append(
+            "TOO OLD or UNREADABLE " + ", ".join(too_old) + " (each row names the remedy)"
+        )
     missing = []
     if not uprof:
         missing.append("uProf CLI (install AMD uProf or set AMDUPROF_CLI)")
@@ -654,12 +785,17 @@ def tool_report() -> None:
 
 # ---------------------------------------------------------------- translate
 
-def translate_command(uprof: str | Path, session: str | Path, *,
-                      symbol_cache: str | Path | None = None,
-                      symbol_servers: Iterable[str] = (),
-                      symbol_paths: Iterable[str | Path] = (),
-                      time_filter: str | None = None,
-                      ascii_kind: str | None = None) -> list[str]:
+
+def translate_command(
+    uprof: str | Path,
+    session: str | Path,
+    *,
+    symbol_cache: str | Path | None = None,
+    symbol_servers: Iterable[str] = (),
+    symbol_paths: Iterable[str | Path] = (),
+    time_filter: str | None = None,
+    ascii_kind: str | None = None,
+) -> list[str]:
     """The AMDuProfCLI translate argument list shared by translate and the dump cache."""
     command = [os.fspath(uprof), "translate", "-i", os.fspath(session)]
     if symbol_cache is not None:
@@ -675,9 +811,9 @@ def translate_command(uprof: str | Path, session: str | Path, *,
     return command
 
 
-def dump_cadence(path: Path, context_key: str | tuple[str, ...] = "CPU_Number",
-                 gap_limit_ns: float | None = None
-                 ) -> tuple[int, int, list[ContextCadence]]:
+def dump_cadence(
+    path: Path, context_key: str | tuple[str, ...] = "CPU_Number", gap_limit_ns: float | None = None
+) -> tuple[int, int, list[ContextCadence]]:
     """Sample rows, distinct CPU_Number values and per-context cadence in an ASCII dump.
 
     context_key is CPU_Number for a system-wide capture and (PID, TID) for an attached one, so
@@ -700,8 +836,11 @@ def dump_cadence(path: Path, context_key: str | tuple[str, ...] = "CPU_Number",
             delta_index = header.index("DeltaTick")
         except ValueError:
             return 0, 0, []
-        key_indices = ([header.index(key) for key in keys]
-                       if all(key in header for key in keys) else [cpu_index])
+        key_indices = (
+            [header.index(key) for key in keys]
+            if all(key in header for key in keys)
+            else [cpu_index]
+        )
         for row in reader:
             if not row:
                 continue
@@ -720,9 +859,11 @@ def dump_cadence(path: Path, context_key: str | tuple[str, ...] = "CPU_Number",
         gaps = [later - earlier for earlier, later in zip(values, values[1:])]
         if gap_limit_ns is not None:
             gaps = [gap for gap in gaps if gap <= gap_limit_ns]
-        contexts.append(ContextCadence(
-            samples=len(values),
-            median_gap_ns=statistics.median(gaps) if gaps else None))
+        contexts.append(
+            ContextCadence(
+                samples=len(values), median_gap_ns=statistics.median(gaps) if gaps else None
+            )
+        )
     return samples, len(cpus), contexts
 
 
@@ -758,10 +899,12 @@ def _refuse_overlap(out: Path, session: Path) -> None:
     link after the first check is still caught.
     """
     if contains(out, session) or contains(session, out):
-        raise UprofError(f"--out-dir {_shown(out)} overlaps --session {_shown(session)} (the "
-                         "same directory under another name, or one inside the other): "
-                         "translate rewrites cpu.db, callstack.db and session.uprof, so it works "
-                         "on a copy. Choose an --out-dir outside the session")
+        raise UprofError(
+            f"--out-dir {_shown(out)} overlaps --session {_shown(session)} (the "
+            "same directory under another name, or one inside the other): "
+            "translate rewrites cpu.db, callstack.db and session.uprof, so it works "
+            "on a copy. Choose an --out-dir outside the session"
+        )
 
 
 def _clear_translate_outputs(out: Path) -> None:
@@ -778,8 +921,10 @@ def _clear_translate_outputs(out: Path) -> None:
             elif path.is_dir():
                 shutil.rmtree(path)
         except OSError as exc:
-            raise UprofError(f"cannot remove {path} for --force: {exc}; choose another "
-                             "--out-dir or fix its permissions") from exc
+            raise UprofError(
+                f"cannot remove {path} for --force: {exc}; choose another "
+                "--out-dir or fix its permissions"
+            ) from exc
 
 
 def symbolization_counts(cpu_db: Path | str) -> tuple[int, int | None, int] | None:
@@ -796,13 +941,18 @@ def symbolization_counts(cpu_db: Path | str) -> tuple[int, int | None, int] | No
     except Exception:
         return None
     try:
-        columns = {str(name).lower() for name, in connection.execute(
-            "SELECT lower(column_name) FROM duckdb_columns() "
-            "WHERE lower(table_name) = 'module'").fetchall()}
+        columns = {
+            str(name).lower()
+            for (name,) in connection.execute(
+                "SELECT lower(column_name) FROM duckdb_columns() WHERE lower(table_name) = 'module'"
+            ).fetchall()
+        }
         modules = connection.execute("SELECT count(*) FROM Module").fetchone()[0]
-        with_debug = (connection.execute(
-            "SELECT count(*) FROM Module WHERE foundDebugInfo").fetchone()[0]
-            if "founddebuginfo" in columns else None)
+        with_debug = (
+            connection.execute("SELECT count(*) FROM Module WHERE foundDebugInfo").fetchone()[0]
+            if "founddebuginfo" in columns
+            else None
+        )
         functions = connection.execute("SELECT count(*) FROM Function").fetchone()[0]
         return int(modules), (None if with_debug is None else int(with_debug)), int(functions)
     except Exception:
@@ -811,11 +961,16 @@ def symbolization_counts(cpu_db: Path | str) -> tuple[int, int | None, int] | No
         connection.close()
 
 
-def translate(session_dir: Path | str, out_dir: Path | str,
-              symbol_paths: Iterable[str | Path] | None = None,
-              symbol_cache: Path | str | None = None,
-              symbol_servers: list[str] | None = None, time_filter: str | None = None,
-              ascii_kind: str | None = None, force: bool = False) -> None:
+def translate(
+    session_dir: Path | str,
+    out_dir: Path | str,
+    symbol_paths: Iterable[str | Path] | None = None,
+    symbol_cache: Path | str | None = None,
+    symbol_servers: list[str] | None = None,
+    time_filter: str | None = None,
+    ascii_kind: str | None = None,
+    force: bool = False,
+) -> None:
     session = absolute(session_dir)
     if not session.is_dir():
         raise UprofError(f"session directory not found: {session}")
@@ -823,32 +978,40 @@ def translate(session_dir: Path | str, out_dir: Path | str,
         raise UprofError(f"session.uprof not found in {session}")
     out = absolute(out_dir)
     if out.exists() and not out.is_dir():
-        raise UprofError(f"output path exists and is not a directory: {out}; choose another "
-                         "--out-dir")
+        raise UprofError(
+            f"output path exists and is not a directory: {out}; choose another --out-dir"
+        )
     _refuse_overlap(out, session)
     # Copied inputs count too: a translate that stopped after the copy leaves them, and copying
     # another capture over them would merge both captures' raw files into one translation.
-    conflicts = [out / name for name in (*TRANSLATE_OUTPUTS, "session.uprof", *COPY_DIRS)
-                 if os.path.lexists(out / name)]
+    conflicts = [
+        out / name
+        for name in (*TRANSLATE_OUTPUTS, "session.uprof", *COPY_DIRS)
+        if os.path.lexists(out / name)
+    ]
     if conflicts and not force:
         shown = ", ".join(os.fspath(path) for path in conflicts)
         raise UprofError(
             f"--out-dir already holds a previous translation or its copied inputs ({shown}); "
             "translate never appends to it or merges into it. Choose another --out-dir, or pass "
-            "--force to replace the files translate copied and generated there")
+            "--force to replace the files translate copied and generated there"
+        )
     if time_filter and parse_time_filter(time_filter) is None:
         raise UprofError("--time-filter needs T1:T2 in seconds from capture start, e.g. 0:5")
     if ascii_kind and ascii_kind not in DUMP_FILENAMES:
-        raise UprofError(f"unknown --ascii kind {ascii_kind!r}; use ibsop-event-dump or "
-                         "ibsfetch-event-dump")
+        raise UprofError(
+            f"unknown --ascii kind {ascii_kind!r}; use ibsop-event-dump or ibsfetch-event-dump"
+        )
     if ascii_kind and derive_sampler(session).timer:
-        raise failure("a timer capture has no IBS sample dump",
-                      ["translate without dump"], session=session)
+        raise failure(
+            "a timer capture has no IBS sample dump", ["translate without dump"], session=session
+        )
 
     env_cache, env_servers = parse_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
     cache = symbol_cache or env_cache or symbol_cache_dir()
-    servers = list(dict.fromkeys([*(env_servers or default_symbol_servers()),
-                                  *(symbol_servers or [])]))
+    servers = list(
+        dict.fromkeys([*(env_servers or default_symbol_servers()), *(symbol_servers or [])])
+    )
     print(f"VERSION={skill_identity()}")
     print(f"SYMBOL_CACHE={cache}")
     print(f"SYMBOL_SERVERS={' | '.join(servers)}")
@@ -860,9 +1023,14 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     copy_session(session, out)
 
     command = translate_command(
-        uprof, out, symbol_cache=cache, symbol_servers=servers,
+        uprof,
+        out,
+        symbol_cache=cache,
+        symbol_servers=servers,
         symbol_paths=[absolute(path) for path in symbol_paths or ()],
-        time_filter=time_filter, ascii_kind=ascii_kind)
+        time_filter=time_filter,
+        ascii_kind=ascii_kind,
+    )
 
     log = CliLog()
     completed = run(command, timeout=TRANSLATE_TIMEOUT)
@@ -877,31 +1045,38 @@ def translate(session_dir: Path | str, out_dir: Path | str,
     print(f"CPU_DB={cpu_db}")
     counts = symbolization_counts(cpu_db)
     if counts is None:
-        print("SYMBOLIZATION: could not inspect cpu.db; check Module.foundDebugInfo and Function "
-              "rows before relying on names")
+        print(
+            "SYMBOLIZATION: could not inspect cpu.db; check Module.foundDebugInfo and Function "
+            "rows before relying on names"
+        )
     else:
         modules, with_debug, functions = counts
-        debug_text = ("Module.foundDebugInfo absent" if with_debug is None
-                      else f"{with_debug}/{modules}")
+        debug_text = (
+            "Module.foundDebugInfo absent" if with_debug is None else f"{with_debug}/{modules}"
+        )
         print(f"SYMBOLIZATION: {debug_text} modules with debug info, {functions} Function rows")
         if functions == 0 or with_debug == 0:
-            print("WARNING: translate exited 0 and printed 'Translation finished', but this "
-                  "cpu.db has no symbol evidence; the exit status is not symbolization success. "
-                  "Check the SYMBOL_CACHE and SYMBOL_SERVERS paths above, or pass --symbol-cache, "
-                  "--symbol-server or --symbol-path and re-run translate into a new --out-dir")
+            print(
+                "WARNING: translate exited 0 and printed 'Translation finished', but this "
+                "cpu.db has no symbol evidence; the exit status is not symbolization success. "
+                "Check the SYMBOL_CACHE and SYMBOL_SERVERS paths above, or pass --symbol-cache, "
+                "--symbol-server or --symbol-path and re-run translate into a new --out-dir"
+            )
     if ascii_kind:
         dump = out / DUMP_FILENAMES[ascii_kind]
         if not dump.is_file():
-            raise UprofError(f"translate --ascii {ascii_kind} did not produce "
-                             f"{DUMP_FILENAMES[ascii_kind]} in {out}")
+            raise UprofError(
+                f"translate --ascii {ascii_kind} did not produce "
+                f"{DUMP_FILENAMES[ascii_kind]} in {out}"
+            )
         print(f"ASCII_DUMP={dump}")
         sampler = derive_sampler(out)
         wide = system_wide(out)
         label = "CPU" if wide else "thread"
         frequency_hz = cycle_frequency_hz(sampler)
         samples, cpus, contexts = dump_cadence(
-            dump, "CPU_Number" if wide else ("PID", "TID"),
-            run_gap_limit_ns(sampler, frequency_hz))
+            dump, "CPU_Number" if wide else ("PID", "TID"), run_gap_limit_ns(sampler, frequency_hz)
+        )
         window_s = _dump_window_s(out, time_filter)
         summary = achieved_summary(samples, window_s, cpus, sampler, contexts, label, frequency_hz)
         print(f"ACHIEVED: {summary}")

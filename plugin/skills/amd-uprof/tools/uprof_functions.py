@@ -48,8 +48,9 @@ class RangeDerivation:
     reason: str | None = None
 
 
-def _boundaries(section: PeSection, sources: Sequence[tuple[str, Iterable[tuple[int, str | None]]]]
-                ) -> dict[int, tuple[int, str, str | None]]:
+def _boundaries(
+    section: PeSection, sources: Sequence[tuple[str, Iterable[tuple[int, str | None]]]]
+) -> dict[int, tuple[int, str, str | None]]:
     """The strongest boundary at each RVA inside one executable section."""
     by_rva: dict[int, tuple[int, str, str | None]] = {}
     for source, starts in sources:
@@ -62,20 +63,24 @@ def _boundaries(section: PeSection, sources: Sequence[tuple[str, Iterable[tuple[
     return by_rva
 
 
-def build_ranges(module_name: str, sections: Sequence[PeSection],
-                 public_starts: Sequence[tuple[int, str | None]] = (),
-                 pdata_starts: Sequence[tuple[int, str | None]] = (),
-                 export_starts: Sequence[tuple[int, str | None]] = ()) -> list[FunctionRange]:
+def build_ranges(
+    module_name: str,
+    sections: Sequence[PeSection],
+    public_starts: Sequence[tuple[int, str | None]] = (),
+    pdata_starts: Sequence[tuple[int, str | None]] = (),
+    export_starts: Sequence[tuple[int, str | None]] = (),
+) -> list[FunctionRange]:
     """Function ranges for every executable section, in ascending section order.
 
     A section with no export, PDB public or .pdata start yields no range: a whole-section row
     would claim one function where no boundary was derived, so --by region is the fallback for
     such an image. Ranges do not overlap: each end is the next start in the same section.
     """
-    sources = (("export", export_starts), ("pdb_public", public_starts),
-               ("pdata", pdata_starts))
-    code_sections = sorted((section for section in sections if section.code and section.size > 0),
-                           key=lambda section: section.start)
+    sources = (("export", export_starts), ("pdb_public", public_starts), ("pdata", pdata_starts))
+    code_sections = sorted(
+        (section for section in sections if section.code and section.size > 0),
+        key=lambda section: section.start,
+    )
     ranges: list[FunctionRange] = []
     for section in code_sections:
         boundaries = _boundaries(section, sources)
@@ -102,9 +107,12 @@ def public_starts_from_names(rows: Iterable[tuple[object, object]]) -> list[tupl
     return starts
 
 
-def derive_module_ranges(module_name: str, module_path: str | Path,
-                         public_starts: Sequence[tuple[int, str | None]] = (),
-                         readobj: str | None = None) -> RangeDerivation:
+def derive_module_ranges(
+    module_name: str,
+    module_path: str | Path,
+    public_starts: Sequence[tuple[int, str | None]] = (),
+    readobj: str | None = None,
+) -> RangeDerivation:
     """Read one module with llvm-readobj and derive its ranges; never guesses a boundary.
 
     A missing or unusable tool, a non-PE image or an image with no executable section yields no
@@ -114,8 +122,17 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
     if not tool:
         return RangeDerivation([], "readobj_missing")
     try:
-        completed = run([tool, "--file-headers", "--sections", "--unwind", "--coff-exports",
-                         tool_operand(module_path)], timeout=READOBJ_TIMEOUT)
+        completed = run(
+            [
+                tool,
+                "--file-headers",
+                "--sections",
+                "--unwind",
+                "--coff-exports",
+                tool_operand(module_path),
+            ],
+            timeout=READOBJ_TIMEOUT,
+        )
     except UprofError as exc:
         return RangeDerivation([], f"readobj_failed: {exc}")
     if completed.returncode != 0:
@@ -130,8 +147,7 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
     sections = image.sections
     if not [section for section in sections if section.code and section.size > 0]:
         return RangeDerivation([], "no_code_section")
-    ranges = build_ranges(module_name, sections, public_starts,
-                          image.unwind_starts, image.exports)
+    ranges = build_ranges(module_name, sections, public_starts, image.unwind_starts, image.exports)
     if not ranges:
         return RangeDerivation([], "no_boundary_source")
     return RangeDerivation(ranges)
@@ -146,9 +162,9 @@ def write_ranges_csv(path: Path, ranges: Sequence[FunctionRange]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
-        writer.writerow(["module_name", "function_start", "function_end", "function_source",
-                         "function_name"])
+        writer.writerow(
+            ["module_name", "function_start", "function_end", "function_source", "function_name"]
+        )
         for item in ranges:
-            writer.writerow([item.module_name, item.start, item.end, item.source,
-                             item.name or ""])
+            writer.writerow([item.module_name, item.start, item.end, item.source, item.name or ""])
     return path

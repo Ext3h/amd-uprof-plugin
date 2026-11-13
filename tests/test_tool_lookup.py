@@ -74,14 +74,18 @@ class PowerShellPathTest(unittest.TestCase):
             calls.append(command)
             return subprocess.CompletedProcess(command, 0, "0 0", "")
 
-        with mock.patch.object(uprof_native, "IS_WINDOWS", True), \
-                mock.patch.object(uprof_native, "_system_directory",
-                                  return_value=Path("C:/Windows/System32")), \
-                mock.patch.dict(os.environ, {"SystemRoot": "C:/planted"}), \
-                mock.patch.object(uprof_native, "run", side_effect=fake_run):
+        with (
+            mock.patch.object(uprof_native, "IS_WINDOWS", True),
+            mock.patch.object(
+                uprof_native, "_system_directory", return_value=Path("C:/Windows/System32")
+            ),
+            mock.patch.dict(os.environ, {"SystemRoot": "C:/planted"}),
+            mock.patch.object(uprof_native, "run", side_effect=fake_run),
+        ):
             uprof_native.ibs_unavailable_reason()
-        self.assertEqual(Path(calls[0][0]),
-                         Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"))
+        self.assertEqual(
+            Path(calls[0][0]), Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
+        )
 
     def test_the_system_directory_comes_from_the_os(self):
         with mock.patch.dict(os.environ, {"SystemRoot": "C:/planted", "windir": "C:/planted"}):

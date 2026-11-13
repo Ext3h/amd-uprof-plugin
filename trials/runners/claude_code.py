@@ -34,10 +34,16 @@ def rule_path(path: Path) -> str:
 def settings(spec: TrialSpec) -> dict:
     allow = ["Bash", "PowerShell"]
     allow += [f"{tool}({rule_path(spec.cwd)}/**)" for tool in ("Edit", "Write")]
-    allow += [f"{tool}({rule_path(root)}/**)" for root in spec.read_roots
-              for tool in ("Read", "Grep", "Glob")]
-    deny = [f"{tool}({rule_path(root)}/**)" for root in spec.deny_roots
-            for tool in ("Read", "Grep", "Glob", "Edit", "Write")]
+    allow += [
+        f"{tool}({rule_path(root)}/**)"
+        for root in spec.read_roots
+        for tool in ("Read", "Grep", "Glob")
+    ]
+    deny = [
+        f"{tool}({rule_path(root)}/**)"
+        for root in spec.deny_roots
+        for tool in ("Read", "Grep", "Glob", "Edit", "Write")
+    ]
     for root in spec.deny_roots:
         for spelling in dict.fromkeys([str(root), Path(root).as_posix()]):
             deny += [f"Bash(*{spelling}*)", f"PowerShell(*{spelling}*)"]
@@ -46,12 +52,28 @@ def settings(spec: TrialSpec) -> dict:
 
 
 def command(executable: str, spec: TrialSpec, settings_file: Path) -> list[str]:
-    return [executable, "-p", spec.prompt, "--model", spec.model,
-            "--output-format", "stream-json", "--verbose",
-            "--setting-sources", "", "--settings", str(settings_file),
-            "--plugin-dir", str(spec.plugin_dir),
-            "--permission-mode", "dontAsk", "--permission-prompts", "none",
-            "--no-session-persistence", "--strict-mcp-config"]
+    return [
+        executable,
+        "-p",
+        spec.prompt,
+        "--model",
+        spec.model,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--setting-sources",
+        "",
+        "--settings",
+        str(settings_file),
+        "--plugin-dir",
+        str(spec.plugin_dir),
+        "--permission-mode",
+        "dontAsk",
+        "--permission-prompts",
+        "none",
+        "--no-session-persistence",
+        "--strict-mcp-config",
+    ]
 
 
 def _text(content: object) -> str:
@@ -73,20 +95,30 @@ def convert(lines: list[str]) -> tuple[list[dict], dict[str, object]]:
             continue
         kind = event.get("type")
         if kind == "system" and event.get("subtype") == "init":
-            evidence.update({
-                "model": event.get("model"), "cwd": event.get("cwd"),
-                "permission_mode": event.get("permissionMode"),
-                "plugins": [f"{p.get('name')} {p.get('path')}" for p in event.get("plugins", [])],
-                "mcp_servers": len(event.get("mcp_servers", [])),
-                "skills": event.get("skills")})
+            evidence.update(
+                {
+                    "model": event.get("model"),
+                    "cwd": event.get("cwd"),
+                    "permission_mode": event.get("permissionMode"),
+                    "plugins": [
+                        f"{p.get('name')} {p.get('path')}" for p in event.get("plugins", [])
+                    ],
+                    "mcp_servers": len(event.get("mcp_servers", [])),
+                    "skills": event.get("skills"),
+                }
+            )
         elif kind == "assistant":
             nested = event.get("parent_tool_use_id") is not None
             for block in event.get("message", {}).get("content", []):
                 if block.get("type") == "text" and not nested:
                     events.append({"type": "assistant_text", "text": block.get("text", "")})
                 elif block.get("type") == "tool_use":
-                    call = {"type": "tool_call", "id": block.get("id"),
-                            "tool": block.get("name"), "input": block.get("input")}
+                    call = {
+                        "type": "tool_call",
+                        "id": block.get("id"),
+                        "tool": block.get("name"),
+                        "input": block.get("input"),
+                    }
                     if nested:
                         call["nested"] = True
                     events.append(call)
@@ -94,16 +126,27 @@ def convert(lines: list[str]) -> tuple[list[dict], dict[str, object]]:
             content = event.get("message", {}).get("content", [])
             for block in content if isinstance(content, list) else []:
                 if block.get("type") == "tool_result":
-                    events.append({"type": "tool_result", "id": block.get("tool_use_id"),
-                                   "is_error": bool(block.get("is_error")),
-                                   "output": _text(block.get("content"))})
+                    events.append(
+                        {
+                            "type": "tool_result",
+                            "id": block.get("tool_use_id"),
+                            "is_error": bool(block.get("is_error")),
+                            "output": _text(block.get("content")),
+                        }
+                    )
         elif kind == "result":
             events.append({"type": "final", "answer": event.get("result") or ""})
-            evidence.update({
-                "result": event.get("subtype"), "is_error": event.get("is_error"),
-                "num_turns": event.get("num_turns"), "cost_usd": event.get("total_cost_usd"),
-                "permission_denials": [d.get("tool_name")
-                                       for d in event.get("permission_denials", [])]})
+            evidence.update(
+                {
+                    "result": event.get("subtype"),
+                    "is_error": event.get("is_error"),
+                    "num_turns": event.get("num_turns"),
+                    "cost_usd": event.get("total_cost_usd"),
+                    "permission_denials": [
+                        d.get("tool_name") for d in event.get("permission_denials", [])
+                    ],
+                }
+            )
     return events, evidence
 
 
@@ -140,11 +183,17 @@ class ClaudeCodeRunner:
         settings_file = spec.out_dir / "settings.json"
         settings_file.write_text(json.dumps(settings(spec), indent=1), encoding="utf-8")
         raw, stderr = spec.out_dir / "raw.stream.jsonl", spec.out_dir / "stderr.txt"
-        status, wall = run_process(command(self.executable, spec, settings_file), spec.cwd,
-                                   trial_env(spec, DROP_PREFIXES, DROP), raw, stderr,
-                                   spec.timeout_s)
+        status, wall = run_process(
+            command(self.executable, spec, settings_file),
+            spec.cwd,
+            trial_env(spec, DROP_PREFIXES, DROP),
+            raw,
+            stderr,
+            spec.timeout_s,
+        )
         lines = raw.read_text(encoding="utf-8", errors="replace").splitlines()
         events, evidence = convert(lines)
         evidence["setting_sources"] = "none"
-        return TrialResult(events, status, wall, evidence,
-                           context_tokens=final_context_tokens(lines))
+        return TrialResult(
+            events, status, wall, evidence, context_tokens=final_context_tokens(lines)
+        )

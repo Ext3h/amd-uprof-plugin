@@ -44,19 +44,30 @@ class ExplicitPdbMatchTest(unittest.TestCase):
     def symbolize(self, explicit, readobj_info, tools=("llvm-readobj", "llvm-pdbutil")):
         stream = io.StringIO()
         failed = uprof_symbols.SymbolizerRun(1, [], "")
-        with mock.patch.object(uprof_symbols, "require_symbolizer",
-                               return_value=Path("llvm-symbolizer.exe")), \
-                mock.patch.object(uprof_symbols, "find_sibling",
-                                  side_effect=lambda _tool, name: (
-                                      Path(name + ".exe") if name in tools else None)), \
-                mock.patch.object(uprof_symbols, "_readobj_info", return_value=readobj_info), \
-                mock.patch.object(uprof_symbols, "_run_symbolizer", return_value=failed), \
-                mock.patch.object(uprof_symbols, "_write_parquet",
-                                  return_value=self.root / "symbols.parquet"), \
-                mock.patch.object(uprof_symbols, "_publics", return_value=None):
+        with (
+            mock.patch.object(
+                uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+            ),
+            mock.patch.object(
+                uprof_symbols,
+                "find_sibling",
+                side_effect=lambda _tool, name: Path(name + ".exe") if name in tools else None,
+            ),
+            mock.patch.object(uprof_symbols, "_readobj_info", return_value=readobj_info),
+            mock.patch.object(uprof_symbols, "_run_symbolizer", return_value=failed),
+            mock.patch.object(
+                uprof_symbols, "_write_parquet", return_value=self.root / "symbols.parquet"
+            ),
+            mock.patch.object(uprof_symbols, "_publics", return_value=None),
+        ):
             result = uprof_symbols.symbolize_module(
-                str(self.module), self.rvas, self.root / "out", stream=stream,
-                module_name="plugin.dll", symbol_files=[explicit])
+                str(self.module),
+                self.rvas,
+                self.root / "out",
+                stream=stream,
+                module_name="plugin.dll",
+                symbol_files=[explicit],
+            )
         return result, stream.getvalue()
 
     def test_another_modules_pdb_is_not_used_without_an_image_guid(self):
@@ -83,12 +94,14 @@ class ExplicitPdbMatchTest(unittest.TestCase):
         self.assertEqual(result.pdb, own)
 
     def test_another_modules_pdb_is_not_used_without_pdbutil(self):
-        result, _ = self.symbolize(self.pdb("app.pdb"), ("plugin.pdb", "ABCD", 1),
-                                   tools=("llvm-readobj",))
+        result, _ = self.symbolize(
+            self.pdb("app.pdb"), ("plugin.pdb", "ABCD", 1), tools=("llvm-readobj",)
+        )
 
         self.assertIsNone(result.pdb)
-        rejected = [probe for probe in result.evidence.search.probes
-                    if probe.path.name == "app.pdb"]
+        rejected = [
+            probe for probe in result.evidence.search.probes if probe.path.name == "app.pdb"
+        ]
         self.assertEqual([probe.status for probe in rejected], ["mismatch"])
 
 

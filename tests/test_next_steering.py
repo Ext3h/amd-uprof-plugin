@@ -19,8 +19,9 @@ SESSION = "C:/captures/run" if uprof_query.os.name == "nt" else "/captures/run"
 
 def next_calls(*argv, system_wide, unresolved=0, top_process=None):
     args = uprof.build_parser().parse_args(["profile", "--session", SESSION, *argv])
-    return uprof_query._next_calls(args, {"unresolved": unresolved}, system_wide=system_wide,
-                                   top_process=top_process)
+    return uprof_query._next_calls(
+        args, {"unresolved": unresolved}, system_wide=system_wide, top_process=top_process
+    )
 
 
 def argv_of(call):
@@ -36,8 +37,7 @@ class NextSteeringTest(unittest.TestCase):
     def test_an_unscoped_system_wide_rollup_names_the_process_ranking_first(self):
         for by, rest in (("module", ["function"]), ("function", []), ("region", [])):
             with self.subTest(by=by):
-                self.assertEqual(bys(next_calls("--by", by, system_wide=True)),
-                                 ["process", *rest])
+                self.assertEqual(bys(next_calls("--by", by, system_wide=True)), ["process", *rest])
 
     def test_line_and_instruction_drill_downs_keep_their_calls(self):
         self.assertEqual(bys(next_calls("--by", "line", system_wide=True)), ["instruction"])
@@ -46,12 +46,14 @@ class NextSteeringTest(unittest.TestCase):
     def test_a_scoped_system_wide_view_keeps_its_drill_down(self):
         for scope in (["--pid", "100"], ["--image", "app.exe"]):
             with self.subTest(scope=scope):
-                self.assertEqual(bys(next_calls("--by", "module", *scope, system_wide=True)),
-                                 ["function"])
+                self.assertEqual(
+                    bys(next_calls("--by", "module", *scope, system_wide=True)), ["function"]
+                )
 
     def test_a_function_scoped_view_is_not_sent_back_to_processes(self):
-        calls = next_calls("--by", "line", "--function", "main", "--module", "app.exe",
-                           system_wide=True)
+        calls = next_calls(
+            "--by", "line", "--function", "main", "--module", "app.exe", system_wide=True
+        )
         self.assertNotIn("process", bys(calls))
 
     def test_an_attached_capture_keeps_its_drill_down(self):

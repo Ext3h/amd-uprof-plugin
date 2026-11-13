@@ -54,7 +54,7 @@ def _number(spec_id):
 
 def _blocks(text):
     """Paragraphs, list items and table rows of the requirement sections, as flat strings."""
-    section = text[text.index(FIRST_SECTION):text.index(LAST_SECTION)]
+    section = text[text.index(FIRST_SECTION) : text.index(LAST_SECTION)]
     lines = section.split("\n")
     blocks, current = [], []
     for k, line in enumerate(lines):
@@ -93,11 +93,15 @@ class SpecIdTest(unittest.TestCase):
 
     def test_every_id_is_well_formed(self):
         text = self.body.replace("SPEC-nn", "")
-        malformed = [m.group(0) for m in ANY_ID.finditer(text)
-                     if not re.fullmatch(r"SPEC-\d{2,}", m.group(0))]
+        malformed = [
+            m.group(0)
+            for m in ANY_ID.finditer(text)
+            if not re.fullmatch(r"SPEC-\d{2,}", m.group(0))
+        ]
         self.assertEqual(malformed, [])
-        bare = [m.group(0) for m in re.finditer(r"SPEC-\d{2,}", text)
-                if f"**{m.group(0)}**" not in text]
+        bare = [
+            m.group(0) for m in re.finditer(r"SPEC-\d{2,}", text) if f"**{m.group(0)}**" not in text
+        ]
         self.assertEqual(bare, [])
 
     def test_no_retired_id_is_in_use(self):

@@ -46,57 +46,104 @@ class Case:
 
 
 CASES = (
-    Case("pe_fixture_coff", F.PE / "fixture_coff.exe", (F.PE_HELPER, F.PE_ENTRY),
-         notes=("COFF symbol table, no PDB record",)),
-    Case("pe_fixture_full", F.PE / "fixture_full.exe",
-         (F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY),
-         pdb=F.PE / "fixture_full.pdb", direct_pdb=F.PE / "fixture_full.pdb"),
-    Case("pe_fixture_public", F.PE / "fixture_public.exe",
-         (F.PE_HELPER, F.PE_ENTRY),
-         pdb=F.PE / "fixture_public.pdb", direct_pdb=F.PE / "fixture_public.pdb",
-         notes=("public-only PDB: names and folds, no lines",)),
-    Case("pe_fixture_mismatch", F.PE / "fixture_mismatch.exe",
-         (F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY),
-         direct_pdb=F.PE / "fixture_other.pdb",
-         symbol_files=(F.PE / "fixture_other.pdb",),
-         notes=("adjacent PDB has a different GUID (same age); production rejects it",
-                "the direct symbolizer may still load it, as the symbolizer section shows")),
-    Case("pe_fixture_pe_dwarf", F.PE / "fixture_pe_dwarf.exe",
-         (F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY),
-         notes=("PE image carrying DWARF and no PDB record",)),
-    Case("elf_fixture_dwarf", F.ELF / "fixture_dwarf",
-         (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY)),
-    Case("elf_fixture_shared_so", F.ELF / "fixture_shared.so",
-         (F.ELF_SHARED_HELPER, F.ELF_SHARED_ENTRY, F.ELF_SHARED_BODY)),
-    Case("elf_fixture_compressed", F.ELF / "fixture_compressed",
-         (F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY),
-         notes=("compressed DWARF: SHF_COMPRESSED .debug_info and .debug_str",)),
-    Case("elf_fixture_split", F.ELF / "fixture_split",
-         (F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY),
-         notes=("split DWARF: the skeleton resolves lines without loading the .dwo",)),
-    Case("elf_fixture_debuglink", F.ELF / "fixture_debuglink",
-         (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY),
-         notes=("stripped image; DWARF in the adjacent fixture_debuglink.debug",)),
-    Case("elf_fixture_buildid", F.ELF / "fixture_buildid",
-         (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY),
-         symbol_dirs=(F.ELF / "debug" / "buildid",),
-         notes=("stripped image; DWARF found under the build-id root",)),
-    Case("elf_fixture_symtab", F.ELF / "fixture_symtab",
-         (F.ELF_HELPER, F.ELF_ENTRY),
-         notes=(".symtab only: names without lines",)),
-    Case("elf_fixture_dynsym_so", F.ELF / "fixture_dynsym.so",
-         (F.ELF_SHARED_HELPER, F.ELF_SHARED_ENTRY),
-         notes=(".dynsym only: names without lines",)),
-    Case("elf_fixture_nosym", F.ELF / "fixture_nosym", (F.ELF_HELPER,),
-         notes=("no named symbols and no DWARF: empty frames",)),
+    Case(
+        "pe_fixture_coff",
+        F.PE / "fixture_coff.exe",
+        (F.PE_HELPER, F.PE_ENTRY),
+        notes=("COFF symbol table, no PDB record",),
+    ),
+    Case(
+        "pe_fixture_full",
+        F.PE / "fixture_full.exe",
+        (F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY),
+        pdb=F.PE / "fixture_full.pdb",
+        direct_pdb=F.PE / "fixture_full.pdb",
+    ),
+    Case(
+        "pe_fixture_public",
+        F.PE / "fixture_public.exe",
+        (F.PE_HELPER, F.PE_ENTRY),
+        pdb=F.PE / "fixture_public.pdb",
+        direct_pdb=F.PE / "fixture_public.pdb",
+        notes=("public-only PDB: names and folds, no lines",),
+    ),
+    Case(
+        "pe_fixture_mismatch",
+        F.PE / "fixture_mismatch.exe",
+        (F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY),
+        direct_pdb=F.PE / "fixture_other.pdb",
+        symbol_files=(F.PE / "fixture_other.pdb",),
+        notes=(
+            "adjacent PDB has a different GUID (same age); production rejects it",
+            "the direct symbolizer may still load it, as the symbolizer section shows",
+        ),
+    ),
+    Case(
+        "pe_fixture_pe_dwarf",
+        F.PE / "fixture_pe_dwarf.exe",
+        (F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY),
+        notes=("PE image carrying DWARF and no PDB record",),
+    ),
+    Case(
+        "elf_fixture_dwarf", F.ELF / "fixture_dwarf", (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY)
+    ),
+    Case(
+        "elf_fixture_shared_so",
+        F.ELF / "fixture_shared.so",
+        (F.ELF_SHARED_HELPER, F.ELF_SHARED_ENTRY, F.ELF_SHARED_BODY),
+    ),
+    Case(
+        "elf_fixture_compressed",
+        F.ELF / "fixture_compressed",
+        (F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY),
+        notes=("compressed DWARF: SHF_COMPRESSED .debug_info and .debug_str",),
+    ),
+    Case(
+        "elf_fixture_split",
+        F.ELF / "fixture_split",
+        (F.ELF_COMPRESSED_HELPER, F.ELF_COMPRESSED_ENTRY, F.ELF_COMPRESSED_BODY),
+        notes=("split DWARF: the skeleton resolves lines without loading the .dwo",),
+    ),
+    Case(
+        "elf_fixture_debuglink",
+        F.ELF / "fixture_debuglink",
+        (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY),
+        notes=("stripped image; DWARF in the adjacent fixture_debuglink.debug",),
+    ),
+    Case(
+        "elf_fixture_buildid",
+        F.ELF / "fixture_buildid",
+        (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY),
+        symbol_dirs=(F.ELF / "debug" / "buildid",),
+        notes=("stripped image; DWARF found under the build-id root",),
+    ),
+    Case(
+        "elf_fixture_symtab",
+        F.ELF / "fixture_symtab",
+        (F.ELF_HELPER, F.ELF_ENTRY),
+        notes=(".symtab only: names without lines",),
+    ),
+    Case(
+        "elf_fixture_dynsym_so",
+        F.ELF / "fixture_dynsym.so",
+        (F.ELF_SHARED_HELPER, F.ELF_SHARED_ENTRY),
+        notes=(".dynsym only: names without lines",),
+    ),
+    Case(
+        "elf_fixture_nosym",
+        F.ELF / "fixture_nosym",
+        (F.ELF_HELPER,),
+        notes=("no named symbols and no DWARF: empty frames",),
+    ),
 )
 
 
 def run_tool(tool, *args) -> str:
     completed = F.run(tool, *args)
     if completed.returncode != 0:
-        raise SystemExit(f"{Path(str(tool)).name} exited {completed.returncode}: "
-                         f"{completed.stderr.strip()}")
+        raise SystemExit(
+            f"{Path(str(tool)).name} exited {completed.returncode}: {completed.stderr.strip()}"
+        )
     return completed.stdout
 
 
@@ -117,15 +164,18 @@ def normalize(text: str) -> str:
 
 def readobj_section(case: Case) -> list[str]:
     pe = case.image.suffix.lower() in {".exe", ".dll"}
-    options = (["--file-headers", "--sections", "--symbols", "--coff-debug-directory"]
-               if pe else
-               ["--file-headers", "--sections", "--symbols", "--dyn-syms", "--notes"])
+    options = (
+        ["--file-headers", "--sections", "--symbols", "--coff-debug-directory"]
+        if pe
+        else ["--file-headers", "--sections", "--symbols", "--dyn-syms", "--notes"]
+    )
     text = run_tool(F.READOBJ, *options, case.image)
     facts = ["## readobj"]
-    for pattern, label in ((r"^Format: (.+)$", "format"),
-                           (r"^\s+Entry: (0x[0-9A-Fa-f]+)$", "entry"),
-                           (r"^\s+PointerToSymbolTable: (.+)$",
-                            "pointer_to_symbol_table")):
+    for pattern, label in (
+        (r"^Format: (.+)$", "format"),
+        (r"^\s+Entry: (0x[0-9A-Fa-f]+)$", "entry"),
+        (r"^\s+PointerToSymbolTable: (.+)$", "pointer_to_symbol_table"),
+    ):
         match = re.search(pattern, text, re.M)
         if match:
             facts.append(f"{label}={match.group(1).strip()}")
@@ -166,8 +216,7 @@ def readobj_section(case: Case) -> list[str]:
 
 def symbol_section(case: Case) -> list[str]:
     pe = case.image.suffix.lower() in {".exe", ".dll"}
-    options = (["--sections", "--symbols"] if pe else
-               ["--sections", "--symbols", "--dyn-syms"])
+    options = ["--sections", "--symbols"] if pe else ["--sections", "--symbols", "--dyn-syms"]
     text = run_tool(F.READOBJ, *options, case.image)
     section_addresses = {}
     current_section = None
@@ -235,13 +284,15 @@ def pdb_section(case: Case) -> list[str]:
         match = re.match(r"^\s+(0x[0-9A-Fa-f]+|\d+) virtual address$", line)
         if current and match:
             section_addresses[current] = int(match.group(1), 16)
-    facts = ["## pdbutil",
-             f"pdb={pdb.name}"
-             + (f" guid={guid.group(1).strip()}" if guid else "")
-             + (f" age={age.group(1).strip()}" if age else "")
-             + (f" has_types={has_types.group(1).strip()}" if has_types else "")
-             + (f" has_publics={has_publics.group(1).strip()}" if has_publics else "")
-             + (f" type_records={type_count.group(1)}" if type_count else "")]
+    facts = [
+        "## pdbutil",
+        f"pdb={pdb.name}"
+        + (f" guid={guid.group(1).strip()}" if guid else "")
+        + (f" age={age.group(1).strip()}" if age else "")
+        + (f" has_types={has_types.group(1).strip()}" if has_types else "")
+        + (f" has_publics={has_publics.group(1).strip()}" if has_publics else "")
+        + (f" type_records={type_count.group(1)}" if type_count else ""),
+    ]
     public_name = None
     for line in publics.splitlines():
         match = re.search(r"`([^`]+)`", line)
@@ -265,9 +316,9 @@ def frame_line(address: int, frame: dict) -> str:
 
 
 def symbolizer_section(case: Case) -> list[str]:
-    records = F.symbolizer_records(case.image, case.addresses,
-                                   pdb=case.direct_pdb,
-                                   debug_dirs=case.symbol_dirs)
+    records = F.symbolizer_records(
+        case.image, case.addresses, pdb=case.direct_pdb, debug_dirs=case.symbol_dirs
+    )
     facts = ["## symbolizer"]
     for record in records:
         address = int(record["Address"], 16)
@@ -277,11 +328,13 @@ def symbolizer_section(case: Case) -> list[str]:
 
 def production_section(case: Case) -> list[str]:
     module, records, stream = F.production(
-        case.image, case.addresses,
-        symbol_dirs=case.symbol_dirs, symbol_files=case.symbol_files)
-    facts = ["## production",
-             f"pdb={Path(module.pdb).name if module.pdb else 'none'}",
-             f"outcome={module.evidence.outcome}"]
+        case.image, case.addresses, symbol_dirs=case.symbol_dirs, symbol_files=case.symbol_files
+    )
+    facts = [
+        "## production",
+        f"pdb={Path(module.pdb).name if module.pdb else 'none'}",
+        f"outcome={module.evidence.outcome}",
+    ]
     if module.evidence.search:
         for probe in module.evidence.search.probes:
             if probe.status != "not_found":
@@ -302,14 +355,21 @@ def profile_section(case: Case, by: str) -> list[str]:
         # The symbol-outcome evidence names the temporary session; only its role is stable.
         evidence = [f"symbol_coverage={document.get('SYMBOL_COVERAGE') or 'none'}"]
         evidence += [line for line in stderr.splitlines() if line.startswith("WARNING:")]
-        evidence = [replace_spellings(line, (Path(root), Path(root).resolve()), "<SESSION_ROOT>")
-                    for line in evidence]
+        evidence = [
+            replace_spellings(line, (Path(root), Path(root).resolve()), "<SESSION_ROOT>")
+            for line in evidence
+        ]
     facts = [f"## profile.{by}", *evidence]
     rows = document.get("rows") or []
     if by == "line":
-        rows = sorted(rows, key=lambda row: (row.get("function") or "",
-                                             row.get("file") or "",
-                                             row.get("line") or 0))
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                row.get("function") or "",
+                row.get("file") or "",
+                row.get("line") or 0,
+            ),
+        )
         for row in rows:
             facts.append(
                 f"line module={Path(row.get('module') or '').name}"
@@ -317,10 +377,12 @@ def profile_section(case: Case, by: str) -> list[str]:
                 f" file={row.get('file') or '<no source line>'}"
                 f" line={row.get('line') or 0}"
                 f" samples={row.get('samples', 0)}"
-                f" attribution={row.get('attribution') or 'unknown'}")
+                f" attribution={row.get('attribution') or 'unknown'}"
+            )
     else:
-        rows = sorted(rows, key=lambda row: (row.get("function") or "",
-                                             row.get("function_start") or ""))
+        rows = sorted(
+            rows, key=lambda row: (row.get("function") or "", row.get("function_start") or "")
+        )
         for row in rows:
             facts.append(
                 f"function module={Path(row.get('module') or '').name}"
@@ -329,7 +391,8 @@ def profile_section(case: Case, by: str) -> list[str]:
                 f" end={row.get('function_end') or 'none'}"
                 f" source={row.get('function_source') or 'none'}"
                 f" samples={row.get('samples', 0)}"
-                f" attribution={row.get('attribution') or 'unknown'}")
+                f" attribution={row.get('attribution') or 'unknown'}"
+            )
     return facts
 
 
@@ -339,17 +402,17 @@ def fallback_case() -> tuple[str, list[str]]:
         moved = Path(root) / "fixture_debuglink"
         shutil.copyfile(F.ELF / "fixture_debuglink", moved)
         fallback = Path(root) / "fallback"
-        target = (fallback / F.relative_path_for_fallback(moved.parent)
-                  / "fixture_debuglink.debug")
+        target = fallback / F.relative_path_for_fallback(moved.parent) / "fixture_debuglink.debug"
         target.parent.mkdir(parents=True)
         shutil.copyfile(F.ELF / "fixture_debuglink.debug", target)
-        module, records, stream = F.production(
-            moved, [F.ELF_ENTRY], symbol_dirs=[fallback])
-    facts = ["# fixture: elf/fixture_debuglink (moved to another directory)",
-             "# production fallback-root layout",
-             "## production",
-             f"pdb={Path(module.pdb).name if module.pdb else 'none'}",
-             f"outcome={module.evidence.outcome}"]
+        module, records, stream = F.production(moved, [F.ELF_ENTRY], symbol_dirs=[fallback])
+    facts = [
+        "# fixture: elf/fixture_debuglink (moved to another directory)",
+        "# production fallback-root layout",
+        "## production",
+        f"pdb={Path(module.pdb).name if module.pdb else 'none'}",
+        f"outcome={module.evidence.outcome}",
+    ]
     by_address = {int(record["Address"], 16): F.innermost(record) for record in records}
     for address in sorted(by_address):
         facts.append(frame_line(address, by_address[address]))
@@ -373,10 +436,14 @@ def render(case: Case) -> str:
 
 def manifest() -> list[str]:
     import platform
-    lines = [f"os={platform.system().lower()}",
-             f"python={platform.python_version()}"]
-    for name, path in (("llvm-symbolizer", F.SYMBOLIZER), ("llvm-readobj", F.READOBJ),
-                       ("llvm-objdump", F.OBJDUMP), ("llvm-pdbutil", F.PDBUTIL)):
+
+    lines = [f"os={platform.system().lower()}", f"python={platform.python_version()}"]
+    for name, path in (
+        ("llvm-symbolizer", F.SYMBOLIZER),
+        ("llvm-readobj", F.READOBJ),
+        ("llvm-objdump", F.OBJDUMP),
+        ("llvm-pdbutil", F.PDBUTIL),
+    ):
         if path:
             version = F.run(path, "--version").stdout.splitlines()[:2]
             lines.append(f"{name}={path}")
@@ -386,8 +453,9 @@ def manifest() -> list[str]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out-dir", required=True,
-                        help="directory that receives <os>/ and manifest.txt")
+    parser.add_argument(
+        "--out-dir", required=True, help="directory that receives <os>/ and manifest.txt"
+    )
     args = parser.parse_args(argv)
     if os.environ.get("UPROF_REQUIRE_TOOLS") == "1":
         missing = F.tool_skip() or F.duckdb_skip()
@@ -398,13 +466,14 @@ def main(argv=None) -> int:
     target = out_dir / os_name
     target.mkdir(parents=True, exist_ok=True)
     for case in CASES:
-        (target / f"{case.name}.txt").write_text(render(case), encoding="utf-8",
-                                                 newline="\n")
+        (target / f"{case.name}.txt").write_text(render(case), encoding="utf-8", newline="\n")
     name, lines = fallback_case()
-    (target / f"{name}.txt").write_text(normalize("\n".join(lines)) + "\n",
-                                        encoding="utf-8", newline="\n")
-    (out_dir / "manifest.txt").write_text("\n".join(manifest()) + "\n",
-                                          encoding="utf-8", newline="\n")
+    (target / f"{name}.txt").write_text(
+        normalize("\n".join(lines)) + "\n", encoding="utf-8", newline="\n"
+    )
+    (out_dir / "manifest.txt").write_text(
+        "\n".join(manifest()) + "\n", encoding="utf-8", newline="\n"
+    )
     print(f"wrote {len(CASES) + 1} traces to {target}")
     return 0
 

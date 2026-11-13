@@ -26,8 +26,10 @@ class ParquetWiringTest(unittest.TestCase):
             session.mkdir()
             (session / "session.uprof").write_text(
                 '{"collection": {"target": {"systemWide": true}}, "translateCommand": ""}',
-                encoding="utf-8")
+                encoding="utf-8",
+            )
             import duckdb
+
             duckdb.connect(str(session / "cpu.db")).close()
             dump_path = root / "IbsOpDump.csv"
             dump_path.write_text("DeltaTick\n1\n", encoding="utf-8")
@@ -35,8 +37,18 @@ class ParquetWiringTest(unittest.TestCase):
             sidecar.write_bytes(b"parquet")
             out = root / "out.txt"
             args = uprof.build_parser().parse_args(
-                ["profile", "--session", str(session), "--by", "process",
-                 "--top", "5", "--out-file", str(out)])
+                [
+                    "profile",
+                    "--session",
+                    str(session),
+                    "--by",
+                    "process",
+                    "--top",
+                    "5",
+                    "--out-file",
+                    str(out),
+                ]
+            )
             captured = {}
 
             @contextlib.contextmanager
@@ -47,16 +59,22 @@ class ParquetWiringTest(unittest.TestCase):
                 yield
 
             sampler = types.SimpleNamespace(pmc=False, timer=False, event_column="")
-            with mock.patch.object(uprof_query, "_check_args", return_value=None), \
-                    mock.patch.object(uprof_session, "derive_sampler", return_value=sampler), \
-                    mock.patch.object(uprof_session, "system_wide", return_value=True), \
-                    mock.patch.object(uprof_dump, "resolve_dump",
-                                      return_value=uprof_dump.DumpInfo(dump_path, "beside")), \
-                    mock.patch.object(uprof_dump, "samples_parquet", return_value=sidecar), \
-                    mock.patch.object(uprof_dump, "recorded_time_filter", return_value=None), \
-                    mock.patch.object(uprof_query, "_primary_measure",
-                                      return_value=("sample_share", None)), \
-                    mock.patch.object(uprof_query.uprof_db, "open_query", fake_open_query):
+            with (
+                mock.patch.object(uprof_query, "_check_args", return_value=None),
+                mock.patch.object(uprof_session, "derive_sampler", return_value=sampler),
+                mock.patch.object(uprof_session, "system_wide", return_value=True),
+                mock.patch.object(
+                    uprof_dump,
+                    "resolve_dump",
+                    return_value=uprof_dump.DumpInfo(dump_path, "beside"),
+                ),
+                mock.patch.object(uprof_dump, "samples_parquet", return_value=sidecar),
+                mock.patch.object(uprof_dump, "recorded_time_filter", return_value=None),
+                mock.patch.object(
+                    uprof_query, "_primary_measure", return_value=("sample_share", None)
+                ),
+                mock.patch.object(uprof_query.uprof_db, "open_query", fake_open_query),
+            ):
                 with self.assertRaises(_Abort):
                     uprof_query.run_query_command(args)
 

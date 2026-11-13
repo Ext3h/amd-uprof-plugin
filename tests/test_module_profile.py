@@ -31,8 +31,15 @@ NTDLL_KEY = "ntdll.dll"
 HELPER_KEY = "c:/app/helper.dll"
 
 HOT_COLUMNS = ["hot_rva", "hot_samples", "other_samples", "hot_sample_share"]
-COLUMNS = ["module", "samples", "sample_share", "time_share", "tag_to_retire_share",
-           "isSystemModule", "cpu_seconds"] + HOT_COLUMNS
+COLUMNS = [
+    "module",
+    "samples",
+    "sample_share",
+    "time_share",
+    "tag_to_retire_share",
+    "isSystemModule",
+    "cpu_seconds",
+] + HOT_COLUMNS
 
 
 def _meta(cycle_controlled):
@@ -40,8 +47,14 @@ def _meta(cycle_controlled):
         "translateCommand": "AMDuProfCLI.exe translate -i session --ascii ibsop-event-dump",
         "collection": {
             "schedule": {"elapsed": 10_000},
-            "events": {"ibsEvents": {"op": True, "fetch": False, "opInterval": 4_700_000,
-                                     "opCycleCount": cycle_controlled}},
+            "events": {
+                "ibsEvents": {
+                    "op": True,
+                    "fetch": False,
+                    "opInterval": 4_700_000,
+                    "opCycleCount": cycle_controlled,
+                }
+            },
             "target": {"systemWide": True},
         },
         "auxiliary": {"ibsOpSampling": True},
@@ -54,37 +67,42 @@ class ModuleProfileTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
-    def session(self, name="cycle", flags=True, cycle_controlled=True, modules=None,
-                body=None):
+    def session(self, name="cycle", flags=True, cycle_controlled=True, modules=None, body=None):
         session = self.root / name
         if session.is_dir():
             return session
         session.mkdir()
-        (session / "session.uprof").write_text(json.dumps(_meta(cycle_controlled)),
-                                               encoding="utf-8")
+        (session / "session.uprof").write_text(
+            json.dumps(_meta(cycle_controlled)), encoding="utf-8"
+        )
         modules = modules or [(1, WORKLOAD, False), (2, NTDLL, True), (3, HELPER, False)]
         connection = duckdb.connect(str(session / "cpu.db"))
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
             flag_column = ", isSystemModule BOOLEAN" if flags else ""
             connection.execute(f"CREATE TABLE Module (id UINTEGER, path VARCHAR{flag_column})")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
-            connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
-                               "functionId UBIGINT, moduleRVA UBIGINT)")
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
+            connection.execute(
+                "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+                "functionId UBIGINT, moduleRVA UBIGINT)"
+            )
             connection.execute("INSERT INTO Process VALUES (100, 'workload.exe')")
             for module_id, path, system in modules:
                 if flags:
-                    connection.execute("INSERT INTO Module VALUES (?, ?, ?)",
-                                       [module_id, path, system])
+                    connection.execute(
+                        "INSERT INTO Module VALUES (?, ?, ?)", [module_id, path, system]
+                    )
                 else:
                     connection.execute("INSERT INTO Module VALUES (?, ?)", [module_id, path])
         finally:
             connection.close()
         rows = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName,IbsTagToRetCtr"]
         rows += self._dump_rows() if body is None else body
-        (session / "IbsOpDump.csv").write_text("\n".join(rows) + "\n", encoding="utf-8",
-                                               newline="\n")
+        (session / "IbsOpDump.csv").write_text(
+            "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+        )
         return session
 
     @staticmethod
@@ -92,8 +110,11 @@ class ModuleProfileTest(unittest.TestCase):
         """workload 3 samples, ntdll 2, helper 1; ntdll's dump name is a basename."""
         rows = []
         tick = 0
-        for module, tags in ((WORKLOAD, (100, 200, 300)), ("ntdll.dll", (50, 150)),
-                             (HELPER, (25,))):
+        for module, tags in (
+            (WORKLOAD, (100, 200, 300)),
+            ("ntdll.dll", (50, 150)),
+            (HELPER, (25,)),
+        ):
             for tag in tags:
                 tick += 1_000_000_000
                 rows.append(f"{tick},0,1,100,4096,{module},{tag}")
@@ -101,23 +122,42 @@ class ModuleProfileTest(unittest.TestCase):
 
     def run_sql(self, session, interval="0.001"):
         variables = {
-            "uprof_image": "%", "uprof_pid": "", "uprof_top": "0",
-            "uprof_time_start": "0", "uprof_time_end": "9223372036854775807",
+            "uprof_image": "%",
+            "uprof_pid": "",
+            "uprof_top": "0",
+            "uprof_time_start": "0",
+            "uprof_time_end": "9223372036854775807",
             "uprof_ibs_dump": str(session / "IbsOpDump.csv"),
-            "uprof_event_column": "", "uprof_session_meta": str(session / "session.uprof"),
-            "uprof_tag_available": "true", "uprof_symbols": "", "uprof_aliases": "",
-            "uprof_pdbs": "", "uprof_sample_interval_s": interval,
+            "uprof_event_column": "",
+            "uprof_session_meta": str(session / "session.uprof"),
+            "uprof_tag_available": "true",
+            "uprof_symbols": "",
+            "uprof_aliases": "",
+            "uprof_pdbs": "",
+            "uprof_sample_interval_s": interval,
         }
-        with uprof_db.open_query(session / "cpu.db", [TOOLS_DIR / "views.sql"],
-                                 variables) as connection:
+        with uprof_db.open_query(
+            session / "cpu.db", [TOOLS_DIR / "views.sql"], variables
+        ) as connection:
             columns, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-module.sql")
         return columns, [dict(zip(columns, row)) for row in rows]
 
     def profile(self, session, by="module", *extra):
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile",
-             "--session", str(session), "--by", by, *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(session),
+                "--by",
+                by,
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -138,12 +178,18 @@ class ModuleProfileTest(unittest.TestCase):
         import uprof_collect
 
         out = io.StringIO()
-        with mock.patch.object(uprof_collect, "_core_frequency",
-                               return_value=(frequency_hz, f"{frequency_hz / 1e6:g} MHz",
-                                             "test")), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(uprof.main(["profile", "--session", str(session), "--by", by,
-                                         "--json"]), 0)
+        with (
+            mock.patch.object(
+                uprof_collect,
+                "_core_frequency",
+                return_value=(frequency_hz, f"{frequency_hz / 1e6:g} MHz", "test"),
+            ),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(
+                uprof.main(["profile", "--session", str(session), "--by", by, "--json"]), 0
+            )
         return json.loads(out.getvalue())
 
     def test_module_rows_carry_shares_classification_and_cpu_seconds(self):
@@ -151,10 +197,11 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertEqual(columns, COLUMNS)
         by_module = {row["module"]: row for row in rows}
 
-        self.assertEqual([row["module"] for row in rows],
-                         [WORKLOAD_KEY, NTDLL_KEY, HELPER_KEY])
-        self.assertEqual([by_module[name]["samples"]
-                          for name in (WORKLOAD_KEY, NTDLL_KEY, HELPER_KEY)], [3, 2, 1])
+        self.assertEqual([row["module"] for row in rows], [WORKLOAD_KEY, NTDLL_KEY, HELPER_KEY])
+        self.assertEqual(
+            [by_module[name]["samples"] for name in (WORKLOAD_KEY, NTDLL_KEY, HELPER_KEY)],
+            [3, 2, 1],
+        )
         self.assertAlmostEqual(sum(row["sample_share"] for row in rows), 1.0, places=12)
         self.assertAlmostEqual(sum(row["tag_to_retire_share"] for row in rows), 1.0, places=12)
         # False from the full-path join, True from the basename fallback for ntdll.
@@ -260,8 +307,9 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertEqual(len(module_calls), 2)
         self.assertIn("--by process", module_calls[0])
         self.assertIn("--by function", module_calls[1])
-        self.assertFalse(any("--by region" in call or "--by instruction" in call
-                             for call in module_calls))
+        self.assertFalse(
+            any("--by region" in call or "--by instruction" in call for call in module_calls)
+        )
 
     def test_an_attached_module_view_points_only_to_functions(self):
         session = self.session("attached")

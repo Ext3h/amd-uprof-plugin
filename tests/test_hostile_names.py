@@ -26,19 +26,25 @@ from uprof_util import UprofError
 SESSION = "C:/captures/run" if os.name == "nt" else "/captures/run"
 # One hostile name per shell-specific hazard, plus shared ones.
 HOSTILE_IMAGES = [
-    "x$(touch pwned).exe",      # bash and PowerShell subexpression
-    "a`id`.exe",                # bash command substitution, PowerShell escape
-    "$HOME.exe",                # bash and PowerShell variable
-    "%PATH%.exe",               # cmd.exe variable
-    "a!b!.exe",                 # cmd.exe delayed expansion
-    'a"b.exe',                  # ends the argument everywhere
+    "x$(touch pwned).exe",  # bash and PowerShell subexpression
+    "a`id`.exe",  # bash command substitution, PowerShell escape
+    "$HOME.exe",  # bash and PowerShell variable
+    "%PATH%.exe",  # cmd.exe variable
+    "a!b!.exe",  # cmd.exe delayed expansion
+    'a"b.exe',  # ends the argument everywhere
     "a\u201d;calc;\u201cb.exe",  # PowerShell typographic quotes
-    "a\u202eexe.txt",           # bidi override
+    "a\u202eexe.txt",  # bidi override
     "a;b|c.exe",
-    "-rf.exe",                  # read as an option when unquoted
+    "-rf.exe",  # read as an option when unquoted
 ]
-HOSTILE_DIRECTORIES = ["$(touch pwned)", "a`id`", "%PATH%", "a!b!", "a\u201d;calc;\u201cb",
-                       "a\u202eexe.txt"]
+HOSTILE_DIRECTORIES = [
+    "$(touch pwned)",
+    "a`id`",
+    "%PATH%",
+    "a!b!",
+    "a\u201d;calc;\u201cb",
+    "a\u202eexe.txt",
+]
 # The characters a capture- or disk-derived name may carry into a command; independent of the
 # implementation's own list so that a missing hazard shows up here.
 PATH_PLAIN = set(" ._-+,=@#~()\\/:'&;[]{}")
@@ -56,8 +62,7 @@ def image_argument(call):
 
 class ProcessNameTest(unittest.TestCase):
     def next_call(self, name):
-        args = uprof.build_parser().parse_args(["profile", "--session", SESSION,
-                                                "--by", "process"])
+        args = uprof.build_parser().parse_args(["profile", "--session", SESSION, "--by", "process"])
         calls = uprof_query._next_calls(args, {}, system_wide=True, top_process=(None, name))
         self.assertEqual(len(calls), 1, calls)
         return calls[0]
@@ -73,7 +78,8 @@ class ProcessNameTest(unittest.TestCase):
                 regex = "".join("." if char == "_" else re.escape(char) for char in pattern)
                 self.assertRegex(name, re.compile(f"^{regex}$", re.IGNORECASE))
                 args = uprof.build_parser().parse_args(
-                    ["profile", "--session", SESSION, "--by", "module", "--image", pattern])
+                    ["profile", "--session", SESSION, "--by", "module", "--image", pattern]
+                )
                 self.assertEqual(args.image, pattern)
 
     def test_a_plain_image_name_is_kept(self):
@@ -94,8 +100,9 @@ class CandidateDirectoryTest(unittest.TestCase):
         return directory
 
     def message(self):
-        args = uprof.build_parser().parse_args(["profile", "--session", str(self.root),
-                                                "--by", "module"])
+        args = uprof.build_parser().parse_args(
+            ["profile", "--session", str(self.root), "--by", "module"]
+        )
         with self.assertRaises(UprofError) as caught:
             uprof_query.run_query_command(args)
         return str(caught.exception)
@@ -110,8 +117,7 @@ class CandidateDirectoryTest(unittest.TestCase):
         message = self.message()
         self.assertNotIn("\n", message)
         offered = [value.strip('"') for value in self.offered_sessions(message)]
-        self.assertEqual(offered, [str(safe).replace("%", "%%") if os.name == "nt"
-                                   else str(safe)])
+        self.assertEqual(offered, [str(safe).replace("%", "%%") if os.name == "nt" else str(safe)])
         for value in offered:
             self.assertTrue(plain(value, PATH_PLAIN), value)
         held = message.split("not offered as commands", 1)[1]

@@ -19,9 +19,13 @@ import uprof_collect
 
 SESSION = {
     "collection": {
-        "events": {"pmcEvents": {"pmcEventList": [{
-            "hwId": 118, "interval": 4_700_000, "isSampling": True}]}},
-        "target": {"systemWide": True}},
+        "events": {
+            "pmcEvents": {
+                "pmcEventList": [{"hwId": 118, "interval": 4_700_000, "isSampling": True}]
+            }
+        },
+        "target": {"systemWide": True},
+    },
     "auxiliary": {},
 }
 
@@ -43,6 +47,7 @@ class ElevatedFallbackTest(unittest.TestCase):
     def link_dir(self, link: Path, target: Path) -> None:
         if os.name == "nt":
             import _winapi
+
             _winapi.CreateJunction(str(target), str(link))
         else:
             link.symlink_to(target, target_is_directory=True)
@@ -62,19 +67,25 @@ class ElevatedFallbackTest(unittest.TestCase):
 
         stdout = io.StringIO()
         options = uprof_collect.CollectOptions(out_dir=str(out), seconds=1, event="ibs-op")
-        with mock.patch.object(uprof_collect, "is_admin", return_value=True), \
-                mock.patch.object(uprof_collect, "find_uprof", return_value="AMDuProfCLI"), \
-                mock.patch.object(uprof_collect, "require_uprof", return_value="AMDuProfCLI"), \
-                mock.patch.object(uprof_collect, "ibs_unavailable_reason", return_value="test"), \
-                mock.patch.object(uprof_collect, "_run_cli", side_effect=fake_run_cli), \
-                mock.patch.object(uprof_collect, "_core_frequency",
-                                  return_value=(4_700_000_000, "4700 MHz", "test")), \
-                contextlib.redirect_stdout(stdout), \
-                contextlib.redirect_stderr(io.StringIO()):
+        with (
+            mock.patch.object(uprof_collect, "is_admin", return_value=True),
+            mock.patch.object(uprof_collect, "find_uprof", return_value="AMDuProfCLI"),
+            mock.patch.object(uprof_collect, "require_uprof", return_value="AMDuProfCLI"),
+            mock.patch.object(uprof_collect, "ibs_unavailable_reason", return_value="test"),
+            mock.patch.object(uprof_collect, "_run_cli", side_effect=fake_run_cli),
+            mock.patch.object(
+                uprof_collect, "_core_frequency", return_value=(4_700_000_000, "4700 MHz", "test")
+            ),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             uprof_collect.collect(options)
         self.stdout = stdout.getvalue()
-        session = next(line.split("=", 1)[1] for line in self.stdout.splitlines()
-                       if line.startswith("SESSION="))
+        session = next(
+            line.split("=", 1)[1]
+            for line in self.stdout.splitlines()
+            if line.startswith("SESSION=")
+        )
         return outputs, Path(session)
 
     def assert_victim_intact(self):

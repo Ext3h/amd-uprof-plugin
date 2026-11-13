@@ -62,11 +62,15 @@ class Runner(Protocol):
     def run(self, spec: TrialSpec) -> TrialResult: ...
 
 
-def trial_env(spec: TrialSpec, drop_prefixes: tuple[str, ...] = (),
-              drop: tuple[str, ...] = ()) -> dict[str, str]:
+def trial_env(
+    spec: TrialSpec, drop_prefixes: tuple[str, ...] = (), drop: tuple[str, ...] = ()
+) -> dict[str, str]:
     """The host environment minus the named variables, temp in the trial folder, PATH prefixed."""
-    env = {key: value for key, value in os.environ.items()
-           if key not in drop and not key.startswith(drop_prefixes)}
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in drop and not key.startswith(drop_prefixes)
+    }
     temp = spec.cwd / "_temp"
     for key in ("TEMP", "TMP", "TMPDIR"):
         env[key] = str(temp)
@@ -75,22 +79,31 @@ def trial_env(spec: TrialSpec, drop_prefixes: tuple[str, ...] = (),
     return env
 
 
-def run_process(command: list[str], cwd: Path, env: dict[str, str], stdout: Path,
-                stderr: Path, timeout_s: int) -> tuple[int | str, float]:
+def run_process(
+    command: list[str], cwd: Path, env: dict[str, str], stdout: Path, stderr: Path, timeout_s: int
+) -> tuple[int | str, float]:
     """Run command with no stdin; kill only its own process tree on timeout."""
     started = time.monotonic()
     options: dict[str, object] = {}
     if os.name != "nt":
         options["start_new_session"] = True
     with open(stdout, "wb") as out, open(stderr, "wb") as err:
-        process = subprocess.Popen(command, cwd=str(cwd), env=env, stdout=out, stderr=err,
-                                   stdin=subprocess.DEVNULL, **options)
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdout=out,
+            stderr=err,
+            stdin=subprocess.DEVNULL,
+            **options,
+        )
         try:
             status: int | str = process.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
-                               capture_output=True)
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True
+                )
             else:
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait()

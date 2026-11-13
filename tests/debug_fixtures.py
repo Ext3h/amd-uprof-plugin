@@ -42,10 +42,16 @@ ELF_SHARED_BODY = 0x13EE
 
 def tool_skip() -> str | None:
     """A skip reason naming the first missing LLVM tool, or None."""
-    missing = [name for name, path in (("llvm-symbolizer", SYMBOLIZER),
-                                       ("llvm-readobj", READOBJ),
-                                       ("llvm-objdump", OBJDUMP),
-                                       ("llvm-pdbutil", PDBUTIL)) if not path]
+    missing = [
+        name
+        for name, path in (
+            ("llvm-symbolizer", SYMBOLIZER),
+            ("llvm-readobj", READOBJ),
+            ("llvm-objdump", OBJDUMP),
+            ("llvm-pdbutil", PDBUTIL),
+        )
+        if not path
+    ]
     return ("missing " + ", ".join(missing) + "; install LLVM") if missing else None
 
 
@@ -57,12 +63,18 @@ def llvm_version_skip(symbolizer=None) -> str | None:
 
 @functools.lru_cache(maxsize=None)
 def _zlib_skip(symbolizer: str) -> str | None:
-    completed = run(symbolizer, f"--obj={ELF / 'fixture_compressed'}", "--output-style=JSON",
-                    input_text=f"0x{ELF_COMPRESSED_HELPER:X}\n")
+    completed = run(
+        symbolizer,
+        f"--obj={ELF / 'fixture_compressed'}",
+        "--output-style=JSON",
+        input_text=f"0x{ELF_COMPRESSED_HELPER:X}\n",
+    )
     if "LLVM_ENABLE_ZLIB" not in (completed.stderr or ""):
         return None
-    return (f"{symbolizer} was built without zlib and cannot read compressed DWARF; "
-            "install an LLVM built with zlib, such as the official LLVM 23.1.4 release the CI jobs install")
+    return (
+        f"{symbolizer} was built without zlib and cannot read compressed DWARF; "
+        "install an LLVM built with zlib, such as the official LLVM 23.1.4 release the CI jobs install"
+    )
 
 
 def zlib_skip(symbolizer=None) -> str | None:
@@ -92,31 +104,45 @@ def context_instructions(context: dict) -> list[tuple[dict, dict]]:
 
 def context_frame(context: dict, run: dict) -> tuple:
     """(function, file, line) of a run: its own value where given, else the context's."""
-    return (run.get("function", context.get("function")),
-            run.get("file", context.get("file")), run["line"])
+    return (
+        run.get("function", context.get("function")),
+        run.get("file", context.get("file")),
+        run["line"],
+    )
 
 
 def run(tool, *args, input_text: str | None = None) -> subprocess.CompletedProcess:
     command = [os.fspath(tool), *[os.fspath(arg) for arg in args]]
-    return subprocess.run(command, input=input_text, capture_output=True,
-                          text=True, encoding="utf-8", errors="replace")
+    return subprocess.run(
+        command,
+        input=input_text,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
-def symbolizer_records(image, addresses, pdb=None, debug_dirs=(), fallback=(),
-                       ) -> list[dict]:
+def symbolizer_records(
+    image,
+    addresses,
+    pdb=None,
+    debug_dirs=(),
+    fallback=(),
+) -> list[dict]:
     """Raw llvm-symbolizer JSON records, one per address, in input order."""
     command = [f"--obj={image}"]
     if pdb:
         command.append(f"--pdb={pdb}")
     command += [f"--debug-file-directory={path}" for path in debug_dirs]
     command += [f"--fallback-debug-path={path}" for path in fallback]
-    command += ["--relative-address", "--functions=linkage", "--inlines",
-                "--output-style=JSON"]
+    command += ["--relative-address", "--functions=linkage", "--inlines", "--output-style=JSON"]
     text = "\n".join(f"0x{address:X}" for address in addresses) + "\n"
     completed = run(SYMBOLIZER, *command, input_text=text)
     if completed.returncode != 0:
-        raise AssertionError(f"llvm-symbolizer exited {completed.returncode}: "
-                             f"{completed.stderr.strip()}")
+        raise AssertionError(
+            f"llvm-symbolizer exited {completed.returncode}: {completed.stderr.strip()}"
+        )
     return [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
 
 
@@ -139,18 +165,22 @@ def production(exe, addresses, **kwargs):
     stream = io.StringIO()
     with tempfile.TemporaryDirectory(prefix="uprof-debug-") as root:
         rva_file = Path(root) / "rvas.txt"
-        rva_file.write_text("\n".join(f"0x{address:X}" for address in addresses) + "\n",
-                            encoding="utf-8")
-        module = uprof_symbols.symbolize_module(str(exe), str(rva_file), root,
-                                                stream=stream, **kwargs)
+        rva_file.write_text(
+            "\n".join(f"0x{address:X}" for address in addresses) + "\n", encoding="utf-8"
+        )
+        module = uprof_symbols.symbolize_module(
+            str(exe), str(rva_file), root, stream=stream, **kwargs
+        )
         jsonl = Path(root) / "symbols.jsonl"
-        records = [json.loads(line) for line in
-                   jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
+        records = [
+            json.loads(line)
+            for line in jsonl.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
     return module, records, stream.getvalue()
 
 
-_SESSION_EVENTS = {"op": {"interval": 4_700_000}, "opInterval": 4_700_000,
-                   "opCycleCount": True}
+_SESSION_EVENTS = {"op": {"interval": 4_700_000}, "opInterval": 4_700_000, "opCycleCount": True}
 
 
 def write_session(root, module_path, addresses, function_name="") -> Path:
@@ -160,28 +190,33 @@ def write_session(root, module_path, addresses, function_name="") -> Path:
     session = Path(root) / "session"
     session.mkdir()
     meta = {
-        "translateCommand": "AMDuProfCLI.exe translate -i session --ascii "
-                            "ibsop-event-dump",
-        "collection": {"schedule": {"elapsed": 10_000},
-                       "events": {"ibsEvents": _SESSION_EVENTS},
-                       "target": {"systemWide": True}},
+        "translateCommand": "AMDuProfCLI.exe translate -i session --ascii ibsop-event-dump",
+        "collection": {
+            "schedule": {"elapsed": 10_000},
+            "events": {"ibsEvents": _SESSION_EVENTS},
+            "target": {"systemWide": True},
+        },
         "auxiliary": {"ibsOpSampling": True},
     }
     (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
     connection = duckdb.connect(str(session / "cpu.db"))
     try:
         connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
-        connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR, "
-                           "isSystemModule BOOLEAN)")
-        connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                           "name VARCHAR)")
-        connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
-                           "functionId UBIGINT, moduleRVA UBIGINT)")
+        connection.execute(
+            "CREATE TABLE Module (id UINTEGER, path VARCHAR, isSystemModule BOOLEAN)"
+        )
+        connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)")
+        connection.execute(
+            "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
+            "functionId UBIGINT, moduleRVA UBIGINT)"
+        )
         connection.execute("INSERT INTO Process VALUES (100, 'workload.exe')")
         connection.execute("INSERT INTO Module VALUES (1, ?, false)", [str(module_path)])
         connection.execute("INSERT INTO Function VALUES (10, 1, ?)", [function_name])
-        connection.executemany("INSERT INTO UnifiedSampleSeries VALUES (1, 10, ?)",
-                               [(address,) for address in addresses])
+        connection.executemany(
+            "INSERT INTO UnifiedSampleSeries VALUES (1, 10, ?)",
+            [(address,) for address in addresses],
+        )
     finally:
         connection.close()
     with open(session / "IbsOpDump.csv", "w", encoding="utf-8", newline="") as handle:
@@ -202,12 +237,26 @@ def profile_with_stderr(session, by="line", extra=()) -> tuple[dict, str]:
     import sys
 
     completed = subprocess.run(
-        [sys.executable, str(TOOLS / "uprof.py"), "profile", "--session", str(session),
-         "--by", by, "--json", *extra],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+        [
+            sys.executable,
+            str(TOOLS / "uprof.py"),
+            "profile",
+            "--session",
+            str(session),
+            "--by",
+            by,
+            "--json",
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if completed.returncode != 0:
-        raise AssertionError(f"uprof.py profile exited {completed.returncode}: "
-                             f"{completed.stderr.strip()}")
+        raise AssertionError(
+            f"uprof.py profile exited {completed.returncode}: {completed.stderr.strip()}"
+        )
     return json.loads(completed.stdout), completed.stderr
 
 

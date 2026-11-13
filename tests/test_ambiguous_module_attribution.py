@@ -43,16 +43,30 @@ class AmbiguousModuleAttributionTest(unittest.TestCase):
             connection.execute("ALTER TABLE Module ADD COLUMN size UBIGINT")
             connection.execute("ALTER TABLE Module ADD COLUMN is32Bit BOOLEAN")
             for module_id, checksum in zip((1, 2), checksums):
-                connection.execute("UPDATE Module SET checksum = ?, size = 4096, is32Bit = false "
-                                   "WHERE id = ?", [checksum, module_id])
+                connection.execute(
+                    "UPDATE Module SET checksum = ?, size = 4096, is32Bit = false WHERE id = ?",
+                    [checksum, module_id],
+                )
         finally:
             connection.close()
         return path
 
     def rows(self, path, by="function"):
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile", "--session", str(path),
-             "--by", by, "--json"], capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(path),
+                "--by",
+                by,
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)["rows"]
 

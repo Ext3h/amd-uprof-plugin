@@ -11,7 +11,9 @@ transcripts with a script: they can be large.
   well-founded estimate of what the hotspot costs (the answer contract in `scenarios.md`).
 - **Scoped:** the user's own components may be drilled; components outside their control keep
   their full share in one summary line, neither understated nor listed in detail.
-- **Fast:** minimal wall time; no call that the outputs could have made unnecessary.
+- **Fast:** minimal wall time; no call that the outputs could have made unnecessary; as little
+  context as the minimal calls need. The limit in `scenarios.md` is a defect ceiling, not a
+  target: a run below it can still waste context.
 - **Honest about gaps:** no caller-path attribution into outside code (#187); no claim the
   capture cannot support.
 
@@ -25,6 +27,7 @@ transcripts with a script: they can be large.
 | Issue | for each (a)/(b) cause: the existing issue it maps to, or `new` |
 | Overclaims | any claim beyond the evidence: cost overstated, caller paths, wrong module ownership, a share compared across captures |
 | Cost | wall time and, if the runner reported them, tokens or price |
+| Context growth | the calls and outputs that grew the context beyond what the minimal calls need (extra calls, re-runs, oversized outputs), each with the same causes as extra calls |
 | Context | the run log's final-turn context and its verdict; a run passes only with outcome `correct` and context below the limit in `scenarios.md` (Pass criteria); `not measured` cannot pass |
 
 Count a call as extra when the scenario's answer was reachable without it. Reading SKILL.md and

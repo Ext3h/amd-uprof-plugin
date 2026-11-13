@@ -17,6 +17,7 @@ from unittest import mock
 
 import uprof_dump
 import uprof_native
+import uprof_shell
 from uprof_session import Sampler
 from uprof_util import UprofError
 
@@ -71,7 +72,8 @@ class TranslateFailureTest(unittest.TestCase):
         self.assertNotIn(">", message)
         script = Path(uprof_native.__file__).resolve().with_name("uprof.py")
         out_dir = f"{self.session}-recapture"
-        cycles = f'python "{script}" collect --out-dir "{out_dir}" --seconds 60'
+        cycles = (f"python {uprof_shell.quote(str(script))} collect --out-dir "
+                  f"{uprof_shell.quote(out_dir)} --seconds 60")
         self.assertIn(cycles, message)
         self.assertIn(cycles + " --event ibs-op", message)
 

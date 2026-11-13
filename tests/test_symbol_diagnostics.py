@@ -10,6 +10,7 @@ Run from the repository root: python tests/run_tests.py test_symbol_diagnostics
 """
 
 import io
+import os
 import re
 import sys
 import tempfile
@@ -80,6 +81,28 @@ class SymbolDiagnosticsTest(unittest.TestCase):
         self.assertEqual(text, "WARNING: no function range derived for 2 modules (m0.dll, "
                                "m1.dll): no .pdata\n")
 
+    def test_a_path_with_a_parenthesis_keeps_its_owner(self):
+        path = "C:\\Program Files (x86)\\vendor\\app.exe"
+        name = "c:/program files (x86)/vendor/app.exe"
+        warning = f"WARNING: no symbols resolved for {name} ({path}): {CAUSE}"
+        ranges = f"WARNING: no function range derived for {name} ({path}): no .pdata"
+        block = (f"MODULE: {name}: 3 addresses in {path}\nPDB=none\n"
+                 "FOLDS: skipped (no PDB; no public symbols to enumerate)\n"
+                 f"{warning}\n{ranges}\n")
+        self.assertEqual(digest(block, scope=path).splitlines(), [warning, ranges])
+        other = block.replace("vendor", "other")
+        text = digest(block + other)
+        self.assertIn("for 2 modules (app.exe, app.exe):", text)
+        self.assertNotIn("MODULE: ", text)
+
+    def test_a_quieted_module_still_drops_its_progress_lines(self):
+        output = io.StringIO()
+        stream = uprof_query._SymbolDiagnostics(output, None, quiet={"c:/bin/a.dll"})
+        stream.write(unresolved("a.dll") + unresolved("b.dll"))
+        stream.flush()
+        self.assertEqual(output.getvalue().splitlines(), [
+            f"WARNING: no symbols resolved for c:/bin/b.dll (C:\\bin\\b.dll): {CAUSE}"])
+
     def test_other_lines_pass_through_in_order(self):
         text = digest("CACHE: hit\n" + unresolved("a.dll") + "NOTE: done")
         self.assertEqual(text.splitlines(), [
@@ -90,6 +113,8 @@ class SymbolDiagnosticsTest(unittest.TestCase):
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
 @unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
+# Off Windows the PE stand-ins take the DWARF path and print no "no symbols resolved" cause.
+@unittest.skipIf(os.name != "nt", "host: the PE symbolization path runs on Windows only")
 class ProfileStderrTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -128,6 +153,7 @@ class ProfileStderrTest(unittest.TestCase):
                                         "--module", module)
         for other in ("amdvlk64.dll", "ntdll.dll", "node.exe", "vendorlib.dll"):
             self.assertNotIn(other, stderr)
+        self.assertIn(f"MODULE: {module}: ", stderr)
 
     def test_a_cache_hit_prints_what_the_cold_run_printed(self):
         _document, first = self.stderr("function", "--pid", "4242")

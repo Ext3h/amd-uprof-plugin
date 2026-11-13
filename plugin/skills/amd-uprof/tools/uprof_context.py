@@ -189,108 +189,6 @@ def _as_int(value: object) -> int | None:
         return None
 
 
-def parse_file_headers(text: str) -> BuildIdentity:
-    """Read ImageBase, TimeDateStamp, CheckSum, SizeOfImage and the optional-header magic.
-
-    SizeOfImage is the decimal number readobj prints when the header carries it; 0 means the
-    output did not include it.
-    """
-    image_base = checksum = magic = date_stamp = size_of_image = None
-    for line in text.splitlines():
-        if image_base is None and (match := _IMAGE_BASE.match(line)):
-            image_base = int(match.group(1), 16)
-        elif checksum is None and (match := _CHECKSUM.match(line)):
-            checksum = int(match.group(1), 16)
-        elif size_of_image is None and (match := _SIZE_OF_IMAGE.match(line)):
-            size_of_image = int(match.group(1), 10)
-        elif magic is None and (match := _MAGIC.match(line)):
-            magic = int(match.group(1), 16)
-        elif date_stamp is None and (match := _DATE_STAMP.match(line)):
-            date_stamp = int(match.group(1), 16)
-    missing = [name for name, value in (("ImageBase", image_base), ("TimeDateStamp", date_stamp),
-                                        ("CheckSum", checksum), ("Magic", magic))
-               if value is None]
-    if missing:
-        raise ContextOmission("metadata_incomplete",
-                              f"llvm-readobj file headers lack {', '.join(missing)}")
-    return BuildIdentity(image_base=image_base, time_date_stamp=date_stamp,
-                         checksum=checksum, magic=magic,
-                         size_of_image=size_of_image or 0)
-
-
-def parse_unwind_starts(text: str, image_base: int) -> list[tuple[int, str | None]]:
-    """Runtime-function starts from `llvm-readobj --unwind`, as module-relative addresses.
-
-    readobj prints StartAddress as a virtual address; chained fragments are starts too, and the
-    result is sorted and deduplicated. pdata rows carry no names.
-    """
-    starts = set()
-    for line in text.splitlines():
-        match = _UNWIND_START.match(line)
-        if match:
-            rva = int(match.group(1), 16) - image_base
-            if rva >= 0:
-                starts.add(rva)
-    return [(rva, None) for rva in sorted(starts)]
-
-
-def parse_exports(text: str) -> list[tuple[int, str | None]]:
-    """Named and ordinal exports from `llvm-readobj --coff-exports` as (RVA, name).
-
-    Exports are listed in ordinal order and the output keeps them that way; an export without a
-    name keeps its RVA with name None.
-    """
-    exports: list[tuple[int, str | None]] = []
-    in_export = False
-    rva: int | None = None
-    name: str | None = None
-    for line in text.splitlines():
-        if _EXPORT_BLOCK.match(line):
-            in_export, rva, name = True, None, None
-            continue
-        if not in_export:
-            continue
-        if re.match(r"^\s*\}\s*$", line):
-            if rva is not None:
-                exports.append((rva, name))
-            in_export = False
-        elif rva is None and (match := _EXPORT_RVA.match(line)):
-            rva = int(match.group(1), 16)
-        elif name is None and (match := _EXPORT_NAME.match(line)):
-            name = match.group(1) or None
-    return exports
-
-
-def parse_sections(text: str) -> list[PeSection]:
-    """Read section RVAs and sizes from `llvm-readobj --sections`."""
-    sections: list[PeSection] = []
-    current: dict[str, object] = {}
-    in_block = False
-    for line in text.splitlines():
-        if re.match(r"^\s*Section\s*\{\s*$", line):
-            current = {}
-            in_block = True
-            continue
-        if not in_block:
-            continue
-        if re.match(r"^\s*\}\s*$", line):
-            _append_section(sections, current)
-            current = {}
-            in_block = False
-            continue
-        if "Name:" in line and (match := _SECTION_NAME.match(line)):
-            current["name"] = match.group(1)
-        elif match := _SECTION_VIRTUAL_SIZE.match(line):
-            current["virtual_size"] = int(match.group(1), 16)
-        elif match := _SECTION_VIRTUAL_ADDRESS.match(line):
-            current["start"] = int(match.group(1), 16)
-        elif match := _SECTION_RAW_SIZE.match(line):
-            current["raw_size"] = int(match.group(1), 10)
-        elif "IMAGE_SCN_CNT_CODE" in line or "IMAGE_SCN_MEM_EXECUTE" in line:
-            current["code"] = True
-    return sections
-
-
 def _append_section(sections: list[PeSection], values: dict[str, object]) -> None:
     start = values.get("start")
     if start is None:
@@ -317,10 +215,8 @@ class ParsedImage:
 def parse_image(text: str) -> ParsedImage:
     """File headers, sections, .pdata starts and exports from one llvm-readobj text.
 
-    One scan replaces calling parse_file_headers, parse_sections, parse_unwind_starts and
-    parse_exports over the same text, whose unwind tables dominate it. Those four parsers stay
-    for callers that read a single piece. Raises the same metadata_incomplete omission as
-    parse_file_headers when the file headers are incomplete.
+    Raises ContextOmission("metadata_incomplete") when the file headers lack ImageBase,
+    TimeDateStamp, CheckSum or Magic.
     """
     image_base = checksum = magic = date_stamp = size_of_image = None
     sections: list[PeSection] = []
@@ -454,11 +350,6 @@ def select_anchor(hot_rva: int, sections: list[PeSection],
         "anchor_too_far",
         f"0x{hot_rva - section.start:X} bytes from the nearest safe start exceeds the "
         f"{cap}-byte cap")
-
-
-def is_instruction_start(decoded_starts: list[int], hot_rva: int) -> bool:
-    """Whether the decoded stream reaches hot_rva on an instruction boundary."""
-    return hot_rva in decoded_starts
 
 
 def verify_build(build: BuildIdentity, capture_checksum: object,
@@ -874,13 +765,6 @@ def decode_stream(module_path: str, build: BuildIdentity, anchor: Anchor, last_r
         raise ContextOmission("objdump_failed",
                               f"llvm-objdump produced no instructions for 0x{anchor.rva:X}")
     return decoded
-
-
-def decode_window(module_path: str, build: BuildIdentity, anchor: Anchor, hot_rva: int,
-                  section_end: int, objdump: str | None = None) -> list[DecodedInstruction]:
-    """Decode forward from anchor and return the window around hot_rva."""
-    return select_window(
-        decode_stream(module_path, build, anchor, hot_rva, section_end, objdump), hot_rva)
 
 
 # ------------------------------------------------------------------ JSON context block

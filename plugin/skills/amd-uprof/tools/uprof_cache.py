@@ -27,8 +27,15 @@ from typing import Any, Final, TextIO
 import uprof_db
 import uprof_symbols
 from uprof_context import find_readobj
-from uprof_native import (IS_WINDOWS, NtSymbolPath, default_symbol_servers, find_sibling,
-                          find_symbolizer, parse_nt_symbol_path, symbol_cache_dir)
+from uprof_native import (
+    IS_WINDOWS,
+    NtSymbolPath,
+    default_symbol_servers,
+    find_sibling,
+    find_symbolizer,
+    parse_nt_symbol_path,
+    symbol_cache_dir,
+)
 from uprof_util import contains, same_path
 
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
@@ -49,7 +56,11 @@ ATTACH_TIMEOUT_S: Final = 30.0
 MAX_BYTES: Final = 1024 * 1024 * 1024
 TTL_DAYS: Final = 7.0
 DISABLE = os.environ.get("UPROF_SESSION_CACHE_DISABLE", "").strip().lower() in (
-    "1", "true", "yes", "on")
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 _CREDENTIALS = re.compile(r"(?i)([a-z]+://)[^@\s/]+@")
 _CLEANED = False
 
@@ -104,8 +115,9 @@ def _dir_identity(path: Path) -> list[object]:
         return [str(path), None]
 
 
-def _files_in(directory: Path, names: set[str] | None = None,
-              limit: int = 4096) -> list[list[object]]:
+def _files_in(
+    directory: Path, names: set[str] | None = None, limit: int = 4096
+) -> list[list[object]]:
     """Identities of matching files in a directory; only matching names are stat'ed."""
     result: list[list[object]] = []
     try:
@@ -122,8 +134,9 @@ def _files_in(directory: Path, names: set[str] | None = None,
     return result
 
 
-def _dir_listing(path: Path, limit: int = 1024, holds_own: bool = False,
-                 own_name: str | None = None) -> list[object]:
+def _dir_listing(
+    path: Path, limit: int = 1024, holds_own: bool = False, own_name: str | None = None
+) -> list[object]:
     """A directory's mtime and child names; a newly staged PDB changes the names.
 
     Storing a result must not change the key it is stored under. holds_own marks a directory the
@@ -133,9 +146,12 @@ def _dir_listing(path: Path, limit: int = 1024, holds_own: bool = False,
     skip_own = holds_own or own_name is not None
     try:
         with os.scandir(path) as entries:
-            names = sorted(entry.name for entry in entries
-                           if not (holds_own and _OWN_ENTRY.fullmatch(entry.name))
-                           and os.path.normcase(entry.name) != own_name)[:limit]
+            names = sorted(
+                entry.name
+                for entry in entries
+                if not (holds_own and _OWN_ENTRY.fullmatch(entry.name))
+                and os.path.normcase(entry.name) != own_name
+            )[:limit]
         return [str(path), None if skip_own else Path(path).stat().st_mtime_ns, names]
     except OSError:
         return [str(path), None, []]
@@ -155,8 +171,9 @@ def _srv_caches(nt_symbol_path: NtSymbolPath) -> list[list[object]]:
     return result
 
 
-def _store_listings(root: Path, pdb_only: bool = False,
-                    children: bool = True) -> list[list[object]]:
+def _store_listings(
+    root: Path, pdb_only: bool = False, children: bool = True
+) -> list[list[object]]:
     """A symbol store's listing and its child directories' listings; staging a PDB changes them.
 
     pdb_only lists only <pdb> children, the folders a store-layout PDB lives in; children=False
@@ -171,14 +188,16 @@ def _store_listings(root: Path, pdb_only: bool = False,
         own_stat = None
     root_is_own = own_stat is not None and contains(own, root)
     # The root may not exist yet: creating it must not change the key either.
-    own_name = (os.path.normcase(own.name)
-                if not root_is_own and same_path(root, own.parent) else None)
+    own_name = (
+        os.path.normcase(own.name) if not root_is_own and same_path(root, own.parent) else None
+    )
     result = [_dir_listing(root, holds_own=root_is_own, own_name=own_name)]
     if not children:
         return result
     try:
-        children = sorted(child for child in root.iterdir()
-                          if not pdb_only or child.name.lower().endswith(".pdb"))
+        children = sorted(
+            child for child in root.iterdir() if not pdb_only or child.name.lower().endswith(".pdb")
+        )
         for child in children[:256]:
             if root_is_own and _OWN_ENTRY.fullmatch(child.name):
                 continue
@@ -200,9 +219,12 @@ def _same_dir(path: Path, other: os.stat_result | None) -> bool:
         return False
 
 
-def search_identity(symbol_path: list[str] | None, image_path: list[str] | None,
-                    module_names: list[str] = (),
-                    symbol_stores: list[Path] = ()) -> dict[str, object]:
+def search_identity(
+    symbol_path: list[str] | None,
+    image_path: list[str] | None,
+    module_names: list[str] = (),
+    symbol_stores: list[Path] = (),
+) -> dict[str, object]:
     """The symbol/image search state a hit must be validated against.
 
     Explicit files and directories are fingerprinted, a directory's own mtime catches files
@@ -215,23 +237,29 @@ def search_identity(symbol_path: list[str] | None, image_path: list[str] | None,
     paths = uprof_symbols.probe_paths(symbol_path, image_path)
     names = {Path(name).name.lower() for name in module_names if name}
     names |= {Path(name).stem.lower() + ".pdb" for name in module_names if name}
-    module_dirs = sorted({str(Path(name).parent) for name in module_names
-                          if name and Path(name).is_absolute()})
+    module_dirs = sorted(
+        {str(Path(name).parent) for name in module_names if name and Path(name).is_absolute()}
+    )
     return {
         "symbol_files": [_file_identity(path) for path in paths.symbol_files],
         "symbol_dirs": [_dir_identity(path) for path in paths.symbol_dirs],
-        "symbol_dir_files": [entry for path in paths.symbol_dirs
-                             for entry in _files_in(path, names)],
+        "symbol_dir_files": [
+            entry for path in paths.symbol_dirs for entry in _files_in(path, names)
+        ],
         "image_files": [_file_identity(path) for path in paths.image_files],
         "image_dirs": [_dir_identity(path) for path in paths.image_dirs],
-        "image_dir_files": [entry for path in paths.image_dirs
-                            for entry in _files_in(path, names)],
+        "image_dir_files": [entry for path in paths.image_dirs for entry in _files_in(path, names)],
         "module_dirs": [_dir_identity(Path(path)) for path in module_dirs],
         "srv_caches": _srv_caches(nt_symbol_path),
-        "symbol_stores": [entry for root in [*symbol_stores, *paths.symbol_dirs]
-                          for entry in _store_listings(Path(root), pdb_only=True)],
-        "nt_symbol_roots": {"caches": list(nt_symbol_path.caches),
-                            "dirs": list(nt_symbol_path.dirs)},
+        "symbol_stores": [
+            entry
+            for root in [*symbol_stores, *paths.symbol_dirs]
+            for entry in _store_listings(Path(root), pdb_only=True)
+        ],
+        "nt_symbol_roots": {
+            "caches": list(nt_symbol_path.caches),
+            "dirs": list(nt_symbol_path.dirs),
+        },
         "symbol_servers": list(default_symbol_servers()),
     }
 
@@ -256,20 +284,31 @@ def module_identity_rows(connection: object, names: list[str]) -> list[list[obje
     names = sorted(set(names))
     if not names:
         return []
-    columns = {str(row[0]).lower() for row in connection.execute(
-        "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'").fetchall()}
+    columns = {
+        str(row[0]).lower()
+        for row in connection.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'"
+        ).fetchall()
+    }
 
     def column(name: str, kind: str) -> str:
         return f"CAST({name} AS {kind})" if name.lower() in columns else "NULL"
 
-    select = ", ".join(("COALESCE(path, '')", column("size", "UBIGINT"),
-                        column("checksum", "UBIGINT"), column("is32Bit", "BOOLEAN"),
-                        column("foundDebugInfo", "BOOLEAN")))
+    select = ", ".join(
+        (
+            "COALESCE(path, '')",
+            column("size", "UBIGINT"),
+            column("checksum", "UBIGINT"),
+            column("is32Bit", "BOOLEAN"),
+            column("foundDebugInfo", "BOOLEAN"),
+        )
+    )
     placeholders = ", ".join("?" for _ in names)
     rows = connection.execute(
         f"SELECT DISTINCT {select} FROM Module "
         f"WHERE module_key(path) IN ({placeholders}) ORDER BY 1, 2, 3, 4, 5",
-        names).fetchall()
+        names,
+    ).fetchall()
     return [[str(row[0]), row[1], row[2], row[3], row[4]] for row in rows]
 
 
@@ -282,24 +321,32 @@ def ambiguous_modules(connection: object, names: list[str]) -> list[str]:
     names = sorted({name for name in names if name})
     if not names:
         return []
-    columns = {str(row[0]).lower() for row in connection.execute(
-        "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'").fetchall()}
+    columns = {
+        str(row[0]).lower()
+        for row in connection.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'"
+        ).fetchall()
+    }
     # The column set is lower-cased, so each probe is lower case too.
     keys = [name for name in ("size", "checksum", "is32bit") if name in columns]
-    distinct = (f"count(DISTINCT ({', '.join(keys)}))" if keys
-                else "count(DISTINCT path)")
+    distinct = f"count(DISTINCT ({', '.join(keys)}))" if keys else "count(DISTINCT path)"
     placeholders = ", ".join("?" for _ in names)
     rows = connection.execute(
         f"SELECT module_key(path) AS name, {distinct} AS versions FROM Module "
         f"WHERE module_key(path) IN ({placeholders}) GROUP BY 1 HAVING versions > 1",
-        names).fetchall()
+        names,
+    ).fetchall()
     return sorted(str(row[0]) for row in rows)
 
 
 def version_identity_verifiable(connection: object) -> bool:
     """Whether the capture records the columns needed to tell image versions apart."""
-    columns = {str(row[0]).lower() for row in connection.execute(
-        "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'").fetchall()}
+    columns = {
+        str(row[0]).lower()
+        for row in connection.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE lower(table_name) = 'module'"
+        ).fetchall()
+    }
     return all(name in columns for name in ("size", "checksum", "is32bit"))
 
 
@@ -308,11 +355,23 @@ def _digest(payload: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def symbol_key(rvas: list[tuple[str, str, str]], modules: list[list[object]],
-               disk: list[list[object]], tools: dict[str, list[object]],
-               search: dict[str, object]) -> str:
-    return _digest({"version": SCHEMA_VERSION, "rvas": rvas, "modules": modules,
-                    "disk": disk, "tools": tools, "search": search})
+def symbol_key(
+    rvas: list[tuple[str, str, str]],
+    modules: list[list[object]],
+    disk: list[list[object]],
+    tools: dict[str, list[object]],
+    search: dict[str, object],
+) -> str:
+    return _digest(
+        {
+            "version": SCHEMA_VERSION,
+            "rvas": rvas,
+            "modules": modules,
+            "disk": disk,
+            "tools": tools,
+            "search": search,
+        }
+    )
 
 
 def build_symbols_key(connection: object, args: Any) -> tuple[str, list[tuple[str, str, str]]]:
@@ -323,27 +382,49 @@ def build_symbols_key(connection: object, args: Any) -> tuple[str, list[tuple[st
     if names and not version_identity_verifiable(connection):
         raise ValueError(
             "the capture records no image size/checksum/bitness columns, so module version "
-            "identity cannot be verified and the session cache is disabled")
+            "identity cannot be verified and the session cache is disabled"
+        )
     ambiguous = ambiguous_modules(connection, names)
     if ambiguous:
         raise ValueError(
             "module name(s) map to more than one image version: "
             + ", ".join(ambiguous)
             + "; IBS dump samples carry the module name, not Module.id, so per-version "
-              "attribution is unavailable and the session cache is disabled")
+            "attribution is unavailable and the session cache is disabled"
+        )
     paths = [path for _name, path, _rva in rvas if path]
     key = symbol_key(
-        rvas, module_identity_rows(connection, names), _disk_identity(paths),
+        rvas,
+        module_identity_rows(connection, names),
+        _disk_identity(paths),
         tool_identities(),
-        search_identity(getattr(args, "symbol_path", None), getattr(args, "image_path", None),
-                        names, uprof_symbols.symbol_stores(getattr(args, "session", None))))
+        search_identity(
+            getattr(args, "symbol_path", None),
+            getattr(args, "image_path", None),
+            names,
+            uprof_symbols.symbol_stores(getattr(args, "session", None)),
+        ),
+    )
     return key, rvas
 
 
-def ranges_key(modules: list[list[str]], identities: list[list[object]],
-               disk: list[list[object]], readobj: list[object], symbols_key: str) -> str:
-    return _digest({"version": SCHEMA_VERSION, "modules": modules, "identities": identities,
-                    "disk": disk, "readobj": readobj, "symbols": symbols_key})
+def ranges_key(
+    modules: list[list[str]],
+    identities: list[list[object]],
+    disk: list[list[object]],
+    readobj: list[object],
+    symbols_key: str,
+) -> str:
+    return _digest(
+        {
+            "version": SCHEMA_VERSION,
+            "modules": modules,
+            "identities": identities,
+            "disk": disk,
+            "readobj": readobj,
+            "symbols": symbols_key,
+        }
+    )
 
 
 def build_ranges_key(connection: object, symbols_key: str) -> str:
@@ -352,8 +433,12 @@ def build_ranges_key(connection: object, symbols_key: str) -> str:
     modules = [[str(row[0]), str(row[1] or "")] for row in rows]
     paths = [path for _name, path in modules if path]
     return ranges_key(
-        modules, module_identity_rows(connection, [name for name, _path in modules]),
-        _disk_identity(paths), tool_identities()["readobj"], symbols_key)
+        modules,
+        module_identity_rows(connection, [name for name, _path in modules]),
+        _disk_identity(paths),
+        tool_identities()["readobj"],
+        symbols_key,
+    )
 
 
 def _remove_db(path: Path) -> None:
@@ -396,7 +481,8 @@ def cleanup_orphans(root: Path | None = None) -> None:
             connection = uprof_db.file_connection(path)
             try:
                 rows = connection.execute(
-                    "SELECT max(version), any_value(session_path) FROM cache_meta").fetchall()
+                    "SELECT max(version), any_value(session_path) FROM cache_meta"
+                ).fetchall()
                 version = rows[0][0] if rows else None
                 session_path = str(rows[0][1]) if rows and rows[0][1] else None
                 readable = True
@@ -434,8 +520,13 @@ def cleanup_orphans(root: Path | None = None) -> None:
 class SessionCache:
     """Attach, look up, store and expose the per-session artifact tables."""
 
-    def __init__(self, connection: object, session: Path, stream: TextIO = sys.stderr,
-                 timeout: float | None = None):
+    def __init__(
+        self,
+        connection: object,
+        session: Path,
+        stream: TextIO = sys.stderr,
+        timeout: float | None = None,
+    ):
         self.connection = connection
         self.session = Path(session).resolve()
         self.path = cache_db_path(session)
@@ -459,9 +550,13 @@ class SessionCache:
     @staticmethod
     def _lock_error(exc: BaseException) -> bool:
         text = str(exc).lower()
-        return ("lock" in text or "conflict" in text
-                or "being used by another process" in text
-                or "already open" in text or "already attached" in text)
+        return (
+            "lock" in text
+            or "conflict" in text
+            or "being used by another process" in text
+            or "already open" in text
+            or "already attached" in text
+        )
 
     def _discard_corrupt(self, exc: BaseException) -> bool:
         """A disposable cache file that cannot be attached is moved aside once."""
@@ -485,8 +580,7 @@ class SessionCache:
         retried = False
         while True:
             try:
-                self.connection.execute(
-                    f"ATTACH '{quoted}' AS {CACHE_ALIAS} ({mode})")
+                self.connection.execute(f"ATTACH '{quoted}' AS {CACHE_ALIAS} ({mode})")
                 self.mode = "ro" if read_only else "rw"
                 return True
             except Exception as exc:  # noqa: BLE001 - cache failure degrades, never the profile
@@ -499,8 +593,10 @@ class SessionCache:
                     self._warn("cache is busy; profiling without it")
                     return False
                 if _storage_version_error(exc):
-                    self._warn(f"written by another DuckDB storage version ({exc}); "
-                               "profiling without the cache")
+                    self._warn(
+                        f"written by another DuckDB storage version ({exc}); "
+                        "profiling without the cache"
+                    )
                     self.disabled = True
                     return False
                 if not retried and self._discard_corrupt(exc):
@@ -559,50 +655,56 @@ class SessionCache:
             self.connection.execute("BEGIN TRANSACTION")
             self.connection.execute(
                 f"CREATE TABLE IF NOT EXISTS {CACHE_ALIAS}.cache_meta("
-                "version INTEGER, session_path VARCHAR)")
+                "version INTEGER, session_path VARCHAR)"
+            )
             rows = self.connection.execute(
-                f"SELECT max(version) FROM {CACHE_ALIAS}.cache_meta").fetchall()
+                f"SELECT max(version) FROM {CACHE_ALIAS}.cache_meta"
+            ).fetchall()
             current = None if not rows else rows[0][0]
             if current is not None and int(current) > SCHEMA_VERSION:
                 # A newer plugin owns this file; rebuilding would wipe its cache.
                 self.connection.execute("ROLLBACK")
-                self._warn(f"schema version {current} is newer than {SCHEMA_VERSION}; "
-                           "profiling without the cache")
+                self._warn(
+                    f"schema version {current} is newer than {SCHEMA_VERSION}; "
+                    "profiling without the cache"
+                )
                 self.disabled = True
                 return False
             if current is not None and int(current) != SCHEMA_VERSION:
                 self._warn(f"schema version {current} -> {SCHEMA_VERSION}; rebuilding")
-                for table in ("symbols", "publics", "pdbs", "symbol_runs",
-                              "ranges", "range_runs"):
+                for table in ("symbols", "publics", "pdbs", "symbol_runs", "ranges", "range_runs"):
                     self.connection.execute(f"DROP TABLE IF EXISTS {CACHE_ALIAS}.{table}")
                 current = None
             tables = {
                 "symbol_runs": "run_key VARCHAR PRIMARY KEY, created_at VARCHAR, "
-                               "evidence VARCHAR, stderr VARCHAR, transient INTEGER, "
-                               "pdb_identity VARCHAR, probe_identity VARCHAR",
+                "evidence VARCHAR, stderr VARCHAR, transient INTEGER, "
+                "pdb_identity VARCHAR, probe_identity VARCHAR",
                 "symbols": "run_key VARCHAR, module_name VARCHAR, address VARCHAR, "
-                           "function VARCHAR, function_short VARCHAR, "
-                           "containing_function VARCHAR, file VARCHAR, line INTEGER",
+                "function VARCHAR, function_short VARCHAR, "
+                "containing_function VARCHAR, file VARCHAR, line INTEGER",
                 "publics": "run_key VARCHAR, module_name VARCHAR, rva VARCHAR, "
-                           "name_count INTEGER, names VARCHAR",
+                "name_count INTEGER, names VARCHAR",
                 "pdbs": "run_key VARCHAR, module_name VARCHAR, pdb VARCHAR",
                 "range_runs": "run_key VARCHAR PRIMARY KEY, created_at VARCHAR, "
-                              "info VARCHAR, stderr VARCHAR",
+                "info VARCHAR, stderr VARCHAR",
                 "ranges": "run_key VARCHAR, module_name VARCHAR, function_start VARCHAR, "
-                          "function_end VARCHAR, function_source VARCHAR, "
-                          "function_name VARCHAR",
+                "function_end VARCHAR, function_source VARCHAR, "
+                "function_name VARCHAR",
             }
             for name, columns in tables.items():
                 self.connection.execute(
-                    f"CREATE TABLE IF NOT EXISTS {CACHE_ALIAS}.{name}({columns})")
+                    f"CREATE TABLE IF NOT EXISTS {CACHE_ALIAS}.{name}({columns})"
+                )
             if current is None:
                 self.connection.execute(f"DELETE FROM {CACHE_ALIAS}.cache_meta")
                 self.connection.execute(
-                    f"INSERT INTO {CACHE_ALIAS}.cache_meta(version, session_path) "
-                    "VALUES (?, ?)", [SCHEMA_VERSION, str(self.session)])
+                    f"INSERT INTO {CACHE_ALIAS}.cache_meta(version, session_path) VALUES (?, ?)",
+                    [SCHEMA_VERSION, str(self.session)],
+                )
             else:
                 self.connection.execute(
-                    f"UPDATE {CACHE_ALIAS}.cache_meta SET session_path = ?", [str(self.session)])
+                    f"UPDATE {CACHE_ALIAS}.cache_meta SET session_path = ?", [str(self.session)]
+                )
             self.connection.execute("COMMIT")
             return True
         except Exception as exc:  # noqa: BLE001 - disable the cache, keep the profile
@@ -648,15 +750,16 @@ class SessionCache:
             return "exists" in identity and identity.get("exists") is False
         if identity.get("exists") is False:
             return False
-        return (stat.st_size == identity.get("size")
-                and stat.st_mtime_ns == identity.get("mtime_ns"))
+        return stat.st_size == identity.get("size") and stat.st_mtime_ns == identity.get("mtime_ns")
 
     def symbols_valid(self, run_key: str) -> bool:
         """A hit is served only when its resolved PDBs and probed paths still match."""
         if not self.ensure_read():
             return False
-        query = (f"SELECT transient, pdb_identity, probe_identity FROM {CACHE_ALIAS}.symbol_runs "
-                 "WHERE run_key = ?")
+        query = (
+            f"SELECT transient, pdb_identity, probe_identity FROM {CACHE_ALIAS}.symbol_runs "
+            "WHERE run_key = ?"
+        )
         try:
             rows = self.connection.execute(query, [run_key]).fetchall()
         except Exception as exc:  # noqa: BLE001
@@ -678,13 +781,14 @@ class SessionCache:
             probe_identities = json.loads(probe_json or "[]")
         except ValueError:
             return False
-        return (all(self._identity_matches(item) for item in pdb_identities)
-                and all(self._identity_matches(item) for item in probe_identities))
+        return all(self._identity_matches(item) for item in pdb_identities) and all(
+            self._identity_matches(item) for item in probe_identities
+        )
 
     def symbol_meta(self, run_key: str) -> tuple[dict[str, str], str]:
         rows = self.connection.execute(
-            f"SELECT evidence, stderr FROM {CACHE_ALIAS}.symbol_runs WHERE run_key = ?",
-            [run_key]).fetchall()
+            f"SELECT evidence, stderr FROM {CACHE_ALIAS}.symbol_runs WHERE run_key = ?", [run_key]
+        ).fetchall()
         if not rows:
             return {}, ""
         row = rows[0]
@@ -696,8 +800,8 @@ class SessionCache:
 
     def range_meta(self, run_key: str) -> tuple[dict[str, Any], str]:
         rows = self.connection.execute(
-            f"SELECT info, stderr FROM {CACHE_ALIAS}.range_runs WHERE run_key = ?",
-            [run_key]).fetchall()
+            f"SELECT info, stderr FROM {CACHE_ALIAS}.range_runs WHERE run_key = ?", [run_key]
+        ).fetchall()
         if not rows:
             return {}, ""
         row = rows[0]
@@ -724,10 +828,18 @@ class SessionCache:
             return True
         return False
 
-    def store_symbols(self, run_key: str, symbols: Path | None, publics: Path | None,
-                      pdbs: Path | None, evidence: dict[str, str], stderr: str,
-                      transient: bool, pdb_identity: list[dict[str, object]],
-                      probe_identity: list[dict[str, object]]) -> None:
+    def store_symbols(
+        self,
+        run_key: str,
+        symbols: Path | None,
+        publics: Path | None,
+        pdbs: Path | None,
+        evidence: dict[str, str],
+        stderr: str,
+        transient: bool,
+        pdb_identity: list[dict[str, object]],
+        probe_identity: list[dict[str, object]],
+    ) -> None:
         if not self.ensure_write() or self._over_cap():
             return
         created = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -736,29 +848,43 @@ class SessionCache:
             self.connection.execute("BEGIN TRANSACTION")
             for table in ("symbols", "publics", "pdbs"):
                 self.connection.execute(
-                    f"DELETE FROM {CACHE_ALIAS}.{table} WHERE run_key = ?", [run_key])
+                    f"DELETE FROM {CACHE_ALIAS}.{table} WHERE run_key = ?", [run_key]
+                )
             self.connection.execute(
                 f"INSERT OR REPLACE INTO {CACHE_ALIAS}.symbol_runs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [run_key, created, json.dumps(evidence, sort_keys=True), clean_stderr,
-                 int(bool(transient)), json.dumps(pdb_identity, sort_keys=True),
-                 json.dumps(probe_identity, sort_keys=True)])
+                [
+                    run_key,
+                    created,
+                    json.dumps(evidence, sort_keys=True),
+                    clean_stderr,
+                    int(bool(transient)),
+                    json.dumps(pdb_identity, sort_keys=True),
+                    json.dumps(probe_identity, sort_keys=True),
+                ],
+            )
             if symbols is not None:
                 self.connection.execute(
                     f"INSERT INTO {CACHE_ALIAS}.symbols "
                     "SELECT ?, module_name, address, function, function_short, "
                     "containing_function, CAST(file AS VARCHAR), "
-                    "CAST(line AS INTEGER) FROM read_parquet(?)", [run_key, str(symbols)])
+                    "CAST(line AS INTEGER) FROM read_parquet(?)",
+                    [run_key, str(symbols)],
+                )
             if publics is not None:
                 self.connection.execute(
                     f"INSERT INTO {CACHE_ALIAS}.publics "
                     "SELECT ?, module_name, CAST(rva AS VARCHAR), "
                     "CAST(name_count AS INTEGER), names FROM read_csv("
-                    "?, header = true, all_varchar = true)", [run_key, str(publics)])
+                    "?, header = true, all_varchar = true)",
+                    [run_key, str(publics)],
+                )
             if pdbs is not None:
                 self.connection.execute(
                     f"INSERT INTO {CACHE_ALIAS}.pdbs "
                     "SELECT ?, module_name, pdb FROM read_csv("
-                    "?, header = true, all_varchar = true)", [run_key, str(pdbs)])
+                    "?, header = true, all_varchar = true)",
+                    [run_key, str(pdbs)],
+                )
             self.connection.execute("COMMIT")
         except Exception as exc:  # noqa: BLE001 - a cache write cannot fail the profile
             with contextlib.suppress(Exception):
@@ -766,8 +892,9 @@ class SessionCache:
             self._warn(f"symbol store failed ({exc}); the next run will re-derive")
             self.disabled = True
 
-    def store_ranges(self, run_key: str, functions: Path | None, info: dict[str, Any],
-                     stderr: str) -> None:
+    def store_ranges(
+        self, run_key: str, functions: Path | None, info: dict[str, Any], stderr: str
+    ) -> None:
         if functions is None:
             return
         if not self.ensure_write() or self._over_cap():
@@ -777,18 +904,22 @@ class SessionCache:
         try:
             self.connection.execute("BEGIN TRANSACTION")
             self.connection.execute(
-                f"DELETE FROM {CACHE_ALIAS}.range_runs WHERE run_key = ?", [run_key])
+                f"DELETE FROM {CACHE_ALIAS}.range_runs WHERE run_key = ?", [run_key]
+            )
             self.connection.execute(
-                f"DELETE FROM {CACHE_ALIAS}.ranges WHERE run_key = ?", [run_key])
+                f"DELETE FROM {CACHE_ALIAS}.ranges WHERE run_key = ?", [run_key]
+            )
             self.connection.execute(
                 f"INSERT OR REPLACE INTO {CACHE_ALIAS}.range_runs VALUES (?, ?, ?, ?)",
-                [run_key, created, json.dumps(info, sort_keys=True), clean_stderr])
+                [run_key, created, json.dumps(info, sort_keys=True), clean_stderr],
+            )
             self.connection.execute(
                 f"INSERT INTO {CACHE_ALIAS}.ranges "
                 "SELECT ?, module_name, CAST(function_start AS VARCHAR), "
                 "CAST(function_end AS VARCHAR), function_source, function_name "
                 "FROM read_csv(?, header = true, all_varchar = true)",
-                [run_key, str(functions)])
+                [run_key, str(functions)],
+            )
             self.connection.execute("COMMIT")
         except Exception as exc:  # noqa: BLE001
             with contextlib.suppress(Exception):
@@ -801,18 +932,25 @@ class SessionCache:
     def create_symbol_views(self, run_key: str) -> None:
         self.connection.execute("SET VARIABLE uprof_cache_symbols_key = ?", [run_key])
         views = (
-            ("uprof_symbols_source", "symbols",
-             "SELECT module_name, address, function, function_short, containing_function, "
-             "file, line"),
-            ("uprof_aliases_source", "publics",
-             "SELECT module_name, rva, CAST(name_count AS INTEGER) AS name_count, names"),
+            (
+                "uprof_symbols_source",
+                "symbols",
+                "SELECT module_name, address, function, function_short, containing_function, "
+                "file, line",
+            ),
+            (
+                "uprof_aliases_source",
+                "publics",
+                "SELECT module_name, rva, CAST(name_count AS INTEGER) AS name_count, names",
+            ),
             ("uprof_pdbs_source", "pdbs", "SELECT module_name, pdb"),
         )
         for view, table, select in views:
             self.connection.execute(
                 f"CREATE OR REPLACE TEMP VIEW {view} AS {select} "
                 f"FROM {CACHE_ALIAS}.{table} "
-                "WHERE run_key = getvariable('uprof_cache_symbols_key')")
+                "WHERE run_key = getvariable('uprof_cache_symbols_key')"
+            )
 
     def create_range_view(self, run_key: str) -> None:
         self.connection.execute("SET VARIABLE uprof_cache_ranges_key = ?", [run_key])

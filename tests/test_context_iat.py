@@ -46,12 +46,13 @@ class ImportParseTest(unittest.TestCase):
 
         imports = uprof_context.parse_imports(IMPORTS, build)
 
-        self.assertEqual(imports[0x2088], uprof_context.ImportSlot(0x2088, "KERNEL32.dll",
-                                                                   "ExitProcess"))
-        self.assertEqual(imports[0x2090], uprof_context.ImportSlot(0x2090, "ntdll.dll",
-                                                                   "RtlSizeHeap"))
-        self.assertEqual(imports[0x2098], uprof_context.ImportSlot(0x2098, "ntdll.dll",
-                                                                   "NtClose"))
+        self.assertEqual(
+            imports[0x2088], uprof_context.ImportSlot(0x2088, "KERNEL32.dll", "ExitProcess")
+        )
+        self.assertEqual(
+            imports[0x2090], uprof_context.ImportSlot(0x2090, "ntdll.dll", "RtlSizeHeap")
+        )
+        self.assertEqual(imports[0x2098], uprof_context.ImportSlot(0x2098, "ntdll.dll", "NtClose"))
 
     def test_pe32_slots_are_four_bytes_apart(self):
         build = uprof_context.BuildIdentity(0x400000, 0, 0x100, 0x10B)
@@ -115,19 +116,22 @@ class IatCallTest(unittest.TestCase):
         instruction = uprof_context.DecodedInstruction(0x101B, "callq\t*%rax", 0x1021)
 
         self.assertIsNone(
-            uprof_context.resolve_iat_call(instruction, self.build.image_base, self.imports))
+            uprof_context.resolve_iat_call(instruction, self.build.image_base, self.imports)
+        )
 
     def test_a_call_that_is_not_an_iat_slot_stays_unresolved(self):
         instruction = uprof_context.DecodedInstruction(0x101B, "callq\t*0x1000(%rip)", 0x1021)
 
         self.assertIsNone(
-            uprof_context.resolve_iat_call(instruction, self.build.image_base, self.imports))
+            uprof_context.resolve_iat_call(instruction, self.build.image_base, self.imports)
+        )
 
     def test_a_non_call_instruction_is_not_resolved(self):
         instruction = uprof_context.DecodedInstruction(0x101B, "addl\t$3, %eax", 0x1021)
 
         self.assertIsNone(
-            uprof_context.resolve_iat_call(instruction, self.build.image_base, self.imports))
+            uprof_context.resolve_iat_call(instruction, self.build.image_base, self.imports)
+        )
 
 
 class LoadImportsTest(unittest.TestCase):
@@ -136,8 +140,7 @@ class LoadImportsTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(["llvm-readobj"], 0, IMPORTS, "")
 
         with mock.patch.object(uprof_context, "run", return_value=completed) as invoked:
-            imports = uprof_context.load_imports("fixture.exe", build,
-                                                 readobj="llvm-readobj.exe")
+            imports = uprof_context.load_imports("fixture.exe", build, readobj="llvm-readobj.exe")
 
         self.assertEqual(imports[0x2088].name, "ExitProcess")
         self.assertIn("--coff-imports", invoked.call_args[0][0])
@@ -148,8 +151,7 @@ class LoadImportsTest(unittest.TestCase):
 
         with mock.patch.object(uprof_context, "run", return_value=completed):
             with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.load_imports("fixture.exe", build,
-                                           readobj="llvm-readobj.exe")
+                uprof_context.load_imports("fixture.exe", build, readobj="llvm-readobj.exe")
 
         self.assertEqual(caught.exception.reason, "imports_failed")
 

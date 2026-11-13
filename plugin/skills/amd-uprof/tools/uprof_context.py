@@ -27,8 +27,15 @@ WINDOW_BEFORE: Final = 32
 WINDOW_AFTER: Final = 32
 CONTEXT_ROW_CAP: Final = 20
 CONTEXT_TOOL_TIMEOUT: Final = 5 * 60
-IBS_FIELDS: Final = ("DataSrc", "CacheHitSt", "IbsDcMiss", "IbsOpBrnMisp",
-                     "IbsDcLockedOp", "IbsOpMemWidth", "IbsTagToRetCtr")
+IBS_FIELDS: Final = (
+    "DataSrc",
+    "CacheHitSt",
+    "IbsDcMiss",
+    "IbsOpBrnMisp",
+    "IbsDcLockedOp",
+    "IbsOpMemWidth",
+    "IbsTagToRetCtr",
+)
 IBS_DISTRIBUTIONS: Final = frozenset({"DataSrc", "CacheHitSt", "IbsOpMemWidth"})
 IBS_FLAGS: Final = frozenset({"IbsDcMiss", "IbsOpBrnMisp", "IbsDcLockedOp"})
 IBS_LATENCY: Final = "IbsTagToRetCtr"
@@ -65,8 +72,9 @@ _CALL_MNEMONICS: Final = frozenset({"call", "callq", "calll", "callw"})
 class ContextOmission(Exception):
     """A context that cannot be produced safely; reason is a stable machine-readable code."""
 
-    def __init__(self, reason: str, detail: str | None = None,
-                 build: dict[str, object] | None = None) -> None:
+    def __init__(
+        self, reason: str, detail: str | None = None, build: dict[str, object] | None = None
+    ) -> None:
         super().__init__(detail or reason)
         self.reason = reason
         self.detail = detail
@@ -150,7 +158,7 @@ class VerifiedBuild:
 class Anchor:
     """The instruction boundary a window is decoded forward from."""
 
-    kind: str          # "export", "pdb_public", "pdata" or "section"
+    kind: str  # "export", "pdb_public", "pdata" or "section"
     rva: int
     name: str | None = None
 
@@ -194,8 +202,9 @@ def _append_section(sections: list[PeSection], values: dict[str, object]) -> Non
     if start is None:
         return
     size = values.get("virtual_size") or values.get("raw_size") or 0
-    sections.append(PeSection(start=int(start), size=int(size),
-                              code=bool(values.get("code", False))))
+    sections.append(
+        PeSection(start=int(start), size=int(size), code=bool(values.get("code", False)))
+    )
 
 
 @dataclass(frozen=True)
@@ -283,18 +292,37 @@ def parse_image(text: str) -> ParsedImage:
         elif bare.startswith("TimeDateStamp:"):
             if date_stamp is None and (match := _DATE_STAMP.match(line)):
                 date_stamp = int(match.group(1), 16)
-    missing = [name for name, value in (("ImageBase", image_base), ("TimeDateStamp", date_stamp),
-                                        ("CheckSum", checksum), ("Magic", magic))
-               if value is None]
+    missing = [
+        name
+        for name, value in (
+            ("ImageBase", image_base),
+            ("TimeDateStamp", date_stamp),
+            ("CheckSum", checksum),
+            ("Magic", magic),
+        )
+        if value is None
+    ]
     if missing:
-        raise ContextOmission("metadata_incomplete",
-                              f"llvm-readobj file headers lack {', '.join(missing)}")
-    unwind_starts = [(address - image_base, None) for address in sorted(unwind_addresses)
-                     if address - image_base >= 0]
+        raise ContextOmission(
+            "metadata_incomplete", f"llvm-readobj file headers lack {', '.join(missing)}"
+        )
+    unwind_starts = [
+        (address - image_base, None)
+        for address in sorted(unwind_addresses)
+        if address - image_base >= 0
+    ]
     return ParsedImage(
-        BuildIdentity(image_base=image_base, time_date_stamp=date_stamp, checksum=checksum,
-                      magic=magic, size_of_image=size_of_image or 0),
-        sections, unwind_starts, exports)
+        BuildIdentity(
+            image_base=image_base,
+            time_date_stamp=date_stamp,
+            checksum=checksum,
+            magic=magic,
+            size_of_image=size_of_image or 0,
+        ),
+        sections,
+        unwind_starts,
+        exports,
+    )
 
 
 def find_code_section(sections: list[PeSection], rva: int) -> PeSection | None:
@@ -309,19 +337,23 @@ def require_code_section(sections: list[PeSection], rva: int) -> PeSection:
     """The executable section containing rva; omits the context when there is none."""
     section = find_code_section(sections, rva)
     if section is None:
-        raise ContextOmission("no_code_section",
-                              f"0x{rva:X} is not inside an executable PE section")
+        raise ContextOmission(
+            "no_code_section", f"0x{rva:X} is not inside an executable PE section"
+        )
     return section
 
 
 _ANCHOR_PRIORITY: Final = {"export": 0, "pdb_public": 1, "pdata": 2}
 
 
-def select_anchor(hot_rva: int, sections: list[PeSection],
-                  public_starts: list[tuple[int, str | None]],
-                  pdata_starts: Sequence[tuple[int, str | None]] = (),
-                  export_starts: Sequence[tuple[int, str | None]] = (),
-                  cap: int = ANCHOR_DISTANCE_CAP) -> Anchor:
+def select_anchor(
+    hot_rva: int,
+    sections: list[PeSection],
+    public_starts: list[tuple[int, str | None]],
+    pdata_starts: Sequence[tuple[int, str | None]] = (),
+    export_starts: Sequence[tuple[int, str | None]] = (),
+    cap: int = ANCHOR_DISTANCE_CAP,
+) -> Anchor:
     """Nearest safe start at or below hot_rva inside its code section, else the section start.
 
     Safe starts come from the PE export table, PDB publics and .pdata runtime functions. The
@@ -330,8 +362,7 @@ def select_anchor(hot_rva: int, sections: list[PeSection],
     source that supplied the start.
     """
     section = require_code_section(sections, hot_rva)
-    sources = (("export", export_starts), ("pdb_public", public_starts),
-               ("pdata", pdata_starts))
+    sources = (("export", export_starts), ("pdb_public", public_starts), ("pdata", pdata_starts))
     by_rva: dict[int, tuple[int, str, str | None]] = {}
     for kind, starts in sources:
         for rva, name in starts:
@@ -349,11 +380,13 @@ def select_anchor(hot_rva: int, sections: list[PeSection],
     raise ContextOmission(
         "anchor_too_far",
         f"0x{hot_rva - section.start:X} bytes from the nearest safe start exceeds the "
-        f"{cap}-byte cap")
+        f"{cap}-byte cap",
+    )
 
 
-def verify_build(build: BuildIdentity, capture_checksum: object,
-                 capture_size: object = None) -> VerifiedBuild:
+def verify_build(
+    build: BuildIdentity, capture_checksum: object, capture_size: object = None
+) -> VerifiedBuild:
     """Compare the on-disk build with the checksum and SizeOfImage the capture recorded.
 
     A nonzero checksum pair that disagrees is evidence of a different build and omits. When a
@@ -368,21 +401,36 @@ def verify_build(build: BuildIdentity, capture_checksum: object,
             raise ContextOmission(
                 "build_mismatch",
                 f"capture checksum 0x{recorded:X} differs from the on-disk module checksum "
-                f"0x{build.checksum:X}")
-        return VerifiedBuild(pe=build, capture_checksum=recorded, identity="checksum",
-                             capture_size=recorded_size)
+                f"0x{build.checksum:X}",
+            )
+        return VerifiedBuild(
+            pe=build, capture_checksum=recorded, identity="checksum", capture_size=recorded_size
+        )
     warning = "no usable checksum or SizeOfImage evidence; build identity is unverified"
     if recorded_size and build.size_of_image:
         if recorded_size == build.size_of_image:
-            return VerifiedBuild(pe=build, capture_checksum=recorded or 0, identity="size",
-                                 capture_size=recorded_size)
-        warning = (f"capture SizeOfImage 0x{recorded_size:X} differs from the on-disk "
-                   f"SizeOfImage 0x{build.size_of_image:X}; build identity is unverified")
-    return VerifiedBuild(pe=build, capture_checksum=recorded or 0, verified=False,
-                         identity="unverified", capture_size=recorded_size, warning=warning)
+            return VerifiedBuild(
+                pe=build,
+                capture_checksum=recorded or 0,
+                identity="size",
+                capture_size=recorded_size,
+            )
+        warning = (
+            f"capture SizeOfImage 0x{recorded_size:X} differs from the on-disk "
+            f"SizeOfImage 0x{build.size_of_image:X}; build identity is unverified"
+        )
+    return VerifiedBuild(
+        pe=build,
+        capture_checksum=recorded or 0,
+        verified=False,
+        identity="unverified",
+        capture_size=recorded_size,
+        warning=warning,
+    )
 
 
 # ------------------------------------------------------------------ imports
+
 
 def parse_imports(text: str, build: BuildIdentity) -> dict[int, ImportSlot]:
     """Map IAT slot RVAs to imported names from `llvm-readobj --coff-imports` text.
@@ -427,12 +475,13 @@ def _import_name(token: str) -> str:
         return token
     ordinal = token[1:-1].strip()
     if ordinal.lower().startswith("ordinal "):
-        ordinal = ordinal[len("ordinal "):].strip()
+        ordinal = ordinal[len("ordinal ") :].strip()
     return f"#{ordinal}"
 
 
-def resolve_iat_call(instruction: DecodedInstruction, image_base: int,
-                     imports: dict[int, ImportSlot]) -> ImportSlot | None:
+def resolve_iat_call(
+    instruction: DecodedInstruction, image_base: int, imports: dict[int, ImportSlot]
+) -> ImportSlot | None:
     """The imported slot an indirect call targets, or None when the target is not a slot.
 
     A call through a register or to an address outside the import table stays unresolved; only
@@ -458,22 +507,27 @@ def find_readobj(symbolizer: object | None = None) -> str | None:
     return str(found) if found else None
 
 
-def load_imports(module_path: str, build: BuildIdentity,
-                 readobj: str | None = None) -> dict[int, ImportSlot]:
+def load_imports(
+    module_path: str, build: BuildIdentity, readobj: str | None = None
+) -> dict[int, ImportSlot]:
     """Read the module's IAT slots; a readobj failure is an omission, not an empty table."""
     tool = readobj or find_readobj()
     if not tool:
-        raise ContextOmission("readobj_missing",
-                              "llvm-readobj not found beside llvm-symbolizer or on PATH")
-    completed = run([tool, "--coff-imports", tool_operand(module_path)], timeout=CONTEXT_TOOL_TIMEOUT)
+        raise ContextOmission(
+            "readobj_missing", "llvm-readobj not found beside llvm-symbolizer or on PATH"
+        )
+    completed = run(
+        [tool, "--coff-imports", tool_operand(module_path)], timeout=CONTEXT_TOOL_TIMEOUT
+    )
     if completed.returncode != 0:
-        raise ContextOmission("imports_failed",
-                              tail_lines((completed.stdout or "") + "\n" +
-                                         (completed.stderr or "")))
+        raise ContextOmission(
+            "imports_failed", tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
+        )
     return parse_imports(completed.stdout or "", build)
 
 
 # ------------------------------------------------------------------ symbolizer names
+
 
 def parse_symbolizer_json(text: str) -> dict[int, SymbolInfo]:
     """Innermost executed frame per module-relative address from llvm-symbolizer JSON lines."""
@@ -535,17 +589,22 @@ def _empty_symbol_records(text: str) -> tuple[int, int]:
         records += 1
         frames = record.get("Symbol")
         if isinstance(frames, list) and all(
-                not (frame.get("FunctionName") or "").strip()
-                and not (frame.get("Line") or 0)
-                for frame in frames if isinstance(frame, dict)):
+            not (frame.get("FunctionName") or "").strip() and not (frame.get("Line") or 0)
+            for frame in frames
+            if isinstance(frame, dict)
+        ):
             empty += 1
     return records, empty
 
 
-def symbolize_rvas(module_path: str, rvas: list[int], pdb: str | Path | None = None,
-                   symbolizer: str | None = None,
-                   debug_dirs: Iterable[str] = (),
-                   fallback_paths: Iterable[str] = ()) -> dict[int, SymbolInfo]:
+def symbolize_rvas(
+    module_path: str,
+    rvas: list[int],
+    pdb: str | Path | None = None,
+    symbolizer: str | None = None,
+    debug_dirs: Iterable[str] = (),
+    fallback_paths: Iterable[str] = (),
+) -> dict[int, SymbolInfo]:
     """Symbolize module-relative addresses; a tool failure is an omission, not a guessed name.
 
     debug_dirs and fallback_paths are passed to llvm-symbolizer as --debug-file-directory and
@@ -562,8 +621,7 @@ def symbolize_rvas(module_path: str, rvas: list[int], pdb: str | Path | None = N
         command.append(f"--pdb={pdb}")
     command += [f"--debug-file-directory={directory}" for directory in debug_dirs]
     command += [f"--fallback-debug-path={directory}" for directory in fallback_paths]
-    command += ["--relative-address", "--functions=linkage", "--inlines",
-                "--output-style=JSON"]
+    command += ["--relative-address", "--functions=linkage", "--inlines", "--output-style=JSON"]
     input_text = "\n".join(f"0x{rva:X}" for rva in addresses) + "\n"
     completed = run(command, input_text=input_text, timeout=CONTEXT_TOOL_TIMEOUT)
     if completed.returncode != 0:
@@ -572,21 +630,26 @@ def symbolize_rvas(module_path: str, rvas: list[int], pdb: str | Path | None = N
         if not detail:
             detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
         message = f"llvm-symbolizer exited {completed.returncode}: {detail or 'no output'}"
-        print(f"WARNING: {module_path}: {message}; affected instructions carry no symbol",
-              file=sys.stderr)
+        print(
+            f"WARNING: {module_path}: {message}; affected instructions carry no symbol",
+            file=sys.stderr,
+        )
         raise ContextOmission("symbolizer_failed", message)
     symbols = parse_symbolizer_json(completed.stdout or "")
     records, empty_records = _empty_symbol_records(completed.stdout or "")
     if pdb and not symbols and records and empty_records == records:
         # A valid PDB for another build yields exit 0, no Error object and empty Symbol frames.
-        message = (f"llvm-symbolizer resolved no address ({records} empty Symbol entries); "
-                   f"the PDB {Path(pdb).name} is probably for another build")
+        message = (
+            f"llvm-symbolizer resolved no address ({records} empty Symbol entries); "
+            f"the PDB {Path(pdb).name} is probably for another build"
+        )
         print(f"WARNING: {module_path}: {message}", file=sys.stderr)
         raise ContextOmission("symbolizer_failed", message)
     return symbols
 
 
 # ------------------------------------------------------------------ IBS hardware labels
+
 
 def present_ibs_fields(columns: Iterable[str]) -> tuple[str, ...]:
     """The whitelisted IBS fields the dump carries, in a fixed order."""
@@ -604,11 +667,14 @@ def ibs_expression(field: str) -> list[str]:
     if field in IBS_FLAGS:
         return [f'count(*) FILTER (WHERE TRY_CAST("{field}" AS BIGINT) <> 0) AS "{field}"']
     if field == IBS_LATENCY:
-        clipped = (f'CASE WHEN {_IBS_TAG_INT} '
-                   f'THEN LEAST(TRY_CAST("{field}" AS BIGINT), {IBS_TAG_MAX}) END')
-        return [f'count(*) FILTER (WHERE {_IBS_TAG_INT}) AS "{field}_samples"',
-                f'sum({clipped}) AS "{field}_sum"',
-                f'max({clipped}) AS "{field}_max"']
+        clipped = (
+            f'CASE WHEN {_IBS_TAG_INT} THEN LEAST(TRY_CAST("{field}" AS BIGINT), {IBS_TAG_MAX}) END'
+        )
+        return [
+            f'count(*) FILTER (WHERE {_IBS_TAG_INT}) AS "{field}_samples"',
+            f'sum({clipped}) AS "{field}_sum"',
+            f'max({clipped}) AS "{field}_max"',
+        ]
     raise ValueError(f"not a whitelisted IBS field: {field}")
 
 
@@ -628,21 +694,25 @@ def ibs_summary(record: dict[str, object], fields: tuple[str, ...]) -> dict[str,
             counts = record.get(field)
             if isinstance(counts, dict) and counts:
                 summary[field] = {
-                    str(code): int(count) for code, count in
-                    sorted(counts.items(), key=lambda item: _code_key(str(item[0])))}
+                    str(code): int(count)
+                    for code, count in sorted(
+                        counts.items(), key=lambda item: _code_key(str(item[0]))
+                    )
+                }
         elif field in IBS_FLAGS:
             summary[field] = {"set": int(record.get(field) or 0), "of": samples}
         elif field == IBS_LATENCY:
             observed = int(record.get(f"{field}_samples") or 0)
             if observed:
-                summary[field] = {"samples": observed,
-                                  "sum": int(record.get(f"{field}_sum") or 0),
-                                  "max": int(record.get(f"{field}_max") or 0)}
+                summary[field] = {
+                    "samples": observed,
+                    "sum": int(record.get(f"{field}_sum") or 0),
+                    "max": int(record.get(f"{field}_max") or 0),
+                }
     return summary
 
 
-def ibs_rows(connection: object, module_name: str,
-             rvas: list[int]) -> dict[int, dict[str, object]]:
+def ibs_rows(connection: object, module_name: str, rvas: list[int]) -> dict[int, dict[str, object]]:
     """Aggregate the dump's IBS fields per requested RVA; empty when there is no IBS dump."""
     addresses = sorted({int(rva) for rva in rvas})
     if not addresses:
@@ -650,33 +720,40 @@ def ibs_rows(connection: object, module_name: str,
     dump = connection.execute("SELECT getvariable('uprof_ibs_dump')").fetchone()
     if not dump or not dump[0]:
         return {}
-    columns = {str(row[0]) for row in connection.execute(
-        "DESCRIBE SELECT * FROM read_csv(getvariable('uprof_ibs_dump'), "
-        "header = true, all_varchar = true)").fetchall()}
+    columns = {
+        str(row[0])
+        for row in connection.execute(
+            "DESCRIBE SELECT * FROM read_csv(getvariable('uprof_ibs_dump'), "
+            "header = true, all_varchar = true)"
+        ).fetchall()
+    }
     fields = present_ibs_fields(columns)
     if not fields:
         return {}
     expressions = [expression for field in fields for expression in ibs_expression(field)]
     # The rows counted here must be the ones v_scoped kept: same PID, image and time window.
-    sql = ('SELECT CAST(d."Offset" AS BIGINT) AS rva, count(*) AS samples, '
-           + ", ".join(expressions)
-           + ' FROM read_csv(getvariable(\'uprof_ibs_dump\'), header = true, all_varchar = true)'
-             ' AS d LEFT JOIN Process AS p ON p.id = TRY_CAST(d."PID" AS INTEGER)'
-             ' WHERE module_key(d."ModuleName") = CAST(? AS VARCHAR)'
-             ' AND TRY_CAST(d."Offset" AS BIGINT) IN (SELECT * FROM unnest(?))'
-             ' AND TRY_CAST(d."DeltaTick" AS BIGINT) >= getvariable(\'time_start\')'
-             ' AND TRY_CAST(d."DeltaTick" AS BIGINT) < getvariable(\'time_end\')'
-             ' AND (getvariable(\'uprof_pid\') = \'\''
-             '      OR TRY_CAST(d."PID" AS INTEGER)'
-             '         = CAST(getvariable(\'uprof_pid\') AS INTEGER))'
-             ' AND COALESCE(p.name, \'\') ILIKE getvariable(\'uprof_image\')'
-             ' GROUP BY rva')
+    sql = (
+        'SELECT CAST(d."Offset" AS BIGINT) AS rva, count(*) AS samples, '
+        + ", ".join(expressions)
+        + " FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)"
+        ' AS d LEFT JOIN Process AS p ON p.id = TRY_CAST(d."PID" AS INTEGER)'
+        ' WHERE module_key(d."ModuleName") = CAST(? AS VARCHAR)'
+        ' AND TRY_CAST(d."Offset" AS BIGINT) IN (SELECT * FROM unnest(?))'
+        " AND TRY_CAST(d.\"DeltaTick\" AS BIGINT) >= getvariable('time_start')"
+        " AND TRY_CAST(d.\"DeltaTick\" AS BIGINT) < getvariable('time_end')"
+        " AND (getvariable('uprof_pid') = ''"
+        '      OR TRY_CAST(d."PID" AS INTEGER)'
+        "         = CAST(getvariable('uprof_pid') AS INTEGER))"
+        " AND COALESCE(p.name, '') ILIKE getvariable('uprof_image')"
+        " GROUP BY rva"
+    )
     rows = connection.execute(sql, [module_name, addresses]).fetchall()
     names = [str(column[0]) for column in connection.description]
     return {int(row[0]): ibs_summary(dict(zip(names, row)), fields) for row in rows}
 
 
 # ------------------------------------------------------------------ disassembly window
+
 
 def find_objdump(symbolizer: object | None = None) -> str | None:
     """llvm-objdump beside llvm-symbolizer, else on PATH; None when unavailable."""
@@ -710,9 +787,12 @@ def parse_objdump(text: str, image_base: int) -> list[DecodedInstruction]:
     return decoded
 
 
-def select_window(decoded: list[DecodedInstruction], hot_rva: int,
-                  before: int = WINDOW_BEFORE, after: int = WINDOW_AFTER
-                  ) -> list[DecodedInstruction]:
+def select_window(
+    decoded: list[DecodedInstruction],
+    hot_rva: int,
+    before: int = WINDOW_BEFORE,
+    after: int = WINDOW_AFTER,
+) -> list[DecodedInstruction]:
     """The last <=before instructions and <=after instructions around hot_rva.
 
     A hot RVA that is not an instruction start in the decoded stream has no safe window; it is
@@ -720,10 +800,10 @@ def select_window(decoded: list[DecodedInstruction], hot_rva: int,
     """
     for index, instruction in enumerate(decoded):
         if instruction.rva == hot_rva:
-            return decoded[max(0, index - before):index + after + 1]
+            return decoded[max(0, index - before) : index + after + 1]
     raise ContextOmission(
-        "hot_rva_not_instruction_start",
-        f"0x{hot_rva:X} was not reached as an instruction boundary")
+        "hot_rva_not_instruction_start", f"0x{hot_rva:X} was not reached as an instruction boundary"
+    )
 
 
 def instruction_share(samples: int, total_samples: int) -> float | None:
@@ -733,8 +813,14 @@ def instruction_share(samples: int, total_samples: int) -> float | None:
     return samples / total_samples
 
 
-def decode_stream(module_path: str, build: BuildIdentity, anchor: Anchor, last_rva: int,
-                  section_end: int, objdump: str | None = None) -> list[DecodedInstruction]:
+def decode_stream(
+    module_path: str,
+    build: BuildIdentity,
+    anchor: Anchor,
+    last_rva: int,
+    section_end: int,
+    objdump: str | None = None,
+) -> list[DecodedInstruction]:
     """Decode forward from anchor far enough to window last_rva, clamped to the section end.
 
     The stop address leaves enough room for 32 instructions after last_rva plus one more, so the
@@ -742,32 +828,42 @@ def decode_stream(module_path: str, build: BuildIdentity, anchor: Anchor, last_r
     """
     tool = objdump or find_objdump()
     if not tool:
-        raise ContextOmission("objdump_missing",
-                              "llvm-objdump not found beside llvm-symbolizer or on PATH")
+        raise ContextOmission(
+            "objdump_missing", "llvm-objdump not found beside llvm-symbolizer or on PATH"
+        )
     start_vma = build.image_base + anchor.rva
     stop_rva = min(last_rva + (WINDOW_AFTER + 2) * 16, section_end)
     stop_vma = build.image_base + stop_rva
     if stop_vma <= start_vma:
         stop_vma = start_vma + 16
-    command = [tool, "-d", f"--start-address=0x{start_vma:X}",
-               f"--stop-address=0x{stop_vma:X}", "--no-show-raw-insn",
-               "--no-symbolize-operands", tool_operand(module_path)]
+    command = [
+        tool,
+        "-d",
+        f"--start-address=0x{start_vma:X}",
+        f"--stop-address=0x{stop_vma:X}",
+        "--no-show-raw-insn",
+        "--no-symbolize-operands",
+        tool_operand(module_path),
+    ]
     completed = run(command, timeout=CONTEXT_TOOL_TIMEOUT)
     if completed.returncode != 0:
         detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
         message = f"llvm-objdump exited {completed.returncode}: {detail or 'no output'}"
         if not (completed.stdout or "").strip():
             raise ContextOmission("objdump_failed", message)
-        print(f"WARNING: {module_path}: {message}; using the instructions it printed",
-              file=sys.stderr)
+        print(
+            f"WARNING: {module_path}: {message}; using the instructions it printed", file=sys.stderr
+        )
     decoded = parse_objdump(completed.stdout or "", build.image_base)
     if not decoded:
-        raise ContextOmission("objdump_failed",
-                              f"llvm-objdump produced no instructions for 0x{anchor.rva:X}")
+        raise ContextOmission(
+            "objdump_failed", f"llvm-objdump produced no instructions for 0x{anchor.rva:X}"
+        )
     return decoded
 
 
 # ------------------------------------------------------------------ JSON context block
+
 
 def _hex(value: int) -> str:
     return f"0x{value:X}"
@@ -792,11 +888,17 @@ def build_json(build: VerifiedBuild) -> dict[str, object]:
     return payload
 
 
-def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
-                  instructions: list[DecodedInstruction], samples: dict[int, int],
-                  total_samples: int, symbols: dict[int, SymbolInfo],
-                  imports: dict[int, ImportSlot],
-                  ibs: dict[int, dict[str, object]]) -> dict[str, object]:
+def build_context(
+    anchor: Anchor,
+    build: VerifiedBuild,
+    hot_rva: int,
+    instructions: list[DecodedInstruction],
+    samples: dict[int, int],
+    total_samples: int,
+    symbols: dict[int, SymbolInfo],
+    imports: dict[int, ImportSlot],
+    ibs: dict[int, dict[str, object]],
+) -> dict[str, object]:
     """The JSON block for one instruction row; instructions are ordered by RVA."""
     anchor_json: dict[str, object] = {"kind": anchor.kind, "rva": _hex(anchor.rva)}
     if anchor.name is not None:
@@ -812,12 +914,14 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
             "sample_share": instruction_share(count, total_samples),
         }
         symbol = symbols.get(instruction.rva)
-        frame = ((symbol.function, symbol.file, symbol.line) if symbol is not None
-                 else (None, None, None))
+        frame = (
+            (symbol.function, symbol.file, symbol.line)
+            if symbol is not None
+            else (None, None, None)
+        )
         slot = resolve_iat_call(instruction, build.image_base, imports)
         if slot is not None:
-            entry["import"] = {"dll": slot.dll, "name": slot.name,
-                               "slot_rva": _hex(slot.slot_rva)}
+            entry["import"] = {"dll": slot.dll, "name": slot.name, "slot_rva": _hex(slot.slot_rva)}
         ibs_labels = ibs.get(instruction.rva)
         if ibs_labels:
             entry["ibs"] = ibs_labels
@@ -866,79 +970,125 @@ def _source_runs(framed, context: dict[str, object]) -> list[dict[str, object]]:
 
 
 _CONTEXT_HELP_FIELDS: Final = {
-    "anchor": ("the instruction boundary decoding starts from: kind is export, pdb_public, "
-               "pdata or section; rva is module-relative; name is present when the source names "
-               "it; distance is the byte distance from the anchor to the row's rva"),
-    "build": ("identity of the disassembled file: verified is true only with matching checksum "
-              "or size evidence, false means unverified; identity is checksum, size or "
-              "unverified; image_base, time_date_stamp, checksum, capture_checksum, "
-              "size_of_image and capture_size are hex; size_of_image, capture_size and warning "
-              "are present when known"),
-    "function, file": ("llvm-symbolizer frame 0 shared by most instructions of the window; "
-                       "absent when no instruction has one"),
-    "runs": ("the static decoded stream in ascending rva, grouped into runs of consecutive "
-             "instructions with the same frame 0; each run has line and instructions, and "
-             "function or file only where the run's frame differs from the context; null means "
-             "the frame has none, and a run with function, file and line null has no frame"),
-    "runs[].instructions": ("each entry has rva, instruction (assembly), samples (raw count), "
-                            "sample_share (fraction) and optional import and ibs; instruction "
-                            "may include llvm-objdump's nearest-symbol <...> decoration, which "
-                            "is not the frame-0 symbol, so use the run's function for the real "
-                            "frame"),
-    "runs[].instructions[].import": ("the IAT target of a call through a slot: dll, name and "
-                                     "slot_rva; absent for register or non-IAT targets"),
-    "runs[].instructions[].ibs": ("IBS OP aggregates for the same PID, image and time window as the "
-                           "row's samples: DataSrc, CacheHitSt and IbsOpMemWidth are value "
-                           "histograms; IbsDcMiss, IbsOpBrnMisp and IbsDcLockedOp are nonzero "
-                           "counts as {set, of}; IbsTagToRetCtr is {samples, sum, max} over "
-                           "unsigned decimal integer cells, each clipped at 65535, the 16-bit "
-                           "field maximum, with NULL, negative, fractional and exponent cells "
-                           "excluded; values are AMD-encoded hardware fields (counts or "
-                           "histograms), not decoded meanings; fields the dump lacks are omitted"),
-    "omitted": ("an omitted context has omitted=true, reason, optional detail and, when the "
-                "module was examined, the same build object; see omission_reasons"),
+    "anchor": (
+        "the instruction boundary decoding starts from: kind is export, pdb_public, "
+        "pdata or section; rva is module-relative; name is present when the source names "
+        "it; distance is the byte distance from the anchor to the row's rva"
+    ),
+    "build": (
+        "identity of the disassembled file: verified is true only with matching checksum "
+        "or size evidence, false means unverified; identity is checksum, size or "
+        "unverified; image_base, time_date_stamp, checksum, capture_checksum, "
+        "size_of_image and capture_size are hex; size_of_image, capture_size and warning "
+        "are present when known"
+    ),
+    "function, file": (
+        "llvm-symbolizer frame 0 shared by most instructions of the window; "
+        "absent when no instruction has one"
+    ),
+    "runs": (
+        "the static decoded stream in ascending rva, grouped into runs of consecutive "
+        "instructions with the same frame 0; each run has line and instructions, and "
+        "function or file only where the run's frame differs from the context; null means "
+        "the frame has none, and a run with function, file and line null has no frame"
+    ),
+    "runs[].instructions": (
+        "each entry has rva, instruction (assembly), samples (raw count), "
+        "sample_share (fraction) and optional import and ibs; instruction "
+        "may include llvm-objdump's nearest-symbol <...> decoration, which "
+        "is not the frame-0 symbol, so use the run's function for the real "
+        "frame"
+    ),
+    "runs[].instructions[].import": (
+        "the IAT target of a call through a slot: dll, name and "
+        "slot_rva; absent for register or non-IAT targets"
+    ),
+    "runs[].instructions[].ibs": (
+        "IBS OP aggregates for the same PID, image and time window as the "
+        "row's samples: DataSrc, CacheHitSt and IbsOpMemWidth are value "
+        "histograms; IbsDcMiss, IbsOpBrnMisp and IbsDcLockedOp are nonzero "
+        "counts as {set, of}; IbsTagToRetCtr is {samples, sum, max} over "
+        "unsigned decimal integer cells, each clipped at 65535, the 16-bit "
+        "field maximum, with NULL, negative, fractional and exponent cells "
+        "excluded; values are AMD-encoded hardware fields (counts or "
+        "histograms), not decoded meanings; fields the dump lacks are omitted"
+    ),
+    "omitted": (
+        "an omitted context has omitted=true, reason, optional detail and, when the "
+        "module was examined, the same build object; see omission_reasons"
+    ),
 }
 _CONTEXT_HELP_OMISSIONS: Final = {
-    "module_missing": ("the capture records no module path, or the file is absent on this host; "
-                       "remedy: copy the module to the recorded path or capture on this host"),
-    "readobj_missing": ("llvm-readobj is unavailable; remedy: install LLVM so llvm-readobj sits "
-                        "beside llvm-symbolizer or on PATH"),
-    "readobj_failed": ("llvm-readobj failed to read the PE headers, sections, exports or unwind "
-                       "data; remedy: check the module file is readable and the LLVM version "
-                       "supports it"),
-    "metadata_incomplete": ("the PE headers lack ImageBase, TimeDateStamp, CheckSum or Magic "
-                            "(for example an ELF module); remedy: use a PE/COFF module, ELF "
-                            "modules are not supported for this block"),
-    "no_code_section": ("the row's rva is not inside an executable PE section; remedy: use the "
-                        "module/RVA row without a context unless the address is known code"),
-    "anchor_too_far": ("the nearest safe start is beyond the 1 MiB distance cap; remedy: read "
-                       "the module/RVA row without a context"),
-    "hot_rva_not_instruction_start": ("decoding from the anchor never reaches the row's rva on "
-                                      "an instruction boundary; remedy: use the module/RVA row; "
-                                      "do not snap the address by hand"),
-    "objdump_missing": ("llvm-objdump is unavailable; remedy: install LLVM so llvm-objdump sits "
-                        "beside llvm-symbolizer or on PATH"),
-    "objdump_failed": ("llvm-objdump failed or produced no instructions; remedy: check the module "
-                       "file and the LLVM installation; the table row remains valid"),
-    "symbolizer_missing": ("llvm-symbolizer is unavailable; remedy: install LLVM so "
-                           "llvm-symbolizer sits beside the other LLVM tools or on PATH"),
-    "symbolizer_failed": ("llvm-symbolizer exited nonzero or resolved no address and the detail "
-                          "names its exit status, JSON Error and any stderr; remedy: pass profile "
-                          "--symbol-path <file|dir> for a symbol or debug file or a search root, "
-                          "or --image-path <file|dir> when the module image is not at its "
-                          "recorded path; llvm-symbolizer ignores _NT_SYMBOL_PATH, so only an "
-                          "adjacent PDB, the recorded CodeView path or the skill's local srv* "
-                          "cache scan is searched"),
-    "imports_failed": ("llvm-readobj could not read the import table; remedy: check the module "
-                       "file is readable; the block is omitted rather than showing calls "
-                       "without IAT targets"),
-    "build_mismatch": ("a nonzero on-disk CheckSum differs from the capture's Module.checksum; "
-                       "remedy: symbolicate against the exact binary recorded in the capture"),
-    "context_failed": ("an LLVM tool timed out or a scoped query failed while building this "
-                       "context; remedy: retry, then check the LLVM tools and the artifact "
-                       "directory"),
-    "row_cap": ("this row is past the 20-row context cap; remedy: inspect it in a separate run "
-                "with a smaller --top"),
+    "module_missing": (
+        "the capture records no module path, or the file is absent on this host; "
+        "remedy: copy the module to the recorded path or capture on this host"
+    ),
+    "readobj_missing": (
+        "llvm-readobj is unavailable; remedy: install LLVM so llvm-readobj sits "
+        "beside llvm-symbolizer or on PATH"
+    ),
+    "readobj_failed": (
+        "llvm-readobj failed to read the PE headers, sections, exports or unwind "
+        "data; remedy: check the module file is readable and the LLVM version "
+        "supports it"
+    ),
+    "metadata_incomplete": (
+        "the PE headers lack ImageBase, TimeDateStamp, CheckSum or Magic "
+        "(for example an ELF module); remedy: use a PE/COFF module, ELF "
+        "modules are not supported for this block"
+    ),
+    "no_code_section": (
+        "the row's rva is not inside an executable PE section; remedy: use the "
+        "module/RVA row without a context unless the address is known code"
+    ),
+    "anchor_too_far": (
+        "the nearest safe start is beyond the 1 MiB distance cap; remedy: read "
+        "the module/RVA row without a context"
+    ),
+    "hot_rva_not_instruction_start": (
+        "decoding from the anchor never reaches the row's rva on "
+        "an instruction boundary; remedy: use the module/RVA row; "
+        "do not snap the address by hand"
+    ),
+    "objdump_missing": (
+        "llvm-objdump is unavailable; remedy: install LLVM so llvm-objdump sits "
+        "beside llvm-symbolizer or on PATH"
+    ),
+    "objdump_failed": (
+        "llvm-objdump failed or produced no instructions; remedy: check the module "
+        "file and the LLVM installation; the table row remains valid"
+    ),
+    "symbolizer_missing": (
+        "llvm-symbolizer is unavailable; remedy: install LLVM so "
+        "llvm-symbolizer sits beside the other LLVM tools or on PATH"
+    ),
+    "symbolizer_failed": (
+        "llvm-symbolizer exited nonzero or resolved no address and the detail "
+        "names its exit status, JSON Error and any stderr; remedy: pass profile "
+        "--symbol-path <file|dir> for a symbol or debug file or a search root, "
+        "or --image-path <file|dir> when the module image is not at its "
+        "recorded path; llvm-symbolizer ignores _NT_SYMBOL_PATH, so only an "
+        "adjacent PDB, the recorded CodeView path or the skill's local srv* "
+        "cache scan is searched"
+    ),
+    "imports_failed": (
+        "llvm-readobj could not read the import table; remedy: check the module "
+        "file is readable; the block is omitted rather than showing calls "
+        "without IAT targets"
+    ),
+    "build_mismatch": (
+        "a nonzero on-disk CheckSum differs from the capture's Module.checksum; "
+        "remedy: symbolicate against the exact binary recorded in the capture"
+    ),
+    "context_failed": (
+        "an LLVM tool timed out or a scoped query failed while building this "
+        "context; remedy: retry, then check the LLVM tools and the artifact "
+        "directory"
+    ),
+    "row_cap": (
+        "this row is past the 20-row context cap; remedy: inspect it in a separate run "
+        "with a smaller --top"
+    ),
 }
 
 
@@ -952,31 +1102,41 @@ def context_help(legend: dict[str, Any]) -> dict[str, Any]:
     columns = legend.get("columns") or {}
     if "attribution" in columns:
         fields["row.attribution"] = columns["attribution"]
-    read = ("The instruction entry whose rva equals the row's rva is the sampled instruction. "
-            "sample_share is the raw share for this capture mode: read its meaning from "
-            "legend.columns.sample_share and its fraction unit and denominator from "
-            "legend.share_unit, legend.share_scale and legend.denominators.sample_share; it is "
-            "not a per-op cost. The table orders rows by legend.impact.order_by, the mode's "
-            "primary measure: when that measure is sample_share the first row is the sample-hot "
-            "instruction, and when it is time_share the table is not a sample-hot ranking. "
-            "Imports and symbol frames identify the work kind.")
+    read = (
+        "The instruction entry whose rva equals the row's rva is the sampled instruction. "
+        "sample_share is the raw share for this capture mode: read its meaning from "
+        "legend.columns.sample_share and its fraction unit and denominator from "
+        "legend.share_unit, legend.share_scale and legend.denominators.sample_share; it is "
+        "not a per-op cost. The table orders rows by legend.impact.order_by, the mode's "
+        "primary measure: when that measure is sample_share the first row is the sample-hot "
+        "instruction, and when it is time_share the table is not a sample-hot ranking. "
+        "Imports and symbol frames identify the work kind."
+    )
     if "tag_to_retire_share" in columns:
-        read += (" The row's tag_to_retire_share and the instruction ibs.IbsTagToRetCtr values "
-                 "are total tag-to-retire dwell evidence, not per-op latency.")
+        read += (
+            " The row's tag_to_retire_share and the instruction ibs.IbsTagToRetCtr values "
+            "are total tag-to-retire dwell evidence, not per-op latency."
+        )
     return {
-        "scope": ("one context per instruction row; the 20-row cap counts row slots in the "
-                  "table's row order, so a row that omits for another reason still consumes a "
-                  "slot; rows past the cap carry omitted with reason row_cap; the <other "
-                  "instructions> row carries no context"),
-        "share": ("sample_share is a fraction; legend.share_unit, legend.share_scale and "
-                  "legend.denominators.sample_share define its unit and denominator, and "
-                  "legend.columns.sample_share gives its meaning for this capture mode"),
+        "scope": (
+            "one context per instruction row; the 20-row cap counts row slots in the "
+            "table's row order, so a row that omits for another reason still consumes a "
+            "slot; rows past the cap carry omitted with reason row_cap; the <other "
+            "instructions> row carries no context"
+        ),
+        "share": (
+            "sample_share is a fraction; legend.share_unit, legend.share_scale and "
+            "legend.denominators.sample_share define its unit and denominator, and "
+            "legend.columns.sample_share gives its meaning for this capture mode"
+        ),
         "fields": fields,
         "omission_reasons": dict(_CONTEXT_HELP_OMISSIONS),
         "read": read,
-        "next": ("Use legend.next to change scope or granularity. Rank by "
-                 "legend.impact.order_by; a high sample_share with a low time_share and no IBS "
-                 "tag-to-retire evidence is frequency, not an impact finding."),
+        "next": (
+            "Use legend.next to change scope or granularity. Rank by "
+            "legend.impact.order_by; a high sample_share with a low time_share and no IBS "
+            "tag-to-retire evidence is frequency, not an impact finding."
+        ),
     }
 
 
@@ -998,23 +1158,29 @@ class _ModuleState:
     ibs_attempted: set[int] = field(default_factory=set)
 
 
-def _module_row(connection: object, module_name: str, checksum_column: bool,
-                size_column: bool = False) -> tuple[object, object, object] | None:
+def _module_row(
+    connection: object, module_name: str, checksum_column: bool, size_column: bool = False
+) -> tuple[object, object, object] | None:
     """The capture's path, checksum and SizeOfImage, all read from the same Module row."""
     return connection.execute(
         f"SELECT path, {'checksum' if checksum_column else 'NULL'}, "
         f"{'size' if size_column else 'NULL'} "
         "FROM Module WHERE module_key(path) = CAST(? AS VARCHAR) "
         "ORDER BY path DESC NULLS LAST LIMIT 1",
-        [module_name]).fetchone()
+        [module_name],
+    ).fetchone()
 
 
 class _ContextBuilder:
-    def __init__(self, connection: object, total_samples: int,
-                 debug_dirs: Iterable[str] = (),
-                 fallback_paths: Iterable[str] = (),
-                 image_files: Iterable[str | Path] = (),
-                 image_dirs: Iterable[str | Path] = ()) -> None:
+    def __init__(
+        self,
+        connection: object,
+        total_samples: int,
+        debug_dirs: Iterable[str] = (),
+        fallback_paths: Iterable[str] = (),
+        image_files: Iterable[str | Path] = (),
+        image_dirs: Iterable[str | Path] = (),
+    ) -> None:
         self.connection = connection
         self.total_samples = total_samples
         self.debug_dirs = tuple(debug_dirs)
@@ -1038,38 +1204,50 @@ class _ContextBuilder:
         return state
 
     def _load_module(self, module_name: str) -> _ModuleState:
-        columns = {str(name).lower() for name, in self.connection.execute(
-            "SELECT lower(column_name) FROM duckdb_columns() "
-            "WHERE lower(table_name) = 'module'").fetchall()}
-        row = _module_row(self.connection, module_name, "checksum" in columns,
-                          "size" in columns)
+        columns = {
+            str(name).lower()
+            for (name,) in self.connection.execute(
+                "SELECT lower(column_name) FROM duckdb_columns() WHERE lower(table_name) = 'module'"
+            ).fetchall()
+        }
+        row = _module_row(self.connection, module_name, "checksum" in columns, "size" in columns)
         path = row[0] if row else None
         capture_checksum = row[1] if row else None
         capture_size = row[2] if row else None
         if not path:
             resolved = resolve_image(module_name, None, self.image_files, self.image_dirs)[0]
             if resolved is None:
-                raise ContextOmission("module_missing",
-                                      f"the capture records no path for {module_name!r}")
+                raise ContextOmission(
+                    "module_missing", f"the capture records no path for {module_name!r}"
+                )
             module_path = str(resolved)
         else:
             module_path = str(path)
-            resolved = resolve_image(module_name, module_path, self.image_files,
-                                     self.image_dirs)[0]
+            resolved = resolve_image(module_name, module_path, self.image_files, self.image_dirs)[0]
             if resolved is None:
                 raise ContextOmission("module_missing", f"{module_path} is not on this host")
             module_path = str(resolved)
         readobj = find_readobj()
         if not readobj:
-            raise ContextOmission("readobj_missing",
-                                  "llvm-readobj not found beside llvm-symbolizer or on PATH")
-        completed = run([readobj, "--file-headers", "--sections", "--unwind",
-                         "--coff-exports", tool_operand(module_path)],
-                        timeout=CONTEXT_TOOL_TIMEOUT)
+            raise ContextOmission(
+                "readobj_missing", "llvm-readobj not found beside llvm-symbolizer or on PATH"
+            )
+        completed = run(
+            [
+                readobj,
+                "--file-headers",
+                "--sections",
+                "--unwind",
+                "--coff-exports",
+                tool_operand(module_path),
+            ],
+            timeout=CONTEXT_TOOL_TIMEOUT,
+        )
         if completed.returncode != 0:
-            raise ContextOmission("readobj_failed",
-                                  tail_lines((completed.stdout or "") + "\n" +
-                                             (completed.stderr or "")))
+            raise ContextOmission(
+                "readobj_failed",
+                tail_lines((completed.stdout or "") + "\n" + (completed.stderr or "")),
+            )
         text = completed.stdout or ""
         image = parse_image(text)
         build = image.build
@@ -1079,9 +1257,16 @@ class _ContextBuilder:
         except ContextOmission as exc:
             # The mismatch detail is the evidence; attach the same build shape the emitted
             # block would carry so the omitted row is not silent about the build.
-            exc.build = build_json(VerifiedBuild(
-                pe=build, capture_checksum=_as_int(capture_checksum) or 0, verified=False,
-                identity="unverified", capture_size=_as_int(capture_size), warning=exc.detail))
+            exc.build = build_json(
+                VerifiedBuild(
+                    pe=build,
+                    capture_checksum=_as_int(capture_checksum) or 0,
+                    verified=False,
+                    identity="unverified",
+                    capture_size=_as_int(capture_size),
+                    warning=exc.detail,
+                )
+            )
             raise
         try:
             imports = load_imports(module_path, build, readobj)
@@ -1091,15 +1276,26 @@ class _ContextBuilder:
             exc.build = build_json(verified)
             raise
         public_starts = [
-            (int(rva), names) for rva, names in self.connection.execute(
-                "SELECT rva, names FROM v_public_starts "
-                "WHERE module_name = CAST(? AS VARCHAR)", [module_name]).fetchall()]
+            (int(rva), names)
+            for rva, names in self.connection.execute(
+                "SELECT rva, names FROM v_public_starts WHERE module_name = CAST(? AS VARCHAR)",
+                [module_name],
+            ).fetchall()
+        ]
         pdb_row = self.connection.execute(
-            "SELECT pdb FROM v_pdbs WHERE module_name = CAST(? AS VARCHAR)",
-            [module_name]).fetchone()
+            "SELECT pdb FROM v_pdbs WHERE module_name = CAST(? AS VARCHAR)", [module_name]
+        ).fetchone()
         pdb = pdb_row[0] if pdb_row else None
-        return _ModuleState(module_path, verified, sections, imports, public_starts,
-                            image.unwind_starts, image.exports, str(pdb) if pdb else None)
+        return _ModuleState(
+            module_path,
+            verified,
+            sections,
+            imports,
+            public_starts,
+            image.unwind_starts,
+            image.exports,
+            str(pdb) if pdb else None,
+        )
 
     def _samples(self, module_name: str, rvas: list[int]) -> dict[int, int]:
         if not rvas:
@@ -1108,20 +1304,28 @@ class _ContextBuilder:
             "SELECT rva, CAST(sum(samples) AS BIGINT) FROM v_scoped "
             "WHERE module_name = CAST(? AS VARCHAR) "
             "AND rva IN (SELECT * FROM unnest(?)) GROUP BY rva",
-            [module_name, sorted({int(rva) for rva in rvas})]).fetchall()
+            [module_name, sorted({int(rva) for rva in rvas})],
+        ).fetchall()
         return {int(rva): int(count or 0) for rva, count in rows}
 
     def _symbols(self, state: _ModuleState, rvas: list[int]) -> dict[int, SymbolInfo]:
         missing = [rva for rva in rvas if rva not in state.symbol_attempted]
         if missing:
             state.symbol_attempted.update(missing)
-            state.symbols.update(symbolize_rvas(state.path, missing, pdb=state.pdb,
-                                                debug_dirs=self.debug_dirs,
-                                                fallback_paths=self.fallback_paths))
+            state.symbols.update(
+                symbolize_rvas(
+                    state.path,
+                    missing,
+                    pdb=state.pdb,
+                    debug_dirs=self.debug_dirs,
+                    fallback_paths=self.fallback_paths,
+                )
+            )
         return state.symbols
 
-    def _ibs(self, state: _ModuleState, module_name: str,
-             rvas: list[int]) -> dict[int, dict[str, object]]:
+    def _ibs(
+        self, state: _ModuleState, module_name: str, rvas: list[int]
+    ) -> dict[int, dict[str, object]]:
         missing = [rva for rva in rvas if rva not in state.ibs_attempted]
         if missing:
             state.ibs_attempted.update(missing)
@@ -1129,9 +1333,12 @@ class _ContextBuilder:
         return state.ibs
 
 
-def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | None],
-                           module_name: str,
-                           items: list[tuple[int, int, Anchor, int]]) -> None:
+def _build_module_contexts(
+    builder: _ContextBuilder,
+    contexts: list[object | None],
+    module_name: str,
+    items: list[tuple[int, int, Anchor, int]],
+) -> None:
     """Decode once per anchor and annotate every row of one module in batches.
 
     items holds (row index, hot RVA, anchor, section end) for rows that already selected an
@@ -1152,8 +1359,9 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
                 contexts[index] = exc.as_json()
             continue
         except UprofError as exc:
-            omission = ContextOmission("context_failed", str(exc),
-                                       build=build_json(state.build)).as_json()
+            omission = ContextOmission(
+                "context_failed", str(exc), build=build_json(state.build)
+            ).as_json()
             for index, _ in members:
                 contexts[index] = omission
             continue
@@ -1165,8 +1373,7 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
                 contexts[index] = exc.as_json()
     if not windows:
         return
-    rvas = sorted({instruction.rva for _, _, window in windows.values()
-                   for instruction in window})
+    rvas = sorted({instruction.rva for _, _, window in windows.values() for instruction in window})
     try:
         samples = builder._samples(module_name, rvas)
         symbols = builder._symbols(state, rvas)
@@ -1179,24 +1386,36 @@ def _build_module_contexts(builder: _ContextBuilder, contexts: list[object | Non
             contexts[index] = exc.as_json()
         return
     except UprofError as exc:
-        omission = ContextOmission("context_failed", str(exc),
-                                   build=build_json(state.build)).as_json()
+        omission = ContextOmission(
+            "context_failed", str(exc), build=build_json(state.build)
+        ).as_json()
         for index in windows:
             contexts[index] = omission
         return
     for index, (hot_rva, anchor, window) in windows.items():
         contexts[index] = build_context(
-            anchor, state.build, hot_rva, window, samples, builder.total_samples,
-            symbols, state.imports, ibs)
+            anchor,
+            state.build,
+            hot_rva,
+            window,
+            samples,
+            builder.total_samples,
+            symbols,
+            state.imports,
+            ibs,
+        )
 
 
-def instruction_contexts(connection: object, columns: Sequence[str],
-                         rows: Sequence[Sequence[object]],
-                         cap: int = CONTEXT_ROW_CAP,
-                         debug_dirs: Iterable[str] = (),
-                         fallback_paths: Iterable[str] = (),
-                         image_files: Iterable[str | Path] = (),
-                         image_dirs: Iterable[str | Path] = ()) -> list[object | None]:
+def instruction_contexts(
+    connection: object,
+    columns: Sequence[str],
+    rows: Sequence[Sequence[object]],
+    cap: int = CONTEXT_ROW_CAP,
+    debug_dirs: Iterable[str] = (),
+    fallback_paths: Iterable[str] = (),
+    image_files: Iterable[str | Path] = (),
+    image_dirs: Iterable[str | Path] = (),
+) -> list[object | None]:
     """One context (or omission) per instruction row, in row order.
 
     Rows without a module and RVA (the aggregate row) carry no context. Rows past cap carry
@@ -1209,9 +1428,14 @@ def instruction_contexts(connection: object, columns: Sequence[str],
         return [None] * len(rows)
     total_rows = connection.execute("SELECT total_samples FROM v_scope_totals").fetchall()
     total_samples = int(total_rows[0][0] or 0) if total_rows else 0
-    builder = _ContextBuilder(connection, total_samples, debug_dirs=debug_dirs,
-                              fallback_paths=fallback_paths, image_files=image_files,
-                              image_dirs=image_dirs)
+    builder = _ContextBuilder(
+        connection,
+        total_samples,
+        debug_dirs=debug_dirs,
+        fallback_paths=fallback_paths,
+        image_files=image_files,
+        image_dirs=image_dirs,
+    )
     module_at, rva_at = indices["module"], indices["rva"]
     contexts: list[object | None] = [None] * len(rows)
     planned: dict[str, list[tuple[int, int, Anchor, int]]] = {}
@@ -1229,8 +1453,13 @@ def instruction_contexts(connection: object, columns: Sequence[str],
         state: _ModuleState | None = None
         try:
             state = builder._module(module_name)
-            anchor = select_anchor(hot_rva, state.sections, state.public_starts,
-                                   state.pdata_starts, state.export_starts)
+            anchor = select_anchor(
+                hot_rva,
+                state.sections,
+                state.public_starts,
+                state.pdata_starts,
+                state.export_starts,
+            )
             section = require_code_section(state.sections, hot_rva)
         except ContextOmission as exc:
             if state is not None:
@@ -1254,17 +1483,20 @@ def context_omission_summary(contexts: Sequence[object | None]) -> str | None:
     A symbol-less module fails every row for one reason. Repeating that as N omission objects
     invites N investigations; the caller prints this once on stderr instead.
     """
-    omissions = [item for item in contexts
-                 if isinstance(item, dict) and item.get("omitted")]
+    omissions = [item for item in contexts if isinstance(item, dict) and item.get("omitted")]
     if not omissions or len(omissions) != len(contexts):
         return None
     if any(item.get("reason") != "symbolizer_failed" for item in omissions):
         return None
     details = sorted({str(item.get("detail")) for item in omissions if item.get("detail")})
-    detail = details[0] if len(details) == 1 else (
-        "llvm-symbolizer resolved no symbol for the instruction rows")
-    return (f"all {len(omissions)} instruction contexts omitted with symbolizer_failed: {detail}; "
-            "this is one missing-symbol finding, not one failure per row; the instruction "
-            "context is optional, so report the module as symbol-less or pass profile "
-            "--symbol-path <file|dir> and re-run")
-
+    detail = (
+        details[0]
+        if len(details) == 1
+        else ("llvm-symbolizer resolved no symbol for the instruction rows")
+    )
+    return (
+        f"all {len(omissions)} instruction contexts omitted with symbolizer_failed: {detail}; "
+        "this is one missing-symbol finding, not one failure per row; the instruction "
+        "context is optional, so report the module as symbol-less or pass profile "
+        "--symbol-path <file|dir> and re-run"
+    )

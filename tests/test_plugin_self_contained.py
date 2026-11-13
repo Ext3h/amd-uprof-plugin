@@ -15,8 +15,20 @@ PLUGIN = ROOT / "plugin"
 SKILL_DIR = PLUGIN / "skills" / "amd-uprof"
 
 # Names of maintainer documents and repository paths outside the plugin.
-FORBIDDEN = ("../", "CHANGELOG.md", "CONTRIBUTING.md", "README.md", "bench/", "docs/",
-             "examples/", "reference.md", "references/", "spec.md", "tests/", "validation.md")
+FORBIDDEN = (
+    "../",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "bench/",
+    "docs/",
+    "examples/",
+    "reference.md",
+    "references/",
+    "spec.md",
+    "tests/",
+    "validation.md",
+)
 
 
 def _shipped_text_files():

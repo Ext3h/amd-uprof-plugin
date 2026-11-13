@@ -26,8 +26,19 @@ TOOL = uprof_shell.quote(str(uprof_query.TOOLS_DIR / "uprof.py"))
 
 class BarePythonTest(unittest.TestCase):
     def test_next_calls_start_with_bare_python(self):
-        args = uprof.build_parser().parse_args(["profile", "--session", SESSION, "--by", "line",
-                                                "--function", "f", "--module", "m.dll"])
+        args = uprof.build_parser().parse_args(
+            [
+                "profile",
+                "--session",
+                SESSION,
+                "--by",
+                "line",
+                "--function",
+                "f",
+                "--module",
+                "m.dll",
+            ]
+        )
         data = {}
         calls = uprof_query._next_calls(args, {}, data=data)
         self.assertTrue(calls)
@@ -41,8 +52,7 @@ class BarePythonTest(unittest.TestCase):
             capture.mkdir()
             (capture / "session.uprof").write_text("{}", encoding="utf-8")
             (capture / "cpu.db").write_bytes(b"")
-            args = uprof.build_parser().parse_args(["profile", "--session", temp, "--by",
-                                                    "module"])
+            args = uprof.build_parser().parse_args(["profile", "--session", temp, "--by", "module"])
             with self.assertRaises(UprofError) as caught:
                 uprof_query.run_query_command(args)
         self.assertIn(f"run one of: python {TOOL} ", str(caught.exception))
@@ -50,8 +60,9 @@ class BarePythonTest(unittest.TestCase):
     def test_failure_alternatives_and_recapture_start_with_bare_python(self):
         with mock.patch.object(uprof_native, "find_uprof", return_value=None):
             message = str(uprof_native.failure("cause", ["whole capture"], session=SESSION))
-        whole = next(line for line in message.splitlines()
-                     if line.startswith("ALTERNATIVE: whole capture: "))
+        whole = next(
+            line for line in message.splitlines() if line.startswith("ALTERNATIVE: whole capture: ")
+        )
         self.assertTrue(whole.split(": ", 2)[2].startswith(f"python {TOOL} "), whole)
         cycles, ibs, _ = uprof_native.recapture_commands(Path(SESSION))
         for command in (cycles, ibs):

@@ -14,10 +14,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Final
 
-DUMP_FILENAMES: Final = MappingProxyType({
-    "ibsop-event-dump": "IbsOpDump.csv",
-    "ibsfetch-event-dump": "IbsFetchDump.csv",
-})
+DUMP_FILENAMES: Final = MappingProxyType(
+    {
+        "ibsop-event-dump": "IbsOpDump.csv",
+        "ibsfetch-event-dump": "IbsFetchDump.csv",
+    }
+)
 
 COPY_DIRS: Final = ("cpu", "metadata", ".config", ".log", "sources", "binaries")
 
@@ -156,8 +158,9 @@ def sha256_file(path: os.PathLike[str] | str) -> str | None:
     return digest.hexdigest()
 
 
-def capture_identity(session_dir: os.PathLike[str] | str,
-                     known: object = None) -> list[dict[str, object]] | None:
+def capture_identity(
+    session_dir: os.PathLike[str] | str, known: object = None
+) -> list[dict[str, object]] | None:
     """What one capture is: name, size and SHA-256 of every raw cpu/*.prd, in name order.
 
     Neither the path nor file times identify a capture: copies keep their source's times, and
@@ -166,12 +169,20 @@ def capture_identity(session_dir: os.PathLike[str] | str,
     modification time still match its entry keeps that digest unread, every other file is hashed.
     None when a raw file cannot be read.
     """
-    previous = {entry.get("name"): entry for entry in known
-                if isinstance(entry, dict)} if isinstance(known, list) else {}
+    previous = (
+        {entry.get("name"): entry for entry in known if isinstance(entry, dict)}
+        if isinstance(known, list)
+        else {}
+    )
     try:
-        files = sorted((path for path in (Path(session_dir) / "cpu").iterdir()
-                        if path.name.lower().endswith(".prd") and path.is_file()),
-                       key=lambda path: path.name)
+        files = sorted(
+            (
+                path
+                for path in (Path(session_dir) / "cpu").iterdir()
+                if path.name.lower().endswith(".prd") and path.is_file()
+            ),
+            key=lambda path: path.name,
+        )
     except FileNotFoundError:
         return []
     except OSError:
@@ -184,12 +195,16 @@ def capture_identity(session_dir: os.PathLike[str] | str,
             return None
         file_key = [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns]
         entry = previous.get(path.name, {})
-        digest = (entry.get("sha256") if stat.st_ino and entry.get("file") == file_key
-                  else sha256_file(path))
+        digest = (
+            entry.get("sha256")
+            if stat.st_ino and entry.get("file") == file_key
+            else sha256_file(path)
+        )
         if not digest:
             return None
-        identity.append({"name": path.name, "size": stat.st_size, "sha256": digest,
-                         "file": file_key})
+        identity.append(
+            {"name": path.name, "size": stat.st_size, "sha256": digest, "file": file_key}
+        )
     return identity
 
 
@@ -198,11 +213,16 @@ def same_capture(first: object, second: object) -> bool:
 
     An empty identity (no raw file) never matches: it cannot tell two captures apart.
     """
+
     def content(identity: object) -> list[tuple[object, ...]] | None:
         if not isinstance(identity, list):
             return None
-        return [(entry.get("name"), entry.get("size"), entry.get("sha256"))
-                for entry in identity if isinstance(entry, dict)]
+        return [
+            (entry.get("name"), entry.get("size"), entry.get("sha256"))
+            for entry in identity
+            if isinstance(entry, dict)
+        ]
+
     left = content(first)
     return bool(left) and left == content(second)
 
@@ -222,8 +242,9 @@ def read_text(path: os.PathLike[str] | str) -> str:
 
 def _is_link(info: os.stat_result) -> bool:
     """A symlink, or on Windows any reparse point such as a junction."""
-    return (stat.S_ISLNK(info.st_mode)
-            or bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT))
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    )
 
 
 def _refuse_links(source: Path) -> None:
@@ -239,8 +260,9 @@ def _refuse_links(source: Path) -> None:
         except FileNotFoundError:
             continue
         except OSError as exc:
-            raise UprofError(f"cannot inspect {root}: {exc}; fix its permissions and "
-                             "re-run") from exc
+            raise UprofError(
+                f"cannot inspect {root}: {exc}; fix its permissions and re-run"
+            ) from exc
         pending = [root] if stat.S_ISDIR(info.st_mode) and not _is_link(info) else []
         if _is_link(info):
             _link_error(root)
@@ -249,8 +271,9 @@ def _refuse_links(source: Path) -> None:
             try:
                 entries = list(os.scandir(directory))
             except OSError as exc:
-                raise UprofError(f"cannot list {directory}: {exc}; fix its permissions and "
-                                 "re-run") from exc
+                raise UprofError(
+                    f"cannot list {directory}: {exc}; fix its permissions and re-run"
+                ) from exc
             for entry in entries:
                 if _is_link(entry.stat(follow_symlinks=False)):
                     _link_error(Path(entry.path))
@@ -259,9 +282,11 @@ def _refuse_links(source: Path) -> None:
 
 
 def _link_error(link: Path) -> None:
-    raise UprofError(f"the capture contains a link: {link}; copying would follow it out of the "
-                     "capture. Replace the link with the files it points to, or remove it, and "
-                     "re-run")
+    raise UprofError(
+        f"the capture contains a link: {link}; copying would follow it out of the "
+        "capture. Replace the link with the files it points to, or remove it, and "
+        "re-run"
+    )
 
 
 def copy_session(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> None:
@@ -274,34 +299,42 @@ def copy_session(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> No
     target = Path(dst)
     _refuse_links(source)
     if target.exists() and not target.is_dir():
-        raise UprofError(f"output path exists and is not a directory: {target}; choose another "
-                         "output directory")
+        raise UprofError(
+            f"output path exists and is not a directory: {target}; choose another output directory"
+        )
     try:
         target.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise UprofError(f"cannot create output directory {target}: {exc}; choose another "
-                         "output directory or fix its permissions") from exc
+        raise UprofError(
+            f"cannot create output directory {target}: {exc}; choose another "
+            "output directory or fix its permissions"
+        ) from exc
     try:
         shutil.copy2(source / "session.uprof", target / "session.uprof")
     except OSError as exc:
-        raise UprofError(f"cannot copy {source / 'session.uprof'} to "
-                         f"{target / 'session.uprof'}: {exc}; choose another output directory "
-                         "or fix its permissions") from exc
+        raise UprofError(
+            f"cannot copy {source / 'session.uprof'} to "
+            f"{target / 'session.uprof'}: {exc}; choose another output directory "
+            "or fix its permissions"
+        ) from exc
     for name in COPY_DIRS:
         directory = source / name
         if directory.is_dir():
             try:
                 shutil.copytree(directory, target / name, dirs_exist_ok=True)
             except OSError as exc:
-                raise UprofError(f"cannot copy {directory} to {target / name}: {exc}; "
-                                 "choose another output directory or fix its permissions") from exc
+                raise UprofError(
+                    f"cannot copy {directory} to {target / name}: {exc}; "
+                    "choose another output directory or fix its permissions"
+                ) from exc
 
 
 def require_dir(path: os.PathLike[str] | str, what: str) -> Path:
     full = absolute(path)
     if not full.is_dir():
         raise UprofError(
-            f"{what} not found: {full} (pass the directory that holds session.uprof and cpu.db)")
+            f"{what} not found: {full} (pass the directory that holds session.uprof and cpu.db)"
+        )
     return full
 
 

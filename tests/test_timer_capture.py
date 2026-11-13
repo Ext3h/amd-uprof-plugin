@@ -30,14 +30,17 @@ import uprof_session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 
-METRIC = ("METRIC: timer sampling (CPU_TIME, interval 1 ms) -- sample shares: on-CPU time share "
-          "of the sampled threads (one sample per timer tick that found the thread running; "
-          "kernel-mode ticks not established), not cycles, not wall time; not available from a "
-          "timer capture: time_share, tag_to_retire_share, cycle cost, per-op cost, caller "
-          "attribution into external modules")
+METRIC = (
+    "METRIC: timer sampling (CPU_TIME, interval 1 ms) -- sample shares: on-CPU time share "
+    "of the sampled threads (one sample per timer tick that found the thread running; "
+    "kernel-mode ticks not established), not cycles, not wall time; not available from a "
+    "timer capture: time_share, tag_to_retire_share, cycle cost, per-op cost, caller "
+    "attribution into external modules"
+)
 METRIC_WIDE = METRIC.replace(
     "kernel-mode ticks not established)",
-    "kernel-mode ticks not established; system-wide denominator and idle handling unverified)")
+    "kernel-mode ticks not established; system-wide denominator and idle handling unverified)",
+)
 FAKE_CLI = "/opt/uprof/bin/AMDuProfCLI"
 TOTAL = 1446
 IMAGE_SAMPLES = 1052
@@ -70,7 +73,7 @@ def _alternatives(text):
 
 
 def _labels(text):
-    return [line[len("ALTERNATIVE: "):].split(": ", 1)[0] for line in _alternatives(text)]
+    return [line[len("ALTERNATIVE: ") :].split(": ", 1)[0] for line in _alternatives(text)]
 
 
 class _Session(unittest.TestCase):
@@ -84,12 +87,17 @@ class _Session(unittest.TestCase):
         self.session = timer_fixture.build(self.root / "timer")
 
     def run_tool(self, *args):
-        return subprocess.run([sys.executable, str(TOOLS_DIR / "uprof.py"), *args],
-                              capture_output=True, text=True, encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(TOOLS_DIR / "uprof.py"), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
 
     def profile(self, by, *extra, session=None):
-        result = self.run_tool("profile", "--session", str(session or self.session),
-                               "--by", by, *extra)
+        result = self.run_tool(
+            "profile", "--session", str(session or self.session), "--by", by, *extra
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -107,8 +115,11 @@ class NamedRowsWarningTest(_Session):
     def warnings_for_image(self, by):
         result = self.run_tool("profile", "--session", str(self.session), "--by", by)
         self.assertEqual(result.returncode, 0, result.stderr)
-        return [line for line in result.stderr.splitlines()
-                if line.startswith("WARNING: no symbols resolved for") and "heap_churn" in line]
+        return [
+            line
+            for line in result.stderr.splitlines()
+            if line.startswith("WARNING: no symbols resolved for") and "heap_churn" in line
+        ]
 
     def test_the_function_view_does_not_ask_for_the_image(self):
         self.assertEqual(self.warnings_for_image("function"), [])
@@ -130,17 +141,25 @@ class TimerFixtureTest(unittest.TestCase):
             columns = [column for column, _kind in tables[name]["columns"]]
             return [dict(zip(columns, row)) for row in tables[name]["rows"]]
 
-        image_ids = {row["id"] for row in records("Module")
-                     if row["path"] == "c:\\fixture\\heap_churn.exe"}
-        ranges = [(row["startOffset"], row["startOffset"] + row["size"])
-                  for row in records("Function") if row["moduleId"] in image_ids]
-        rvas = {row["moduleRVA"] for row in records("UnifiedSampleSeries")
-                if row["moduleId"] in image_ids}
+        image_ids = {
+            row["id"] for row in records("Module") if row["path"] == "c:\\fixture\\heap_churn.exe"
+        }
+        ranges = [
+            (row["startOffset"], row["startOffset"] + row["size"])
+            for row in records("Function")
+            if row["moduleId"] in image_ids
+        ]
+        rvas = {
+            row["moduleRVA"]
+            for row in records("UnifiedSampleSeries")
+            if row["moduleId"] in image_ids
+        }
         self.assertTrue(ranges and rvas)
         outside = sorted(rva for rva in rvas if not any(lo <= rva < hi for lo, hi in ranges))
         self.assertEqual(outside, [])
-        self.assertEqual(sum(row[timer_fixture.EVENT_COLUMN]
-                             for row in records("UnifiedSampleSeries")), TOTAL)
+        self.assertEqual(
+            sum(row[timer_fixture.EVENT_COLUMN] for row in records("UnifiedSampleSeries")), TOTAL
+        )
 
     def test_fixture_holds_no_host_path(self):
         for name in ("session.uprof", "cpu_tables.json", "heap_churn.pdb", "heap_churn.exe"):
@@ -169,8 +188,9 @@ class TimerDetectionTest(_Session):
         session = self.root / "full"
         session.mkdir()
         (session / "session.uprof").write_text(json.dumps(full), encoding="utf-8")
-        self.assertEqual(uprof_session.derive_sampler(session),
-                         uprof_session.derive_sampler(self.session))
+        self.assertEqual(
+            uprof_session.derive_sampler(session), uprof_session.derive_sampler(self.session)
+        )
 
     def test_cpu_time_without_its_hw_event_id_is_not_a_timer(self):
         meta = timer_fixture.meta()
@@ -184,9 +204,17 @@ class TimerDetectionTest(_Session):
 
     def test_a_pmc_event_wins_over_a_timer_entry(self):
         meta = timer_fixture.meta()
-        meta["collection"]["events"]["pmcEvents"] = {"pmcEventList": [{
-            "hwId": 118, "interval": 2_600_000, "isSampling": True, "os": True,
-            "encodedEventId": 0x03000076}]}
+        meta["collection"]["events"]["pmcEvents"] = {
+            "pmcEventList": [
+                {
+                    "hwId": 118,
+                    "interval": 2_600_000,
+                    "isSampling": True,
+                    "os": True,
+                    "encodedEventId": 0x03000076,
+                }
+            ]
+        }
         session = self.root / "mixed"
         session.mkdir()
         (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
@@ -195,13 +223,18 @@ class TimerDetectionTest(_Session):
         self.assertTrue(sampler.pmc_cycle_shares)
 
     def test_missing_sample_column_fails_with_cause_and_alternative(self):
-        session = timer_fixture.build(self.root / "nocol",
-                                      drop_columns=(timer_fixture.EVENT_COLUMN,))
+        session = timer_fixture.build(
+            self.root / "nocol", drop_columns=(timer_fixture.EVENT_COLUMN,)
+        )
         result = self.run_tool("profile", "--session", str(session), "--by", "process")
         self.assertEqual(result.returncode, 2)
         lines = result.stderr.strip().splitlines()
-        self.assertTrue(lines[0].startswith("error: cpu.db UnifiedSampleSeries has no "
-                                            f"{timer_fixture.EVENT_COLUMN} column"), lines[0])
+        self.assertTrue(
+            lines[0].startswith(
+                f"error: cpu.db UnifiedSampleSeries has no {timer_fixture.EVENT_COLUMN} column"
+            ),
+            lines[0],
+        )
         self.assertEqual(_labels(result.stderr), ["translate without dump"])
 
 
@@ -240,8 +273,9 @@ class TimerOutputTest(_Session):
         reason = _symbolizer_skip()
         if reason:
             self.skipTest(reason)
-        text = self.symbolized("instruction", "--function", HASH_NAME,
-                               "--module", timer_fixture.IMAGE_KEY)
+        text = self.symbolized(
+            "instruction", "--function", HASH_NAME, "--module", timer_fixture.IMAGE_KEY
+        )
         header = text.split("\n|", 1)[0]
         self.assertEqual(header.count("time_share absent"), 0, header)
         self.assertEqual(header.count("tag_to_retire_share absent"), 0, header)
@@ -263,26 +297,37 @@ class TimerOutputTest(_Session):
     def test_json_absent_causes_are_the_timer_causes(self):
         absent = self.document("module")["legend"]["absent"]
         self.assertEqual(absent["time_share"], "a timer capture has no per-sample timestamps")
-        self.assertEqual(absent["tag_to_retire_share"],
-                         "a timer capture has no tag-to-retire counter")
-        self.assertIn("multiply sample_share by the workload's measured CPU time",
-                      absent["cpu_seconds"])
+        self.assertEqual(
+            absent["tag_to_retire_share"], "a timer capture has no tag-to-retire counter"
+        )
+        self.assertIn(
+            "multiply sample_share by the workload's measured CPU time", absent["cpu_seconds"]
+        )
 
     def test_no_pmc_or_cycle_wording_in_timer_output(self):
         reason = _symbolizer_skip()
         if reason:
             self.skipTest(reason)
         scoped = ("--function", HASH_NAME, "--module", timer_fixture.IMAGE_KEY)
-        views = [(by, ()) for by in ("process", "module", "function", "region", "line",
-                                     "instruction")]
+        views = [
+            (by, ()) for by in ("process", "module", "function", "region", "line", "instruction")
+        ]
         views += [("line", scoped), ("instruction", scoped)]
         for by, scope in views:
             for extra in ((), ("--json",)):
                 with self.subTest(by=by, scoped=bool(scope), json=bool(extra)):
                     text = self.symbolized(by, *scope, *extra)
-                    for banned in ("PMC", "core-cycle", "cycles were spent", "time-based",
-                                   "Time-based Sampling", "configName", "--event ibs-op",
-                                   "--event cycles", "not applicable"):
+                    for banned in (
+                        "PMC",
+                        "core-cycle",
+                        "cycles were spent",
+                        "time-based",
+                        "Time-based Sampling",
+                        "configName",
+                        "--event ibs-op",
+                        "--event cycles",
+                        "not applicable",
+                    ):
                         self.assertNotIn(banned, text)
 
     def test_scoped_parent_states_the_timer_cpu_seconds_cause(self):
@@ -291,8 +336,9 @@ class TimerOutputTest(_Session):
             self.skipTest(reason)
         for by in ("line", "instruction"):
             with self.subTest(by=by):
-                text = self.symbolized(by, "--function", HASH_NAME,
-                                       "--module", timer_fixture.IMAGE_KEY)
+                text = self.symbolized(
+                    by, "--function", HASH_NAME, "--module", timer_fixture.IMAGE_KEY
+                )
                 parent = re.search(r"^PARENT: .*$", text, re.M).group(0)
                 self.assertIn("cpu_seconds absent (on the reference host", parent)
 
@@ -319,8 +365,10 @@ class TimerOutputTest(_Session):
     def test_read_carries_the_top_row_interval(self):
         share = IMAGE_SAMPLES / TOTAL
         half = 1.96 * math.sqrt(share * (1 - share) / TOTAL)
-        expected = (f"top row {timer_fixture.IMAGE_KEY} {100 * share:.1f}% "
-                    f"±{100 * half:.1f} points (95% binomial, n={TOTAL})")
+        expected = (
+            f"top row {timer_fixture.IMAGE_KEY} {100 * share:.1f}% "
+            f"±{100 * half:.1f} points (95% binomial, n={TOTAL})"
+        )
         read = re.search(r"^READ: .*$", self.profile("module"), re.M).group(0)
         self.assertTrue(read.endswith(expected), read)
         self.assertIn("72.8% ±2.3 points", expected)
@@ -362,8 +410,11 @@ class TimerModesTest(_Session):
         reason = _pdb_skip()
         if reason:
             self.skipTest(reason)
-        document = json.loads(self.symbolized(
-            "line", "--json", "--function", HASH_NAME, "--module", timer_fixture.IMAGE_KEY))
+        document = json.loads(
+            self.symbolized(
+                "line", "--json", "--function", HASH_NAME, "--module", timer_fixture.IMAGE_KEY
+            )
+        )
         lines = {row["line"] for row in document["rows"] if row["file"]}
         self.assertTrue(lines & {23, 24, 25}, lines)
 
@@ -372,23 +423,33 @@ class TimerFailureTest(_Session):
     """REQ-06/09/15/17: unsupported cases fail with a cause and ALTERNATIVE lines."""
 
     def test_profile_time_filter_fails_with_alternatives(self):
-        result = self.run_tool("profile", "--session", str(self.session), "--by", "process",
-                               "--time-filter", "0:1")
+        result = self.run_tool(
+            "profile", "--session", str(self.session), "--by", "process", "--time-filter", "0:1"
+        )
         self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stderr.splitlines()[0],
-                         "error: --time-filter applies to IBS dump captures; a timer capture "
-                         "is windowed at translate time")
+        self.assertEqual(
+            result.stderr.splitlines()[0],
+            "error: --time-filter applies to IBS dump captures; a timer capture "
+            "is windowed at translate time",
+        )
         self.assertEqual(_labels(result.stderr), ["timer window", "whole capture"])
         whole = _alternatives(result.stderr)[1]
         self.assertIn(f"profile --session {self.session}", whole.replace('"', ""))
 
     def test_translate_ascii_fails_with_alternative(self):
-        result = self.run_tool("translate", "--session", str(self.session),
-                               "--out-dir", str(self.root / "copy"),
-                               "--ascii", "ibsop-event-dump")
+        result = self.run_tool(
+            "translate",
+            "--session",
+            str(self.session),
+            "--out-dir",
+            str(self.root / "copy"),
+            "--ascii",
+            "ibsop-event-dump",
+        )
         self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stderr.splitlines()[0],
-                         "error: a timer capture has no IBS sample dump")
+        self.assertEqual(
+            result.stderr.splitlines()[0], "error: a timer capture has no IBS sample dump"
+        )
         self.assertEqual(_labels(result.stderr), ["translate without dump"])
 
     def test_translate_time_filter_is_passed_through(self):
@@ -413,8 +474,9 @@ class TimerFailureTest(_Session):
             second = str(uprof_native.failure("b", ["Zen host", "timer capture (launch)"]))
         self.assertEqual(_alternatives(first), _alternatives(second))
         self.assertIn("ALTERNATIVE: timer capture (launch): python ", first)
-        self.assertIn(" collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer --launch <APP>",
-                      first)
+        self.assertIn(
+            " collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer --launch <APP>", first
+        )
 
 
 class CollectRejectionTest(unittest.TestCase):
@@ -434,18 +496,22 @@ class CollectRejectionTest(unittest.TestCase):
                 return subprocess.CompletedProcess(spec, 1, "", "ibs counters are not available")
             return subprocess.CompletedProcess(spec, 2148008192, rejected, "")
 
-        options = uprof_collect.CollectOptions(out_dir=str(out), seconds=5, pids=[4242],
-                                               event=event)
-        with mock.patch.object(uprof_collect, "is_admin", return_value=True), \
-                mock.patch.object(uprof_collect, "find_uprof", return_value=FAKE_CLI), \
-                mock.patch.object(uprof_collect, "require_uprof", return_value=FAKE_CLI), \
-                mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)), \
-                mock.patch.object(uprof_collect, "ibs_unavailable_reason", return_value="test"), \
-                mock.patch.object(uprof_collect, "_run_cli", side_effect=fake_run_cli), \
-                mock.patch.object(uprof_collect, "_core_frequency",
-                                  return_value=(2_600_000_000, "2600 MHz", "test")), \
-                contextlib.redirect_stdout(io.StringIO()), \
-                contextlib.redirect_stderr(io.StringIO()):
+        options = uprof_collect.CollectOptions(
+            out_dir=str(out), seconds=5, pids=[4242], event=event
+        )
+        with (
+            mock.patch.object(uprof_collect, "is_admin", return_value=True),
+            mock.patch.object(uprof_collect, "find_uprof", return_value=FAKE_CLI),
+            mock.patch.object(uprof_collect, "require_uprof", return_value=FAKE_CLI),
+            mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)),
+            mock.patch.object(uprof_collect, "ibs_unavailable_reason", return_value="test"),
+            mock.patch.object(uprof_collect, "_run_cli", side_effect=fake_run_cli),
+            mock.patch.object(
+                uprof_collect, "_core_frequency", return_value=(2_600_000_000, "2600 MHz", "test")
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             with self.assertRaises(uprof_native.UprofError) as raised:
                 uprof_collect.collect(options)
         return str(raised.exception), calls
@@ -455,23 +521,36 @@ class CollectRejectionTest(unittest.TestCase):
             with self.subTest(event=event):
                 text, calls = self.collect(event)
                 self.assertEqual(len(calls), runs)
-                self.assertTrue(text.splitlines()[0].startswith(
-                    "AMDuProfCLI rejected CYCLES_NOT_IN_HALT: ERROR: Invalid event"), text)
-                self.assertEqual(_labels(text), ["timer capture", "timer capture (launch)",
-                                                 "whole capture", "Zen host"])
+                self.assertTrue(
+                    text.splitlines()[0].startswith(
+                        "AMDuProfCLI rejected CYCLES_NOT_IN_HALT: ERROR: Invalid event"
+                    ),
+                    text,
+                )
+                self.assertEqual(
+                    _labels(text),
+                    ["timer capture", "timer capture (launch)", "whole capture", "Zen host"],
+                )
                 # The timer alternatives do not retry the rejected cycle or IBS sampler.
                 for line in _alternatives(text)[:3]:
                     self.assertNotIn("--event cycles", line)
                     self.assertNotIn("--event ibs-op", line)
                 # The same option is the same text wherever it is offered.
                 with mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)):
-                    no_sampler = str(uprof_native.failure(
-                        "x", ["timer capture", "timer capture (launch)", "Zen host"]))
-                shared = [line for line in _alternatives(text)
-                          if not line.startswith("ALTERNATIVE: whole capture: ")]
+                    no_sampler = str(
+                        uprof_native.failure(
+                            "x", ["timer capture", "timer capture (launch)", "Zen host"]
+                        )
+                    )
+                shared = [
+                    line
+                    for line in _alternatives(text)
+                    if not line.startswith("ALTERNATIVE: whole capture: ")
+                ]
                 self.assertEqual(shared, _alternatives(no_sampler))
-                self.assertIn("collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer;",
-                              shared[0])
+                self.assertIn(
+                    "collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer;", shared[0]
+                )
 
 
 if __name__ == "__main__":

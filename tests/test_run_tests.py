@@ -15,6 +15,7 @@ import run_tests
 
 def _passes(skip_reason: str, require_tools: bool) -> bool:
     """Whether a suite holding one test that skips with skip_reason passes."""
+
     def skipping():
         raise unittest.SkipTest(skip_reason)
 
@@ -33,14 +34,16 @@ class RequireToolsTest(unittest.TestCase):
         self.assertFalse(_passes(MISSING_TOOL, require_tools=True))
 
     def test_a_host_skip_passes_when_tools_are_required(self):
-        self.assertTrue(_passes(run_tests.HOST_SKIP + "runs only on Windows",
-                                require_tools=True))
+        self.assertTrue(_passes(run_tests.HOST_SKIP + "runs only on Windows", require_tools=True))
 
 
 class CaptureRequireToolsTest(unittest.TestCase):
     def test_the_capture_stops_when_a_required_tool_is_missing(self):
-        with tempfile.TemporaryDirectory(prefix="uprof-require-tools-") as root,                 mock.patch.dict(os.environ, {"UPROF_REQUIRE_TOOLS": "1"}),                 mock.patch.object(capture_debug_traces.F, "tool_skip",
-                                  return_value=MISSING_TOOL):
+        with (
+            tempfile.TemporaryDirectory(prefix="uprof-require-tools-") as root,
+            mock.patch.dict(os.environ, {"UPROF_REQUIRE_TOOLS": "1"}),
+            mock.patch.object(capture_debug_traces.F, "tool_skip", return_value=MISSING_TOOL),
+        ):
             with self.assertRaises(SystemExit) as raised:
                 capture_debug_traces.main(["--out-dir", root])
         self.assertIn(MISSING_TOOL, str(raised.exception.code))

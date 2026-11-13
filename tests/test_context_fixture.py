@@ -16,14 +16,18 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
 READOBJ = uprof_context.find_readobj()
 OBJDUMP = uprof_context.find_objdump()
 SYMBOLIZER = uprof_context.find_symbolizer()
-SKIP = ("llvm-readobj, llvm-objdump and llvm-symbolizer are required, "
-        "and llvm-objdump must support --no-symbolize-operands")
+SKIP = (
+    "llvm-readobj, llvm-objdump and llvm-symbolizer are required, "
+    "and llvm-objdump must support --no-symbolize-operands"
+)
 
 
 def _objdump_supports_flag() -> bool:
     if not OBJDUMP:
         return False
     return "--no-symbolize-operands" in uprof_context.run([OBJDUMP, "--help"]).stdout
+
+
 HOT_RVA = 0x101B
 TEXT_RVA = 0x1000
 SECOND_RVA = 0x1030
@@ -33,14 +37,27 @@ IAT_SLOT = 0x20A0
 
 def _readobj_text() -> str:
     completed = uprof_context.run(
-        [READOBJ, "--file-headers", "--sections", "--coff-imports", "--unwind",
-         "--coff-exports", str(FIXTURE)])
+        [
+            READOBJ,
+            "--file-headers",
+            "--sections",
+            "--coff-imports",
+            "--unwind",
+            "--coff-exports",
+            str(FIXTURE),
+        ]
+    )
     return completed.stdout
 
 
 class FakeConnection:
-    def __init__(self, module_path: str, checksum: int, total: int = 10,
-                 publics: tuple[tuple[int, str | None], ...] = ()) -> None:
+    def __init__(
+        self,
+        module_path: str,
+        checksum: int,
+        total: int = 10,
+        publics: tuple[tuple[int, str | None], ...] = (),
+    ) -> None:
         self.module_path = module_path
         self.checksum = checksum
         self.total = total
@@ -101,10 +118,10 @@ class FixtureTest(unittest.TestCase):
         self.assertEqual(section.start, TEXT_RVA)
 
     def test_pdata_and_exports_come_from_the_built_image(self):
-        self.assertEqual(self.starts,
-                         [(TEXT_RVA, None), (SECOND_RVA, None), (INTERNAL_RVA, None)])
-        self.assertEqual(self.exports,
-                         [(TEXT_RVA, "fixture_entry"), (SECOND_RVA, "fixture_second")])
+        self.assertEqual(self.starts, [(TEXT_RVA, None), (SECOND_RVA, None), (INTERNAL_RVA, None)])
+        self.assertEqual(
+            self.exports, [(TEXT_RVA, "fixture_entry"), (SECOND_RVA, "fixture_second")]
+        )
 
     def test_matching_checksum_is_verified(self):
         identity = uprof_context.verify_build(self.build, self.build.checksum)
@@ -123,16 +140,16 @@ class FixtureTest(unittest.TestCase):
         self.assertIn("checksum", identity.warning)
 
     def test_a_zero_checksum_with_the_recorded_size_is_verified(self):
-        identity = uprof_context.verify_build(self.build, 0,
-                                              capture_size=self.build.size_of_image)
+        identity = uprof_context.verify_build(self.build, 0, capture_size=self.build.size_of_image)
 
         self.assertTrue(identity.verified)
         self.assertEqual(identity.identity, "size")
         self.assertEqual(identity.capture_size, self.build.size_of_image)
 
     def test_a_zero_checksum_with_another_size_is_unverified(self):
-        identity = uprof_context.verify_build(self.build, 0,
-                                              capture_size=self.build.size_of_image + 1)
+        identity = uprof_context.verify_build(
+            self.build, 0, capture_size=self.build.size_of_image + 1
+        )
 
         self.assertFalse(identity.verified)
         self.assertEqual(identity.identity, "unverified")
@@ -140,15 +157,23 @@ class FixtureTest(unittest.TestCase):
 
     def test_an_export_wins_a_tie_over_a_public_at_the_same_start(self):
         anchor = uprof_context.select_anchor(
-            HOT_RVA, self.sections, [(TEXT_RVA, "fixture_entry")],
-            pdata_starts=self.starts, export_starts=self.exports)
+            HOT_RVA,
+            self.sections,
+            [(TEXT_RVA, "fixture_entry")],
+            pdata_starts=self.starts,
+            export_starts=self.exports,
+        )
 
         self.assertEqual(anchor, uprof_context.Anchor("export", TEXT_RVA, "fixture_entry"))
 
     def test_an_internal_pdata_start_anchors_without_a_name(self):
         anchor = uprof_context.select_anchor(
-            INTERNAL_RVA + 5, self.sections, [], pdata_starts=self.starts,
-            export_starts=self.exports)
+            INTERNAL_RVA + 5,
+            self.sections,
+            [],
+            pdata_starts=self.starts,
+            export_starts=self.exports,
+        )
 
         self.assertEqual(anchor, uprof_context.Anchor("pdata", INTERNAL_RVA))
 
@@ -161,14 +186,17 @@ class FixtureTest(unittest.TestCase):
         verified = uprof_context.verify_build(self.build, self.build.checksum)
         window = uprof_context.select_window(
             uprof_context.decode_stream(
-                str(FIXTURE), verified,
-                uprof_context.Anchor("export", TEXT_RVA, "fixture_entry"), HOT_RVA,
-                self.text_end),
-            HOT_RVA)
+                str(FIXTURE),
+                verified,
+                uprof_context.Anchor("export", TEXT_RVA, "fixture_entry"),
+                HOT_RVA,
+                self.text_end,
+            ),
+            HOT_RVA,
+        )
         by_rva = {instruction.rva: instruction for instruction in window}
 
-        self.assertEqual([instruction.rva for instruction in window],
-                         sorted(by_rva))
+        self.assertEqual([instruction.rva for instruction in window], sorted(by_rva))
         self.assertEqual(window[0].rva, TEXT_RVA)
         self.assertEqual(by_rva[HOT_RVA].text, "callq\t*0x107f(%rip)")
         self.assertEqual(by_rva[0x1015].text, "addl\t$0x3, %eax")
@@ -181,64 +209,83 @@ class FixtureTest(unittest.TestCase):
         with self.assertRaises(uprof_context.ContextOmission) as omission:
             uprof_context.select_window(
                 uprof_context.decode_stream(
-                    str(FIXTURE), verified,
-                    uprof_context.Anchor("export", TEXT_RVA, "fixture_entry"), 0x1002,
-                    self.text_end),
-                0x1002)
+                    str(FIXTURE),
+                    verified,
+                    uprof_context.Anchor("export", TEXT_RVA, "fixture_entry"),
+                    0x1002,
+                    self.text_end,
+                ),
+                0x1002,
+            )
         self.assertEqual(omission.exception.reason, "hot_rva_not_instruction_start")
 
     def test_iat_call_resolves_to_exit_process(self):
         imports = uprof_context.load_imports(str(FIXTURE), self.build, readobj=READOBJ)
-        self.assertEqual(imports[IAT_SLOT],
-                         uprof_context.ImportSlot(IAT_SLOT, "KERNEL32.dll", "ExitProcess"))
+        self.assertEqual(
+            imports[IAT_SLOT], uprof_context.ImportSlot(IAT_SLOT, "KERNEL32.dll", "ExitProcess")
+        )
         verified = uprof_context.verify_build(self.build, self.build.checksum)
         window = uprof_context.select_window(
             uprof_context.decode_stream(
-                str(FIXTURE), verified, uprof_context.Anchor("section", TEXT_RVA), HOT_RVA,
-                self.text_end),
-            HOT_RVA)
+                str(FIXTURE),
+                verified,
+                uprof_context.Anchor("section", TEXT_RVA),
+                HOT_RVA,
+                self.text_end,
+            ),
+            HOT_RVA,
+        )
         call = next(item for item in window if item.rva == HOT_RVA)
 
         slot = uprof_context.resolve_iat_call(call, self.build.image_base, imports)
 
-        self.assertEqual(slot, uprof_context.ImportSlot(IAT_SLOT, "KERNEL32.dll",
-                                                        "ExitProcess"))
+        self.assertEqual(slot, uprof_context.ImportSlot(IAT_SLOT, "KERNEL32.dll", "ExitProcess"))
 
     def test_symbolizer_names_the_export_without_source(self):
         symbols = uprof_context.symbolize_rvas(str(FIXTURE), [HOT_RVA])
 
-        self.assertEqual(symbols[HOT_RVA],
-                         uprof_context.SymbolInfo("fixture_entry", None, None))
+        self.assertEqual(symbols[HOT_RVA], uprof_context.SymbolInfo("fixture_entry", None, None))
 
     def test_instruction_contexts_builds_a_verified_block(self):
-        connection = FakeConnection(str(FIXTURE), self.build.checksum,
-                                    publics=((TEXT_RVA, "fixture_entry"),))
+        connection = FakeConnection(
+            str(FIXTURE), self.build.checksum, publics=((TEXT_RVA, "fixture_entry"),)
+        )
 
         contexts = uprof_context.instruction_contexts(
-            connection, ["module", "rva"], [("fixture.exe", "0x101B")])
+            connection, ["module", "rva"], [("fixture.exe", "0x101B")]
+        )
 
         context = contexts[0]
         self.assertNotIn("omitted", context)
-        self.assertEqual(context["anchor"],
-                         {"kind": "export", "rva": "0x1000", "name": "fixture_entry",
-                          "distance": HOT_RVA - TEXT_RVA})
+        self.assertEqual(
+            context["anchor"],
+            {
+                "kind": "export",
+                "rva": "0x1000",
+                "name": "fixture_entry",
+                "distance": HOT_RVA - TEXT_RVA,
+            },
+        )
         self.assertTrue(context["build"]["verified"])
         self.assertEqual(context["build"]["identity"], "checksum")
-        hot, run = next(pair for pair in F.context_instructions(context)
-                        if pair[0]["rva"] == "0x101B")
+        hot, run = next(
+            pair for pair in F.context_instructions(context) if pair[0]["rva"] == "0x101B"
+        )
         self.assertEqual(hot["samples"], 4)
         self.assertEqual(hot["sample_share"], 0.4)
         self.assertEqual(F.context_frame(context, run), ("fixture_entry", None, None))
-        self.assertEqual(hot["import"],
-                         {"dll": "KERNEL32.dll", "name": "ExitProcess",
-                          "slot_rva": f"0x{IAT_SLOT:X}"})
+        self.assertEqual(
+            hot["import"],
+            {"dll": "KERNEL32.dll", "name": "ExitProcess", "slot_rva": f"0x{IAT_SLOT:X}"},
+        )
         self.assertNotIn("ibs", hot)
 
     def test_instruction_contexts_omits_a_mismatched_build(self):
         connection = FakeConnection(str(FIXTURE), self.build.checksum + 1)
 
         context = uprof_context.instruction_contexts(
-            connection, ["module", "rva"], [("fixture.exe", "0x101B")])[0]
+            connection, ["module", "rva"], [("fixture.exe", "0x101B")]
+        )[0]
 
         self.assertTrue(context["omitted"])
         self.assertEqual(context["reason"], "build_mismatch")
@@ -250,7 +297,8 @@ class FixtureTest(unittest.TestCase):
         connection = FakeConnection(str(FIXTURE), self.build.checksum)
 
         context = uprof_context.instruction_contexts(
-            connection, ["module", "rva"], [("fixture.exe", "0x1002")])[0]
+            connection, ["module", "rva"], [("fixture.exe", "0x1002")]
+        )[0]
 
         self.assertEqual(context["omitted"], True)
         self.assertEqual(context["reason"], "hot_rva_not_instruction_start")

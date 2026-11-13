@@ -47,8 +47,9 @@ def catalogue() -> dict[str, dict[str, str]]:
         title, _, body = block.partition("\n")
         match = re.match(r"(SCN-\d\d): ", title)
         if match:
-            result[match.group(1)] = {m.group(1): m.group(2) for line in body.splitlines()
-                                      if (m := FIELD.match(line))}
+            result[match.group(1)] = {
+                m.group(1): m.group(2) for line in body.splitlines() if (m := FIELD.match(line))
+            }
     return result
 
 
@@ -68,10 +69,14 @@ def plugin_copy(run_dir: Path, rev: str | None, directory: Path | None) -> tuple
     if directory is not None:
         shutil.copytree(directory, target)
         return target, f"copy of {directory}"
-    commit = subprocess.run(["git", "-C", str(REPO), "rev-parse", rev], check=True,
-                            capture_output=True, text=True).stdout.strip()
-    archive = subprocess.run(["git", "-C", str(REPO), "archive", "--format=tar", commit,
-                              "plugin"], check=True, capture_output=True).stdout
+    commit = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", rev], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    archive = subprocess.run(
+        ["git", "-C", str(REPO), "archive", "--format=tar", commit, "plugin"],
+        check=True,
+        capture_output=True,
+    ).stdout
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         try:
             tar.extractall(run_dir, filter="data")
@@ -92,9 +97,13 @@ def prepare(run_dir: Path, scn: str, fields: dict[str, str]) -> tuple[str, Path]
         built[name].rename(root / label)
         paths[label] = root / label
     prompt = question(fields)
-    replacements = {"<CAPTURE>": paths.get("capture"), "<BEFORE>": paths.get("before"),
-                    "<AFTER>": paths.get("after"), "<PDB_DIR>": root / "bins" / "pdbs",
-                    "<IMAGE_DIR>": root / "bins" / "timer"}
+    replacements = {
+        "<CAPTURE>": paths.get("capture"),
+        "<BEFORE>": paths.get("before"),
+        "<AFTER>": paths.get("after"),
+        "<PDB_DIR>": root / "bins" / "pdbs",
+        "<IMAGE_DIR>": root / "bins" / "timer",
+    }
     for placeholder, path in replacements.items():
         if path is not None:
             prompt = prompt.replace(placeholder, str(path))
@@ -126,17 +135,18 @@ def summarize(events: list[dict]) -> dict[str, object]:
     tools: dict[str, int] = {}
     for call in calls:
         tools[call["tool"]] = tools.get(call["tool"], 0) + 1
-    return {"tool_calls": len(calls), "tools": tools,
-            "tool_errors": sum(1 for e in events if e["type"] == "tool_result"
-                               and e.get("is_error")),
-            "answered": any(e["type"] == "final" and e.get("answer") for e in events)}
+    return {
+        "tool_calls": len(calls),
+        "tools": tools,
+        "tool_errors": sum(1 for e in events if e["type"] == "tool_result" and e.get("is_error")),
+        "answered": any(e["type"] == "final" and e.get("answer") for e in events),
+    }
 
 
 def outside_references(events: list[dict], denied: list[Path]) -> list[str]:
     """Tool inputs that name a denied root or another trial's folders (isolation evidence)."""
     found = []
-    spellings = [s for root in denied for s in {str(root).lower(),
-                                                root.as_posix().lower()}]
+    spellings = [s for root in denied for s in {str(root).lower(), root.as_posix().lower()}]
     for event in events:
         if event["type"] != "tool_call":
             continue
@@ -147,8 +157,9 @@ def outside_references(events: list[dict], denied: list[Path]) -> list[str]:
     return found
 
 
-def run_one(runner, run_dir: Path, scn: str, fields, plugin: Path, args,
-            others: list[str]) -> dict[str, object]:
+def run_one(
+    runner, run_dir: Path, scn: str, fields, plugin: Path, args, others: list[str]
+) -> dict[str, object]:
     prompt, capture_root = prepare(run_dir, scn, fields)
     cwd = run_dir / "trials" / scn
     (cwd / "_temp").mkdir(parents=True)
@@ -156,26 +167,49 @@ def run_one(runner, run_dir: Path, scn: str, fields, plugin: Path, args,
     out.mkdir(parents=True)
     # The repository, every run's output and the other trials' folders and captures.
     denied = [REPO, run_dir / "out"]
-    denied += [run_dir / folder / other for other in others if other != scn
-               for folder in ("captures", "trials")]
-    spec = TrialSpec(trial_id=scn, prompt=prompt, model=args.model, plugin_dir=plugin,
-                     capture_dir=capture_root, cwd=cwd, out_dir=out,
-                     read_roots=(cwd, plugin, capture_root), deny_roots=tuple(denied),
-                     timeout_s=args.timeout, path_prefix=tuple(args.path_prefix))
+    denied += [
+        run_dir / folder / other
+        for other in others
+        if other != scn
+        for folder in ("captures", "trials")
+    ]
+    spec = TrialSpec(
+        trial_id=scn,
+        prompt=prompt,
+        model=args.model,
+        plugin_dir=plugin,
+        capture_dir=capture_root,
+        cwd=cwd,
+        out_dir=out,
+        read_roots=(cwd, plugin, capture_root),
+        deny_roots=tuple(denied),
+        timeout_s=args.timeout,
+        path_prefix=tuple(args.path_prefix),
+    )
     result = runner.run(spec)
     with open(out / "transcript.jsonl", "w", encoding="utf-8", newline="\n") as handle:
         for event in result.events:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
-    meta = {"scenario": scn, "prompt": prompt, "runner": runner.name, "model": args.model,
-            "exit": result.exit_status, "wall_s": result.wall_s, "cwd": str(cwd),
-            "capture": str(capture_root), "evidence": result.evidence,
-            "context_tokens": result.context_tokens,
-            "context": context_verdict(result.context_tokens, context_limit()),
-            **summarize(result.events),
-            "outside_references": outside_references(result.events, denied)}
+    meta = {
+        "scenario": scn,
+        "prompt": prompt,
+        "runner": runner.name,
+        "model": args.model,
+        "exit": result.exit_status,
+        "wall_s": result.wall_s,
+        "cwd": str(cwd),
+        "capture": str(capture_root),
+        "evidence": result.evidence,
+        "context_tokens": result.context_tokens,
+        "context": context_verdict(result.context_tokens, context_limit()),
+        **summarize(result.events),
+        "outside_references": outside_references(result.events, denied),
+    }
     (out / "meta.json").write_text(json.dumps(meta, indent=1, default=str), encoding="utf-8")
-    print(f"{scn}: exit {result.exit_status}, {result.wall_s} s, {meta['tool_calls']} tool calls",
-          flush=True)
+    print(
+        f"{scn}: exit {result.exit_status}, {result.wall_s} s, {meta['tool_calls']} tool calls",
+        flush=True,
+    )
     return meta
 
 
@@ -183,23 +217,28 @@ def runlog(run_dir: Path, header: dict[str, str], metas: list[dict], skipped: di
     lines = ["# Trial run log", ""]
     lines += ["| Item | Value |", "|---|---|"]
     lines += [f"| {key} | {value} |" for key, value in header.items()]
-    lines += ["", "Answers are not judged here; apply `trials/observer.md` to the transcripts.",
-              f"Context is the final-turn context in tokens; a run passes only below "
-              f"{context_limit()}.",
-              "", "| Scenario | Exit | Wall s | Tool calls | Tools | Tool errors | Answered | "
-              "Outside references | Context |", "|---|---|---|---|---|---|---|---|---|"]
+    lines += [
+        "",
+        "Answers are not judged here; apply `trials/observer.md` to the transcripts.",
+        f"Context is the final-turn context in tokens; a run passes only below {context_limit()}.",
+        "",
+        "| Scenario | Exit | Wall s | Tool calls | Tools | Tool errors | Answered | "
+        "Outside references | Context |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
     for meta in sorted(metas, key=lambda m: m["scenario"]):
         tools = ", ".join(f"{k} {v}" for k, v in sorted(meta["tools"].items()))
         tokens = meta["context_tokens"]
         context = meta["context"] if tokens is None else f"{tokens} {meta['context']}"
-        lines.append(f"| {meta['scenario']} | {meta['exit']} | {meta['wall_s']} | "
-                     f"{meta['tool_calls']} | {tools} | {meta['tool_errors']} | "
-                     f"{'yes' if meta['answered'] else 'no'} | "
-                     f"{'; '.join(meta['outside_references']) or 'none'} | {context} |")
+        lines.append(
+            f"| {meta['scenario']} | {meta['exit']} | {meta['wall_s']} | "
+            f"{meta['tool_calls']} | {tools} | {meta['tool_errors']} | "
+            f"{'yes' if meta['answered'] else 'no'} | "
+            f"{'; '.join(meta['outside_references']) or 'none'} | {context} |"
+        )
     lines += ["", "## Isolation evidence reported by the runner", ""]
     for meta in sorted(metas, key=lambda m: m["scenario"]):
-        facts = "; ".join(f"{k}: {v}" for k, v in sorted(meta["evidence"].items())
-                          if k != "skills")
+        facts = "; ".join(f"{k}: {v}" for k, v in sorted(meta["evidence"].items()) if k != "skills")
         lines.append(f"- **{meta['scenario']}:** {facts}")
     if skipped:
         lines += ["", "## Skipped", "", "| Scenario | Reason |", "|---|---|"]
@@ -239,19 +278,30 @@ def main(argv: list[str] | None = None, registry: dict[str, type] | None = None)
     unknown = sorted(set(chosen) - set(scenarios))
     if unknown:
         raise SystemExit(f"unknown scenario(s): {', '.join(unknown)}")
-    skipped = {scn: scenarios[scn]["Session"] for scn in chosen
-               if not sessions_of(scenarios[scn])}
+    skipped = {scn: scenarios[scn]["Session"] for scn in chosen if not sessions_of(scenarios[scn])}
     runnable = [scn for scn in chosen if scn not in skipped]
     args.run_dir.mkdir(parents=True)
-    plugin, source = plugin_copy(args.run_dir, None if args.plugin_dir else args.plugin_rev,
-                                 args.plugin_dir)
+    plugin, source = plugin_copy(
+        args.run_dir, None if args.plugin_dir else args.plugin_rev, args.plugin_dir
+    )
     (args.run_dir / "captures").mkdir()
     with ThreadPoolExecutor(max(1, args.parallel)) as pool:
-        metas = list(pool.map(lambda scn: run_one(runner, args.run_dir, scn, scenarios[scn],
-                                                  plugin, args, runnable), runnable))
-    header = {"Started": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-              "Runner": runner.name, "Model": args.model, "Plugin": source,
-              "Timeout per trial": f"{args.timeout} s", "Parallel": str(args.parallel)}
+        metas = list(
+            pool.map(
+                lambda scn: run_one(
+                    runner, args.run_dir, scn, scenarios[scn], plugin, args, runnable
+                ),
+                runnable,
+            )
+        )
+    header = {
+        "Started": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "Runner": runner.name,
+        "Model": args.model,
+        "Plugin": source,
+        "Timeout per trial": f"{args.timeout} s",
+        "Parallel": str(args.parallel),
+    }
     runlog(args.run_dir, header, metas, skipped)
     print(args.run_dir / "runlog.md")
     return 0

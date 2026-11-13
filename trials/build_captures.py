@@ -32,13 +32,29 @@ SYSTEM_IMAGE = FIXTURES / "fixture.exe"
 
 PID, OTHER_PID = 3112, 4242
 PROCESS, OTHER_PROCESS = "storage_test.exe", "node.exe"
-IBS_CYCLES = {"ibsEvents": {"op": {"interval": 4_700_000}, "opInterval": 4_700_000,
-                            "opCycleCount": True, "opOs": True}}
-IBS_OPS = {"ibsEvents": {"op": True, "opInterval": 1_000_000, "opCycleCount": False,
-                         "opOs": True}}
-PMC = {"pmcEvents": {"pmcEventList": [{"hwId": 118, "interval": 2_592_000, "isSampling": True,
-                                       "user": True, "os": True,
-                                       "encodedEventId": 0x03000076}]}}
+IBS_CYCLES = {
+    "ibsEvents": {
+        "op": {"interval": 4_700_000},
+        "opInterval": 4_700_000,
+        "opCycleCount": True,
+        "opOs": True,
+    }
+}
+IBS_OPS = {"ibsEvents": {"op": True, "opInterval": 1_000_000, "opCycleCount": False, "opOs": True}}
+PMC = {
+    "pmcEvents": {
+        "pmcEventList": [
+            {
+                "hwId": 118,
+                "interval": 2_592_000,
+                "isSampling": True,
+                "user": True,
+                "os": True,
+                "encodedEventId": 0x03000076,
+            }
+        ]
+    }
+}
 PMC_COLUMN = "event#0x3000076"
 
 
@@ -64,6 +80,7 @@ class Module:
 @dataclass(frozen=True)
 class Sample:
     """count IBS samples at one RVA, with the IBS fields every one of them carries."""
+
     pid: int
     tid: int
     module: int
@@ -76,15 +93,22 @@ class Sample:
 
 # Function.name values uProf would record: names for the own exe and ntdll (PDBs on the capture
 # host), none for the driver and the vendor DLL.
-FUNCTION_NAMES = {(1, 0x1018): "fixture_entry", (1, 0x1000): "fixture_helper",
-                  (3, 0x1000): "RtlQueryPerformanceCounter", (3, 0x1050): "RtlAllocateHeap",
-                  (3, 0x1030): "NtWaitForSingleObject"}
+FUNCTION_NAMES = {
+    (1, 0x1018): "fixture_entry",
+    (1, 0x1000): "fixture_helper",
+    (3, 0x1000): "RtlQueryPerformanceCounter",
+    (3, 0x1050): "RtlAllocateHeap",
+    (3, 0x1030): "NtWaitForSingleObject",
+}
 
 BASE = [
-    Sample(PID, 11, 2, 0x101B, 40, 3, 1, 900), Sample(PID, 11, 2, 0x1030, 12, 0, 0, 40),
+    Sample(PID, 11, 2, 0x101B, 40, 3, 1, 900),
+    Sample(PID, 11, 2, 0x1030, 12, 0, 0, 40),
     Sample(PID, 12, 2, 0x1050, 8, 0, 0, 30),
-    Sample(PID, 11, 3, 0x1000, 14, 0, 0, 20), Sample(PID, 12, 3, 0x1050, 6, 2, 1, 300),
-    Sample(PID, 11, 1, 0x1018, 9, 8, 1, 2400), Sample(PID, 12, 1, 0x1000, 3, 0, 0, 25),
+    Sample(PID, 11, 3, 0x1000, 14, 0, 0, 20),
+    Sample(PID, 12, 3, 0x1050, 6, 2, 1, 300),
+    Sample(PID, 11, 1, 0x1018, 9, 8, 1, 2400),
+    Sample(PID, 12, 1, 0x1000, 3, 0, 0, 25),
     Sample(PID, 12, 4, 0x2040, 5, 0, 0, 15),
 ]
 
@@ -101,10 +125,12 @@ class Builder:
         node = self._copy(SYSTEM_IMAGE, bins / "node", name="node.exe")
         # Recorded on the capture host only; no host has it, so its identity is never checked.
         vendor = str(bins / "absent" / "vendorlib.dll")
-        self.modules = [self._module(1, self.own, False, True),
-                        self._module(2, driver, True, False),
-                        self._module(3, ntdll, True, False),
-                        Module(4, vendor, False, 0x10000, 0, False)]
+        self.modules = [
+            self._module(1, self.own, False, True),
+            self._module(2, driver, True, False),
+            self._module(3, ntdll, True, False),
+            Module(4, vendor, False, 0x10000, 0, False),
+        ]
         self.node = self._module(5, node, False, False)
 
     @staticmethod
@@ -121,21 +147,35 @@ class Builder:
         checksum, size = pe_identity(image)
         return Module(module_id, str(image), system, size, checksum, debug_info)
 
-    def write(self, name: str, modules: list[Module], samples: list[Sample], *,
-              processes=((PID, PROCESS),), system_wide: bool = False, events=None,
-              pmc: bool = False) -> Path:
+    def write(
+        self,
+        name: str,
+        modules: list[Module],
+        samples: list[Sample],
+        *,
+        processes=((PID, PROCESS),),
+        system_wide: bool = False,
+        events=None,
+        pmc: bool = False,
+    ) -> Path:
         session = self.root / name
         session.mkdir()
         dump = not pmc
-        meta = {"collection": {"schedule": {"elapsed": 10_000, "start": 1_000_000_000},
-                               "events": events or IBS_CYCLES,
-                               "target": {"systemWide": system_wide,
-                                          "attachedProcesses": [{"processId": pid}
-                                                                for pid, _ in processes]}},
-                "auxiliary": {"ibsOpSampling": dump}}
+        meta = {
+            "collection": {
+                "schedule": {"elapsed": 10_000, "start": 1_000_000_000},
+                "events": events or IBS_CYCLES,
+                "target": {
+                    "systemWide": system_wide,
+                    "attachedProcesses": [{"processId": pid} for pid, _ in processes],
+                },
+            },
+            "auxiliary": {"ibsOpSampling": dump},
+        }
         if dump:
-            meta["translateCommand"] = ("AMDuProfCLI.exe translate -i session --ascii "
-                                        "ibsop-event-dump")
+            meta["translateCommand"] = (
+                "AMDuProfCLI.exe translate -i session --ascii ibsop-event-dump"
+            )
         (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
         self._cpu_db(session, modules, samples, processes, pmc)
         if dump:
@@ -143,8 +183,9 @@ class Builder:
         return session
 
     @staticmethod
-    def _cpu_db(session: Path, modules: list[Module], samples: list[Sample], processes,
-                pmc: bool) -> None:
+    def _cpu_db(
+        session: Path, modules: list[Module], samples: list[Sample], processes, pmc: bool
+    ) -> None:
         import duckdb
 
         connection = duckdb.connect(str(session / "cpu.db"))
@@ -152,34 +193,49 @@ class Builder:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
             connection.execute(
                 "CREATE TABLE Module (id UINTEGER, path VARCHAR, isSystemModule BOOLEAN, "
-                "size UBIGINT, checksum UBIGINT, is32Bit BOOLEAN, foundDebugInfo BOOLEAN)")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
+                "size UBIGINT, checksum UBIGINT, is32Bit BOOLEAN, foundDebugInfo BOOLEAN)"
+            )
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
             extra = f', "{PMC_COLUMN}" DOUBLE' if pmc else ""
             connection.execute(
                 "CREATE TABLE UnifiedSampleSeries (processId UINTEGER, threadId UINTEGER, "
                 f"moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER"
-                f"{extra})")
+                f"{extra})"
+            )
             connection.executemany("INSERT INTO Process VALUES (?, ?)", list(processes))
             connection.executemany(
                 "INSERT INTO Module VALUES (?, ?, ?, ?, ?, false, ?)",
-                [(m.id, m.path, m.system, m.size, m.checksum, m.debug_info) for m in modules])
+                [(m.id, m.path, m.system, m.size, m.checksum, m.debug_info) for m in modules],
+            )
             function_ids: dict[tuple[int, object], int] = {}
             for sample in samples:
                 name = FUNCTION_NAMES.get((sample.module, sample.rva), "")
                 key = (sample.module, name or sample.rva)
                 if key not in function_ids:
                     function_ids[key] = len(function_ids) + 100
-                    connection.execute("INSERT INTO Function VALUES (?, ?, ?)",
-                                       [function_ids[key], sample.module, name])
-                row = [sample.pid, sample.tid, sample.module, function_ids[key], sample.rva,
-                       sample.tid % 4]
+                    connection.execute(
+                        "INSERT INTO Function VALUES (?, ?, ?)",
+                        [function_ids[key], sample.module, name],
+                    )
+                row = [
+                    sample.pid,
+                    sample.tid,
+                    sample.module,
+                    function_ids[key],
+                    sample.rva,
+                    sample.tid % 4,
+                ]
                 if pmc:
-                    connection.execute("INSERT INTO UnifiedSampleSeries VALUES "
-                                       "(?, ?, ?, ?, ?, ?, ?)", row + [sample.count])
+                    connection.execute(
+                        "INSERT INTO UnifiedSampleSeries VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        row + [sample.count],
+                    )
                 else:
-                    connection.execute("INSERT INTO UnifiedSampleSeries VALUES "
-                                       "(?, ?, ?, ?, ?, ?)", row)
+                    connection.execute(
+                        "INSERT INTO UnifiedSampleSeries VALUES (?, ?, ?, ?, ?, ?)", row
+                    )
         finally:
             connection.close()
 
@@ -190,14 +246,16 @@ class Builder:
         # A fixed interleaving, so threads and RVAs are not in blocks.
         rows.sort(key=lambda s: (s.pid * 31 + s.tid * 7 + s.rva) % 7)
         ticks: dict[tuple[int, int], int] = {}
-        lines = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName,DataSrc,IbsDcMiss,"
-                 "IbsTagToRetCtr"]
+        lines = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName,DataSrc,IbsDcMiss,IbsTagToRetCtr"]
         for s in rows:
             ticks[(s.pid, s.tid)] = ticks.get((s.pid, s.tid), 0) + 9_000_000
-            lines.append(f"{ticks[(s.pid, s.tid)]},{s.tid % 4},{s.tid},{s.pid},{s.rva},"
-                         f"{paths[s.module]},{s.data_src},{s.dc_miss},{s.tag_to_ret}")
-        (session / "IbsOpDump.csv").write_text("\n".join(lines) + "\n", encoding="utf-8",
-                                               newline="\n")
+            lines.append(
+                f"{ticks[(s.pid, s.tid)]},{s.tid % 4},{s.tid},{s.pid},{s.rva},"
+                f"{paths[s.module]},{s.data_src},{s.dc_miss},{s.tag_to_ret}"
+            )
+        (session / "IbsOpDump.csv").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+        )
 
 
 def _attached(b: Builder) -> Path:
@@ -206,24 +264,38 @@ def _attached(b: Builder) -> Path:
 
 def _attached_after(b: Builder) -> Path:
     # The fix cut the own module's samples to a third; everything else is unchanged.
-    after = [Sample(s.pid, s.tid, s.module, s.rva, max(1, s.count // 3), s.data_src,
-                    s.dc_miss, s.tag_to_ret) if s.module == 1 else s for s in BASE]
+    after = [
+        Sample(
+            s.pid, s.tid, s.module, s.rva, max(1, s.count // 3), s.data_src, s.dc_miss, s.tag_to_ret
+        )
+        if s.module == 1
+        else s
+        for s in BASE
+    ]
     return b.write("attached_after", b.modules, after)
 
 
 def _pdb_far(b: Builder) -> Path:
     own = Builder._module(1, b.far, False, True)
-    return b.write("pdb_far", [own, b.modules[2]],
-                   [Sample(PID, 11, 1, 0x1018, 20, 0, 0, 30),
-                    Sample(PID, 11, 1, 0x1000, 5, 0, 0, 30),
-                    Sample(PID, 11, 3, 0x1000, 5, 0, 0, 20)])
+    return b.write(
+        "pdb_far",
+        [own, b.modules[2]],
+        [
+            Sample(PID, 11, 1, 0x1018, 20, 0, 0, 30),
+            Sample(PID, 11, 1, 0x1000, 5, 0, 0, 30),
+            Sample(PID, 11, 3, 0x1000, 5, 0, 0, 20),
+        ],
+    )
 
 
 def _systemwide(b: Builder) -> Path:
-    return b.write("systemwide", b.modules + [b.node],
-                   BASE + [Sample(OTHER_PID, 77, 5, 0x1030, 60), Sample(OTHER_PID, 78, 3,
-                                                                        0x1030, 20)],
-                   processes=((PID, PROCESS), (OTHER_PID, OTHER_PROCESS)), system_wide=True)
+    return b.write(
+        "systemwide",
+        b.modules + [b.node],
+        BASE + [Sample(OTHER_PID, 77, 5, 0x1030, 60), Sample(OTHER_PID, 78, 3, 0x1030, 20)],
+        processes=((PID, PROCESS), (OTHER_PID, OTHER_PROCESS)),
+        system_wide=True,
+    )
 
 
 def _opcount(b: Builder) -> Path:
@@ -245,16 +317,24 @@ def _timer(b: Builder) -> Path:
     return session
 
 
-SESSIONS = {"attached": _attached, "attached_after": _attached_after, "pdb_far": _pdb_far,
-            "systemwide": _systemwide, "opcount": _opcount, "pmc": _pmc, "timer": _timer}
+SESSIONS = {
+    "attached": _attached,
+    "attached_after": _attached_after,
+    "pdb_far": _pdb_far,
+    "systemwide": _systemwide,
+    "opcount": _opcount,
+    "pmc": _pmc,
+    "timer": _timer,
+}
 
 
 def build(root: Path, names: list[str] | None = None) -> dict[str, Path]:
     """Write the named sessions (all by default) under root, which must not exist."""
     unknown = sorted(set(names or ()) - set(SESSIONS))
     if unknown:
-        raise ValueError(f"unknown session(s) {', '.join(unknown)}; choose from "
-                         f"{', '.join(SESSIONS)}")
+        raise ValueError(
+            f"unknown session(s) {', '.join(unknown)}; choose from {', '.join(SESSIONS)}"
+        )
     root.mkdir(parents=True)
     builder = Builder(root)
     return {name: SESSIONS[name](builder) for name in (names or SESSIONS)}
@@ -263,8 +343,12 @@ def build(root: Path, names: list[str] | None = None) -> dict[str, Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("out_dir", type=Path, help="new directory for the sessions")
-    parser.add_argument("sessions", nargs="*", metavar="SESSION",
-                        help=f"sessions to build (default: all of {', '.join(SESSIONS)})")
+    parser.add_argument(
+        "sessions",
+        nargs="*",
+        metavar="SESSION",
+        help=f"sessions to build (default: all of {', '.join(SESSIONS)})",
+    )
     args = parser.parse_args(argv)
     if args.out_dir.exists():
         parser.error(f"{args.out_dir} exists; choose a new directory")

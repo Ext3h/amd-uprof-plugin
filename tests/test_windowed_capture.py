@@ -35,16 +35,23 @@ class WindowedCaptureTest(unittest.TestCase):
         return uprof_query._capture_windowed(path)
 
     def test_an_ibs_dump_translate_with_a_time_filter_is_windowed(self):
-        self.assertTrue(self.windowed(
-            "AMDuProfCLI.exe translate -i sess --ascii ibsop-event-dump --time-filter 10:12"))
+        self.assertTrue(
+            self.windowed(
+                "AMDuProfCLI.exe translate -i sess --ascii ibsop-event-dump --time-filter 10:12"
+            )
+        )
 
     def test_a_translate_without_a_time_filter_is_not_windowed(self):
         self.assertFalse(self.windowed("AMDuProfCLI.exe translate -i sess"))
         self.assertFalse(self.windowed(None))
 
     def test_a_windowed_capture_emits_no_kernel_field(self):
-        self.assertEqual(uprof_query._kernel_coverage_field(
-            uprof_session.Sampler(os_requested=True), False, windowed=True), [])
+        self.assertEqual(
+            uprof_query._kernel_coverage_field(
+                uprof_session.Sampler(os_requested=True), False, windowed=True
+            ),
+            [],
+        )
 
 
 # A PMC capture: the event column is the event#0x... spelling of the recorded encodedEventId.
@@ -54,6 +61,7 @@ PMC_COLUMN = "event#0x3000076"
 def pmc_capture(root, translate_command):
     """A PMC capture with OS mode requested and only a user-mode module, as translated."""
     import duckdb
+
     root.mkdir(parents=True, exist_ok=True)
     connection = duckdb.connect(str(root / "cpu.db"))
     try:
@@ -63,7 +71,8 @@ def pmc_capture(root, translate_command):
         connection.execute(
             "CREATE TABLE UnifiedSampleSeries (processId UINTEGER, threadId UINTEGER, "
             "moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER, "
-            f'"{PMC_COLUMN}" DOUBLE)')
+            f'"{PMC_COLUMN}" DOUBLE)'
+        )
         connection.execute("INSERT INTO Process VALUES (1, 'app.exe')")
         connection.execute("INSERT INTO Module VALUES (1, 'c:/app/app.exe')")
         connection.execute("INSERT INTO UnifiedSampleSeries VALUES (1, 1, 1, NULL, 16, 0, 5)")
@@ -71,9 +80,20 @@ def pmc_capture(root, translate_command):
         connection.close()
     meta = {
         "collection": {
-            "events": {"pmcEvents": {"pmcEventList": [{
-                "hwId": 118, "interval": 4_700_000, "isSampling": True,
-                "user": True, "os": True, "encodedEventId": 0x03000076}]}},
+            "events": {
+                "pmcEvents": {
+                    "pmcEventList": [
+                        {
+                            "hwId": 118,
+                            "interval": 4_700_000,
+                            "isSampling": True,
+                            "user": True,
+                            "os": True,
+                            "encodedEventId": 0x03000076,
+                        }
+                    ]
+                }
+            },
             "target": {"systemWide": True},
             "schedule": {"elapsed": 1000},
         },
@@ -99,9 +119,20 @@ class PmcProfileTest(unittest.TestCase):
 
     def profile(self, translate_command):
         session = pmc_capture(self.root / "s", translate_command)
-        result = subprocess.run([sys.executable, str(uprof_query.TOOLS_DIR / "uprof.py"),
-                                 "profile", "--session", str(session), "--by", "process"],
-                                capture_output=True, text=True, encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(uprof_query.TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(session),
+                "--by",
+                "process",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout + result.stderr
 

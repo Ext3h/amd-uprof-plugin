@@ -61,25 +61,23 @@ class PdbProbeTest(unittest.TestCase):
         with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
             uprof_symbols._readobj_info("fixture.exe", Path("llvm-readobj.exe"))
 
-        self.assertEqual(invoked.call_args.kwargs["timeout"],
-                         uprof_symbols.PDB_PROBE_TIMEOUT)
+        self.assertEqual(invoked.call_args.kwargs["timeout"], uprof_symbols.PDB_PROBE_TIMEOUT)
 
     def test_the_pdbutil_probe_has_a_timeout(self):
-        completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0,
-                                                "GUID: ABCD\nAge: 1\n", "")
+        completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, "GUID: ABCD\nAge: 1\n", "")
 
         with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
             uprof_symbols._pdb_signature(Path("llvm-pdbutil.exe"), Path("fixture.pdb"))
 
-        self.assertEqual(invoked.call_args.kwargs["timeout"],
-                         uprof_symbols.PDB_PROBE_TIMEOUT)
+        self.assertEqual(invoked.call_args.kwargs["timeout"], uprof_symbols.PDB_PROBE_TIMEOUT)
 
     def test_a_probe_error_carries_the_pdbutil_exit_and_stderr(self):
         completed = subprocess.CompletedProcess(["llvm-pdbutil"], 1, "", "Access is denied.")
 
         with mock.patch.object(uprof_symbols, "run", return_value=completed):
             guid, age, error = uprof_symbols._pdb_signature(
-                Path("llvm-pdbutil.exe"), Path("fixture.pdb"))
+                Path("llvm-pdbutil.exe"), Path("fixture.pdb")
+            )
 
         self.assertIsNone(guid)
         self.assertIsNone(age)
@@ -94,17 +92,24 @@ class PdbProbeTest(unittest.TestCase):
 
         # These are Windows PDB search roots, so compare as Windows paths: Path() would keep
         # the backslashes as literal POSIX filename characters rather than separators.
-        self.assertEqual([PureWindowsPath(path) for path in candidates],
-                         [PureWindowsPath("C:/app/fixture.pdb"),
-                          PureWindowsPath(r"C:\cache\fixture.pdb\ABCD1\fixture.pdb")])
+        self.assertEqual(
+            [PureWindowsPath(path) for path in candidates],
+            [
+                PureWindowsPath("C:/app/fixture.pdb"),
+                PureWindowsPath(r"C:\cache\fixture.pdb\ABCD1\fixture.pdb"),
+            ],
+        )
 
     def test_a_failing_signature_probe_rejects_only_that_candidate(self):
-        with mock.patch.object(uprof_symbols, "_candidate_pdbs",
-                               return_value=[Path(__file__)]), \
-                mock.patch.object(uprof_symbols, "_pdb_signature",
-                                  side_effect=UprofError("timed out after 300s")):
+        with (
+            mock.patch.object(uprof_symbols, "_candidate_pdbs", return_value=[Path(__file__)]),
+            mock.patch.object(
+                uprof_symbols, "_pdb_signature", side_effect=UprofError("timed out after 300s")
+            ),
+        ):
             search = uprof_symbols._choose_pdb(
-                Path("llvm-pdbutil.exe"), Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1)
+                Path("llvm-pdbutil.exe"), Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1
+            )
 
         self.assertIsNone(search.pdb)
         self.assertEqual(search.probes[0].status, "probe_failed")
@@ -115,18 +120,21 @@ class PdbProbeTest(unittest.TestCase):
             missing = Path(directory) / "amdvlk64.pdb"
             with mock.patch.object(uprof_symbols, "_candidate_pdbs", return_value=[missing]):
                 search = uprof_symbols._choose_pdb(
-                    Path("llvm-pdbutil.exe"), Path("C:/app/amdvlk64.dll"), "amdvlk64.pdb",
-                    "ABCD", 1)
+                    Path("llvm-pdbutil.exe"), Path("C:/app/amdvlk64.dll"), "amdvlk64.pdb", "ABCD", 1
+                )
 
         self.assertIsNone(search.pdb)
         self.assertEqual(search.probes[0].status, "not_found")
         self.assertEqual(search.probes[0].detail, "not found")
 
     def test_symbolizer_json_errors_are_collected_as_evidence(self):
-        text = json.dumps({"Address": "0x10",
-                           "Error": {"Message": "'C:\\x\\amdvlk64.pdb': no such file or "
-                                                "directory"},
-                           "ModuleName": "C:\\app\\amdvlk64.dll"})
+        text = json.dumps(
+            {
+                "Address": "0x10",
+                "Error": {"Message": "'C:\\x\\amdvlk64.pdb': no such file or directory"},
+                "ModuleName": "C:\\app\\amdvlk64.dll",
+            }
+        )
 
         errors = uprof_symbols._json_errors(text)
 
@@ -135,13 +143,17 @@ class PdbProbeTest(unittest.TestCase):
     def test_an_explicit_symbol_directory_is_searched_before_the_module_dir(self):
         with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": ""}):
             candidates = uprof_symbols._candidate_pdbs(
-                Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1,
-                symbol_dirs=[r"C:\symbols"])
+                Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1, symbol_dirs=[r"C:\symbols"]
+            )
 
-        self.assertEqual([PureWindowsPath(path) for path in candidates],
-                         [PureWindowsPath(r"C:\symbols\fixture.pdb"),
-                          PureWindowsPath(r"C:\symbols\ABCD1\fixture.pdb"),
-                          PureWindowsPath("C:/app/fixture.pdb")])
+        self.assertEqual(
+            [PureWindowsPath(path) for path in candidates],
+            [
+                PureWindowsPath(r"C:\symbols\fixture.pdb"),
+                PureWindowsPath(r"C:\symbols\ABCD1\fixture.pdb"),
+                PureWindowsPath("C:/app/fixture.pdb"),
+            ],
+        )
 
     def test_debug_file_directories_reach_the_symbolizer(self):
         with tempfile.TemporaryDirectory(prefix="uprof-debug-dirs-") as directory:
@@ -151,8 +163,13 @@ class PdbProbeTest(unittest.TestCase):
             completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, "", "")
             with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
                 uprof_symbols._run_symbolizer(
-                    Path("llvm-symbolizer.exe"), "fixture.exe", None, rvas,
-                    root / "out.jsonl", debug_dirs=[str(root / "one"), str(root / "two")])
+                    Path("llvm-symbolizer.exe"),
+                    "fixture.exe",
+                    None,
+                    rvas,
+                    root / "out.jsonl",
+                    debug_dirs=[str(root / "one"), str(root / "two")],
+                )
 
         command = invoked.call_args.args[0]
         self.assertIn(f"--debug-file-directory={root / 'one'}", command)
@@ -160,12 +177,20 @@ class PdbProbeTest(unittest.TestCase):
 
     def test_the_evidence_line_names_locations_and_unconsulted_urls(self):
         evidence = uprof_symbols.ModuleEvidence(
-            "amdvlk64.dll", "C:/app/amdvlk64.dll", image_guid="ABCD", image_age=1,
+            "amdvlk64.dll",
+            "C:/app/amdvlk64.dll",
+            image_guid="ABCD",
+            image_age=1,
             search=uprof_symbols.PdbSearch(
-                probes=[uprof_symbols.PdbProbe(Path("C:/app/amdvlk64.pdb"), "not_found",
-                                               detail="not found")],
-                urls=["https://msdl.microsoft.com/download/symbols"]),
-            outcome="no_pdb")
+                probes=[
+                    uprof_symbols.PdbProbe(
+                        Path("C:/app/amdvlk64.pdb"), "not_found", detail="not found"
+                    )
+                ],
+                urls=["https://msdl.microsoft.com/download/symbols"],
+            ),
+            outcome="no_pdb",
+        )
         stream = io.StringIO()
 
         uprof_symbols._evidence_line(evidence, stream)
@@ -186,21 +211,29 @@ class PdbManifestTest(unittest.TestCase):
             module.write_bytes(b"MZ")
             out = root / "out"
             result = uprof_symbols.SymbolizedModule(
-                root / "symbols.parquet", None, pdb,
+                root / "symbols.parquet",
+                None,
+                pdb,
                 uprof_symbols.ModuleEvidence(
-                    "fixture.exe", str(module), pdb=str(pdb) if pdb else None,
-                    outcome="resolved" if pdb else "no_pdb"))
-            with mock.patch.object(uprof_symbols, "require_symbolizer",
-                                   return_value=Path("llvm-symbolizer.exe")):
-                with mock.patch.object(
-                        uprof_symbols, "symbolize_module", return_value=result):
+                    "fixture.exe",
+                    str(module),
+                    pdb=str(pdb) if pdb else None,
+                    outcome="resolved" if pdb else "no_pdb",
+                ),
+            )
+            with mock.patch.object(
+                uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+            ):
+                with mock.patch.object(uprof_symbols, "symbolize_module", return_value=result):
                     with mock.patch.object(
-                            uprof_symbols, "_combine_artifacts",
-                            return_value=(root / "symbols.parquet", None)):
+                        uprof_symbols,
+                        "_combine_artifacts",
+                        return_value=(root / "symbols.parquet", None),
+                    ):
                         symbols, publics, pdbs, evidence = uprof_symbols.symbolize_modules(
-                            [("fixture.exe", str(module), ["0x101B"])], out)
-                        content = (Path(pdbs).read_text(encoding="utf-8")
-                                   if pdbs else None)
+                            [("fixture.exe", str(module), ["0x101B"])], out
+                        )
+                        content = Path(pdbs).read_text(encoding="utf-8") if pdbs else None
                         return symbols, publics, content, evidence
 
     def test_the_pdb_used_for_symbolization_is_recorded(self):
@@ -229,23 +262,34 @@ class NoPdbEvidenceTest(unittest.TestCase):
             rvas = root / "rvas.txt"
             rvas.write_text("0x1000\n", encoding="utf-8")
             search = uprof_symbols.PdbSearch(
-                probes=[uprof_symbols.PdbProbe(root / "fixture.pdb", "not_found")])
+                probes=[uprof_symbols.PdbProbe(root / "fixture.pdb", "not_found")]
+            )
             failed = uprof_symbols.SymbolizerRun(
-                1, [("0x1000", "'C:\\app\\fixture.pdb': no such file or directory")], "")
-            with mock.patch.object(uprof_symbols, "require_symbolizer",
-                                   return_value=Path("llvm-symbolizer.exe")), \
-                    mock.patch.object(uprof_symbols, "find_sibling",
-                                      side_effect=lambda _tool, name: Path(name + ".exe")), \
-                    mock.patch.object(uprof_symbols, "_readobj_info",
-                                      return_value=("fixture.pdb", "ABCD", 1)), \
-                    mock.patch.object(uprof_symbols, "_choose_pdb",
-                                      return_value=search), \
-                    mock.patch.object(uprof_symbols, "_run_symbolizer",
-                                      return_value=failed) as symbolizer, \
-                    mock.patch.object(uprof_symbols, "_write_parquet",
-                                      return_value=root / "symbols.parquet"):
+                1, [("0x1000", "'C:\\app\\fixture.pdb': no such file or directory")], ""
+            )
+            with (
+                mock.patch.object(
+                    uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+                ),
+                mock.patch.object(
+                    uprof_symbols,
+                    "find_sibling",
+                    side_effect=lambda _tool, name: Path(name + ".exe"),
+                ),
+                mock.patch.object(
+                    uprof_symbols, "_readobj_info", return_value=("fixture.pdb", "ABCD", 1)
+                ),
+                mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search),
+                mock.patch.object(
+                    uprof_symbols, "_run_symbolizer", return_value=failed
+                ) as symbolizer,
+                mock.patch.object(
+                    uprof_symbols, "_write_parquet", return_value=root / "symbols.parquet"
+                ),
+            ):
                 result = uprof_symbols.symbolize_module(
-                    str(module), rvas, root / "out", module_name="fixture.exe")
+                    str(module), rvas, root / "out", module_name="fixture.exe"
+                )
 
         self.assertIsNone(result.pdb)
         self.assertEqual(result.evidence.outcome, "no_pdb")
@@ -257,9 +301,13 @@ class ExplicitPdbTest(unittest.TestCase):
     def test_an_explicit_symbol_file_is_probed_before_any_search_root(self):
         with mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": ""}):
             candidates = uprof_symbols._candidate_pdbs(
-                Path("C:/app/fixture.exe"), "fixture.pdb", "ABCD", 1,
+                Path("C:/app/fixture.exe"),
+                "fixture.pdb",
+                "ABCD",
+                1,
                 symbol_dirs=[r"C:\symbols"],
-                symbol_files=[Path(r"C:\choice\other.pdb")])
+                symbol_files=[Path(r"C:\choice\other.pdb")],
+            )
 
         self.assertEqual(PureWindowsPath(candidates[0]), PureWindowsPath(r"C:\choice\other.pdb"))
         self.assertEqual(PureWindowsPath(candidates[1]), PureWindowsPath(r"C:\symbols\fixture.pdb"))
@@ -272,18 +320,28 @@ class ExplicitPdbTest(unittest.TestCase):
             completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, "", "")
             with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
                 uprof_symbols._run_symbolizer(
-                    Path("llvm-symbolizer.exe"), "fixture.exe", None, rvas,
+                    Path("llvm-symbolizer.exe"),
+                    "fixture.exe",
+                    None,
+                    rvas,
                     root / "out.jsonl",
-                    fallback_paths=[str(root / "one"), str(root / "two")])
+                    fallback_paths=[str(root / "one"), str(root / "two")],
+                )
 
         command = invoked.call_args.args[0]
         self.assertIn(f"--fallback-debug-path={root / 'one'}", command)
         self.assertIn(f"--fallback-debug-path={root / 'two'}", command)
 
     def test_all_empty_symbol_records_are_a_wrong_build_pdb(self):
-        text = "\n".join(json.dumps(
-            {"Address": hex(0x1000 + offset),
-             "Symbol": [{"FunctionName": "", "Line": 0}]}) for offset in range(2)) + "\n"
+        text = (
+            "\n".join(
+                json.dumps(
+                    {"Address": hex(0x1000 + offset), "Symbol": [{"FunctionName": "", "Line": 0}]}
+                )
+                for offset in range(2)
+            )
+            + "\n"
+        )
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, text, "")
         with tempfile.TemporaryDirectory(prefix="uprof-wrong-build-") as directory:
             root = Path(directory)
@@ -291,8 +349,12 @@ class ExplicitPdbTest(unittest.TestCase):
             rvas.write_text("0x1000\n0x1001\n", encoding="utf-8")
             with mock.patch.object(uprof_symbols, "run", return_value=completed):
                 result = uprof_symbols._run_symbolizer(
-                    Path("llvm-symbolizer.exe"), "fixture.exe",
-                    root / "fixture.pdb", rvas, root / "out.jsonl")
+                    Path("llvm-symbolizer.exe"),
+                    "fixture.exe",
+                    root / "fixture.pdb",
+                    rvas,
+                    root / "out.jsonl",
+                )
 
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.empty_records, 2)
@@ -306,36 +368,46 @@ def write_stub_symbolizer(directory: Path, pdb_option: bool, zlib: bool = True) 
     Without zlib, a symbolization run reports the decompression error of an LLVM built without
     LLVM_ENABLE_ZLIB, the way such a build reads compressed DWARF.
     """
-    help_lines = ["OVERVIEW: llvm-symbolizer", "OPTIONS:",
-                  "  --dwp=<file>            Path to DWP file to be use for any split CUs"]
+    help_lines = [
+        "OVERVIEW: llvm-symbolizer",
+        "OPTIONS:",
+        "  --dwp=<file>            Path to DWP file to be use for any split CUs",
+    ]
     if pdb_option:
         help_lines.append("  --pdb=<file>            Path to PDB file")
     version = "23.1.4" if pdb_option else "22.1.6"
     script = directory / "stub_symbolizer.py"
-    script.write_text("\n".join([
-        "import sys",
-        f"HELP = {chr(10).join(help_lines)!r}",
-        f"VERSION = {('LLVM (http://llvm.org/):' + chr(10) + '  LLVM version ' + version)!r}",
-        "if '--help' in sys.argv:",
-        "    print(HELP)",
-        "elif '--version' in sys.argv:",
-        "    print(VERSION)",
-        f"elif {not pdb_option!r}:",
-        "    bad = [arg for arg in sys.argv[1:] if arg.startswith('--pdb')]",
-        "    if bad:",
-        "        print(f\"error: unknown argument '{bad[0]}'\", file=sys.stderr)",
-        "        sys.exit(1)",
-        f"if {not zlib!r} and '--help' not in sys.argv and '--version' not in sys.argv:",
-        "    print(\"error: failed to decompress '.debug_info', LLVM was not built with \"",
-        "          \"LLVM_ENABLE_ZLIB or did not find zlib at build time\", file=sys.stderr)",
-        ""]), encoding="utf-8")
+    script.write_text(
+        "\n".join(
+            [
+                "import sys",
+                f"HELP = {chr(10).join(help_lines)!r}",
+                f"VERSION = {('LLVM (http://llvm.org/):' + chr(10) + '  LLVM version ' + version)!r}",
+                "if '--help' in sys.argv:",
+                "    print(HELP)",
+                "elif '--version' in sys.argv:",
+                "    print(VERSION)",
+                f"elif {not pdb_option!r}:",
+                "    bad = [arg for arg in sys.argv[1:] if arg.startswith('--pdb')]",
+                "    if bad:",
+                "        print(f\"error: unknown argument '{bad[0]}'\", file=sys.stderr)",
+                "        sys.exit(1)",
+                f"if {not zlib!r} and '--help' not in sys.argv and '--version' not in sys.argv:",
+                "    print(\"error: failed to decompress '.debug_info', LLVM was not built with \"",
+                '          "LLVM_ENABLE_ZLIB or did not find zlib at build time", file=sys.stderr)',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     if os.name == "nt":
         launcher = directory / "llvm-symbolizer.cmd"
         launcher.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
     else:
         launcher = directory / "llvm-symbolizer"
-        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n',
-                            encoding="utf-8")
+        launcher.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8"
+        )
         launcher.chmod(0o755)
     return launcher
 
@@ -383,16 +455,23 @@ class LlvmVersionGateTest(unittest.TestCase):
         pdb.write_bytes(b"pdb")
         rvas = self.root / "rvas.txt"
         rvas.write_text("0x1000\n", encoding="utf-8")
-        search = uprof_symbols.PdbSearch(
-            pdb=pdb, probes=[uprof_symbols.PdbProbe(pdb, "accepted")])
-        with mock.patch.object(uprof_native, "find_symbolizer", return_value=stub), \
-                mock.patch.object(uprof_native, "find_sibling", return_value=None), \
-                mock.patch.object(uprof_symbols, "find_sibling",
-                                  side_effect=lambda _tool, name: Path(name + ".exe")),                 mock.patch.object(uprof_symbols, "_readobj_info",
-                                  return_value=("fixture.pdb", "ABCD", 1)),                 mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search),                 mock.patch.object(uprof_symbols, "_run_symbolizer") as symbolizer:
+        search = uprof_symbols.PdbSearch(pdb=pdb, probes=[uprof_symbols.PdbProbe(pdb, "accepted")])
+        with (
+            mock.patch.object(uprof_native, "find_symbolizer", return_value=stub),
+            mock.patch.object(uprof_native, "find_sibling", return_value=None),
+            mock.patch.object(
+                uprof_symbols, "find_sibling", side_effect=lambda _tool, name: Path(name + ".exe")
+            ),
+            mock.patch.object(
+                uprof_symbols, "_readobj_info", return_value=("fixture.pdb", "ABCD", 1)
+            ),
+            mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search),
+            mock.patch.object(uprof_symbols, "_run_symbolizer") as symbolizer,
+        ):
             with self.assertRaisesRegex(uprof_native.SymbolizerUnsupported, "minimum 23"):
                 uprof_symbols.symbolize_module(
-                    str(module), rvas, self.root / "out", module_name="fixture.exe")
+                    str(module), rvas, self.root / "out", module_name="fixture.exe"
+                )
 
         symbolizer.assert_not_called()
 
@@ -401,10 +480,12 @@ class LlvmVersionGateTest(unittest.TestCase):
         cause = uprof_native.llvm_cause(str(stub))
         module = self.root / "fixture.exe"
         module.write_bytes(b"MZ")
-        with mock.patch.object(uprof_symbols, "symbolize_module",
-                               side_effect=uprof_native.SymbolizerUnsupported(cause)):
+        with mock.patch.object(
+            uprof_symbols, "symbolize_module", side_effect=uprof_native.SymbolizerUnsupported(cause)
+        ):
             outcome = uprof_symbols._symbolize_worker(
-                0, "fixture.exe", str(module), ["0x1000"], self.root, None, (), (), (), ())
+                0, "fixture.exe", str(module), ["0x1000"], self.root, None, (), (), (), ()
+            )
 
         self.assertIsNone(outcome.error)
         self.assertEqual(outcome.evidence.outcome, "failed")
@@ -440,8 +521,7 @@ class SourcePathProbeTest(unittest.TestCase):
         self.assertEqual(paths.image_dirs, ())
 
     def test_an_image_file_and_a_directory_are_told_apart(self):
-        paths = uprof_symbols.probe_paths(
-            image_paths=[str(self.image), str(self.images)])
+        paths = uprof_symbols.probe_paths(image_paths=[str(self.image), str(self.images)])
 
         self.assertEqual(paths.image_files, (self.image,))
         self.assertEqual(paths.image_dirs, (self.images,))
@@ -476,15 +556,16 @@ class ImageResolutionTest(unittest.TestCase):
 
     def test_an_explicit_image_file_wins_over_a_directory(self):
         image, source = uprof_symbols.resolve_image(
-            "app.exe", "C:/capture/app.exe", image_files=(self.image,),
-            image_dirs=(self.images,))
+            "app.exe", "C:/capture/app.exe", image_files=(self.image,), image_dirs=(self.images,)
+        )
 
         self.assertEqual(image, self.image)
         self.assertIn("explicit", source)
 
     def test_an_image_directory_finds_the_module_basename(self):
         image, source = uprof_symbols.resolve_image(
-            "app.exe", "C:/capture/app.exe", image_dirs=(self.images,))
+            "app.exe", "C:/capture/app.exe", image_dirs=(self.images,)
+        )
 
         self.assertEqual(image, self.found)
         self.assertIn(str(self.images), source)
@@ -497,13 +578,15 @@ class ImageResolutionTest(unittest.TestCase):
 
     def test_an_image_directory_resolves_a_module_the_capture_cannot_supply(self):
         image, _source = uprof_symbols.resolve_image(
-            "app.exe", "C:/capture/app.exe", image_dirs=(self.images,))
+            "app.exe", "C:/capture/app.exe", image_dirs=(self.images,)
+        )
 
         self.assertEqual(image, self.found)
 
     def test_an_unmatched_image_path_resolves_nothing(self):
         image, source = uprof_symbols.resolve_image(
-            "other.exe", "C:/capture/other.exe", image_dirs=(self.images,))
+            "other.exe", "C:/capture/other.exe", image_dirs=(self.images,)
+        )
 
         self.assertIsNone(image)
         self.assertIsNone(source)
@@ -513,10 +596,23 @@ class ProfilePathOptionsTest(unittest.TestCase):
     def test_profile_accepts_repeatable_neutral_paths(self):
         import uprof
 
-        args = uprof.build_parser().parse_args([
-            "profile", "--session", "s", "--by", "line",
-            "--symbol-path", "one", "--symbol-path", "two",
-            "--image-path", "three", "--image-path", "four"])
+        args = uprof.build_parser().parse_args(
+            [
+                "profile",
+                "--session",
+                "s",
+                "--by",
+                "line",
+                "--symbol-path",
+                "one",
+                "--symbol-path",
+                "two",
+                "--image-path",
+                "three",
+                "--image-path",
+                "four",
+            ]
+        )
 
         self.assertEqual(args.symbol_path, ["one", "two"])
         self.assertEqual(args.image_path, ["three", "four"])
@@ -524,19 +620,35 @@ class ProfilePathOptionsTest(unittest.TestCase):
     def test_profile_rejects_the_old_names(self):
         import uprof
 
-        for option in ("--pdb-file", "--pdb-dir", "--debug-file-dir",
-                       "--fallback-debug-path", "--image-dir"):
+        for option in (
+            "--pdb-file",
+            "--pdb-dir",
+            "--debug-file-dir",
+            "--fallback-debug-path",
+            "--image-dir",
+        ):
             with self.subTest(option=option):
                 with self.assertRaises(SystemExit):
                     uprof.build_parser().parse_args(
-                        ["profile", "--session", "s", "--by", "line", option, "x"])
+                        ["profile", "--session", "s", "--by", "line", option, "x"]
+                    )
 
     def test_the_process_image_filter_stays_separate_from_image_path(self):
         import uprof
 
-        args = uprof.build_parser().parse_args([
-            "profile", "--session", "s", "--by", "line",
-            "--image", "%app%", "--image-path", "images"])
+        args = uprof.build_parser().parse_args(
+            [
+                "profile",
+                "--session",
+                "s",
+                "--by",
+                "line",
+                "--image",
+                "%app%",
+                "--image-path",
+                "images",
+            ]
+        )
 
         self.assertEqual(args.image, "%app%")
         self.assertEqual(args.image_path, ["images"])
@@ -544,9 +656,19 @@ class ProfilePathOptionsTest(unittest.TestCase):
     def test_translate_accepts_repeatable_symbol_paths(self):
         import uprof
 
-        args = uprof.build_parser().parse_args([
-            "translate", "--session", "s", "--out-dir", "o",
-            "--symbol-path", "one", "--symbol-path", "two"])
+        args = uprof.build_parser().parse_args(
+            [
+                "translate",
+                "--session",
+                "s",
+                "--out-dir",
+                "o",
+                "--symbol-path",
+                "one",
+                "--symbol-path",
+                "two",
+            ]
+        )
 
         self.assertEqual(args.symbol_path, ["one", "two"])
 
@@ -555,15 +677,15 @@ class ProfilePathOptionsTest(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             uprof.build_parser().parse_args(
-                ["translate", "--session", "s", "--out-dir", "o", "--pdb-dir", "x"])
+                ["translate", "--session", "s", "--out-dir", "o", "--pdb-dir", "x"]
+            )
 
 
 class TranslateSymbolPathTest(unittest.TestCase):
     def test_each_symbol_path_is_forwarded(self):
         import uprof_native
 
-        command = uprof_native.translate_command(
-            "uprof", "session", symbol_paths=["one", "two"])
+        command = uprof_native.translate_command("uprof", "session", symbol_paths=["one", "two"])
 
         self.assertEqual(command.count("--symbol-path"), 2)
         self.assertIn("one", command)
@@ -579,17 +701,23 @@ class ImagePathSymbolizationTest(unittest.TestCase):
             image = images / "app.exe"
             image.write_bytes(b"MZ")
             evidence = uprof_symbols.ModuleEvidence("app.exe", str(image), outcome="resolved")
-            result = uprof_symbols.SymbolizedModule(
-                root / "symbols.parquet", None, None, evidence)
-            with mock.patch.object(uprof_symbols, "symbolize_module",
-                                   return_value=result) as symbolized, \
-                    mock.patch.object(uprof_symbols, "require_symbolizer",
-                                      return_value=Path("llvm-symbolizer.exe")), \
-                    mock.patch.object(uprof_symbols, "_combine_artifacts",
-                                      return_value=(root / "symbols.parquet", None)):
+            result = uprof_symbols.SymbolizedModule(root / "symbols.parquet", None, None, evidence)
+            with (
+                mock.patch.object(
+                    uprof_symbols, "symbolize_module", return_value=result
+                ) as symbolized,
+                mock.patch.object(
+                    uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+                ),
+                mock.patch.object(
+                    uprof_symbols,
+                    "_combine_artifacts",
+                    return_value=(root / "symbols.parquet", None),
+                ),
+            ):
                 uprof_symbols.symbolize_modules(
-                    [("app.exe", "C:/capture/app.exe", ["0x101B"])], root,
-                    image_dirs=(images,))
+                    [("app.exe", "C:/capture/app.exe", ["0x101B"])], root, image_dirs=(images,)
+                )
             called_with = symbolized.call_args.args[0]
 
         self.assertEqual(called_with, str(image))
@@ -603,9 +731,11 @@ class PublicsMemoTest(unittest.TestCase):
             pdb.write_bytes(b"pdb")
             pdbutil = root / "llvm-pdbutil.exe"
             pdbutil.write_bytes(b"")
-            stdout = ("SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
-                      "1 | S_PUB32 [size = 8] `foo`\n"
-                      "        flags = function, addr = 0001:10\n")
+            stdout = (
+                "SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
+                "1 | S_PUB32 [size = 8] `foo`\n"
+                "        flags = function, addr = 0001:10\n"
+            )
             completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, stdout, "")
             uprof_symbols._PUBLICS_CACHE.reset()
             self.addCleanup(uprof_symbols._PUBLICS_CACHE.reset)
@@ -624,17 +754,20 @@ class PublicsMemoTest(unittest.TestCase):
             pdb.write_bytes(b"pdb")
             pdbutil = root / "llvm-pdbutil.exe"
             pdbutil.write_bytes(b"")
-            stdout = ("SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
-                      "1 | S_PUB32 [size = 8] `foo`\n"
-                      "        flags = function, addr = 0001:10\n")
+            stdout = (
+                "SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
+                "1 | S_PUB32 [size = 8] `foo`\n"
+                "        flags = function, addr = 0001:10\n"
+            )
             completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, stdout, "")
             uprof_symbols._PUBLICS_CACHE.reset()
             self.addCleanup(uprof_symbols._PUBLICS_CACHE.reset)
             with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
                 first = uprof_symbols.public_symbols(root / "one.csv", pdb, pdbutil)
                 calls = invoked.call_count
-                with mock.patch.object(uprof_symbols.shutil, "copyfile",
-                                       side_effect=OSError("gone")):
+                with mock.patch.object(
+                    uprof_symbols.shutil, "copyfile", side_effect=OSError("gone")
+                ):
                     second = uprof_symbols.public_symbols(root / "two.csv", pdb, pdbutil)
 
             self.assertEqual(first, second)
@@ -656,23 +789,27 @@ class PublicsTimeoutTest(unittest.TestCase):
         self.pdbutil.write_bytes(b"")
 
     def test_the_publics_dump_runs_with_the_pdb_probe_timeout(self):
-        stdout = ("SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
-                  "1 | S_PUB32 [size = 8] `foo`\n"
-                  "        flags = function, addr = 0001:10\n")
+        stdout = (
+            "SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
+            "1 | S_PUB32 [size = 8] `foo`\n"
+            "        flags = function, addr = 0001:10\n"
+        )
         completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, stdout, "")
         with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
             uprof_symbols.public_symbols(self.root / "one.csv", self.pdb, self.pdbutil)
 
-        self.assertEqual(invoked.call_args.kwargs.get("timeout"),
-                         uprof_symbols.PDB_PROBE_TIMEOUT)
+        self.assertEqual(invoked.call_args.kwargs.get("timeout"), uprof_symbols.PDB_PROBE_TIMEOUT)
 
     def test_a_timed_out_dump_is_a_fold_warning_not_a_failure(self):
         stream = io.StringIO()
         timeout = UprofError("llvm-pdbutil.exe timed out after 300s")
-        with mock.patch.object(uprof_symbols, "find_sibling", return_value=self.pdbutil), \
-                mock.patch.object(uprof_symbols, "run", side_effect=timeout):
-            result = uprof_symbols._publics(self.pdb, self.root / "symbols.jsonl",
-                                            self.root / "llvm-symbolizer.exe", stream)
+        with (
+            mock.patch.object(uprof_symbols, "find_sibling", return_value=self.pdbutil),
+            mock.patch.object(uprof_symbols, "run", side_effect=timeout),
+        ):
+            result = uprof_symbols._publics(
+                self.pdb, self.root / "symbols.jsonl", self.root / "llvm-symbolizer.exe", stream
+            )
 
         self.assertIsNone(result)
         self.assertIn("timed out after 300s", stream.getvalue())
@@ -685,8 +822,9 @@ class ParallelSymbolizationTest(unittest.TestCase):
     def test_concurrent_modules_keep_output_and_artifact_order(self):
         cpu_count = os.cpu_count() or 1
         if cpu_count < 2:
-            self.skipTest(HOST_SKIP + "a thread pool needs at least two CPUs to run modules "
-                          "together")
+            self.skipTest(
+                HOST_SKIP + "a thread pool needs at least two CPUs to run modules together"
+            )
         count = min(4, cpu_count)
         with tempfile.TemporaryDirectory(prefix="uprof-parallel-") as directory:
             root = Path(directory)
@@ -705,15 +843,21 @@ class ParallelSymbolizationTest(unittest.TestCase):
                 print(f"SYMBOLIZED: {module_name}", file=stream)
                 evidence = uprof_symbols.ModuleEvidence(module_name, exe, outcome="resolved")
                 return uprof_symbols.SymbolizedModule(
-                    Path(out_dir) / "symbols.parquet", None, None, evidence)
+                    Path(out_dir) / "symbols.parquet", None, None, evidence
+                )
 
             stream = io.StringIO()
-            with mock.patch.object(uprof_symbols, "require_symbolizer",
-                                   return_value=Path("llvm-symbolizer.exe")), \
-                    mock.patch.object(uprof_symbols, "symbolize_module",
-                                      side_effect=symbolize), \
-                    mock.patch.object(uprof_symbols, "_combine_artifacts",
-                                      return_value=(root / "symbols.parquet", None)) as combine:
+            with (
+                mock.patch.object(
+                    uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+                ),
+                mock.patch.object(uprof_symbols, "symbolize_module", side_effect=symbolize),
+                mock.patch.object(
+                    uprof_symbols,
+                    "_combine_artifacts",
+                    return_value=(root / "symbols.parquet", None),
+                ) as combine,
+            ):
                 uprof_symbols.symbolize_modules(modules, root / "out", stream=stream)
 
         expected: list[str] = []
@@ -729,19 +873,31 @@ class ParallelSymbolizationTest(unittest.TestCase):
 
 class SymbolizeTasksErrorReplayTest(unittest.TestCase):
     def test_an_error_stops_replay_before_later_modules(self):
-        def worker(index, name, path, rvas, out_path, debug_info, symbol_files,
-                   symbol_dirs, image_files, image_dirs, identity=None, symbol_stores=()):
+        def worker(
+            index,
+            name,
+            path,
+            rvas,
+            out_path,
+            debug_info,
+            symbol_files,
+            symbol_dirs,
+            image_files,
+            image_dirs,
+            identity=None,
+            symbol_stores=(),
+        ):
             if name == "b.exe":
                 return uprof_symbols._ModuleSymbolization(
-                    name, "MODULE: b.exe\nFAILURE DETAIL\n", error=RuntimeError("boom"))
+                    name, "MODULE: b.exe\nFAILURE DETAIL\n", error=RuntimeError("boom")
+                )
             return uprof_symbols._ModuleSymbolization(name, f"MODULE: {name}\n")
 
         modules = [("a.exe", "", ["0x1"]), ("b.exe", "", ["0x1"]), ("c.exe", "", ["0x1"])]
         stream = io.StringIO()
         with mock.patch.object(uprof_symbols, "_symbolize_worker", side_effect=worker):
             with self.assertRaises(RuntimeError):
-                uprof_symbols._symbolize_tasks(modules, Path("out"), stream, None,
-                                               (), (), (), ())
+                uprof_symbols._symbolize_tasks(modules, Path("out"), stream, None, (), (), (), ())
 
         output = stream.getvalue()
         self.assertIn("MODULE: a.exe", output)
@@ -777,10 +933,13 @@ class PublicsCacheResetTest(unittest.TestCase):
             cache.remember(Path("y.pdb"), Path("out2.csv"), (3, 4))
             return []
 
-        with tempfile.TemporaryDirectory(prefix="uprof-reset-ok-") as tmp, \
-                mock.patch.object(uprof_symbols, "require_symbolizer",
-                                  return_value=Path("llvm-symbolizer.exe")), \
-                mock.patch.object(uprof_symbols, "_symbolize_tasks", side_effect=tasks):
+        with (
+            tempfile.TemporaryDirectory(prefix="uprof-reset-ok-") as tmp,
+            mock.patch.object(
+                uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+            ),
+            mock.patch.object(uprof_symbols, "_symbolize_tasks", side_effect=tasks),
+        ):
             uprof_symbols.symbolize_modules([], Path(tmp), stream=io.StringIO())
 
         self._assert_cleared()
@@ -797,9 +956,12 @@ class PublicsCacheResetTest(unittest.TestCase):
             raise RuntimeError("boom")
 
         with tempfile.TemporaryDirectory(prefix="uprof-reset-fail-") as tmp:
-            with mock.patch.object(uprof_symbols, "require_symbolizer",
-                                   return_value=Path("llvm-symbolizer.exe")), \
-                    mock.patch.object(uprof_symbols, "_symbolize_tasks", side_effect=tasks):
+            with (
+                mock.patch.object(
+                    uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+                ),
+                mock.patch.object(uprof_symbols, "_symbolize_tasks", side_effect=tasks),
+            ):
                 with self.assertRaises(RuntimeError):
                     uprof_symbols.symbolize_modules([], Path(tmp), stream=io.StringIO())
             self._assert_cleared()
@@ -810,9 +972,11 @@ class PublicsCacheResetTest(unittest.TestCase):
             pdb.write_bytes(b"pdb")
             pdbutil = root / "llvm-pdbutil.exe"
             pdbutil.write_bytes(b"")
-            stdout = ("SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
-                      "1 | S_PUB32 [size = 8] `foo`\n"
-                      "        flags = function, addr = 0001:10\n")
+            stdout = (
+                "SECTION HEADER #1\n  1000 virtual address\nPublic Symbols\n"
+                "1 | S_PUB32 [size = 8] `foo`\n"
+                "        flags = function, addr = 0001:10\n"
+            )
             completed = subprocess.CompletedProcess(["llvm-pdbutil"], 0, stdout, "")
             with mock.patch.object(uprof_symbols, "run", return_value=completed) as invoked:
                 uprof_symbols.public_symbols(root / "again.csv", pdb, pdbutil)
@@ -821,10 +985,12 @@ class PublicsCacheResetTest(unittest.TestCase):
 
 class PublicSymbolsInvocationTest(unittest.TestCase):
     SECTIONS = "SECTION HEADER #1\n  1000 virtual address\n"
-    PUBLICS = ("Public Symbols\n"
-               "================================================================\n"
-               "1 | S_PUB32 [size = 8] `foo`\n"
-               "        flags = function, addr = 0001:10\n")
+    PUBLICS = (
+        "Public Symbols\n"
+        "================================================================\n"
+        "1 | S_PUB32 [size = 8] `foo`\n"
+        "        flags = function, addr = 0001:10\n"
+    )
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="uprof-publics-")
@@ -841,10 +1007,13 @@ class PublicSymbolsInvocationTest(unittest.TestCase):
 
     def invoke(self, stdout, returncode=0):
         completed = subprocess.CompletedProcess(["llvm-pdbutil"], returncode, stdout, "boom")
-        with mock.patch.object(uprof_symbols, "find_sibling", return_value=self.pdbutil), \
-                mock.patch.object(uprof_symbols, "run", return_value=completed):
-            return uprof_symbols._publics(self.pdb, self.out, Path("llvm-symbolizer.exe"),
-                                          self.stream)
+        with (
+            mock.patch.object(uprof_symbols, "find_sibling", return_value=self.pdbutil),
+            mock.patch.object(uprof_symbols, "run", return_value=completed),
+        ):
+            return uprof_symbols._publics(
+                self.pdb, self.out, Path("llvm-symbolizer.exe"), self.stream
+            )
 
     def test_a_failed_invocation_is_unavailable_and_warns(self):
         self.assertIsNone(self.invoke(self.SECTIONS, returncode=1))
@@ -902,8 +1071,11 @@ class ParquetWriteThreadTest(unittest.TestCase):
                 mock.patch.dict(sys.modules, {"duckdb": FakeDuckDB}),
             ]
             if count_error:
-                patches.append(mock.patch.object(uprof_symbols, "_jsonl_row_count",
-                                                 side_effect=OSError("gone")))
+                patches.append(
+                    mock.patch.object(
+                        uprof_symbols, "_jsonl_row_count", side_effect=OSError("gone")
+                    )
+                )
             with contextlib.ExitStack() as stack:
                 for patcher in patches:
                     stack.enter_context(patcher)

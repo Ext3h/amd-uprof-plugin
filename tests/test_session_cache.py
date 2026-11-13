@@ -21,12 +21,20 @@ RVAS = [("a.dll", "c:/a.dll", "0x10")]
 DISK = [["c:/a.dll", True, 10, 20]]
 MODULES = [["c:/a.dll", 10, 1, False, True]]
 TOOLS = {"symbolizer": ["s", 1, 1], "pdbutil": ["p", 1, 1], "readobj": ["r", 1, 1]}
-SEARCH = {"symbol_files": [], "symbol_dirs": [], "image_files": [], "image_dirs": [],
-          "nt_symbol_roots": {"caches": [], "dirs": []}, "symbol_servers": []}
+SEARCH = {
+    "symbol_files": [],
+    "symbol_dirs": [],
+    "image_files": [],
+    "image_dirs": [],
+    "nt_symbol_roots": {"caches": [], "dirs": []},
+    "symbol_servers": [],
+}
 
 
-_STORAGE_ERROR = ("Trying to read a database file with storage version number 99, but we can "
-                  "only read storage versions between 64 and 70.")
+_STORAGE_ERROR = (
+    "Trying to read a database file with storage version number 99, but we can "
+    "only read storage versions between 64 and 70."
+)
 
 
 class _StorageMismatch:
@@ -60,24 +68,46 @@ class KeyTest(unittest.TestCase):
         self.assertNotEqual(base, uprof_cache.symbol_key(RVAS, MODULES, disk, TOOLS, SEARCH))
 
     def test_the_range_key_is_bound_to_the_symbols_and_readobj(self):
-        base = uprof_cache.ranges_key([["a.dll", "c:/a.dll"]], MODULES, DISK,
-                                      TOOLS["readobj"], "symbols")
-        self.assertNotEqual(base, uprof_cache.ranges_key(
-            [["a.dll", "c:/a.dll"]], MODULES, DISK, TOOLS["readobj"], "other"))
-        self.assertNotEqual(base, uprof_cache.ranges_key(
-            [["a.dll", "c:/a.dll"]], MODULES, DISK, ["r2", 1, 1], "symbols"))
+        base = uprof_cache.ranges_key(
+            [["a.dll", "c:/a.dll"]], MODULES, DISK, TOOLS["readobj"], "symbols"
+        )
+        self.assertNotEqual(
+            base,
+            uprof_cache.ranges_key(
+                [["a.dll", "c:/a.dll"]], MODULES, DISK, TOOLS["readobj"], "other"
+            ),
+        )
+        self.assertNotEqual(
+            base,
+            uprof_cache.ranges_key([["a.dll", "c:/a.dll"]], MODULES, DISK, ["r2", 1, 1], "symbols"),
+        )
 
     def test_lock_errors_and_unfinished_results_are_distinguished(self):
-        self.assertTrue(uprof_cache.SessionCache._lock_error(
-            Exception("IO Error: Could not set lock on file: conflicting lock")))
-        self.assertTrue(uprof_cache.SessionCache._lock_error(
-            Exception("The process cannot access the file because it is being used by "
-                      "another process")))
-        self.assertTrue(uprof_cache.SessionCache._lock_error(
-            Exception("Resource In Use Error: Unique file handle conflict: Cannot attach "
-                      "b2 - the database file is already attached")))
-        self.assertFalse(uprof_cache.SessionCache._lock_error(
-            Exception("Resource In Use Error: connection has an unfinished result")))
+        self.assertTrue(
+            uprof_cache.SessionCache._lock_error(
+                Exception("IO Error: Could not set lock on file: conflicting lock")
+            )
+        )
+        self.assertTrue(
+            uprof_cache.SessionCache._lock_error(
+                Exception(
+                    "The process cannot access the file because it is being used by another process"
+                )
+            )
+        )
+        self.assertTrue(
+            uprof_cache.SessionCache._lock_error(
+                Exception(
+                    "Resource In Use Error: Unique file handle conflict: Cannot attach "
+                    "b2 - the database file is already attached"
+                )
+            )
+        )
+        self.assertFalse(
+            uprof_cache.SessionCache._lock_error(
+                Exception("Resource In Use Error: connection has an unfinished result")
+            )
+        )
 
     def test_the_search_identity_tracks_override_file_content(self):
         with tempfile.TemporaryDirectory(prefix="uprof-search-") as tmp:
@@ -93,8 +123,9 @@ class KeyTest(unittest.TestCase):
             root = Path(tmp)
             staged = root / "a.pdb"
             staged.mkdir()
-            with mock.patch.dict(os.environ, {
-                    "_NT_SYMBOL_PATH": f"srv*{root}*https://example.invalid"}):
+            with mock.patch.dict(
+                os.environ, {"_NT_SYMBOL_PATH": f"srv*{root}*https://example.invalid"}
+            ):
                 first = uprof_cache.search_identity(None, None, [])
                 (staged / "GUIDAGE").mkdir()
                 second = uprof_cache.search_identity(None, None, [])
@@ -102,26 +133,34 @@ class KeyTest(unittest.TestCase):
 
     def test_ambiguous_modules_are_detected(self):
         connection = duckdb.connect()
+        connection.execute("CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
         connection.execute(
-            "CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
-        connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR, size UBIGINT, "
-                           "checksum UBIGINT, is32Bit BOOLEAN)")
-        connection.execute("INSERT INTO Module VALUES (1, 'C:/a.dll', 10, 1, false), "
-                           "(2, 'C:/a.dll', 10, 2, false), (3, 'C:/b.dll', 10, 1, false)")
-        self.assertEqual(uprof_cache.ambiguous_modules(connection, ["c:/a.dll", "c:/b.dll"]),
-                         ["c:/a.dll"])
+            "CREATE TABLE Module(id INTEGER, path VARCHAR, size UBIGINT, "
+            "checksum UBIGINT, is32Bit BOOLEAN)"
+        )
+        connection.execute(
+            "INSERT INTO Module VALUES (1, 'C:/a.dll', 10, 1, false), "
+            "(2, 'C:/a.dll', 10, 2, false), (3, 'C:/b.dll', 10, 1, false)"
+        )
+        self.assertEqual(
+            uprof_cache.ambiguous_modules(connection, ["c:/a.dll", "c:/b.dll"]), ["c:/a.dll"]
+        )
         connection.close()
 
     def test_bitness_alone_makes_two_versions(self):
         connection = duckdb.connect()
+        connection.execute("CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
         connection.execute(
-            "CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
-        connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR, size UBIGINT, "
-                           "checksum UBIGINT, is32Bit BOOLEAN)")
-        connection.execute("INSERT INTO Module VALUES (1, 'C:/c.dll', 10, 1, false), "
-                           "(2, 'C:/c.dll', 10, 1, true), (3, 'C:/d.dll', 10, 1, true)")
-        self.assertEqual(uprof_cache.ambiguous_modules(connection, ["c:/c.dll", "c:/d.dll"]),
-                         ["c:/c.dll"])
+            "CREATE TABLE Module(id INTEGER, path VARCHAR, size UBIGINT, "
+            "checksum UBIGINT, is32Bit BOOLEAN)"
+        )
+        connection.execute(
+            "INSERT INTO Module VALUES (1, 'C:/c.dll', 10, 1, false), "
+            "(2, 'C:/c.dll', 10, 1, true), (3, 'C:/d.dll', 10, 1, true)"
+        )
+        self.assertEqual(
+            uprof_cache.ambiguous_modules(connection, ["c:/c.dll", "c:/d.dll"]), ["c:/c.dll"]
+        )
         connection.close()
 
 
@@ -133,8 +172,9 @@ class CacheTest(unittest.TestCase):
         self.session = self.root / "session"
         self.session.mkdir()
         duckdb.connect(str(self.session / "cpu.db")).close()
-        self.env = mock.patch.dict(os.environ, {
-            "UPROF_SESSION_CACHE_ROOT": str(self.root / "cache")})
+        self.env = mock.patch.dict(
+            os.environ, {"UPROF_SESSION_CACHE_ROOT": str(self.root / "cache")}
+        )
         self.env.start()
         self.addCleanup(self.env.stop)
         self.symbols = self.root / "symbols.parquet"
@@ -142,11 +182,14 @@ class CacheTest(unittest.TestCase):
         connection.execute(
             "COPY (SELECT 'a.dll' AS module_name, '16' AS address, 'f' AS function, "
             "'f' AS function_short, 'f' AS containing_function, 'x.c' AS file, "
-            "1 AS line) TO ? (FORMAT parquet)", [str(self.symbols)])
+            "1 AS line) TO ? (FORMAT parquet)",
+            [str(self.symbols)],
+        )
         connection.close()
         self.publics = self.root / "publics.csv"
         self.publics.write_text(
-            "module_name,rva,name_count,names\na.dll,16,1,f\n", encoding="utf-8")
+            "module_name,rva,name_count,names\na.dll,16,1,f\n", encoding="utf-8"
+        )
         self.pdbs = self.root / "pdbs.csv"
         self.pdbs.write_text("module_name,pdb\na.dll,c:/a.pdb\n", encoding="utf-8")
         self.pdb_file = self.root / "a.pdb"
@@ -154,24 +197,36 @@ class CacheTest(unittest.TestCase):
         self.ranges = self.root / "functions.csv"
         self.ranges.write_text(
             "module_name,function_start,function_end,function_source,function_name\n"
-            "a.dll,16,32,export,f\n", encoding="utf-8")
+            "a.dll,16,32,export,f\n",
+            encoding="utf-8",
+        )
 
     def pdb_identity(self):
         stat = self.pdb_file.stat()
-        return [{"path": str(self.pdb_file), "size": stat.st_size,
-                 "mtime_ns": stat.st_mtime_ns}]
+        return [{"path": str(self.pdb_file), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}]
 
     def test_a_run_is_stored_and_replayed_by_identity(self):
         capture = duckdb.connect()
         stream = io.StringIO()
         writer = uprof_cache.SessionCache(capture, self.session, stream, timeout=2)
         self.assertTrue(writer.ensure_write())
-        writer.store_symbols("k1", self.symbols, self.publics, self.pdbs,
-                             {"a.dll": "cause"}, "symbol text\n", False, self.pdb_identity(),
-                             [])
-        writer.store_ranges("k1", self.ranges,
-                            {"modules": 1, "ranges": 1, "absent_by_module": {},
-                             "attempted": ["a.dll"]}, "range text\n")
+        writer.store_symbols(
+            "k1",
+            self.symbols,
+            self.publics,
+            self.pdbs,
+            {"a.dll": "cause"},
+            "symbol text\n",
+            False,
+            self.pdb_identity(),
+            [],
+        )
+        writer.store_ranges(
+            "k1",
+            self.ranges,
+            {"modules": 1, "ranges": 1, "absent_by_module": {}, "attempted": ["a.dll"]},
+            "range text\n",
+        )
         writer.close()
         capture.close()
 
@@ -183,17 +238,28 @@ class CacheTest(unittest.TestCase):
         replay.create_symbol_views("k1")
         replay.create_range_view("k1")
         self.assertEqual(
-            reader.execute("SELECT module_name, address, function FROM uprof_symbols_source")
-            .fetchall(), [("a.dll", "16", "f")])
+            reader.execute(
+                "SELECT module_name, address, function FROM uprof_symbols_source"
+            ).fetchall(),
+            [("a.dll", "16", "f")],
+        )
         self.assertEqual(
-            reader.execute("SELECT module_name, CAST(rva AS BIGINT) FROM uprof_aliases_source")
-            .fetchall(), [("a.dll", 16)])
+            reader.execute(
+                "SELECT module_name, CAST(rva AS BIGINT) FROM uprof_aliases_source"
+            ).fetchall(),
+            [("a.dll", 16)],
+        )
         self.assertEqual(
             reader.execute("SELECT module_name, pdb FROM uprof_pdbs_source").fetchall(),
-            [("a.dll", "c:/a.pdb")])
+            [("a.dll", "c:/a.pdb")],
+        )
         self.assertEqual(
-            reader.execute("SELECT module_name, CAST(function_start AS BIGINT), function_name "
-                           "FROM uprof_functions_source").fetchall(), [("a.dll", 16, "f")])
+            reader.execute(
+                "SELECT module_name, CAST(function_start AS BIGINT), function_name "
+                "FROM uprof_functions_source"
+            ).fetchall(),
+            [("a.dll", 16, "f")],
+        )
         evidence, symbol_text = replay.symbol_meta("k1")
         self.assertEqual(evidence, {"a.dll": "cause"})
         self.assertEqual(symbol_text, "symbol text\n")
@@ -208,8 +274,9 @@ class CacheTest(unittest.TestCase):
         capture = duckdb.connect()
         writer = uprof_cache.SessionCache(capture, self.session, io.StringIO(), timeout=2)
         self.assertTrue(writer.ensure_write())
-        writer.store_symbols("k1", self.symbols, self.publics, self.pdbs, {}, "", False,
-                             self.pdb_identity(), [])
+        writer.store_symbols(
+            "k1", self.symbols, self.publics, self.pdbs, {}, "", False, self.pdb_identity(), []
+        )
         self.assertTrue(writer.symbols_valid("k1"))
         self.pdb_file.write_bytes(b"pdb-two-changed")
         self.assertFalse(writer.symbols_valid("k1"))
@@ -220,8 +287,7 @@ class CacheTest(unittest.TestCase):
         capture = duckdb.connect()
         writer = uprof_cache.SessionCache(capture, self.session, io.StringIO(), timeout=2)
         self.assertTrue(writer.ensure_write())
-        writer.store_symbols("k1", self.symbols, self.publics, self.pdbs, {}, "", True,
-                             [], [])
+        writer.store_symbols("k1", self.symbols, self.publics, self.pdbs, {}, "", True, [], [])
         self.assertFalse(writer.symbols_valid("k1"))
         writer.close()
         capture.close()
@@ -288,10 +354,10 @@ class CacheTest(unittest.TestCase):
         cache = uprof_cache.SessionCache(capture, self.session, stream, timeout=2)
         self.assertTrue(cache.ensure_write())
         with mock.patch.object(uprof_cache, "MAX_BYTES", 1):
-            cache.store_symbols("k1", self.symbols, self.publics, self.pdbs, {}, "", False,
-                                [], [])
+            cache.store_symbols("k1", self.symbols, self.publics, self.pdbs, {}, "", False, [], [])
         self.assertEqual(
-            capture.execute("SELECT count(*) FROM uprof_cache.symbol_runs").fetchone()[0], 0)
+            capture.execute("SELECT count(*) FROM uprof_cache.symbol_runs").fetchone()[0], 0
+        )
         self.assertIn("cap", stream.getvalue())
         capture.close()
 
@@ -301,8 +367,9 @@ class CacheTest(unittest.TestCase):
         path = root / ("0" * 32 + ".duckdb")
         connection = duckdb.connect(str(path))
         connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
-        connection.execute("INSERT INTO cache_meta VALUES (2, ?)",
-                           [str(self.root / "gone-session")])
+        connection.execute(
+            "INSERT INTO cache_meta VALUES (2, ?)", [str(self.root / "gone-session")]
+        )
         connection.close()
         old = time.time() - 8 * 86400
         os.utime(path, (old, old))
@@ -328,8 +395,9 @@ class CacheTest(unittest.TestCase):
         readable = root / "Analysis.duckdb"
         connection = duckdb.connect(str(readable))
         connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
-        connection.execute("INSERT INTO cache_meta VALUES (3, ?)",
-                           [str(self.root / "gone-session")])
+        connection.execute(
+            "INSERT INTO cache_meta VALUES (3, ?)", [str(self.root / "gone-session")]
+        )
         connection.close()
         for path in (foreign, quarantined, readable):
             self._old(path)
@@ -353,8 +421,10 @@ class CacheTest(unittest.TestCase):
         path = root / ("3" * 32 + ".duckdb")
         connection = duckdb.connect(str(path))
         connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
-        connection.execute("INSERT INTO cache_meta VALUES (?, ?)",
-                           [uprof_cache.SCHEMA_VERSION + 1, str(self.root / "gone-session")])
+        connection.execute(
+            "INSERT INTO cache_meta VALUES (?, ?)",
+            [uprof_cache.SCHEMA_VERSION + 1, str(self.root / "gone-session")],
+        )
         connection.close()
         self._cleanup(root)
         self.assertTrue(path.is_file())
@@ -391,8 +461,10 @@ class CacheTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         connection = duckdb.connect(str(path))
         connection.execute("CREATE TABLE cache_meta(version INTEGER, session_path VARCHAR)")
-        connection.execute("INSERT INTO cache_meta VALUES (?, ?)",
-                           [uprof_cache.SCHEMA_VERSION + 1, str(self.session)])
+        connection.execute(
+            "INSERT INTO cache_meta VALUES (?, ?)",
+            [uprof_cache.SCHEMA_VERSION + 1, str(self.session)],
+        )
         connection.execute("CREATE TABLE symbol_runs(run_key VARCHAR, future VARCHAR)")
         connection.execute("INSERT INTO symbol_runs VALUES ('k', 'kept')")
         connection.close()
@@ -401,76 +473,105 @@ class CacheTest(unittest.TestCase):
         self.assertFalse(cache.ensure_write())
         capture.close()
         connection = duckdb.connect(str(path), read_only=True)
-        self.assertEqual(connection.execute("SELECT future FROM symbol_runs").fetchall(),
-                         [("kept",)])
-        self.assertEqual(connection.execute("SELECT max(version) FROM cache_meta").fetchall(),
-                         [(uprof_cache.SCHEMA_VERSION + 1,)])
+        self.assertEqual(
+            connection.execute("SELECT future FROM symbol_runs").fetchall(), [("kept",)]
+        )
+        self.assertEqual(
+            connection.execute("SELECT max(version) FROM cache_meta").fetchall(),
+            [(uprof_cache.SCHEMA_VERSION + 1,)],
+        )
         connection.close()
 
     def test_views_sql_can_run_without_the_tool_created_source_views(self):
         connection = duckdb.connect()
         connection.execute("CREATE TABLE Process(id UINTEGER, name VARCHAR)")
-        connection.execute("CREATE TABLE Module(id UINTEGER, path VARCHAR, "
-                           "isSystemModule BOOLEAN)")
-        connection.execute("CREATE TABLE Function(id UBIGINT, moduleId UINTEGER, name VARCHAR, "
-                           "startOffset UBIGINT, size UBIGINT, srcfileId UINTEGER)")
-        connection.execute("CREATE TABLE UnifiedSampleSeries(moduleId UINTEGER, "
-                           "functionId UBIGINT, moduleRVA UBIGINT)")
+        connection.execute("CREATE TABLE Module(id UINTEGER, path VARCHAR, isSystemModule BOOLEAN)")
+        connection.execute(
+            "CREATE TABLE Function(id UBIGINT, moduleId UINTEGER, name VARCHAR, "
+            "startOffset UBIGINT, size UBIGINT, srcfileId UINTEGER)"
+        )
+        connection.execute(
+            "CREATE TABLE UnifiedSampleSeries(moduleId UINTEGER, "
+            "functionId UBIGINT, moduleRVA UBIGINT)"
+        )
         dump = self.root / "dump.csv"
-        dump.write_text("DeltaTick,CPU_Number,TID,PID,Offset,ModuleName\n"
-                        "1,0,1,100,4096,a.dll\n", encoding="utf-8")
+        dump.write_text(
+            "DeltaTick,CPU_Number,TID,PID,Offset,ModuleName\n1,0,1,100,4096,a.dll\n",
+            encoding="utf-8",
+        )
         args = uprof.build_parser().parse_args(
-            ["profile", "--session", str(self.session), "--by", "process"])
+            ["profile", "--session", str(self.session), "--by", "process"]
+        )
         variables = uprof_query._variables(args, None, 20, "0", "2147483647", None)
-        variables.update({"uprof_ibs_dump": str(dump), "uprof_ibs_parquet": "",
-                          "uprof_symbols": str(self.symbols),
-                          "uprof_aliases": str(self.publics),
-                          "uprof_pdbs": str(self.pdbs),
-                          "uprof_functions": str(self.ranges)})
+        variables.update(
+            {
+                "uprof_ibs_dump": str(dump),
+                "uprof_ibs_parquet": "",
+                "uprof_symbols": str(self.symbols),
+                "uprof_aliases": str(self.publics),
+                "uprof_pdbs": str(self.pdbs),
+                "uprof_functions": str(self.ranges),
+            }
+        )
         uprof_db.set_variables(connection, variables)
         uprof_db.run_script(connection, uprof_query.TOOLS_DIR / "views.sql")
-        self.assertEqual(connection.execute(
-            "SELECT module_name, CAST(rva AS BIGINT), function FROM v_symbols").fetchall(),
-            [("a.dll", 16, "f")])
-        self.assertEqual(connection.execute(
-            "SELECT module_name, name_count FROM v_public_starts").fetchall(), [("a.dll", 1)])
-        self.assertEqual(connection.execute(
-            "SELECT module_name, CAST(function_start AS BIGINT) FROM v_function_ranges")
-            .fetchall(), [("a.dll", 16)])
-        self.assertEqual(connection.execute("SELECT module_name, pdb FROM v_pdbs").fetchall(),
-                         [("a.dll", "c:/a.pdb")])
+        self.assertEqual(
+            connection.execute(
+                "SELECT module_name, CAST(rva AS BIGINT), function FROM v_symbols"
+            ).fetchall(),
+            [("a.dll", 16, "f")],
+        )
+        self.assertEqual(
+            connection.execute("SELECT module_name, name_count FROM v_public_starts").fetchall(),
+            [("a.dll", 1)],
+        )
+        self.assertEqual(
+            connection.execute(
+                "SELECT module_name, CAST(function_start AS BIGINT) FROM v_function_ranges"
+            ).fetchall(),
+            [("a.dll", 16)],
+        )
+        self.assertEqual(
+            connection.execute("SELECT module_name, pdb FROM v_pdbs").fetchall(),
+            [("a.dll", "c:/a.pdb")],
+        )
         connection.close()
 
     def test_module_identities_use_the_columns_the_capture_has(self):
         connection = duckdb.connect()
-        connection.execute(
-            "CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
+        connection.execute("CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
         connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR)")
         connection.execute("INSERT INTO Module VALUES (1, 'C:/a.dll')")
-        self.assertEqual(uprof_cache.module_identity_rows(connection, ["c:/a.dll"]),
-                         [["C:/a.dll", None, None, None, None]])
+        self.assertEqual(
+            uprof_cache.module_identity_rows(connection, ["c:/a.dll"]),
+            [["C:/a.dll", None, None, None, None]],
+        )
         connection.execute("ALTER TABLE Module ADD COLUMN size UBIGINT")
         connection.execute("ALTER TABLE Module ADD COLUMN checksum UBIGINT")
         connection.execute("ALTER TABLE Module ADD COLUMN is32Bit BOOLEAN")
         connection.execute("ALTER TABLE Module ADD COLUMN foundDebugInfo BOOLEAN")
-        connection.execute("UPDATE Module SET size = 10, checksum = 1, "
-                           "is32Bit = false, foundDebugInfo = true")
-        self.assertEqual(uprof_cache.module_identity_rows(connection, ["c:/a.dll"]),
-                         [["C:/a.dll", 10, 1, False, True]])
+        connection.execute(
+            "UPDATE Module SET size = 10, checksum = 1, is32Bit = false, foundDebugInfo = true"
+        )
+        self.assertEqual(
+            uprof_cache.module_identity_rows(connection, ["c:/a.dll"]),
+            [["C:/a.dll", 10, 1, False, True]],
+        )
         connection.close()
-
 
     def test_an_overwritten_probe_invalidates_the_run(self):
         probe = self.root / "candidate.pdb"
         probe.write_bytes(b"one")
         stat = probe.stat()
-        identity = [{"path": str(probe), "exists": True, "size": stat.st_size,
-                     "mtime_ns": stat.st_mtime_ns}]
+        identity = [
+            {"path": str(probe), "exists": True, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+        ]
         capture = duckdb.connect()
         cache = uprof_cache.SessionCache(capture, self.session, io.StringIO(), timeout=2)
         self.assertTrue(cache.ensure_write())
-        cache.store_symbols("k1", self.symbols, self.publics, self.pdbs, {}, "", False,
-                            [], identity)
+        cache.store_symbols(
+            "k1", self.symbols, self.publics, self.pdbs, {}, "", False, [], identity
+        )
         self.assertTrue(cache.symbols_valid("k1"))
         probe.write_bytes(b"two-replaced")
         self.assertFalse(cache.symbols_valid("k1"))
@@ -482,8 +583,9 @@ class CacheTest(unittest.TestCase):
         capture = duckdb.connect()
         cache = uprof_cache.SessionCache(capture, self.session, io.StringIO(), timeout=2)
         self.assertTrue(cache.ensure_write())
-        cache.store_symbols("k1", self.symbols, self.publics, self.pdbs, {}, "", False,
-                            [], identity)
+        cache.store_symbols(
+            "k1", self.symbols, self.publics, self.pdbs, {}, "", False, [], identity
+        )
         self.assertTrue(cache.symbols_valid("k1"))
         probe.write_bytes(b"appeared")
         self.assertFalse(cache.symbols_valid("k1"))
@@ -491,12 +593,10 @@ class CacheTest(unittest.TestCase):
 
     def test_version_identity_requires_the_capture_columns(self):
         connection = duckdb.connect()
-        connection.execute(
-            "CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
+        connection.execute("CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
         connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR)")
         self.assertFalse(uprof_cache.version_identity_verifiable(connection))
-        for column, kind in (("size", "UBIGINT"), ("checksum", "UBIGINT"),
-                             ("is32Bit", "BOOLEAN")):
+        for column, kind in (("size", "UBIGINT"), ("checksum", "UBIGINT"), ("is32Bit", "BOOLEAN")):
             connection.execute(f"ALTER TABLE Module ADD COLUMN {column} {kind}")
         self.assertTrue(uprof_cache.version_identity_verifiable(connection))
         connection.close()
@@ -528,7 +628,6 @@ class CacheTest(unittest.TestCase):
         with mock.patch.object(uprof_cache, "_CLEANED", False):
             uprof_cache.cleanup_orphans(root)
         self.assertFalse(sibling.exists())
-
 
     def test_files_in_only_stats_matching_names(self):
         directory = self.root / "scan"
@@ -575,25 +674,30 @@ class HitGuardTest(unittest.TestCase):
         self.assertTrue(cache.disabled)
 
 
-
 class EndToEndHitTest(unittest.TestCase):
     """Two CLI runs on one synthesized session: store then hit, and a PDB touch misses."""
 
     def setUp(self):
         from test_function_region_profile import FIXTURE, Session
+
         self.tmp = tempfile.TemporaryDirectory(prefix="uprof-e2e-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.cache_root = self.root / "cache"
-        self.env = mock.patch.dict(os.environ, {
-            "UPROF_SESSION_CACHE_ROOT": str(self.cache_root),
-            "_NT_SYMBOL_PATH": f"srv*{self.root / 'srv'}*https://example.invalid"})
+        self.env = mock.patch.dict(
+            os.environ,
+            {
+                "UPROF_SESSION_CACHE_ROOT": str(self.cache_root),
+                "_NT_SYMBOL_PATH": f"srv*{self.root / 'srv'}*https://example.invalid",
+            },
+        )
         self.env.start()
         self.addCleanup(self.env.stop)
         # The replay comparison is exact, and Linux re-reads the current core frequency from
         # /proc/cpuinfo on every run, so pin it for both runs.
-        self.frequency = mock.patch("uprof_collect._core_frequency",
-                                    return_value=(4_700_000_000, "4700 MHz", "test"))
+        self.frequency = mock.patch(
+            "uprof_collect._core_frequency", return_value=(4_700_000_000, "4700 MHz", "test")
+        )
         self.frequency.start()
         self.addCleanup(self.frequency.stop)
         self.pdb = self.root / "fixture.pdb"
@@ -604,11 +708,17 @@ class EndToEndHitTest(unittest.TestCase):
         self.session = session.write()
         stat = FIXTURE.stat()
         connection = duckdb.connect(str(self.session / "cpu.db"))
-        for column, kind in (("size", "UBIGINT"), ("checksum", "UBIGINT"),
-                             ("is32Bit", "BOOLEAN"), ("foundDebugInfo", "BOOLEAN")):
+        for column, kind in (
+            ("size", "UBIGINT"),
+            ("checksum", "UBIGINT"),
+            ("is32Bit", "BOOLEAN"),
+            ("foundDebugInfo", "BOOLEAN"),
+        ):
             connection.execute(f"ALTER TABLE Module ADD COLUMN {column} {kind}")
-        connection.execute("UPDATE Module SET size = ?, checksum = 7, is32Bit = false, "
-                           "foundDebugInfo = true", [stat.st_size])
+        connection.execute(
+            "UPDATE Module SET size = ?, checksum = 7, is32Bit = false, foundDebugInfo = true",
+            [stat.st_size],
+        )
         connection.close()
         self.module_name = str(FIXTURE).replace("\\", "/").lower()
         self.calls = 0
@@ -623,7 +733,8 @@ class EndToEndHitTest(unittest.TestCase):
             "COPY (SELECT ? AS module_name, '0x101B' AS address, 'fixture_hot' AS function, "
             "'fixture_hot' AS function_short, 'fixture_hot' AS containing_function, "
             "'fixture.s' AS file, 27 AS line) TO ? (FORMAT parquet)",
-            [self.module_name, str(symbols)])
+            [self.module_name, str(symbols)],
+        )
         connection.close()
         publics = out / "symbols.publics.csv"
         publics.write_text("module_name,rva,name_count,names\n", encoding="utf-8")
@@ -636,12 +747,18 @@ class EndToEndHitTest(unittest.TestCase):
         import io
         import uprof
         import uprof_query
+
         args = uprof.build_parser().parse_args(
-            ["profile", "--session", str(self.session), "--by", "line"])
+            ["profile", "--session", str(self.session), "--by", "line"]
+        )
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(uprof_query.uprof_symbols, "symbolize_modules",
-                               side_effect=self.fake_symbolize), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(
+                uprof_query.uprof_symbols, "symbolize_modules", side_effect=self.fake_symbolize
+            ),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
             uprof_query.run_query_command(args)
         return out.getvalue(), err.getvalue()
 
@@ -656,7 +773,6 @@ class EndToEndHitTest(unittest.TestCase):
         third_out, third_err = self.run_cli()
         self.assertIn("ARTIFACTS=", third_err)
         self.assertEqual(self.calls, 2)
-
 
 
 class EndToEndHitInsideSrvCacheTest(EndToEndHitTest):

@@ -43,30 +43,43 @@ class ToolOperandTest(unittest.TestCase):
                 self.assertIn(os.path.abspath(name), operands)
 
     def test_readobj_imports(self):
-        self.capture(uprof_context, lambda name: uprof_context.load_imports(
-            name, None, readobj="llvm-readobj"))
+        self.capture(
+            uprof_context,
+            lambda name: uprof_context.load_imports(name, None, readobj="llvm-readobj"),
+        )
 
     def test_objdump_decode(self):
         build = types.SimpleNamespace(image_base=0x140000000)
         anchor = types.SimpleNamespace(rva=0x1000)
-        self.capture(uprof_context, lambda name: uprof_context.decode_stream(
-            name, build, anchor, 0x1010, 0x2000, objdump="llvm-objdump"))
+        self.capture(
+            uprof_context,
+            lambda name: uprof_context.decode_stream(
+                name, build, anchor, 0x1010, 0x2000, objdump="llvm-objdump"
+            ),
+        )
 
     def test_readobj_function_ranges(self):
-        self.capture(uprof_functions, lambda name: uprof_functions.derive_module_ranges(
-            "m", name, readobj="llvm-readobj"))
+        self.capture(
+            uprof_functions,
+            lambda name: uprof_functions.derive_module_ranges("m", name, readobj="llvm-readobj"),
+        )
 
     def test_readobj_build_identity(self):
-        self.capture(uprof_symbols, lambda name: uprof_symbols.image_build_mismatch(
-            name, 1, 1, Path("llvm-readobj")))
+        self.capture(
+            uprof_symbols,
+            lambda name: uprof_symbols.image_build_mismatch(name, 1, 1, Path("llvm-readobj")),
+        )
 
     def test_readobj_debug_directory(self):
-        self.capture(uprof_symbols, lambda name: uprof_symbols._readobj_info(
-            name, Path("llvm-readobj")))
+        self.capture(
+            uprof_symbols, lambda name: uprof_symbols._readobj_info(name, Path("llvm-readobj"))
+        )
 
     def test_pdbutil_signature(self):
-        self.capture(uprof_symbols, lambda name: uprof_symbols._pdb_signature(
-            Path("llvm-pdbutil"), Path(name)))
+        self.capture(
+            uprof_symbols,
+            lambda name: uprof_symbols._pdb_signature(Path("llvm-pdbutil"), Path(name)),
+        )
 
 
 if __name__ == "__main__":

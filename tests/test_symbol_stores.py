@@ -34,18 +34,20 @@ class SymbolStoreTest(unittest.TestCase):
         self.session.mkdir()
         patches = [
             mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": ""}),
-            mock.patch.object(uprof_symbols, "symbol_cache_dir",
-                              return_value=self.default_cache),
+            mock.patch.object(uprof_symbols, "symbol_cache_dir", return_value=self.default_cache),
         ]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
 
     def record_translate(self, cache):
-        command = (f"AMDuProfCLI.exe translate -i {self.session} --symbol-cache-dir {cache} "
-                   "--symbol-server srv*C:\\symbols\\ms*https://msdl.microsoft.com/download/symbols")
+        command = (
+            f"AMDuProfCLI.exe translate -i {self.session} --symbol-cache-dir {cache} "
+            "--symbol-server srv*C:\\symbols\\ms*https://msdl.microsoft.com/download/symbols"
+        )
         (self.session / "session.uprof").write_text(
-            json.dumps({"translateCommand": command}), encoding="utf-8")
+            json.dumps({"translateCommand": command}), encoding="utf-8"
+        )
 
     def stage(self, store):
         pdb = store / "ntdll.pdb" / f"{GUID}{AGE:X}" / "ntdll.pdb"
@@ -55,9 +57,13 @@ class SymbolStoreTest(unittest.TestCase):
 
     def candidates(self, symbol_dirs=()):
         return uprof_symbols._candidate_pdbs(
-            Path("C:/Windows/System32/ntdll.dll"), "ntdll.pdb", GUID, AGE,
+            Path("C:/Windows/System32/ntdll.dll"),
+            "ntdll.pdb",
+            GUID,
+            AGE,
             symbol_dirs=symbol_dirs,
-            symbol_stores=uprof_symbols.symbol_stores(self.session))
+            symbol_stores=uprof_symbols.symbol_stores(self.session),
+        )
 
     def test_the_recorded_translate_symbol_cache_is_searched(self):
         self.custom_cache.mkdir()
@@ -112,10 +118,15 @@ class NoPdbRemedyTest(unittest.TestCase):
     def test_the_remedy_names_concrete_steps_without_placeholders(self):
         searched = Path("C:/Symbols/ntdll.pdb/ABCD1/ntdll.pdb")
         evidence = uprof_symbols.ModuleEvidence(
-            "c:/windows/system32/ntdll.dll", "C:/Windows/System32/ntdll.dll",
-            image_guid=GUID, image_age=AGE, outcome="no_pdb",
-            search=uprof_symbols.PdbSearch(probes=[uprof_symbols.PdbProbe(
-                searched, "not_found", detail="not found")]))
+            "c:/windows/system32/ntdll.dll",
+            "C:/Windows/System32/ntdll.dll",
+            image_guid=GUID,
+            image_age=AGE,
+            outcome="no_pdb",
+            search=uprof_symbols.PdbSearch(
+                probes=[uprof_symbols.PdbProbe(searched, "not_found", detail="not found")]
+            ),
+        )
         stream = io.StringIO()
         uprof_symbols._evidence_line(evidence, stream)
         line = stream.getvalue()

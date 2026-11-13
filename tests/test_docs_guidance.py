@@ -24,17 +24,22 @@ REFERENCE = (DOCS / "reference.md").read_text(encoding="utf-8")
 SPEC = re.sub(r"\*\*SPEC-\d{2,}\*\* ", "", (DOCS / "spec.md").read_text(encoding="utf-8"))
 VALIDATION = (DOCS / "validation.md").read_text(encoding="utf-8")
 
-FIRST_CALL = ("**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py "
-              "profile --session <capture dir> --by function|module|process`; its `NEXT` line "
-              "names the next.**")
-REGION_MEANING = ("region = 4 KiB address page; samples are grouped by address, not by control "
-                  "flow; a page may span unrelated code; the hot RVA is the precise attribution "
-                  "and the page is the coarse bucket")
+FIRST_CALL = (
+    "**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py "
+    "profile --session <capture dir> --by function|module|process`; its `NEXT` line "
+    "names the next.**"
+)
+REGION_MEANING = (
+    "region = 4 KiB address page; samples are grouped by address, not by control "
+    "flow; a page may span unrelated code; the hot RVA is the precise attribution "
+    "and the page is the coarse bucket"
+)
 
 
 def _flat(text):
     """Compare wording without depending on where a document wraps its lines."""
     return " ".join(text.split())
+
 
 SKILL_FRAGMENTS = (
     FIRST_CALL,
@@ -146,7 +151,7 @@ REFERENCE_FRAGMENTS = (
     "`unresolved` is the attribution category",
     "a derived range is attributed, not unresolved",
     "report the row attribution, not the channel count",
-    "never \"unresolved\" or \"no named functions\"",
+    'never "unresolved" or "no named functions"',
     "function rows are in the `unresolved` attribution and `function_source` is `none`",
     "must not be used to claim the sample-hot RVA",
     "one `CONTEXT:` line",
@@ -216,24 +221,28 @@ class DocsGuidanceTest(unittest.TestCase):
     def test_the_function_lens_is_offered_before_the_module_lens(self):
         # Small models take the first option offered; most questions need --by function first,
         # and only "where did time go" or mine-versus-the-rest starts at --by module.
-        first_line = SKILL[SKILL.index("**First call"):SKILL.index("One entry point")]
+        first_line = SKILL[SKILL.index("**First call") : SKILL.index("One entry point")]
         self.assertIn("--by function|module|process", first_line)
-        quickstart = SKILL[SKILL.index("## Quickstart"):SKILL.index("## Commands")]
-        choice = quickstart[quickstart.index("First call by question"):]
+        quickstart = SKILL[SKILL.index("## Quickstart") : SKILL.index("## Commands")]
+        choice = quickstart[quickstart.index("First call by question") :]
         self.assertLess(choice.index("`--by function`"), choice.index("`--by module`"))
         self.assertNotIn("the CPU-time path is module, then function", SKILL)
 
     def test_no_fixed_first_call_or_self_read_is_mandated(self):
         # A loaded skill needs no Read of itself, and an attached capture goes straight to the
         # lens the question needs; only a system-wide capture starts with the process ranking.
-        for fragment in ("the Read of this file", "`profile --by process` first",
-                         "Then run `profile --by process`", "1. **Rank the processes.**"):
+        for fragment in (
+            "the Read of this file",
+            "`profile --by process` first",
+            "Then run `profile --by process`",
+            "1. **Rank the processes.**",
+        ):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, SKILL)
 
     def test_the_invocation_states_the_interpreter_and_keeps_sibling_imports(self):
         start = SKILL.index("One entry point")
-        section = SKILL[start:SKILL.index("## Quickstart")]
+        section = SKILL[start : SKILL.index("## Quickstart")]
         self.assertIn("Python 3.9 or newer", section)
         self.assertIn("do not add `-I`", section)
         self.assertIn("sibling modules", section)
@@ -246,31 +255,30 @@ class DocsGuidanceTest(unittest.TestCase):
 
     def test_spec_states_the_requirements_behind_the_derived_function_and_region_paths(self):
         spec = _flat(SPEC)
-        for fragment in ("--by process\\|module\\|function\\|region\\|line\\|instruction",
-                         "`--function NAME`",
-                         "the tool derives boundaries from the binary",
-                         "must not parse the image or map its function tables by hand",
-                         "A synthetic range is visibly labelled and attributed",
-                         "`unresolved` is only the attribution category",
-                         "`derived`, never `unresolved` or \"no named functions\"",
-                         "rows remain `unresolved` only when neither a name nor a derived range "
-                         "covers them",
-                         "report per-scope agreement and coverage",
-                         "the maximum per-function hot sample count",
-                         "must not be used to claim the sample-hot address",
-                         "other_samples",
-                         "module keys are normalized",
-                         "parent totals are a join of the capture's rows, not a second measurement",
-                         "the profile symbolizer share, not the share of samples the capture "
-                         "itself named",
-                         "another build's source is a resolution failure, not success",
-                         "even with `--json`/`--out-file`",
-                         "an omitted row consumes a slot",
-                         "a supplied measure is present even at zero",
-                         "scope-coverage verdicts are part of `profile`",
-                         "system-flagged vendor dependency is the dominant non-workload "
-                         "dependency",
-                         "`interval` does not exist"):
+        for fragment in (
+            "--by process\\|module\\|function\\|region\\|line\\|instruction",
+            "`--function NAME`",
+            "the tool derives boundaries from the binary",
+            "must not parse the image or map its function tables by hand",
+            "A synthetic range is visibly labelled and attributed",
+            "`unresolved` is only the attribution category",
+            '`derived`, never `unresolved` or "no named functions"',
+            "rows remain `unresolved` only when neither a name nor a derived range covers them",
+            "report per-scope agreement and coverage",
+            "the maximum per-function hot sample count",
+            "must not be used to claim the sample-hot address",
+            "other_samples",
+            "module keys are normalized",
+            "parent totals are a join of the capture's rows, not a second measurement",
+            "the profile symbolizer share, not the share of samples the capture itself named",
+            "another build's source is a resolution failure, not success",
+            "even with `--json`/`--out-file`",
+            "an omitted row consumes a slot",
+            "a supplied measure is present even at zero",
+            "scope-coverage verdicts are part of `profile`",
+            "system-flagged vendor dependency is the dominant non-workload dependency",
+            "`interval` does not exist",
+        ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, spec)
 
@@ -288,8 +296,11 @@ class ValidationQuoteTest(unittest.TestCase):
     def test_agreement_quotes_use_the_printed_field_syntax(self):
         # The AGREEMENT line prints `mismatch_rate=<p>%`, `name_mismatches=<n> addresses of <m>
         # compared` and `unresolved=<u> addresses`; a quote of it may abbreviate but not respell.
-        spans = [s for s in re.findall(r"`([^`]*)`", VALIDATION)
-                 if re.search(r"mismatch_rate|name_mismatches|unresolved[ =]\d", s)]
+        spans = [
+            s
+            for s in re.findall(r"`([^`]*)`", VALIDATION)
+            if re.search(r"mismatch_rate|name_mismatches|unresolved[ =]\d", s)
+        ]
         self.assertTrue(spans)
         for span in spans:
             with self.subTest(quote=span):

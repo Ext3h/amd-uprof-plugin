@@ -36,8 +36,10 @@ class OutFileGuardTest(unittest.TestCase):
         self.session.mkdir()
         (self.session / "session.uprof").write_text(
             '{"collection": {"target": {"systemWide": true}}, "translateCommand": ""}',
-            encoding="utf-8")
+            encoding="utf-8",
+        )
         import duckdb
+
         connection = duckdb.connect(str(self.session / "cpu.db"))
         self.image = self.root / "app.exe"
         self.image.write_bytes(b"image")
@@ -51,12 +53,13 @@ class OutFileGuardTest(unittest.TestCase):
 
     def _run(self, *extra):
         args = uprof.build_parser().parse_args(
-            ["profile", "--session", str(self.session), "--by", "process", "--top", "5",
-             *extra])
+            ["profile", "--session", str(self.session), "--by", "process", "--top", "5", *extra]
+        )
 
         @contextlib.contextmanager
         def real_connection(cpu_db, view_files, variables, views=None):
             import duckdb
+
             connection = duckdb.connect(str(cpu_db), read_only=True)
             try:
                 yield connection
@@ -70,16 +73,17 @@ class OutFileGuardTest(unittest.TestCase):
 
         sampler = types.SimpleNamespace(pmc=False, timer=False, event_column="")
         dump = uprof_dump.DumpInfo(self.dump, "beside", self.cache)
-        with mock.patch.object(uprof_session, "derive_sampler", return_value=sampler), \
-                mock.patch.object(uprof_session, "system_wide", return_value=True), \
-                mock.patch.object(uprof_dump, "resolve_dump", return_value=dump), \
-                mock.patch.object(uprof_dump, "samples_parquet", side_effect=parquet), \
-                mock.patch.object(uprof_dump, "recorded_time_filter", return_value=None), \
-                mock.patch.object(uprof_query, "_primary_measure",
-                                  return_value=("sample_share", None)), \
-                mock.patch.object(uprof_query, "_dump_sanity", side_effect=_Reached()), \
-                mock.patch.object(uprof_query, "_bind_ambiguous_modules"), \
-                mock.patch.object(uprof_query.uprof_db, "open_query", real_connection):
+        with (
+            mock.patch.object(uprof_session, "derive_sampler", return_value=sampler),
+            mock.patch.object(uprof_session, "system_wide", return_value=True),
+            mock.patch.object(uprof_dump, "resolve_dump", return_value=dump),
+            mock.patch.object(uprof_dump, "samples_parquet", side_effect=parquet),
+            mock.patch.object(uprof_dump, "recorded_time_filter", return_value=None),
+            mock.patch.object(uprof_query, "_primary_measure", return_value=("sample_share", None)),
+            mock.patch.object(uprof_query, "_dump_sanity", side_effect=_Reached()),
+            mock.patch.object(uprof_query, "_bind_ambiguous_modules"),
+            mock.patch.object(uprof_query.uprof_db, "open_query", real_connection),
+        ):
             uprof_query.run_query_command(args)
 
     def _assert_refused(self, target, *extra, out_file=None):
@@ -98,8 +102,9 @@ class OutFileGuardTest(unittest.TestCase):
         cwd = os.getcwd()
         os.chdir(self.root)
         self.addCleanup(os.chdir, cwd)
-        self._assert_refused(pdb, "--symbol-path", "app.pdb",
-                             out_file=os.path.join("session", "..", "app.pdb"))
+        self._assert_refused(
+            pdb, "--symbol-path", "app.pdb", out_file=os.path.join("session", "..", "app.pdb")
+        )
 
     @unittest.skipUnless(os.name == "nt", "host: case-insensitive paths need Windows")
     def test_a_differently_cased_path_is_the_same_file_on_windows(self):
@@ -141,6 +146,7 @@ class OutFileGuardTest(unittest.TestCase):
         if os.name != "nt":
             self.skipTest("host: junctions exist on Windows only")
         import _winapi
+
         link = self.root / "junction"
         _winapi.CreateJunction(str(target), str(link))
         return link
@@ -201,8 +207,7 @@ class OutFileGuardTest(unittest.TestCase):
         self.assertFalse(copy.exists())
 
     def test_a_parquet_copy_not_built_yet_through_a_junction_is_protected(self):
-        self._assert_new_copy_refused(
-            str(self._junction(self.cache) / "IbsOpDump.samples.parquet"))
+        self._assert_new_copy_refused(str(self._junction(self.cache) / "IbsOpDump.samples.parquet"))
 
     def test_a_parquet_copy_not_built_yet_through_a_unc_path_is_protected(self):
         self._assert_new_copy_refused(self._unc(self.cache / "IbsOpDump.samples.parquet"))
@@ -213,6 +218,7 @@ class OutFileGuardTest(unittest.TestCase):
             self.skipTest("host: subst drives exist on Windows only")
         import string
         import subprocess
+
         for letter in reversed(string.ascii_uppercase[3:]):
             drive = f"{letter}:"
             if os.path.exists(drive + "\\"):
@@ -235,12 +241,15 @@ class OutFileGuardTest(unittest.TestCase):
             link = self.root / "link"
             link.symlink_to(self.cache, target_is_directory=True)
         with mock.patch.object(uprof_util, "canonical", side_effect=uprof_util.absolute):
-            self.assertTrue(uprof_util.same_path(link / "new" / "a.parquet",
-                                                 self.cache / "new" / "a.parquet"))
-            self.assertFalse(uprof_util.same_path(link / "new" / "a.parquet",
-                                                  self.cache / "new" / "b.parquet"))
-            self.assertFalse(uprof_util.same_path(link / "new" / "a.parquet",
-                                                  self.root / "new" / "a.parquet"))
+            self.assertTrue(
+                uprof_util.same_path(link / "new" / "a.parquet", self.cache / "new" / "a.parquet")
+            )
+            self.assertFalse(
+                uprof_util.same_path(link / "new" / "a.parquet", self.cache / "new" / "b.parquet")
+            )
+            self.assertFalse(
+                uprof_util.same_path(link / "new" / "a.parquet", self.root / "new" / "a.parquet")
+            )
 
     def test_the_parquet_unsupported_marker_is_protected(self):
         marker = self.cache / "IbsOpDump.samples.parquet.unsupported.json"

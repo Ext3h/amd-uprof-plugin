@@ -13,10 +13,14 @@ import unittest
 
 import uprof_query
 
-COVERAGE = {"rows": [
-    {"module_name": "app.exe", "samples": 10, "named_samples": 10},
-    {"module_name": "vendor.dll", "samples": 5, "named_samples": 2},
-], "total": 15, "named": 12}
+COVERAGE = {
+    "rows": [
+        {"module_name": "app.exe", "samples": 10, "named_samples": 10},
+        {"module_name": "vendor.dll", "samples": 5, "named_samples": 2},
+    ],
+    "total": 15,
+    "named": 12,
+}
 
 
 class NamedRowsWarningTest(unittest.TestCase):
@@ -29,14 +33,18 @@ class NamedRowsWarningTest(unittest.TestCase):
         target = io.StringIO()
         stream = uprof_query._SymbolDiagnostics(target, None, quiet={"app.exe"})
         stream.write("MODULE: app.exe: 3 addresses in C:/app.exe\n")
-        stream.write("WARNING: no symbols resolved for app.exe (C:/app.exe): gone; "
-                     "pass --image-path\nWARNING: no symbols resolved for vendor.dll ")
+        stream.write(
+            "WARNING: no symbols resolved for app.exe (C:/app.exe): gone; "
+            "pass --image-path\nWARNING: no symbols resolved for vendor.dll "
+        )
         stream.write("(C:/vendor.dll): gone\n")
         stream.write("WARNING: no symbols resolved for app.exe.bak (C:/app.exe.bak): kept\n")
         stream.flush()
-        self.assertEqual(target.getvalue(),
-                         "WARNING: no symbols resolved for vendor.dll (C:/vendor.dll): gone\n"
-                         "WARNING: no symbols resolved for app.exe.bak (C:/app.exe.bak): kept\n")
+        self.assertEqual(
+            target.getvalue(),
+            "WARNING: no symbols resolved for vendor.dll (C:/vendor.dll): gone\n"
+            "WARNING: no symbols resolved for app.exe.bak (C:/app.exe.bak): kept\n",
+        )
 
 
 if __name__ == "__main__":

@@ -31,8 +31,7 @@ class SkillIdentityTest(unittest.TestCase):
     def test_nearest_plugin_manifest_supplies_the_version(self):
         manifest = self.root / ".claude-plugin" / "plugin.json"
         manifest.parent.mkdir()
-        manifest.write_text(json.dumps({"name": "amd-uprof", "version": "9.9.9"}),
-                            encoding="utf-8")
+        manifest.write_text(json.dumps({"name": "amd-uprof", "version": "9.9.9"}), encoding="utf-8")
 
         text = uprof_util.skill_identity(self.root)
 
@@ -43,8 +42,9 @@ class SkillIdentityTest(unittest.TestCase):
     def test_loose_copy_falls_back_to_the_built_in_version(self):
         text = uprof_util.skill_identity(self.root)
 
-        self.assertTrue(text.startswith(f"amd-uprof {uprof_util._BUILTIN_VERSION} (built-in); "),
-                        text)
+        self.assertTrue(
+            text.startswith(f"amd-uprof {uprof_util._BUILTIN_VERSION} (built-in); "), text
+        )
         self.assertIn(f"skill dir {self.root.resolve()}", text)
 
     def test_malformed_manifest_falls_back_instead_of_failing(self):
@@ -66,8 +66,14 @@ class VersionHeaderTest(unittest.TestCase):
         self._write_capture()
 
     def _write_capture(self):
-        event = {"hwId": 118, "interval": 4_700_000, "isSampling": True, "user": True,
-                 "os": False, "encodedEventId": 0x03000076}
+        event = {
+            "hwId": 118,
+            "interval": 4_700_000,
+            "isSampling": True,
+            "user": True,
+            "os": False,
+            "encodedEventId": 0x03000076,
+        }
         meta = {
             "collection": {
                 "schedule": {"elapsed": 1000},
@@ -81,25 +87,37 @@ class VersionHeaderTest(unittest.TestCase):
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
             connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
-            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, "
-                               "name VARCHAR)")
+            connection.execute(
+                "CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)"
+            )
             connection.execute(
                 "CREATE TABLE UnifiedSampleSeries (processId UINTEGER, threadId UINTEGER, "
                 "moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER, "
-                f'"{EVENT_COLUMN}" DOUBLE)')
+                f'"{EVENT_COLUMN}" DOUBLE)'
+            )
             connection.execute(r"INSERT INTO Process VALUES (100, 'c:\workload.exe')")
             connection.execute(r"INSERT INTO Module VALUES (1, 'c:\workload.exe')")
             connection.execute("INSERT INTO Function VALUES (1, 1, 'main')")
-            connection.execute(
-                "INSERT INTO UnifiedSampleSeries VALUES (100, 1, 1, 1, 4096, 0, 5)")
+            connection.execute("INSERT INTO UnifiedSampleSeries VALUES (100, 1, 1, 1, 4096, 0, 5)")
         finally:
             connection.close()
 
     def profile(self, *extra):
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "uprof.py"), "profile",
-             "--session", str(self.session), "--by", "process", *extra],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(self.session),
+                "--by",
+                "process",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 

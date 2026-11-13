@@ -36,20 +36,25 @@ class DebugTraceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="uprof-trace-compare-") as root:
             completed = subprocess.run(
                 [sys.executable, str(CAPTURE), "--out-dir", root],
-                cwd=str(REPO), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=900)
+                cwd=str(REPO),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=900,
+            )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             captured = Path(root) / OS_NAME
             generated = {path.name: path for path in captured.glob("*.txt")}
             committed = {path.name: path for path in GOLDENS.glob("*.txt")}
-            self.assertEqual(sorted(generated), sorted(committed),
-                             "trace case set differs from the goldens")
+            self.assertEqual(
+                sorted(generated), sorted(committed), "trace case set differs from the goldens"
+            )
             for name in sorted(committed):
                 with self.subTest(trace=name):
                     actual = generated[name].read_text(encoding="utf-8")
                     expected = committed[name].read_text(encoding="utf-8")
-                    self.assertEqual(actual, expected,
-                                     f"{OS_NAME}/{name} differs from the golden")
+                    self.assertEqual(actual, expected, f"{OS_NAME}/{name} differs from the golden")
 
 
 @unittest.skipIf(SKIP, SKIP or "")

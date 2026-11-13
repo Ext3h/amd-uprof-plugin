@@ -35,25 +35,35 @@ DATA = PeSection(0x3000, 0x40, False)
 class BoundaryTest(unittest.TestCase):
     def test_export_wins_at_one_rva_and_each_range_ends_at_the_next_start(self):
         ranges = uprof_functions.build_ranges(
-            "m.dll", [TEXT],
+            "m.dll",
+            [TEXT],
             public_starts=[(0x1020, "public_fn")],
             pdata_starts=[(0x1000, None), (0x1030, None), (0x1050, None)],
-            export_starts=[(0x1000, "entry"), (0x1030, "second")])
+            export_starts=[(0x1000, "entry"), (0x1030, "second")],
+        )
 
         self.assertEqual(
             [(r.start, r.end, r.source, r.name) for r in ranges],
-            [(0x1000, 0x1020, "export", "entry"),
-             (0x1020, 0x1030, "pdb_public", "public_fn"),
-             (0x1030, 0x1050, "export", "second"),
-             (0x1050, 0x1062, "pdata", None)])
+            [
+                (0x1000, 0x1020, "export", "entry"),
+                (0x1020, 0x1030, "pdb_public", "public_fn"),
+                (0x1030, 0x1050, "export", "second"),
+                (0x1050, 0x1062, "pdata", None),
+            ],
+        )
 
     def test_a_pdb_public_beats_a_pdata_start_at_the_same_rva(self):
         ranges = uprof_functions.build_ranges(
-            "m.dll", [TEXT], public_starts=[(0x1000, "public_fn")],
-            pdata_starts=[(0x1000, None)], export_starts=[(0x1050, "tail")])
+            "m.dll",
+            [TEXT],
+            public_starts=[(0x1000, "public_fn")],
+            pdata_starts=[(0x1000, None)],
+            export_starts=[(0x1050, "tail")],
+        )
 
-        self.assertEqual([(r.source, r.name) for r in ranges],
-                         [("pdb_public", "public_fn"), ("export", "tail")])
+        self.assertEqual(
+            [(r.source, r.name) for r in ranges], [("pdb_public", "public_fn"), ("export", "tail")]
+        )
 
     def test_a_code_section_without_a_boundary_yields_no_range(self):
         ranges = uprof_functions.build_ranges("m.dll", [TEXT])
@@ -62,19 +72,22 @@ class BoundaryTest(unittest.TestCase):
 
     def test_non_code_sections_and_outside_starts_are_ignored(self):
         ranges = uprof_functions.build_ranges(
-            "m.dll", [TEXT, DATA], pdata_starts=[(0x3000, None), (0x9000, None)])
+            "m.dll", [TEXT, DATA], pdata_starts=[(0x3000, None), (0x9000, None)]
+        )
 
         self.assertEqual(ranges, [])
 
     def test_a_folded_public_uses_its_first_name(self):
         starts = uprof_functions.public_starts_from_names(
-            [(0x1000, "first | second"), (0x2000, ""), (0x3000, "  spaced  ")])
+            [(0x1000, "first | second"), (0x2000, ""), (0x3000, "  spaced  ")]
+        )
 
         self.assertEqual(starts, [(0x1000, "first"), (0x2000, None), (0x3000, "spaced")])
 
     def test_csv_carries_the_range_columns_with_lf_newlines(self):
         ranges = uprof_functions.build_ranges(
-            "m.dll", [TEXT], pdata_starts=[(0x1000, None), (0x1030, "named")])
+            "m.dll", [TEXT], pdata_starts=[(0x1000, None), (0x1030, "named")]
+        )
         with tempfile.TemporaryDirectory() as tmp:
             path = uprof_functions.write_ranges_csv(Path(tmp) / "functions.csv", ranges)
             text = path.read_bytes()
@@ -82,8 +95,9 @@ class BoundaryTest(unittest.TestCase):
         self.assertFalse(text.startswith(b"\xef\xbb\xbf"))
         self.assertNotIn(b"\r\n", text)
         lines = text.decode("utf-8").split("\n")
-        self.assertEqual(lines[0], "module_name,function_start,function_end,function_source,"
-                                   "function_name")
+        self.assertEqual(
+            lines[0], "module_name,function_start,function_end,function_source,function_name"
+        )
         self.assertEqual(lines[1], "m.dll,4096,4144,pdata,")
         self.assertEqual(lines[2], "m.dll,4144,4194,pdata,named")
 
@@ -96,9 +110,12 @@ class FixtureDerivationTest(unittest.TestCase):
         self.assertIsNone(result.reason)
         self.assertEqual(
             [(r.start, r.end, r.source, r.name) for r in result.ranges],
-            [(0x1000, 0x1030, "export", "fixture_entry"),
-             (0x1030, 0x1050, "export", "fixture_second"),
-             (0x1050, 0x1062, "pdata", None)])
+            [
+                (0x1000, 0x1030, "export", "fixture_entry"),
+                (0x1030, 0x1050, "export", "fixture_second"),
+                (0x1050, 0x1062, "pdata", None),
+            ],
+        )
 
     def test_missing_readobj_reports_the_reason_instead_of_failing(self):
         with mock.patch.object(uprof_context, "find_readobj", return_value=None):
@@ -137,8 +154,7 @@ class FakeFuture:
 
 
 class FakePool:
-    def __init__(self, created, max_workers=None, crash=None, fail_start=None,
-                 fail_submit=None):
+    def __init__(self, created, max_workers=None, crash=None, fail_start=None, fail_submit=None):
         self.created = created
         self.created.append(max_workers)
         self.crash = crash
@@ -167,7 +183,8 @@ def fake_pool(created, **kwargs):
 
 def derive_sentinel(module_name, _module_path, _starts=(), readobj=None):
     return uprof_functions.RangeDerivation(
-        [uprof_functions.FunctionRange(module_name, 0x1000, 0x1010, "pdata", None)])
+        [uprof_functions.FunctionRange(module_name, 0x1000, 0x1010, "pdata", None)]
+    )
 
 
 @unittest.skipUnless(READOBJ, "llvm-readobj is required")
@@ -180,8 +197,9 @@ class PoolCrashTest(unittest.TestCase):
             shadow = root / "shadow"
             shadow.mkdir()
             (shadow / "uprof_functions.py").write_text(
-                "import os\n\n\ndef derive_module_ranges(*args, **kwargs):\n"
-                "    os._exit(3)\n", encoding="utf-8")
+                "import os\n\n\ndef derive_module_ranges(*args, **kwargs):\n    os._exit(3)\n",
+                encoding="utf-8",
+            )
             fixture = root / "fixture.exe"
             fixture.write_bytes(FIXTURE.read_bytes())
             second = root / "second.exe"
@@ -190,8 +208,8 @@ class PoolCrashTest(unittest.TestCase):
             sys.path.insert(0, str(shadow))
             try:
                 results = uprof_query._derive_candidates(
-                    [("fixture.exe", str(fixture)), ("second.exe", str(second))],
-                    {}, READOBJ)
+                    [("fixture.exe", str(fixture)), ("second.exe", str(second))], {}, READOBJ
+                )
             finally:
                 sys.path[:] = original_path
 
@@ -204,9 +222,12 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
     def test_the_pool_derives_each_candidate_and_keeps_submission_order(self):
         candidates = [("a.dll", "a"), ("b.dll", "b")]
         created = []
-        with mock.patch.object(uprof_query.uprof_functions, "derive_module_ranges",
-                               side_effect=derive_sentinel), \
-                mock.patch.object(uprof_query, "ProcessPoolExecutor", fake_pool(created)):
+        with (
+            mock.patch.object(
+                uprof_query.uprof_functions, "derive_module_ranges", side_effect=derive_sentinel
+            ),
+            mock.patch.object(uprof_query, "ProcessPoolExecutor", fake_pool(created)),
+        ):
             results = uprof_query._derive_candidates(candidates, {}, "readobj")
 
         self.assertEqual(created, [2])
@@ -215,23 +236,31 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
     def test_the_worker_cap_bounds_cores_and_module_count(self):
         for cpus, count, expected in ((32, 20, 8), (3, 20, 3), (16, 2, 2)):
             created = []
-            with mock.patch.object(uprof_query.os, "cpu_count", return_value=cpus), \
-                    mock.patch.object(uprof_query.uprof_functions, "derive_module_ranges",
-                                      side_effect=derive_sentinel), \
-                    mock.patch.object(uprof_query, "ProcessPoolExecutor", fake_pool(created)):
+            with (
+                mock.patch.object(uprof_query.os, "cpu_count", return_value=cpus),
+                mock.patch.object(
+                    uprof_query.uprof_functions, "derive_module_ranges", side_effect=derive_sentinel
+                ),
+                mock.patch.object(uprof_query, "ProcessPoolExecutor", fake_pool(created)),
+            ):
                 uprof_query._derive_candidates(
-                    [(f"m{index}.dll", "p") for index in range(count)], {}, "readobj")
+                    [(f"m{index}.dll", "p") for index in range(count)], {}, "readobj"
+                )
             self.assertEqual(created, [expected])
 
     def test_one_cpu_or_one_module_uses_the_serial_loop(self):
         for cpus, count in ((1, 4), (16, 1)):
             created = []
-            with mock.patch.object(uprof_query.os, "cpu_count", return_value=cpus), \
-                    mock.patch.object(uprof_query.uprof_functions, "derive_module_ranges",
-                                      side_effect=derive_sentinel), \
-                    mock.patch.object(uprof_query, "ProcessPoolExecutor", fake_pool(created)):
+            with (
+                mock.patch.object(uprof_query.os, "cpu_count", return_value=cpus),
+                mock.patch.object(
+                    uprof_query.uprof_functions, "derive_module_ranges", side_effect=derive_sentinel
+                ),
+                mock.patch.object(uprof_query, "ProcessPoolExecutor", fake_pool(created)),
+            ):
                 uprof_query._derive_candidates(
-                    [(f"m{index}.dll", "p") for index in range(count)], {}, "readobj")
+                    [(f"m{index}.dll", "p") for index in range(count)], {}, "readobj"
+                )
             self.assertEqual(created, [])
 
     def test_a_pool_that_cannot_start_falls_back_to_the_serial_loop(self):
@@ -242,10 +271,14 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
             calls.append(name)
             return derive_sentinel(name, None)
 
-        with mock.patch.object(uprof_query.uprof_functions, "derive_module_ranges",
-                               side_effect=derive), \
-                mock.patch.object(uprof_query, "ProcessPoolExecutor",
-                                  fake_pool([], fail_start=OSError("no spawn"))):
+        with (
+            mock.patch.object(
+                uprof_query.uprof_functions, "derive_module_ranges", side_effect=derive
+            ),
+            mock.patch.object(
+                uprof_query, "ProcessPoolExecutor", fake_pool([], fail_start=OSError("no spawn"))
+            ),
+        ):
             results = uprof_query._derive_candidates(candidates, {}, "readobj")
 
         self.assertEqual(calls, ["a.dll", "b.dll"])
@@ -259,10 +292,16 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
             calls.append(name)
             return derive_sentinel(name, None)
 
-        with mock.patch.object(uprof_query.uprof_functions, "derive_module_ranges",
-                               side_effect=derive), \
-                mock.patch.object(uprof_query, "ProcessPoolExecutor",
-                                  fake_pool([], fail_submit=RuntimeError("broken"))):
+        with (
+            mock.patch.object(
+                uprof_query.uprof_functions, "derive_module_ranges", side_effect=derive
+            ),
+            mock.patch.object(
+                uprof_query,
+                "ProcessPoolExecutor",
+                fake_pool([], fail_submit=RuntimeError("broken")),
+            ),
+        ):
             results = uprof_query._derive_candidates(candidates, {}, "readobj")
 
         self.assertEqual(calls, ["a.dll", "b.dll"])
@@ -286,7 +325,8 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
 
         with mock.patch.object(uprof_query, "ProcessPoolExecutor", CrashingPool):
             results = uprof_query._derive_candidates(
-                [("a.dll", "p"), ("b.dll", "p")], {}, "readobj")
+                [("a.dll", "p"), ("b.dll", "p")], {}, "readobj"
+            )
 
         self.assertEqual(results[0].ranges[0].module_name, "a.dll")
         self.assertIsInstance(results[1], ValueError)
@@ -298,12 +338,15 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
             calls.append(name)
             return derive_sentinel(name, None)
 
-        with mock.patch.object(uprof_query.uprof_functions, "derive_module_ranges",
-                               side_effect=derive), \
-                mock.patch.object(uprof_query, "ProcessPoolExecutor",
-                                  fake_pool([], crash="a.dll")):
+        with (
+            mock.patch.object(
+                uprof_query.uprof_functions, "derive_module_ranges", side_effect=derive
+            ),
+            mock.patch.object(uprof_query, "ProcessPoolExecutor", fake_pool([], crash="a.dll")),
+        ):
             results = uprof_query._derive_candidates(
-                [("a.dll", "p"), ("b.dll", "p")], {}, "readobj")
+                [("a.dll", "p"), ("b.dll", "p")], {}, "readobj"
+            )
 
         self.assertEqual(calls[-2:], ["a.dll", "b.dll"])
         self.assertTrue(all(result.ranges for result in results))
@@ -324,15 +367,17 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
 
         with mock.patch.object(uprof_query, "ProcessPoolExecutor", InterruptingPool):
             with self.assertRaises(KeyboardInterrupt):
-                uprof_query._derive_candidates([("a.dll", "p"), ("b.dll", "p")], {},
-                                               "readobj")
+                uprof_query._derive_candidates([("a.dll", "p"), ("b.dll", "p")], {}, "readobj")
 
 
 class ReadobjResolutionTest(unittest.TestCase):
     def test_readobj_is_resolved_only_when_the_pool_is_used(self):
-        with mock.patch.object(uprof_query.os, "cpu_count", return_value=8), \
-                mock.patch.object(uprof_query.uprof_context, "find_readobj",
-                                  return_value="tool") as find:
+        with (
+            mock.patch.object(uprof_query.os, "cpu_count", return_value=8),
+            mock.patch.object(
+                uprof_query.uprof_context, "find_readobj", return_value="tool"
+            ) as find,
+        ):
             self.assertIsNone(uprof_query._readobj_for(1))
             self.assertEqual(find.call_count, 0)
             self.assertEqual(uprof_query._readobj_for(2), "tool")
@@ -347,11 +392,15 @@ class SerialDerivationTest(unittest.TestCase):
             stream = io.StringIO()
             connection = mock.Mock()
             connection.execute.return_value.fetchall.return_value = []
-            with mock.patch.object(uprof_query.uprof_db, "fetch",
-                                   return_value=([], [("a.exe", str(image), 1, 2)])), \
-                    mock.patch.object(uprof_query, "_pool_workers", return_value=None), \
-                    mock.patch.object(uprof_functions, "derive_module_ranges",
-                                      side_effect=OSError("boom")):
+            with (
+                mock.patch.object(
+                    uprof_query.uprof_db, "fetch", return_value=([], [("a.exe", str(image), 1, 2)])
+                ),
+                mock.patch.object(uprof_query, "_pool_workers", return_value=None),
+                mock.patch.object(
+                    uprof_functions, "derive_module_ranges", side_effect=OSError("boom")
+                ),
+            ):
                 path, info = uprof_query._derive_scope_ranges(connection, None, stream)
 
         self.assertIsNone(path)
@@ -365,28 +414,49 @@ class ProfileFunctionModulesQueryTest(unittest.TestCase):
     def modules(self, named_samples: int, unnamed_samples: int) -> list[tuple]:
         connection = duckdb.connect(":memory:")
         connection.execute("CREATE TABLE Process(id UINTEGER, name VARCHAR)")
-        connection.execute("CREATE TABLE Module(id UINTEGER, path VARCHAR, "
-                           "isSystemModule BOOLEAN)")
-        connection.execute("CREATE TABLE Function(id UBIGINT, moduleId UINTEGER, name VARCHAR, "
-                           "startOffset UBIGINT, size UBIGINT, srcfileId UINTEGER)")
-        connection.execute('CREATE TABLE UnifiedSampleSeries(moduleId UINTEGER, '
-                           'functionId UBIGINT, moduleRVA UBIGINT, processId UINTEGER, '
-                           'coreId UINTEGER, "event#0x76" BIGINT)')
+        connection.execute("CREATE TABLE Module(id UINTEGER, path VARCHAR, isSystemModule BOOLEAN)")
+        connection.execute(
+            "CREATE TABLE Function(id UBIGINT, moduleId UINTEGER, name VARCHAR, "
+            "startOffset UBIGINT, size UBIGINT, srcfileId UINTEGER)"
+        )
+        connection.execute(
+            "CREATE TABLE UnifiedSampleSeries(moduleId UINTEGER, "
+            "functionId UBIGINT, moduleRVA UBIGINT, processId UINTEGER, "
+            'coreId UINTEGER, "event#0x76" BIGINT)'
+        )
         connection.execute("INSERT INTO Process VALUES (100, 'app.exe')")
         connection.execute("INSERT INTO Module VALUES (1, 'C:\\bin\\a.dll', false)")
-        connection.execute("INSERT INTO Function VALUES (1, 1, 'named', 4096, 64, 0), "
-                           "(2, 1, '', 8192, 64, 0)")
-        connection.execute("INSERT INTO UnifiedSampleSeries VALUES "
-                           "(1, 1, 4096, 100, 0, ?), (1, 2, 8192, 100, 0, ?)",
-                           [named_samples, unnamed_samples])
-        uprof_db.set_variables(connection, {
-            "uprof_ibs_dump": "", "uprof_ibs_parquet": "", "uprof_symbols": "",
-            "uprof_aliases": "", "uprof_pdbs": "", "uprof_functions": "",
-            "uprof_event_column": "event#0x76", "uprof_primary_measure": "samples",
-            "uprof_time_start": "0", "uprof_time_end": "1000000", "uprof_top": "20",
-            "uprof_pid": "", "uprof_image": "%", "uprof_by": "function", "uprof_module": "",
-            "uprof_function": "", "uprof_line": "", "uprof_instruction": "",
-        })
+        connection.execute(
+            "INSERT INTO Function VALUES (1, 1, 'named', 4096, 64, 0), (2, 1, '', 8192, 64, 0)"
+        )
+        connection.execute(
+            "INSERT INTO UnifiedSampleSeries VALUES "
+            "(1, 1, 4096, 100, 0, ?), (1, 2, 8192, 100, 0, ?)",
+            [named_samples, unnamed_samples],
+        )
+        uprof_db.set_variables(
+            connection,
+            {
+                "uprof_ibs_dump": "",
+                "uprof_ibs_parquet": "",
+                "uprof_symbols": "",
+                "uprof_aliases": "",
+                "uprof_pdbs": "",
+                "uprof_functions": "",
+                "uprof_event_column": "event#0x76",
+                "uprof_primary_measure": "samples",
+                "uprof_time_start": "0",
+                "uprof_time_end": "1000000",
+                "uprof_top": "20",
+                "uprof_pid": "",
+                "uprof_image": "%",
+                "uprof_by": "function",
+                "uprof_module": "",
+                "uprof_function": "",
+                "uprof_line": "",
+                "uprof_instruction": "",
+            },
+        )
         uprof_db.run_script(connection, TOOLS_DIR / "views.sql")
         try:
             _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
@@ -396,8 +466,12 @@ class ProfileFunctionModulesQueryTest(unittest.TestCase):
 
     def test_unresolved_part_is_weighed_by_samples(self):
         cases = [
-            ("unnamed rows sum their samples", 100, 250,
-             [("c:/bin/a.dll", "C:\\bin\\a.dll", 250, 350)]),
+            (
+                "unnamed rows sum their samples",
+                100,
+                250,
+                [("c:/bin/a.dll", "C:\\bin\\a.dll", 250, 350)],
+            ),
             ("an unnamed row with no samples needs no range", 100, 0, []),
         ]
         for label, named, unnamed, expected in cases:

@@ -39,8 +39,9 @@ class AchievedCadenceTest(unittest.TestCase):
     def test_eight_busy_and_eight_idle_cpus_do_not_warn(self):
         # The capture average is 62.56/s per CPU, below 10% of the 1,000/s ideal, because the
         # idle CPUs share the denominator; the busiest CPU still delivers the 1 ms cadence.
-        contexts = ([uprof_session.ContextCadence(1000, 1_000_000)] * 8
-                    + [uprof_session.ContextCadence(1, 1_000_000_000)] * 8)
+        contexts = [uprof_session.ContextCadence(1000, 1_000_000)] * 8 + [
+            uprof_session.ContextCadence(1, 1_000_000_000)
+        ] * 8
         text = self.achieved(contexts, window_s=8.0)
         self.assertNotIn("WARN", text)
         self.assertIn("62.56/s per CPU", text)
@@ -98,13 +99,16 @@ class OneFrequencyReadTest(unittest.TestCase):
             limits.append(limit_ns)
             return [uprof_session.ContextCadence(5, 1_000_000)]
 
-        with mock.patch.object(uprof_collect, "_core_frequency", side_effect=reads) as read, \
-                mock.patch.object(uprof_session, "read_meta", return_value={}), \
-                mock.patch.object(uprof_session, "system_wide", return_value=True), \
-                mock.patch.object(uprof_query, "_capture_scan", return_value=(5, 1, None)), \
-                mock.patch.object(uprof_query, "_dump_contexts", side_effect=contexts):
+        with (
+            mock.patch.object(uprof_collect, "_core_frequency", side_effect=reads) as read,
+            mock.patch.object(uprof_session, "read_meta", return_value={}),
+            mock.patch.object(uprof_session, "system_wide", return_value=True),
+            mock.patch.object(uprof_query, "_capture_scan", return_value=(5, 1, None)),
+            mock.patch.object(uprof_query, "_dump_contexts", side_effect=contexts),
+        ):
             (_name, text), _samples, _kernel = uprof_query._achieved_field(
-                None, True, args, sampler, None)
+                None, True, args, sampler, None
+            )
 
         self.assertEqual(read.call_count, 1)
         self.assertEqual(limits, [10 * 4_700_000 / 4.7e9 * 1e9])
@@ -122,7 +126,9 @@ class DumpCadenceTest(unittest.TestCase):
                 "1000000000,0,4242,100,4096,workload.exe\n"
                 "1500000000,0,4242,200,8192,other.exe\n"
                 "2500000000,0,4242,200,8192,other.exe\n",
-                encoding="utf-8", newline="\n")
+                encoding="utf-8",
+                newline="\n",
+            )
 
             _, _, contexts = uprof_native.dump_cadence(dump, ("PID", "TID"))
 

@@ -31,8 +31,8 @@ class ParseImageDivergenceTest(unittest.TestCase):
 
     def test_a_start_address_inside_a_section_block_is_recorded(self):
         text = HEADERS + SECTION.replace(
-            "  IMAGE_SCN_CNT_CODE\n",
-            "  StartAddress: (0x140001000)\n  IMAGE_SCN_CNT_CODE\n")
+            "  IMAGE_SCN_CNT_CODE\n", "  StartAddress: (0x140001000)\n  IMAGE_SCN_CNT_CODE\n"
+        )
 
         image = uprof_context.parse_image(text)
 
@@ -40,8 +40,8 @@ class ParseImageDivergenceTest(unittest.TestCase):
 
     def test_a_start_address_inside_an_export_block_is_recorded(self):
         text = HEADERS + (
-            "Export {\n  RVA: 0x1010\n  Name: foo\n"
-            "  StartAddress: (0x140001000)\n}\n")
+            "Export {\n  RVA: 0x1010\n  Name: foo\n  StartAddress: (0x140001000)\n}\n"
+        )
 
         image = uprof_context.parse_image(text)
 

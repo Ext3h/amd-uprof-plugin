@@ -33,11 +33,22 @@ PART = re.compile(r"^\s+- \*\*(\w+):\*\*\s*(.*)$")
 ANSWER_PARTS = ("Location", "Proof", "Cost", "Confidence", "Saving")
 NONE_WITH_REASON = re.compile(r"^none \(\S.*\)$")
 # Concrete stand-ins for the catalogue's placeholders, so a call parses as a user would run it.
-PLACEHOLDERS = {"<CAPTURE>": "capture", "<BEFORE>": "before", "<AFTER>": "after",
-                "<SESSION>": "session", "<OUT_DIR>": "out", "<PDB_DIR>": "pdbs",
-                "<IMAGE_DIR>": "bins", "<OWN_MODULE>": "c:/bins/app/fixture_full.exe",
-                "<FUNCTION>": "fixture_entry", "<PID>": "3112", "<QPC1>": "1000",
-                "<QPC2>": "2000", "<T1>": "0.5", "<T2>": "1.5"}
+PLACEHOLDERS = {
+    "<CAPTURE>": "capture",
+    "<BEFORE>": "before",
+    "<AFTER>": "after",
+    "<SESSION>": "session",
+    "<OUT_DIR>": "out",
+    "<PDB_DIR>": "pdbs",
+    "<IMAGE_DIR>": "bins",
+    "<OWN_MODULE>": "c:/bins/app/fixture_full.exe",
+    "<FUNCTION>": "fixture_entry",
+    "<PID>": "3112",
+    "<QPC1>": "1000",
+    "<QPC2>": "2000",
+    "<T1>": "0.5",
+    "<T2>": "1.5",
+}
 REQUIRED = ("Session", "Question", "Answer", "Minimal calls")
 
 
@@ -102,8 +113,9 @@ class CatalogueTest(unittest.TestCase):
                     self.assertIn(name, entry["fields"], f"{scn} lacks {name}")
                 for name in ("Session", "Question"):
                     self.assertTrue(entry["fields"][name], f"{scn}: {name} is empty")
-                self.assertTrue(entry["fields"]["Answer"] or entry["parts"],
-                                f"{scn}: Answer is empty")
+                self.assertTrue(
+                    entry["fields"]["Answer"] or entry["parts"], f"{scn}: Answer is empty"
+                )
 
     def test_answers_on_a_session_have_every_contract_part(self):
         for scn, entry in self.scenarios.items():
@@ -132,15 +144,18 @@ class CatalogueTest(unittest.TestCase):
                 self.assertTrue(names, f"{scn}: Session names no builder session")
                 self.assertLessEqual(set(names), set(build_captures.SESSIONS))
                 question = entry["fields"]["Question"]
-                self.assertTrue("<CAPTURE>" in question or "<BEFORE>" in question,
-                                f"{scn}: the question does not name the capture")
+                self.assertTrue(
+                    "<CAPTURE>" in question or "<BEFORE>" in question,
+                    f"{scn}: the question does not name the capture",
+                )
 
     def test_minimal_calls_are_listed_or_declined(self):
         for scn, entry in self.scenarios.items():
             with self.subTest(scenario=scn):
                 declined = entry["fields"]["Minimal calls"].startswith("none (")
-                self.assertNotEqual(declined, bool(entry["calls"]),
-                                    f"{scn}: list calls or say none (reason)")
+                self.assertNotEqual(
+                    declined, bool(entry["calls"]), f"{scn}: list calls or say none (reason)"
+                )
 
     def test_pass_criteria_cap_the_final_turn_context(self):
         # A run that reaches the context ceiling is defective: the ceiling counts the model's
@@ -185,7 +200,8 @@ class BuilderTest(unittest.TestCase):
             connection = duckdb.connect(str(session / "cpu.db"), read_only=True)
             try:
                 cls.modules[name] = connection.execute(
-                    "SELECT path, checksum, size FROM Module").fetchall()
+                    "SELECT path, checksum, size FROM Module"
+                ).fetchall()
             finally:
                 connection.close()
 
@@ -239,15 +255,15 @@ class BuilderTest(unittest.TestCase):
 
     def test_scn09_quotes_the_process_and_scoped_module_shares(self):
         self.assert_quoted("SCN-09", self.shares("systemwide", "process", "process"))
-        self.assert_quoted("SCN-09", self.shares("systemwide", "module", "module",
-                                                 "--pid", "3112"))
+        self.assert_quoted("SCN-09", self.shares("systemwide", "module", "module", "--pid", "3112"))
 
     @unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
     def test_images_pass_the_tools_build_identity_checks(self):
         for name, path, image, checksum, size in self.images():
             with self.subTest(session=name, module=path):
-                self.assertIsNone(uprof_symbols.image_build_mismatch(
-                    str(image), checksum, size, F.READOBJ))
+                self.assertIsNone(
+                    uprof_symbols.image_build_mismatch(str(image), checksum, size, F.READOBJ)
+                )
                 headers = uprof_context.run([str(F.READOBJ), "--file-headers", str(image)])
                 build = uprof_context.parse_image(headers.stdout).build
                 verified = uprof_context.verify_build(build, checksum, size)

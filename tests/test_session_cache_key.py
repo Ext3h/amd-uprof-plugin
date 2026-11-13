@@ -23,9 +23,13 @@ class SessionCacheInsideSymbolCacheTest(unittest.TestCase):
         self.srv.mkdir()
 
     def identity(self, cache_root):
-        with mock.patch.dict(os.environ, {
+        with mock.patch.dict(
+            os.environ,
+            {
                 "_NT_SYMBOL_PATH": f"srv*{self.srv}*https://example.invalid",
-                "UPROF_SESSION_CACHE_ROOT": str(cache_root)}):
+                "UPROF_SESSION_CACHE_ROOT": str(cache_root),
+            },
+        ):
             return uprof_cache.search_identity(None, None, [])["srv_caches"]
 
     def assert_storing_keeps_the_identity(self, cache_root):

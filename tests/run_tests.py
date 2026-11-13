@@ -44,8 +44,8 @@ class _RequiredToolsResult(unittest.TextTestResult):
 def run(suite: unittest.TestSuite, require_tools: bool, stream=None) -> bool:
     """Run suite verbosely; True when it passed."""
     runner = unittest.TextTestRunner(
-        stream=stream, verbosity=2,
-        resultclass=_RequiredToolsResult if require_tools else None)
+        stream=stream, verbosity=2, resultclass=_RequiredToolsResult if require_tools else None
+    )
     return runner.run(suite).wasSuccessful()
 
 
@@ -78,7 +78,11 @@ def main(argv: list[str]) -> int:
             if entry not in sys.path:
                 sys.path.insert(0, entry)
         loader = unittest.TestLoader()
-        suite = loader.loadTestsFromNames(argv) if argv else loader.discover(str(HERE), pattern="test_*.py")
+        suite = (
+            loader.loadTestsFromNames(argv)
+            if argv
+            else loader.discover(str(HERE), pattern="test_*.py")
+        )
         require_tools = os.environ.get("UPROF_REQUIRE_TOOLS") == "1"
         return 0 if run(suite, require_tools) else 1
     finally:

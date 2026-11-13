@@ -21,7 +21,12 @@ class SchemaGuardPmcTest(unittest.TestCase):
             "startOffset UBIGINT, size UBIGINT, srcfileId UINTEGER)"
         )
 
-        cols = ["moduleId UINTEGER", "functionId UBIGINT", "moduleRVA UBIGINT", '"event#0x76" BIGINT']
+        cols = [
+            "moduleId UINTEGER",
+            "functionId UBIGINT",
+            "moduleRVA UBIGINT",
+            '"event#0x76" BIGINT',
+        ]
         if include_core_id:
             cols.append("coreId UINTEGER")
         if include_process_id:
@@ -58,7 +63,9 @@ class SchemaGuardPmcTest(unittest.TestCase):
             with self.assertRaises(Exception) as ctx:
                 uprof_db.run_script(connection, TOOLS_DIR / "views.sql")
             message = str(ctx.exception)
-            self.assertIn("uProf export incomplete: missing column UnifiedSampleSeries.coreId", message)
+            self.assertIn(
+                "uProf export incomplete: missing column UnifiedSampleSeries.coreId", message
+            )
             self.assertNotIn("Binder Error", message)
         finally:
             connection.close()
@@ -69,7 +76,9 @@ class SchemaGuardPmcTest(unittest.TestCase):
             with self.assertRaises(Exception) as ctx:
                 uprof_db.run_script(connection, TOOLS_DIR / "views.sql")
             message = str(ctx.exception)
-            self.assertIn("uProf export incomplete: missing column UnifiedSampleSeries.processId", message)
+            self.assertIn(
+                "uProf export incomplete: missing column UnifiedSampleSeries.processId", message
+            )
             self.assertNotIn("Binder Error", message)
         finally:
             connection.close()
@@ -80,7 +89,10 @@ class SchemaGuardPmcTest(unittest.TestCase):
             with self.assertRaises(Exception) as ctx:
                 uprof_db.run_script(connection, TOOLS_DIR / "views.sql")
             message = str(ctx.exception)
-            self.assertIn("missing column UnifiedSampleSeries.coreId, column UnifiedSampleSeries.processId", message)
+            self.assertIn(
+                "missing column UnifiedSampleSeries.coreId, column UnifiedSampleSeries.processId",
+                message,
+            )
             self.assertNotIn("Binder Error", message)
         finally:
             connection.close()

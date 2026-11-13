@@ -26,8 +26,12 @@ def meta() -> dict:
     return json.loads((FIXTURE / "session.uprof").read_text(encoding="utf-8"))
 
 
-def build(session: Path, meta_override: dict | None = None,
-          drop_columns: tuple[str, ...] = (), keep_rows: int | None = None) -> Path:
+def build(
+    session: Path,
+    meta_override: dict | None = None,
+    drop_columns: tuple[str, ...] = (),
+    keep_rows: int | None = None,
+) -> Path:
     """Write the fixture session into session (created); return it.
 
     meta_override replaces session.uprof; drop_columns leaves those UnifiedSampleSeries columns
@@ -43,10 +47,14 @@ def build(session: Path, meta_override: dict | None = None,
     connection = duckdb.connect(str(session / "cpu.db"))
     try:
         for name, table in tables().items():
-            keep = [index for index, (column, _kind) in enumerate(table["columns"])
-                    if not (name == "UnifiedSampleSeries" and column in drop_columns)]
-            columns = ", ".join(f'"{table["columns"][i][0]}" {table["columns"][i][1]}'
-                                for i in keep)
+            keep = [
+                index
+                for index, (column, _kind) in enumerate(table["columns"])
+                if not (name == "UnifiedSampleSeries" and column in drop_columns)
+            ]
+            columns = ", ".join(
+                f'"{table["columns"][i][0]}" {table["columns"][i][1]}' for i in keep
+            )
             connection.execute(f'CREATE TABLE "{name}" ({columns})')
             source = table["rows"]
             if name == "UnifiedSampleSeries" and keep_rows is not None:

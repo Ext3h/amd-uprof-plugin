@@ -43,14 +43,16 @@ class SessionCandidatesTest(unittest.TestCase):
         (self.root / "raw").mkdir()
         (self.root / "raw" / "session.uprof").write_text("{}", encoding="utf-8")
 
-        message = self.refused("profile", "--session", str(self.root), "--by", "function",
-                               "--pid", "100")
+        message = self.refused(
+            "profile", "--session", str(self.root), "--by", "function", "--pid", "100"
+        )
 
         self.assertNotIn("\n", message)
         self.assertIn("cpu.db not found", message)
         for found in (first, second):
-            self.assertIn(f"--session {uprof_shell.quote(str(found))} --by function --pid 100",
-                          message)
+            self.assertIn(
+                f"--session {uprof_shell.quote(str(found))} --by function --pid 100", message
+            )
         self.assertNotIn(str(self.root / "raw"), message)
 
     def test_without_captures_below_the_translate_remedy_stays(self):

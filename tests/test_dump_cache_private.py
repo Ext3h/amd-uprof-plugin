@@ -42,6 +42,7 @@ class _Case(unittest.TestCase):
         link.parent.mkdir(parents=True, exist_ok=True)
         if os.name == "nt":
             import _winapi
+
             _winapi.CreateJunction(str(target), str(link))
         else:
             link.symlink_to(target, target_is_directory=True)
@@ -151,8 +152,9 @@ class LinkedSidecarTest(_Case):
     def test_a_linked_cache_json_is_replaced_not_followed(self):
         link = self.cache / "cache.json"
         self.link_file(link, self.secret)
-        uprof_dump._write_cache_meta(link, self.session, "ibsop-event-dump", None,
-                                     self.cache / "IbsOpDump.csv", [])
+        uprof_dump._write_cache_meta(
+            link, self.session, "ibsop-event-dump", None, self.cache / "IbsOpDump.csv", []
+        )
         self.assert_not_followed(link)
 
 

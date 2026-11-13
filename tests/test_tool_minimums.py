@@ -28,17 +28,24 @@ UPROF = Path("/uprof/AMDuProfCLI")
 @contextlib.contextmanager
 def toolchain(llvm: dict[str, str | None], uprof: str | None = "AMDuProfCLI.exe Version 5.3.521.0"):
     """Every named LLVM tool is found with the given --version line; uProf likewise."""
+
     def version_line(path, *args):
         return uprof if Path(path) == UPROF else llvm.get(Path(path).name)
 
-    with mock.patch.object(uprof_native, "find_uprof", return_value=UPROF), \
-            mock.patch.object(uprof_native, "find_symbolizer",
-                              return_value=(LLVM_BIN / "llvm-symbolizer"
-                                            if "llvm-symbolizer" in llvm else None)), \
-            mock.patch.object(uprof_native, "find_sibling",
-                              side_effect=lambda symbolizer, name:
-                              LLVM_BIN / name if name in llvm else None), \
-            mock.patch.object(uprof_native, "_first_version_line", side_effect=version_line):
+    with (
+        mock.patch.object(uprof_native, "find_uprof", return_value=UPROF),
+        mock.patch.object(
+            uprof_native,
+            "find_symbolizer",
+            return_value=(LLVM_BIN / "llvm-symbolizer" if "llvm-symbolizer" in llvm else None),
+        ),
+        mock.patch.object(
+            uprof_native,
+            "find_sibling",
+            side_effect=lambda symbolizer, name: LLVM_BIN / name if name in llvm else None,
+        ),
+        mock.patch.object(uprof_native, "_first_version_line", side_effect=version_line),
+    ):
         uprof_native.llvm_cause.cache_clear()
         try:
             yield
@@ -48,7 +55,9 @@ def toolchain(llvm: dict[str, str | None], uprof: str | None = "AMDuProfCLI.exe 
 
 LLVM23 = "LLVM version 23.1.4"
 LLVM22 = "LLVM version 22.1.8"
-ALL23 = {name: LLVM23 for name in ("llvm-symbolizer", "llvm-readobj", "llvm-pdbutil", "llvm-objdump")}
+ALL23 = {
+    name: LLVM23 for name in ("llvm-symbolizer", "llvm-readobj", "llvm-pdbutil", "llvm-objdump")
+}
 
 
 class UprofMinimumTest(unittest.TestCase):
@@ -67,20 +76,24 @@ class UprofMinimumTest(unittest.TestCase):
 
     def test_an_unreadable_uprof_version_stops_even_when_the_install_path_names_one(self):
         path = Path("/opt/AMDuProf_5.3-521/bin/AMDuProfCLI")
-        with mock.patch.object(uprof_native, "find_uprof", return_value=path), \
-                mock.patch.object(uprof_native, "_first_version_line", return_value=None):
+        with (
+            mock.patch.object(uprof_native, "find_uprof", return_value=path),
+            mock.patch.object(uprof_native, "_first_version_line", return_value=None),
+        ):
             with self.assertRaises(UprofError) as caught:
                 uprof_native.require_uprof()
         self.assertIn("cannot read the version", str(caught.exception))
 
     def test_version_lines_in_other_shapes_parse(self):
-        for text, expected in (("AMDuProfCLI.exe Version 5.3.521.0 ", (5, 3, 521, 0)),
-                               ("Version: 5.3.521.0", (5, 3, 521, 0)),
-                               ("AMDuProfCLI version-5.3.521", (5, 3, 521)),
-                               ("AMD uProf 5.3.521", (5, 3, 521)),
-                               ("AMDuProfCLI 5.3-521", (5, 3)),
-                               ("Ubuntu LLVM version 23.1.0", (23, 1, 0)),
-                               ("Homebrew LLVM version 23.0.0git", (23, 0, 0))):
+        for text, expected in (
+            ("AMDuProfCLI.exe Version 5.3.521.0 ", (5, 3, 521, 0)),
+            ("Version: 5.3.521.0", (5, 3, 521, 0)),
+            ("AMDuProfCLI version-5.3.521", (5, 3, 521)),
+            ("AMD uProf 5.3.521", (5, 3, 521)),
+            ("AMDuProfCLI 5.3-521", (5, 3)),
+            ("Ubuntu LLVM version 23.1.0", (23, 1, 0)),
+            ("Homebrew LLVM version 23.0.0git", (23, 0, 0)),
+        ):
             with self.subTest(text=text):
                 self.assertEqual(uprof_native.parse_version(text), expected)
 
@@ -116,8 +129,9 @@ class LlvmMinimumTest(unittest.TestCase):
             for _ in range(3):
                 uprof_native.require_symbolizer()
                 uprof_native.require_llvm(uprof_native.CONTEXT_TOOLS)
-            calls = [Path(call.args[0]).name
-                     for call in uprof_native._first_version_line.call_args_list]
+            calls = [
+                Path(call.args[0]).name for call in uprof_native._first_version_line.call_args_list
+            ]
         self.assertEqual(sorted(calls), sorted(set(calls)))
 
     def test_an_unreadable_llvm_version_stops(self):
@@ -164,9 +178,11 @@ class ProfileGateTest(unittest.TestCase):
 class ToolsReportMinimumTest(unittest.TestCase):
     def report(self, llvm, uprof="AMDuProfCLI.exe Version 5.3.521.0"):
         out = io.StringIO()
-        with toolchain(llvm, uprof), \
-                mock.patch.dict("sys.modules", duckdb=types.SimpleNamespace(__version__="2.0.0")), \
-                contextlib.redirect_stdout(out):
+        with (
+            toolchain(llvm, uprof),
+            mock.patch.dict("sys.modules", duckdb=types.SimpleNamespace(__version__="2.0.0")),
+            contextlib.redirect_stdout(out),
+        ):
             try:
                 uprof_native.tool_report()
                 error = None
@@ -177,9 +193,12 @@ class ToolsReportMinimumTest(unittest.TestCase):
     def test_each_found_tool_prints_its_minimum(self):
         rows, error = self.report(ALL23)
         self.assertIsNone(error)
-        self.assertIn(f"UPROF={UPROF}; version=AMDuProfCLI.exe Version 5.3.521.0; minimum=5.3; ok",
-                      rows)
-        self.assertIn(f"OBJDUMP={LLVM_BIN / 'llvm-objdump'}; version={LLVM23}; minimum=23; ok", rows)
+        self.assertIn(
+            f"UPROF={UPROF}; version=AMDuProfCLI.exe Version 5.3.521.0; minimum=5.3; ok", rows
+        )
+        self.assertIn(
+            f"OBJDUMP={LLVM_BIN / 'llvm-objdump'}; version={LLVM23}; minimum=23; ok", rows
+        )
 
     def test_a_tool_below_its_minimum_prints_too_old_and_fails(self):
         rows, error = self.report(dict(ALL23, **{"llvm-objdump": LLVM22}))
@@ -193,18 +212,24 @@ class CiPinsTest(unittest.TestCase):
         pins = []
         for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
             text = workflow.read_text(encoding="utf-8")
-            pins += [(workflow.name, found) for found
-                     in re.findall(r"LLVM_VERSION:\s*[\"']?([\d.]+)|LLVM-([\d.]+)-win64\.msi",
-                                   text)]
+            pins += [
+                (workflow.name, found)
+                for found in re.findall(
+                    r"LLVM_VERSION:\s*[\"']?([\d.]+)|LLVM-([\d.]+)-win64\.msi", text
+                )
+            ]
             if "llvm-project/releases" in text:
-                self.assertTrue(any(name == workflow.name for name, _ in pins),
-                                f"{workflow.name} installs LLVM without a recognised pin")
+                self.assertTrue(
+                    any(name == workflow.name for name, _ in pins),
+                    f"{workflow.name} installs LLVM without a recognised pin",
+                )
         versions = [(name, next(part for part in found if part)) for name, found in pins]
         self.assertTrue(versions)
         for name, version in versions:
             with self.subTest(workflow=name, version=version):
-                self.assertGreaterEqual(uprof_native.parse_version(version),
-                                        uprof_native.LLVM_MINIMUM)
+                self.assertGreaterEqual(
+                    uprof_native.parse_version(version), uprof_native.LLVM_MINIMUM
+                )
 
     def test_the_reference_uprof_meets_the_minimum(self):
         text = (ROOT / "docs" / "validation.md").read_text(encoding="utf-8")

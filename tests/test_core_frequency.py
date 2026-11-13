@@ -22,7 +22,8 @@ class CoreFrequencyLinuxTest(unittest.TestCase):
             cpuinfo.write_text("cpu MHz : 2200.000\n", encoding="utf-8")
 
             hz, display, source = uprof_collect._linux_core_frequency(
-                cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo)
+                cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo
+            )
 
             self.assertEqual(hz, 3_800_000_000)
             self.assertEqual(display, "3800 MHz")
@@ -37,7 +38,8 @@ class CoreFrequencyLinuxTest(unittest.TestCase):
             cpuinfo.write_text("cpu MHz : 2200.000\n", encoding="utf-8")
 
             hz, display, source = uprof_collect._linux_core_frequency(
-                cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo)
+                cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo
+            )
 
             self.assertEqual(hz, 4_700_000_000)
             self.assertEqual(display, "4700 MHz")
@@ -49,13 +51,13 @@ class CoreFrequencyLinuxTest(unittest.TestCase):
             max_freq = Path(tmp) / "cpuinfo_max_freq"
             cpuinfo = Path(tmp) / "cpuinfo"
             cpuinfo.write_text(
-                "processor\t: 0\n"
-                "model name\t: AMD Ryzen 9 7950X\n"
-                "cpu MHz\t\t: 2842.125\n",
-                encoding="utf-8")
+                "processor\t: 0\nmodel name\t: AMD Ryzen 9 7950X\ncpu MHz\t\t: 2842.125\n",
+                encoding="utf-8",
+            )
 
             hz, display, source = uprof_collect._linux_core_frequency(
-                cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo)
+                cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo
+            )
 
             self.assertEqual(hz, 2_842_125_000)
             self.assertEqual(display, "2842.125 MHz")
@@ -70,7 +72,8 @@ class CoreFrequencyLinuxTest(unittest.TestCase):
 
             with self.assertRaises(UprofError) as context:
                 uprof_collect._linux_core_frequency(
-                    cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo)
+                    cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo
+                )
 
             self.assertIn("cannot determine the core frequency", str(context.exception))
             self.assertIn("cpuinfo_max_freq", str(context.exception))

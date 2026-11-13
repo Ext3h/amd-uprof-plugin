@@ -29,9 +29,12 @@ NO_CATEGORY_LOG = (
     "[PROFILE_COMMON][AMDTProfileTranslationManager::Execute:384][TID: 1996][19:48:09]: "
     "No categories to translate...\n"
     "[PROFILE_COMMON][AMDTProfileManager::Translate:1199][TID: 1996][19:48:09]: "
-    "Translation error encountered...\n")
-OTHER_LOG = ("[PROFILE_COMMON][AMDTProfileManager::Translate:1199][TID: 1][19:48:09]: "
-             "Translation error encountered...\n")
+    "Translation error encountered...\n"
+)
+OTHER_LOG = (
+    "[PROFILE_COMMON][AMDTProfileManager::Translate:1199][TID: 1][19:48:09]: "
+    "Translation error encountered...\n"
+)
 
 
 class TranslateFailureTest(unittest.TestCase):
@@ -50,14 +53,19 @@ class TranslateFailureTest(unittest.TestCase):
         def fake_run(command, **_kwargs):
             with open(self.log, "a", encoding="utf-8") as handle:
                 handle.write(appended)
-            return subprocess.CompletedProcess(command, ACCESS_VIOLATION, "Translation started\n", "")
+            return subprocess.CompletedProcess(
+                command, ACCESS_VIOLATION, "Translation started\n", ""
+            )
+
         return fake_run
 
     def translate(self, appended):
-        with mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")), \
-                mock.patch.object(uprof_native, "run", side_effect=self.crashing_run(appended)), \
-                contextlib.redirect_stdout(io.StringIO()), \
-                self.assertRaises(UprofError) as caught:
+        with (
+            mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
+            mock.patch.object(uprof_native, "run", side_effect=self.crashing_run(appended)),
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaises(UprofError) as caught,
+        ):
             uprof_native.translate(self.session, self.root / "out")
         return str(caught.exception)
 
@@ -73,8 +81,10 @@ class TranslateFailureTest(unittest.TestCase):
         self.assertNotIn(">", message)
         script = Path(uprof_native.__file__).resolve().with_name("uprof.py")
         out_dir = f"{self.session}-recapture"
-        cycles = (f"python {uprof_shell.quote(str(script))} collect --out-dir "
-                  f"{uprof_shell.quote(out_dir)} --seconds 60")
+        cycles = (
+            f"python {uprof_shell.quote(str(script))} collect --out-dir "
+            f"{uprof_shell.quote(out_dir)} --seconds 60"
+        )
         self.assertIn(cycles, message)
         self.assertIn(cycles + " --event ibs-op", message)
 
@@ -88,14 +98,18 @@ class TranslateFailureTest(unittest.TestCase):
         self.assertIn(str(self.log), message)
 
     def test_the_dump_cache_names_the_same_cause(self):
-        with mock.patch.object(uprof_dump, "cache_dir", return_value=self.root / "cache" / "k"), \
-                mock.patch.object(uprof_dump, "require_uprof", return_value=Path("AMDuProfCLI")), \
-                mock.patch.object(uprof_dump, "translate_command",
-                                  side_effect=lambda _uprof, out, **_kw: ["AMDuProfCLI", str(out)]), \
-                mock.patch.object(uprof_dump, "run",
-                                  side_effect=self.crashing_run(NO_CATEGORY_LOG)), \
-                contextlib.redirect_stderr(io.StringIO()), \
-                self.assertRaises(UprofError) as caught:
+        with (
+            mock.patch.object(uprof_dump, "cache_dir", return_value=self.root / "cache" / "k"),
+            mock.patch.object(uprof_dump, "require_uprof", return_value=Path("AMDuProfCLI")),
+            mock.patch.object(
+                uprof_dump,
+                "translate_command",
+                side_effect=lambda _uprof, out, **_kw: ["AMDuProfCLI", str(out)],
+            ),
+            mock.patch.object(uprof_dump, "run", side_effect=self.crashing_run(NO_CATEGORY_LOG)),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(UprofError) as caught,
+        ):
             uprof_dump.resolve_dump(self.session, Sampler(ibs_dump_kind="ibsop-event-dump"))
 
         self.assertIn("no translatable sample category", str(caught.exception))

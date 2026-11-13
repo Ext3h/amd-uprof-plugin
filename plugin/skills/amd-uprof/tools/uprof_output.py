@@ -19,9 +19,20 @@ from typing import Final
 from uprof_util import UprofError
 
 _NUMERIC_TYPE_PREFIXES: Final = (
-    "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT",
-    "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT",
-    "FLOAT", "REAL", "DOUBLE", "DECIMAL",
+    "TINYINT",
+    "SMALLINT",
+    "INTEGER",
+    "BIGINT",
+    "HUGEINT",
+    "UTINYINT",
+    "USMALLINT",
+    "UINTEGER",
+    "UBIGINT",
+    "UHUGEINT",
+    "FLOAT",
+    "REAL",
+    "DOUBLE",
+    "DECIMAL",
 )
 _NULL_CELL: Final = "NULL"
 _CONTROL_ESCAPES: Final = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
@@ -79,12 +90,15 @@ def _escape(text: str) -> str:
     return text.replace("|", "\\|")
 
 
-def markdown_table(columns: Sequence[str], type_names: Sequence[str],
-                   rows: Sequence[Sequence[object]]) -> str:
+def markdown_table(
+    columns: Sequence[str], type_names: Sequence[str], rows: Sequence[Sequence[object]]
+) -> str:
     """A pipe table with right-aligned numeric columns and escaped text cells."""
     numeric = [_is_numeric(name) for name in type_names]
-    lines = ["| " + " | ".join(_escape(column) for column in columns) + " |",
-             "| " + " | ".join("---:" if right else "---" for right in numeric) + " |"]
+    lines = [
+        "| " + " | ".join(_escape(column) for column in columns) + " |",
+        "| " + " | ".join("---:" if right else "---" for right in numeric) + " |",
+    ]
     for row in rows:
         lines.append("| " + " | ".join(_escape(_cell(value)) for value in row) + " |")
     return "\n".join(lines) + "\n"
@@ -96,11 +110,14 @@ def _json_value(value: object) -> object:
     return str(value)
 
 
-def json_document(fields: Sequence[tuple[str, str]], columns: Sequence[str],
-                  rows: Sequence[Sequence[object]],
-                  legend: dict[str, object] | None = None,
-                  contexts: Sequence[object | None] | None = None,
-                  context_help: dict[str, object] | None = None) -> str:
+def json_document(
+    fields: Sequence[tuple[str, str]],
+    columns: Sequence[str],
+    rows: Sequence[Sequence[object]],
+    legend: dict[str, object] | None = None,
+    contexts: Sequence[object | None] | None = None,
+    context_help: dict[str, object] | None = None,
+) -> str:
     """One object with the header fields, the legend and a rows array keyed by column names.
 
     contexts, when given, holds one entry per row; a non-None entry becomes that row's

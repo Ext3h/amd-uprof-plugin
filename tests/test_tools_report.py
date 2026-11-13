@@ -19,13 +19,16 @@ SYMBOLIZER = Path("/llvm/bin/llvm-symbolizer")
 def report(siblings: dict[str, Path | None]) -> list[str]:
     """The `tools` rows with uProf, DuckDB and llvm-symbolizer present and siblings as given."""
     out = io.StringIO()
-    with mock.patch.object(uprof_native, "find_uprof", return_value=Path("/uprof/AMDuProfCLI")), \
-            mock.patch.object(uprof_native, "find_symbolizer", return_value=SYMBOLIZER), \
-            mock.patch.object(uprof_native, "find_sibling",
-                              side_effect=lambda symbolizer, name: siblings.get(name)), \
-            mock.patch.object(uprof_native, "_first_version_line", return_value="LLVM version 23.1.4"), \
-            mock.patch.dict("sys.modules", duckdb=types.SimpleNamespace(__version__="2.0.0")), \
-            contextlib.redirect_stdout(out):
+    with (
+        mock.patch.object(uprof_native, "find_uprof", return_value=Path("/uprof/AMDuProfCLI")),
+        mock.patch.object(uprof_native, "find_symbolizer", return_value=SYMBOLIZER),
+        mock.patch.object(
+            uprof_native, "find_sibling", side_effect=lambda symbolizer, name: siblings.get(name)
+        ),
+        mock.patch.object(uprof_native, "_first_version_line", return_value="LLVM version 23.1.4"),
+        mock.patch.dict("sys.modules", duckdb=types.SimpleNamespace(__version__="2.0.0")),
+        contextlib.redirect_stdout(out),
+    ):
         uprof_native.tool_report()
     return out.getvalue().splitlines()
 
@@ -38,9 +41,12 @@ class ToolsReportTest(unittest.TestCase):
 
     def test_a_missing_objdump_prints_the_cause_and_remedy_without_failing(self):
         rows = report({})
-        self.assertIn("OBJDUMP=; version=MISSING (llvm-objdump is not beside llvm-symbolizer or "
-                      "on PATH; instruction context is omitted; remedy: install LLVM or add its "
-                      "bin directory to PATH; module/RVA rows still work)", rows)
+        self.assertIn(
+            "OBJDUMP=; version=MISSING (llvm-objdump is not beside llvm-symbolizer or "
+            "on PATH; instruction context is omitted; remedy: install LLVM or add its "
+            "bin directory to PATH; module/RVA rows still work)",
+            rows,
+        )
 
 
 if __name__ == "__main__":

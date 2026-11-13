@@ -90,14 +90,23 @@ SYMBOLS = """\
 {"Address":"0x101b","ModuleName":"fixture.exe","Symbol":[{"Column":0,"FileName":"src\\\\main.cpp","FunctionName":"main","Line":12}]}
 """
 
-COLUMNS = ["module", "rva", "function", "file", "line", "attribution", "samples",
-           "sample_share", "time_share", "tag_to_retire_share"]
+COLUMNS = [
+    "module",
+    "rva",
+    "function",
+    "file",
+    "line",
+    "attribution",
+    "samples",
+    "sample_share",
+    "time_share",
+    "tag_to_retire_share",
+]
 ROW = ("fixture.exe", "0x101B", "main", "src\\main.cpp", 12, "unique", 3, 0.05, 0.02, 0.01)
 
 
 class FakeConnection:
-    def __init__(self, module_path, checksum=0x1234ABCD, total=60, publics=(), pdb=None,
-                 size=0):
+    def __init__(self, module_path, checksum=0x1234ABCD, total=60, publics=(), pdb=None, size=0):
         self.module_path = module_path
         self.checksum = checksum
         self.total = total
@@ -142,8 +151,9 @@ def fake_run(command, **_kwargs):
     if "--coff-imports" in command:
         return subprocess.CompletedProcess(command, 0, IMPORTS, "")
     if "--file-headers" in command:
-        return subprocess.CompletedProcess(command, 0, FILE_HEADERS + SECTIONS + UNWIND + EXPORTS,
-                                           "")
+        return subprocess.CompletedProcess(
+            command, 0, FILE_HEADERS + SECTIONS + UNWIND + EXPORTS, ""
+        )
     if command[0] == "llvm-objdump.exe":
         return subprocess.CompletedProcess(command, 0, OBJDUMP, "")
     if command[0] == "llvm-symbolizer.exe":
@@ -160,17 +170,26 @@ class BuildContextTest(unittest.TestCase):
         imports = uprof_context.parse_imports(IMPORTS, build)
 
         context = uprof_context.build_context(
-            anchor, verified, 0x101B, window,
-            samples={0x1000: 1, 0x101B: 3}, total_samples=60,
+            anchor,
+            verified,
+            0x101B,
+            window,
+            samples={0x1000: 1, 0x101B: 3},
+            total_samples=60,
             symbols={0x101B: uprof_context.SymbolInfo("main", r"src\main.cpp", 12)},
-            imports=imports, ibs={})
+            imports=imports,
+            ibs={},
+        )
 
-        self.assertEqual(context["anchor"],
-                         {"kind": "export", "rva": "0x1000", "name": "fixture_entry",
-                          "distance": 0x1B})
+        self.assertEqual(
+            context["anchor"],
+            {"kind": "export", "rva": "0x1000", "name": "fixture_entry", "distance": 0x1B},
+        )
         self.assertTrue(context["build"]["verified"])
-        self.assertEqual([item["rva"] for item, _run in flat(context)],
-                         ["0x1000", "0x1004", "0x1015", "0x101B", "0x1021", "0x1024"])
+        self.assertEqual(
+            [item["rva"] for item, _run in flat(context)],
+            ["0x1000", "0x1004", "0x1015", "0x101B", "0x1021", "0x1024"],
+        )
         hot, run = flat(context)[3]
         self.assertEqual(hot["samples"], 3)
         self.assertAlmostEqual(hot["sample_share"], 3 / 60)
@@ -179,9 +198,9 @@ class BuildContextTest(unittest.TestCase):
         # The instructions without a frame around it are runs of their own that say so.
         self.assertEqual([len(item["instructions"]) for item in context["runs"]], [3, 1, 2])
         self.assertEqual(frame(context, context["runs"][0]), (None, None, None))
-        self.assertEqual(hot["import"],
-                         {"dll": "KERNEL32.dll", "name": "ExitProcess",
-                          "slot_rva": "0x2088"})
+        self.assertEqual(
+            hot["import"], {"dll": "KERNEL32.dll", "name": "ExitProcess", "slot_rva": "0x2088"}
+        )
         self.assertNotIn("ibs", hot)
 
     def test_absent_symbol_and_ibs_fields_are_omitted(self):
@@ -190,8 +209,16 @@ class BuildContextTest(unittest.TestCase):
         instruction = uprof_context.DecodedInstruction(0x1000, "retq", None)
 
         context = uprof_context.build_context(
-            uprof_context.Anchor("section", 0x1000), verified, 0x1000, [instruction],
-            samples={}, total_samples=0, symbols={}, imports={}, ibs={})
+            uprof_context.Anchor("section", 0x1000),
+            verified,
+            0x1000,
+            [instruction],
+            samples={},
+            total_samples=0,
+            symbols={},
+            imports={},
+            ibs={},
+        )
 
         entry, run = flat(context)[0]
         self.assertEqual(entry["samples"], 0)
@@ -206,55 +233,93 @@ class BuildContextTest(unittest.TestCase):
     def test_runs_group_instructions_by_source_line_and_state_function_and_file_once(self):
         build = uprof_context.parse_image(FILE_HEADERS).build
         verified = uprof_context.verify_build(build, 0x1234ABCD)
-        window = [uprof_context.DecodedInstruction(rva, "nop", None)
-                  for rva in (0x1000, 0x1001, 0x1002, 0x1003, 0x1004, 0x1005)]
+        window = [
+            uprof_context.DecodedInstruction(rva, "nop", None)
+            for rva in (0x1000, 0x1001, 0x1002, 0x1003, 0x1004, 0x1005)
+        ]
         main = r"src\main.cpp"
-        symbols = {0x1000: uprof_context.SymbolInfo("main", main, 7),
-                   0x1001: uprof_context.SymbolInfo("main", main, 7),
-                   0x1002: uprof_context.SymbolInfo("main", main, 8),
-                   0x1003: uprof_context.SymbolInfo("main", main, 7),
-                   0x1004: uprof_context.SymbolInfo("helper", r"src\helper.h", 3),
-                   0x1005: uprof_context.SymbolInfo("main", main, 9)}
+        symbols = {
+            0x1000: uprof_context.SymbolInfo("main", main, 7),
+            0x1001: uprof_context.SymbolInfo("main", main, 7),
+            0x1002: uprof_context.SymbolInfo("main", main, 8),
+            0x1003: uprof_context.SymbolInfo("main", main, 7),
+            0x1004: uprof_context.SymbolInfo("helper", r"src\helper.h", 3),
+            0x1005: uprof_context.SymbolInfo("main", main, 9),
+        }
 
         context = uprof_context.build_context(
-            uprof_context.Anchor("section", 0x1000), verified, 0x1002, window,
-            samples={}, total_samples=0, symbols=symbols, imports={}, ibs={})
+            uprof_context.Anchor("section", 0x1000),
+            verified,
+            0x1002,
+            window,
+            samples={},
+            total_samples=0,
+            symbols=symbols,
+            imports={},
+            ibs={},
+        )
 
         self.assertEqual((context["function"], context["file"]), ("main", main))
         runs = context["runs"]
         self.assertEqual([run["line"] for run in runs], [7, 8, 7, 3, 9])
-        self.assertEqual([[item["rva"] for item in run["instructions"]] for run in runs],
-                         [["0x1000", "0x1001"], ["0x1002"], ["0x1003"], ["0x1004"],
-                          ["0x1005"]])
+        self.assertEqual(
+            [[item["rva"] for item in run["instructions"]] for run in runs],
+            [["0x1000", "0x1001"], ["0x1002"], ["0x1003"], ["0x1004"], ["0x1005"]],
+        )
         # Only the inlined run names its own function and file.
-        self.assertEqual(runs[3], {"function": "helper", "file": r"src\helper.h", "line": 3,
-                                   "instructions": runs[3]["instructions"]})
+        self.assertEqual(
+            runs[3],
+            {
+                "function": "helper",
+                "file": r"src\helper.h",
+                "line": 3,
+                "instructions": runs[3]["instructions"],
+            },
+        )
         for run in runs[:3] + runs[4:]:
             self.assertEqual(set(run), {"line", "instructions"})
         self.assertNotIn('"symbol"', json.dumps(context))
 
-
     def test_a_run_names_a_file_the_context_lacks_and_a_tie_takes_the_first_frame(self):
         build = uprof_context.parse_image(FILE_HEADERS).build
         verified = uprof_context.verify_build(build, 0x1234ABCD)
-        window = [uprof_context.DecodedInstruction(rva, "nop", None)
-                  for rva in (0x1000, 0x1001, 0x1002)]
+        window = [
+            uprof_context.DecodedInstruction(rva, "nop", None) for rva in (0x1000, 0x1001, 0x1002)
+        ]
 
         def context_for(symbols):
             return uprof_context.build_context(
-                uprof_context.Anchor("section", 0x1000), verified, 0x1000, window,
-                samples={}, total_samples=0, symbols=symbols, imports={}, ibs={})
+                uprof_context.Anchor("section", 0x1000),
+                verified,
+                0x1000,
+                window,
+                samples={},
+                total_samples=0,
+                symbols=symbols,
+                imports={},
+                ibs={},
+            )
 
-        context = context_for({0x1000: uprof_context.SymbolInfo("main", None, None),
-                               0x1001: uprof_context.SymbolInfo("main", None, None),
-                               0x1002: uprof_context.SymbolInfo("main", "a.c", 4)})
+        context = context_for(
+            {
+                0x1000: uprof_context.SymbolInfo("main", None, None),
+                0x1001: uprof_context.SymbolInfo("main", None, None),
+                0x1002: uprof_context.SymbolInfo("main", "a.c", 4),
+            }
+        )
         self.assertEqual(context["function"], "main")
         self.assertNotIn("file", context)
-        self.assertEqual(context["runs"][1], {"file": "a.c", "line": 4,
-                                              "instructions": context["runs"][1]["instructions"]})
+        self.assertEqual(
+            context["runs"][1],
+            {"file": "a.c", "line": 4, "instructions": context["runs"][1]["instructions"]},
+        )
 
-        tie = context_for({0x1000: uprof_context.SymbolInfo("b", "b.c", 1),
-                           0x1001: uprof_context.SymbolInfo("a", "a.c", 1)})
+        tie = context_for(
+            {
+                0x1000: uprof_context.SymbolInfo("b", "b.c", 1),
+                0x1001: uprof_context.SymbolInfo("a", "a.c", 1),
+            }
+        )
         self.assertEqual((tie["function"], tie["file"]), ("b", "b.c"))
 
     def test_ibs_samples_are_kept_when_no_other_field_is_present(self):
@@ -263,9 +328,16 @@ class BuildContextTest(unittest.TestCase):
         instruction = uprof_context.DecodedInstruction(0x1000, "retq", None)
 
         context = uprof_context.build_context(
-            uprof_context.Anchor("section", 0x1000), verified, 0x1000, [instruction],
-            samples={}, total_samples=10, symbols={}, imports={},
-            ibs={0x1000: {"samples": 2}})
+            uprof_context.Anchor("section", 0x1000),
+            verified,
+            0x1000,
+            [instruction],
+            samples={},
+            total_samples=10,
+            symbols={},
+            imports={},
+            ibs={0x1000: {"samples": 2}},
+        )
 
         self.assertEqual(flat(context)[0][0]["ibs"], {"samples": 2})
 
@@ -274,30 +346,37 @@ class InstructionProfileTest(unittest.TestCase):
     def test_the_instruction_select_is_fetched_once(self):
         columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
         contexts = [{"anchor": {}}]
-        legend = {"share_unit": "fraction", "share_scale": 1,
-                  "denominators": {"sample_share": "total_samples"},
-                  "columns": {"sample_share": "busy core-cycle share"},
-                  "impact": {"order_by": ["samples"]}}
+        legend = {
+            "share_unit": "fraction",
+            "share_scale": 1,
+            "denominators": {"sample_share": "total_samples"},
+            "columns": {"sample_share": "busy core-cycle share"},
+            "impact": {"order_by": ["samples"]},
+        }
         args = argparse.Namespace(json=True, by="instruction")
-        with mock.patch.object(uprof_query.uprof_db, "fetch_typed",
-                               return_value=(columns, types, rows)) as fetched:
-            with mock.patch.object(uprof_query.uprof_context, "instruction_contexts",
-                                   return_value=contexts) as built:
+        with mock.patch.object(
+            uprof_query.uprof_db, "fetch_typed", return_value=(columns, types, rows)
+        ) as fetched:
+            with mock.patch.object(
+                uprof_query.uprof_context, "instruction_contexts", return_value=contexts
+            ) as built:
                 with mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered:
                     with mock.patch.object(uprof_query.uprof_db, "output") as legacy:
                         uprof_query._write_profile(None, args, [("METRIC", "x")], None, legend)
 
         fetched.assert_called_once()
-        built.assert_called_once_with(None, columns, rows, debug_dirs=(), fallback_paths=(),
-                                      image_files=(), image_dirs=())
+        built.assert_called_once_with(
+            None, columns, rows, debug_dirs=(), fallback_paths=(), image_files=(), image_dirs=()
+        )
         rendered.assert_called_once()
         call = rendered.call_args.args
         self.assertEqual(call[:6], (columns, types, rows, [("METRIC", "x")], True, None))
         self.assertIs(call[6], legend)
         self.assertIs(call[7], contexts)
         help_text = call[8]
-        self.assertEqual(list(help_text), ["scope", "share", "fields", "omission_reasons",
-                                           "read", "next"])
+        self.assertEqual(
+            list(help_text), ["scope", "share", "fields", "omission_reasons", "read", "next"]
+        )
         legacy.assert_not_called()
 
     def test_a_markdown_profile_uses_the_configured_query_file(self):
@@ -309,27 +388,34 @@ class InstructionProfileTest(unittest.TestCase):
 
 
 class ContextHelpTest(unittest.TestCase):
-    LEGEND = {"share_unit": "fraction", "share_scale": 1,
-              "denominators": {"sample_share": "total_samples",
-                               "time_share": "total_weight",
-                               "tag_to_retire_share": "total_tag_cycles"},
-              "columns": {"samples": "raw sample count",
-                          "sample_share": "dispatched-op frequency share",
-                          "attribution": "unique / shared / unresolved",
-                          "time_share": "time share",
-                          "tag_to_retire_share": "total tag-to-retire cycles"},
-              "impact": {"order_by": ["time_share", "samples"]}}
+    LEGEND = {
+        "share_unit": "fraction",
+        "share_scale": 1,
+        "denominators": {
+            "sample_share": "total_samples",
+            "time_share": "total_weight",
+            "tag_to_retire_share": "total_tag_cycles",
+        },
+        "columns": {
+            "samples": "raw sample count",
+            "sample_share": "dispatched-op frequency share",
+            "attribution": "unique / shared / unresolved",
+            "time_share": "time share",
+            "tag_to_retire_share": "total tag-to-retire cycles",
+        },
+        "impact": {"order_by": ["time_share", "samples"]},
+    }
 
     def test_document_help_reuses_the_main_legend_unit_and_meaning(self):
         help_text = uprof_context.context_help(self.LEGEND)
 
-        self.assertEqual(list(help_text), ["scope", "share", "fields", "omission_reasons",
-                                           "read", "next"])
+        self.assertEqual(
+            list(help_text), ["scope", "share", "fields", "omission_reasons", "read", "next"]
+        )
         self.assertIn("legend.columns.sample_share", help_text["share"])
         self.assertIn("legend.denominators.sample_share", help_text["share"])
         self.assertIn("legend.share_unit", help_text["share"])
-        self.assertEqual(help_text["fields"]["row.attribution"],
-                         "unique / shared / unresolved")
+        self.assertEqual(help_text["fields"]["row.attribution"], "unique / shared / unresolved")
         self.assertIn("legend.impact", help_text["read"])
         self.assertIn("not a per-op cost", help_text["read"])
         self.assertIn("tag-to-retire dwell", help_text["read"])
@@ -340,8 +426,16 @@ class ContextHelpTest(unittest.TestCase):
     def test_document_help_names_the_emitted_context_fields(self):
         fields = uprof_context.context_help(self.LEGEND)["fields"]
 
-        for name in ("anchor", "build", "function, file", "runs", "runs[].instructions",
-                     "runs[].instructions[].import", "runs[].instructions[].ibs", "omitted"):
+        for name in (
+            "anchor",
+            "build",
+            "function, file",
+            "runs",
+            "runs[].instructions",
+            "runs[].instructions[].import",
+            "runs[].instructions[].ibs",
+            "omitted",
+        ):
             self.assertIn(name, fields)
         self.assertNotIn("instructions[].symbol", fields)
         self.assertIn("kind", fields["anchor"])
@@ -358,10 +452,11 @@ class ContextHelpTest(unittest.TestCase):
 
         self.assertIn("nearest-symbol <...> decoration", fields["runs[].instructions"])
         self.assertIn("not the frame-0 symbol", fields["runs[].instructions"])
-        self.assertIn("use the run's function for the real frame",
-                      fields["runs[].instructions"])
-        self.assertIn("AMD-encoded hardware fields (counts or histograms)",
-                      fields["runs[].instructions[].ibs"])
+        self.assertIn("use the run's function for the real frame", fields["runs[].instructions"])
+        self.assertIn(
+            "AMD-encoded hardware fields (counts or histograms)",
+            fields["runs[].instructions[].ibs"],
+        )
         self.assertIn("not decoded meanings", fields["runs[].instructions[].ibs"])
 
     def test_document_help_says_the_cap_counts_row_slots(self):
@@ -380,16 +475,33 @@ class ContextHelpTest(unittest.TestCase):
     def test_every_omission_reason_has_a_meaning(self):
         reasons = uprof_context.context_help(self.LEGEND)["omission_reasons"]
 
-        self.assertEqual(set(reasons), {
-            "module_missing", "readobj_missing", "readobj_failed", "metadata_incomplete",
-            "no_code_section", "anchor_too_far", "hot_rva_not_instruction_start",
-            "objdump_missing", "objdump_failed", "symbolizer_missing", "symbolizer_failed",
-            "imports_failed", "build_mismatch", "context_failed", "row_cap"})
+        self.assertEqual(
+            set(reasons),
+            {
+                "module_missing",
+                "readobj_missing",
+                "readobj_failed",
+                "metadata_incomplete",
+                "no_code_section",
+                "anchor_too_far",
+                "hot_rva_not_instruction_start",
+                "objdump_missing",
+                "objdump_failed",
+                "symbolizer_missing",
+                "symbolizer_failed",
+                "imports_failed",
+                "build_mismatch",
+                "context_failed",
+                "row_cap",
+            },
+        )
         self.assertTrue(all(reasons.values()))
 
     def test_context_omission_summary_is_one_symbolizer_fact(self):
-        contexts = [{"omitted": True, "reason": "symbolizer_failed",
-                     "detail": "llvm-symbolizer: no PDB"} for _ in range(3)]
+        contexts = [
+            {"omitted": True, "reason": "symbolizer_failed", "detail": "llvm-symbolizer: no PDB"}
+            for _ in range(3)
+        ]
         summary = uprof_context.context_omission_summary(contexts)
 
         self.assertIn("all 3 instruction contexts omitted with symbolizer_failed", summary)
@@ -398,39 +510,63 @@ class ContextHelpTest(unittest.TestCase):
 
     def test_context_omission_summary_needs_every_row_and_one_reason(self):
         self.assertIsNone(uprof_context.context_omission_summary([]))
-        self.assertIsNone(uprof_context.context_omission_summary([
-            {"omitted": True, "reason": "symbolizer_failed", "detail": "x"},
-            {"anchor": {"kind": "section"}}]))
-        self.assertIsNone(uprof_context.context_omission_summary([
-            {"omitted": True, "reason": "symbolizer_failed"},
-            {"omitted": True, "reason": "row_cap"}]))
+        self.assertIsNone(
+            uprof_context.context_omission_summary(
+                [
+                    {"omitted": True, "reason": "symbolizer_failed", "detail": "x"},
+                    {"anchor": {"kind": "section"}},
+                ]
+            )
+        )
+        self.assertIsNone(
+            uprof_context.context_omission_summary(
+                [
+                    {"omitted": True, "reason": "symbolizer_failed"},
+                    {"omitted": True, "reason": "row_cap"},
+                ]
+            )
+        )
 
     def test_document_help_is_deterministic(self):
         first = uprof_context.context_help(self.LEGEND)
         second = uprof_context.context_help(self.LEGEND)
 
         self.assertEqual(json.dumps(first, indent=2), json.dumps(second, indent=2))
-        self.assertEqual(list(first["omission_reasons"]), [
-            "module_missing", "readobj_missing", "readobj_failed", "metadata_incomplete",
-            "no_code_section", "anchor_too_far", "hot_rva_not_instruction_start",
-            "objdump_missing", "objdump_failed", "symbolizer_missing", "symbolizer_failed",
-            "imports_failed", "build_mismatch", "context_failed", "row_cap"])
+        self.assertEqual(
+            list(first["omission_reasons"]),
+            [
+                "module_missing",
+                "readobj_missing",
+                "readobj_failed",
+                "metadata_incomplete",
+                "no_code_section",
+                "anchor_too_far",
+                "hot_rva_not_instruction_start",
+                "objdump_missing",
+                "objdump_failed",
+                "symbolizer_missing",
+                "symbolizer_failed",
+                "imports_failed",
+                "build_mismatch",
+                "context_failed",
+                "row_cap",
+            ],
+        )
 
 
 class JsonDocumentTest(unittest.TestCase):
     def test_context_is_attached_to_its_row(self):
         contexts = [{"anchor": {"kind": "section"}}, None]
 
-        text = uprof_output.json_document([("METRIC", "x")], ["module", "rva"],
-                                          [("a", "0x1"), ("b", "0x2")],
-                                          contexts=contexts)
+        text = uprof_output.json_document(
+            [("METRIC", "x")], ["module", "rva"], [("a", "0x1"), ("b", "0x2")], contexts=contexts
+        )
 
         self.assertIn('"context"', text)
         self.assertEqual(text.count('"context"'), 1)
 
     def test_no_contexts_keep_the_existing_bytes(self):
-        without = uprof_output.json_document([("METRIC", "x")], ["module", "rva"],
-                                             [("a", "0x1")])
+        without = uprof_output.json_document([("METRIC", "x")], ["module", "rva"], [("a", "0x1")])
 
         self.assertNotIn("context", without)
 
@@ -442,9 +578,13 @@ class JsonDocumentTest(unittest.TestCase):
         help_text = uprof_context.context_help(ContextHelpTest.LEGEND)
 
         text = uprof_output.json_document(
-            [("METRIC", "x")], ["rva"], [("0x1",)],
-            legend={"share_unit": "fraction"}, contexts=[{"anchor": {}}],
-            context_help=help_text)
+            [("METRIC", "x")],
+            ["rva"],
+            [("0x1",)],
+            legend={"share_unit": "fraction"},
+            contexts=[{"anchor": {}}],
+            context_help=help_text,
+        )
 
         document = json.loads(text)
         self.assertEqual(list(document), ["METRIC", "legend", "context_help", "rows"])
@@ -462,8 +602,9 @@ class OutputTest(unittest.TestCase):
         columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
         with mock.patch.object(uprof_db, "fetch_typed") as fetched:
             with mock.patch.object(uprof_db, "write_payload") as written:
-                uprof_db.output_rows(columns, types, rows, [("METRIC", "x")], True, None,
-                                     contexts=[{"anchor": {}}])
+                uprof_db.output_rows(
+                    columns, types, rows, [("METRIC", "x")], True, None, contexts=[{"anchor": {}}]
+                )
 
         fetched.assert_not_called()
         self.assertIn('"context"', written.call_args[0][0])
@@ -472,8 +613,9 @@ class OutputTest(unittest.TestCase):
         columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
         with mock.patch.object(uprof_db, "fetch_typed", return_value=(columns, types, rows)):
             with mock.patch.object(uprof_db, "write_payload") as written:
-                uprof_db.output(None, None, [("METRIC", "x")], False, None,
-                                contexts=[{"anchor": {}}])
+                uprof_db.output(
+                    None, None, [("METRIC", "x")], False, None, contexts=[{"anchor": {}}]
+                )
                 with_context = written.call_args[0][0]
             with mock.patch.object(uprof_db, "write_payload") as written:
                 uprof_db.output(None, None, [("METRIC", "x")], False, None)
@@ -488,9 +630,14 @@ class InstructionContextsTest(unittest.TestCase):
         with mock.patch.object(uprof_context.Path, "is_file", return_value=False):
             contexts = uprof_context.instruction_contexts(connection, COLUMNS, [ROW])
 
-        self.assertEqual(contexts[0],
-                         {"omitted": True, "reason": "module_missing",
-                          "detail": "missing-fixture.exe is not on this host"})
+        self.assertEqual(
+            contexts[0],
+            {
+                "omitted": True,
+                "reason": "module_missing",
+                "detail": "missing-fixture.exe is not on this host",
+            },
+        )
 
     def test_rows_past_the_cap_report_row_cap(self):
         connection = FakeConnection(module_path="missing-fixture.exe")
@@ -540,17 +687,18 @@ class InstructionContextsTest(unittest.TestCase):
         self.assertEqual(contexts, [None])
 
     def test_successful_context_joins_every_annotation(self):
-        connection = FakeConnection(module_path=__file__, total=60,
-                                    publics=[(0x1000, "fixture_entry")])
+        connection = FakeConnection(
+            module_path=__file__, total=60, publics=[(0x1000, "fixture_entry")]
+        )
         with mock.patch.object(uprof_context, "run", side_effect=fake_run):
-            with mock.patch.object(uprof_context, "find_readobj",
-                                   return_value="llvm-readobj.exe"):
-                with mock.patch.object(uprof_context, "find_objdump",
-                                       return_value="llvm-objdump.exe"):
-                    with mock.patch.object(uprof_context, "find_symbolizer",
-                                           return_value="llvm-symbolizer.exe"):
-                        contexts = uprof_context.instruction_contexts(
-                            connection, COLUMNS, [ROW])
+            with mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"):
+                with mock.patch.object(
+                    uprof_context, "find_objdump", return_value="llvm-objdump.exe"
+                ):
+                    with mock.patch.object(
+                        uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"
+                    ):
+                        contexts = uprof_context.instruction_contexts(connection, COLUMNS, [ROW])
 
         context = contexts[0]
         self.assertEqual(context["anchor"]["kind"], "export")
@@ -561,23 +709,25 @@ class InstructionContextsTest(unittest.TestCase):
 
     def contexts_with(self, connection, run_side_effect, rows=None):
         with mock.patch.object(uprof_context, "run", side_effect=run_side_effect):
-            with mock.patch.object(uprof_context, "find_readobj",
-                                   return_value="llvm-readobj.exe"):
-                with mock.patch.object(uprof_context, "find_objdump",
-                                       return_value="llvm-objdump.exe"):
-                    with mock.patch.object(uprof_context, "find_symbolizer",
-                                           return_value="llvm-symbolizer.exe"):
+            with mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"):
+                with mock.patch.object(
+                    uprof_context, "find_objdump", return_value="llvm-objdump.exe"
+                ):
+                    with mock.patch.object(
+                        uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"
+                    ):
                         return uprof_context.instruction_contexts(
-                            connection, COLUMNS, [ROW] if rows is None else rows)
+                            connection, COLUMNS, [ROW] if rows is None else rows
+                        )
 
     def two_rows(self):
-        other = ("fixture.exe", "0x1015", "main", "src\\main.cpp", 12, "unique",
-                 2, 3.0, 1.0, 0.5)
+        other = ("fixture.exe", "0x1015", "main", "src\\main.cpp", 12, "unique", 2, 3.0, 1.0, 0.5)
         return [ROW, other]
 
     def test_rows_under_one_anchor_share_one_decode(self):
-        connection = FakeConnection(module_path=__file__, total=60,
-                                    publics=[(0x1000, "fixture_entry")])
+        connection = FakeConnection(
+            module_path=__file__, total=60, publics=[(0x1000, "fixture_entry")]
+        )
         calls = []
 
         def counting_run(command, **kwargs):
@@ -591,8 +741,9 @@ class InstructionContextsTest(unittest.TestCase):
         self.assertIn("--stop-address=0x14000123B", objdump[0])
 
     def test_rows_of_one_module_share_the_annotation_queries(self):
-        connection = FakeConnection(module_path=__file__, total=60,
-                                    publics=[(0x1000, "fixture_entry")])
+        connection = FakeConnection(
+            module_path=__file__, total=60, publics=[(0x1000, "fixture_entry")]
+        )
         calls = []
 
         def counting_run(command, **kwargs):
@@ -609,14 +760,16 @@ class InstructionContextsTest(unittest.TestCase):
     def test_the_context_reuses_the_pdb_symbolization_chose(self):
         connection = FakeConnection(module_path=__file__, pdb="C:/cache/fixture.pdb")
         with mock.patch.object(uprof_context, "run", side_effect=fake_run):
-            with mock.patch.object(uprof_context, "find_readobj",
-                                   return_value="llvm-readobj.exe"):
-                with mock.patch.object(uprof_context, "find_objdump",
-                                       return_value="llvm-objdump.exe"):
-                    with mock.patch.object(uprof_context, "find_symbolizer",
-                                           return_value="llvm-symbolizer.exe"):
-                        with mock.patch.object(uprof_context, "symbolize_rvas",
-                                               return_value={}) as symbolized:
+            with mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"):
+                with mock.patch.object(
+                    uprof_context, "find_objdump", return_value="llvm-objdump.exe"
+                ):
+                    with mock.patch.object(
+                        uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"
+                    ):
+                        with mock.patch.object(
+                            uprof_context, "symbolize_rvas", return_value={}
+                        ) as symbolized:
                             uprof_context.instruction_contexts(connection, COLUMNS, [ROW])
 
         self.assertEqual(symbolized.call_args.kwargs["pdb"], "C:/cache/fixture.pdb")
@@ -651,9 +804,10 @@ class OmissionJsonTest(unittest.TestCase):
     def test_omission_carries_reason_and_detail(self):
         omission = uprof_context.ContextOmission("build_mismatch", "no checksum")
 
-        self.assertEqual(omission.as_json(),
-                         {"omitted": True, "reason": "build_mismatch",
-                          "detail": "no checksum"})
+        self.assertEqual(
+            omission.as_json(),
+            {"omitted": True, "reason": "build_mismatch", "detail": "no checksum"},
+        )
 
 
 if __name__ == "__main__":

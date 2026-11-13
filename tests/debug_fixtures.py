@@ -14,6 +14,18 @@ from pathlib import Path
 import uprof_native
 
 HERE = Path(__file__).resolve().parent
+# translate and profile print this line when the run is elevated, as CI runners are; output
+# compared across hosts leaves it out so a result does not depend on the runner's rights.
+ELEVATION_WARNING = "WARNING: running elevated; only collect needs elevation"
+
+
+def without_elevation_warning(text: str) -> str:
+    """text without the elevated-run warning lines, every other line unchanged."""
+    return "".join(
+        line for line in text.splitlines(keepends=True) if not line.startswith(ELEVATION_WARNING)
+    )
+
+
 DEBUG = HERE / "fixtures" / "debug"
 PE = DEBUG / "pe"
 ELF = DEBUG / "elf"

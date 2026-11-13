@@ -354,7 +354,11 @@ def profile_section(case: Case, by: str) -> list[str]:
         document, stderr = F.profile_with_stderr(session, by)
         # The symbol-outcome evidence names the temporary session; only its role is stable.
         evidence = [f"symbol_coverage={document.get('SYMBOL_COVERAGE') or 'none'}"]
-        evidence += [line for line in stderr.splitlines() if line.startswith("WARNING:")]
+        evidence += [
+            line
+            for line in F.without_elevation_warning(stderr).splitlines()
+            if line.startswith("WARNING:")
+        ]
         evidence = [
             replace_spellings(line, (Path(root), Path(root).resolve()), "<SESSION_ROOT>")
             for line in evidence

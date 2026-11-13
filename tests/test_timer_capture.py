@@ -22,6 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 import timer_fixture
+import debug_fixtures as F
 import uprof_collect
 import uprof_dump
 import uprof_native
@@ -87,12 +88,14 @@ class _Session(unittest.TestCase):
         self.session = timer_fixture.build(self.root / "timer")
 
     def run_tool(self, *args):
-        return subprocess.run(
+        result = subprocess.run(
             [sys.executable, str(TOOLS_DIR / "uprof.py"), *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
         )
+        result.stderr = F.without_elevation_warning(result.stderr)
+        return result
 
     def profile(self, by, *extra, session=None):
         result = self.run_tool(

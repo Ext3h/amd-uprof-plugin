@@ -11,6 +11,7 @@ Run from the repository root: python tests/run_tests.py test_symbol_coverage
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ from pathlib import Path
 
 import duckdb
 
+import uprof_native
 import uprof_query
 from test_function_region_profile import FIXTURE, Session
 
@@ -441,6 +443,12 @@ class FailingSymbolizerTest(unittest.TestCase):
                 encoding="ascii",
                 newline="",
             )
+            # The real llvm-readobj beside the stub shows that the image records no PDB, so the
+            # failing PDB-less symbolizer pass runs; without it no symbolizer pass may run at all.
+            readobj = uprof_native.find_sibling(uprof_native.find_symbolizer(), "llvm-readobj")
+            if readobj is None:
+                self.skipTest("llvm-readobj is required beside llvm-symbolizer or on PATH")
+            shutil.copyfile(readobj, root / "llvm-readobj.exe")
         else:
             self.symbolizer = root / "llvm-symbolizer"
             self.symbolizer.write_text(

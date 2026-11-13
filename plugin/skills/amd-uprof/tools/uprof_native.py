@@ -1042,6 +1042,15 @@ def translate(
     print(f"VERSION={skill_identity()}")
     print(f"SYMBOL_CACHE={cache}")
     print(f"SYMBOL_SERVERS={' | '.join(servers)}")
+    for server in servers:
+        upstream = server.split("*")[-1].strip()
+        if upstream.lower().startswith("http://"):
+            # Downloaded PDBs are parsed; over plain http anyone on the path can replace them.
+            print(
+                f"WARNING: symbol server {upstream} uses plain http, so a network attacker "
+                "can substitute the PDBs translate downloads; use its https:// URL",
+                file=sys.stderr,
+            )
 
     uprof = require_uprof()
     _refuse_overlap(out, session)

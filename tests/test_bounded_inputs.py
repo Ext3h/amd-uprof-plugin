@@ -6,6 +6,7 @@ larger than any real dump cell is refused with a one-line cause, not a traceback
 """
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from unittest import mock
 import uprof_native
 import uprof_output
 import uprof_session
+import uprof_symbols
 import uprof_util
 
 
@@ -72,6 +74,40 @@ class DumpFieldTest(unittest.TestCase):
             )
             with self.assertRaisesRegex(uprof_util.UprofError, str(dump).replace("\\", "\\\\")):
                 uprof_native.dump_cadence(dump)
+
+
+class SymbolizerTimeoutTest(unittest.TestCase):
+    def run_symbolizer(self, fake_run):
+        with tempfile.TemporaryDirectory() as tmp:
+            rvas = Path(tmp) / "rvas.txt"
+            rvas.write_text("0x1000\n", encoding="utf-8")
+            with mock.patch.object(uprof_symbols, "run", side_effect=fake_run):
+                uprof_symbols._run_symbolizer(
+                    Path("llvm-symbolizer"),
+                    "app.exe",
+                    None,
+                    rvas,
+                    Path(tmp) / "out.jsonl",
+                    "linkage",
+                )
+
+    def test_one_module_gets_minutes_not_hours(self):
+        seen = []
+
+        def fake_run(command, timeout=None, **kwargs):
+            seen.append(timeout)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        self.run_symbolizer(fake_run)
+        self.assertLessEqual(seen[0], 10 * 60)
+
+    def test_a_timeout_names_a_runnable_alternative(self):
+        def fake_run(command, timeout=None, **kwargs):
+            raise uprof_native.ToolTimeout(f"llvm-symbolizer timed out after {timeout}s")
+
+        with self.assertRaisesRegex(uprof_util.UprofError, "app.exe") as raised:
+            self.run_symbolizer(fake_run)
+        self.assertIn("--by module", str(raised.exception))
 
 
 if __name__ == "__main__":

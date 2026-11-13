@@ -88,10 +88,33 @@ class ClaudeCodeAdapterTest(unittest.TestCase):
         self.assertEqual(evidence["plugins"], ["amd-uprof p"])
         self.assertEqual(evidence["permission_denials"], ["Read"])
 
+    def test_the_final_turn_context_counts_input_and_cache_tokens(self):
+        def turn(usage, parent=None):
+            return json.dumps({"type": "assistant", "parent_tool_use_id": parent,
+                               "message": {"content": [], "usage": usage}})
+
+        lines = [
+            turn({"input_tokens": 5, "cache_read_input_tokens": 9000,
+                  "cache_creation_input_tokens": 3000, "output_tokens": 50}),
+            turn({"input_tokens": 7, "cache_read_input_tokens": 12000,
+                  "cache_creation_input_tokens": 800, "output_tokens": 90}),
+            # A subagent's turn has its own context; the final turn is the main agent's.
+            turn({"input_tokens": 1, "cache_read_input_tokens": 99999}, parent="t1"),
+            json.dumps({"type": "result", "subtype": "success", "result": "x",
+                        "usage": {"input_tokens": 12, "cache_read_input_tokens": 21000}}),
+        ]
+        self.assertEqual(claude_code.final_context_tokens(lines), 7 + 12000 + 800)
+
+    def test_a_transcript_without_usage_leaves_the_context_unmeasured(self):
+        lines = [json.dumps({"type": "assistant", "message": {"content": []}})]
+        self.assertIsNone(claude_code.final_context_tokens(lines))
+        self.assertIsNone(TrialResult([], 0, 1.0).context_tokens)
+
 
 class FakeRunner:
     name = "fake"
     specs: list = []
+    context: dict = {}
 
     def run(self, trial: TrialSpec) -> TrialResult:
         FakeRunner.specs.append(trial)
@@ -99,7 +122,8 @@ class FakeRunner:
                    "input": {"command": f"python uprof.py profile --session {trial.capture_dir}"}},
                   {"type": "tool_result", "id": "1", "is_error": False, "output": "ok"},
                   {"type": "final", "answer": "answer"}]
-        return TrialResult(events, 0, 1.0, {"isolated": True})
+        return TrialResult(events, 0, 1.0, {"isolated": True},
+                           context_tokens=FakeRunner.context.get(trial.trial_id))
 
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
@@ -133,6 +157,37 @@ class DriverTest(unittest.TestCase):
         self.assertNotRegex(trial.prompt, r"<[A-Z_]+>")
         self.assertIn(REPO, trial.deny_roots)
         self.assertEqual(trial.read_roots, (trial.cwd, trial.plugin_dir, trial.capture_dir))
+
+    def test_the_context_limit_is_the_catalogues(self):
+        self.assertEqual(run_trials.context_limit(), 100_000)
+
+    def test_a_run_records_each_scenarios_final_turn_context(self):
+        FakeRunner.specs = []
+        FakeRunner.context = {"SCN-02": 41_250, "SCN-03": 100_000}
+        try:
+            with tempfile.TemporaryDirectory(prefix="uprof-trial-run-") as directory:
+                run_dir = Path(directory) / "run"
+                run_trials.main(
+                    ["--run-dir", str(run_dir), "--runner", "fake", "--model", "small-model",
+                     "--plugin-dir", str(REPO / "plugin"), "--parallel", "1",
+                     "--scenario", "SCN-02", "--scenario", "SCN-03", "--scenario", "SCN-08"],
+                    registry={"fake": FakeRunner})
+                log = (run_dir / "runlog.md").read_text(encoding="utf-8")
+                metas = {scn: json.loads((run_dir / "out" / scn / "meta.json").read_text(
+                    encoding="utf-8")) for scn in ("SCN-02", "SCN-03", "SCN-08")}
+        finally:
+            FakeRunner.context = {}
+
+        self.assertEqual((metas["SCN-02"]["context_tokens"], metas["SCN-02"]["context"]),
+                         (41_250, "below limit"))
+        self.assertEqual((metas["SCN-03"]["context_tokens"], metas["SCN-03"]["context"]),
+                         (100_000, "over limit"))
+        self.assertEqual((metas["SCN-08"]["context_tokens"], metas["SCN-08"]["context"]),
+                         (None, "not measured"))
+        self.assertIn("final-turn context", log)
+        self.assertRegex(log, r"\| SCN-02 \|.*\| 41250 below limit \|")
+        self.assertRegex(log, r"\| SCN-03 \|.*\| 100000 over limit \|")
+        self.assertRegex(log, r"\| SCN-08 \|.*\| not measured \|")
 
     def test_a_run_folder_inside_the_repository_is_refused(self):
         with self.assertRaises(SystemExit):

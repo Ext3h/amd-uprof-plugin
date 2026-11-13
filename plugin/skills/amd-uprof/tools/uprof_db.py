@@ -8,12 +8,12 @@ columns before any query runs. Rendering is uprof_output's job; this module only
 from __future__ import annotations
 
 import contextlib
-import os
 import sys
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any, Final
 
+import uprof_shell
 from uprof_output import header_text, json_document, markdown_table, write_payload
 from uprof_util import UprofError
 
@@ -96,18 +96,21 @@ def _shown_name(name: object) -> str:
 
 
 def _stored_sql_error(cpu_db: Path | str, objects: list[tuple[str, str]]) -> UprofError:
-    from uprof_native import _shell_arg
-
     shown = ", ".join(f"{kind} {_shown_name(name)}" for kind, name in objects[:_SHOWN_OBJECTS])
     more = len(objects) - _SHOWN_OBJECTS
     if more > 0:
         shown += f" and {more} more"
-    tool = "python " + _shell_arg(os.fspath(Path(__file__).resolve().parent / "uprof.py"))
-    return UprofError(
+    script, script_data = uprof_shell.path_arg(Path(__file__).resolve().parent / "uprof.py",
+                                               "<UPROF_PY>")
+    lines = [
         f"{cpu_db} defines SQL objects that a uProf translation never writes ({shown}); the "
-        "skill does not run SQL stored in a capture, so it is not queried\n"
-        f"ALTERNATIVE: translate the raw capture again: {tool} translate --session "
-        "<RAW_SESSION_DIR> --out-dir <NEW_TR_DIR>")
+        "skill does not run SQL stored in a capture, so it is not queried",
+        f"ALTERNATIVE: translate the raw capture again: python {script} translate --session "
+        "<RAW_SESSION_DIR> --out-dir <NEW_TR_DIR>"]
+    # A path that is not plain is a placeholder in the command and named here as data only.
+    if script_data:
+        lines.append(script_data)
+    return UprofError("\n".join(lines))
 
 
 def connect(cpu_db: Path | str) -> Any:

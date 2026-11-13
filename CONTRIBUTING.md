@@ -51,7 +51,8 @@ Maintainers are the people with write access to this repository.
 ## Design constraints
 
 - DC-01 Technology stack. Python, the LLVM tool suite, AMD uProf, and DuckDB as the data engine
-  under Python — nothing else.
+  under Python — nothing else. Development tools that never ship with the plugin and only check
+  the repository in CI (the code formatter) are exempt.
   Why: a fixed stack keeps installs and reviews predictable.
 - DC-02 Minimum tool versions. uProf ≥ 5.3 (DuckDB output) and LLVM ≥ 23.1.0
   (`llvm-symbolizer --pdb`, `llvm-objdump --no-symbolize-operands`); `tools` checks them; no

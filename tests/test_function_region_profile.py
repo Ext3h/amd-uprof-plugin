@@ -21,12 +21,15 @@ import duckdb
 
 import uprof_context
 import uprof_query
+import uprof_session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
 READOBJ = uprof_context.find_readobj()
 SKIP = "llvm-readobj is required"
-PAGE_MEANING = uprof_query._REGION_MEANING
+PAGE_MEANING = uprof_query._region_meaning(
+    uprof_session.Sampler(ibs_dump_kind="ibsop-event-dump", interval_units="cycles")
+)
 
 
 def module_key(path):

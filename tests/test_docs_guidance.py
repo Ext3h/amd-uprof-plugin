@@ -290,6 +290,15 @@ class DocsGuidanceTest(unittest.TestCase):
         self.assertNotIn("function rows are `unique`, `derived` or `unresolved`", skill)
         self.assertIn("at `function`, `region`, `line` and `instruction` granularity", skill)
 
+    def test_image_matching_names_the_file_name_and_the_full_path(self):
+        # --image matches the image's file name or its full path; a document that names only the
+        # path steers a caller to write %name.
+        self.assertIn(
+            "| `uprof_image` | ILIKE pattern on the process image's file name or full path",
+            _flat(REFERENCE),
+        )
+        self.assertIn("| `--image PATTERN` | ILIKE (any case) on file name or full path;", SKILL)
+
     def test_the_example_stops_below_a_symbol_less_module(self):
         start = SKILL.index("## Worked example: where did CPU time go?")
         end = SKILL.index("## Header lines", start)

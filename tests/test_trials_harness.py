@@ -159,11 +159,11 @@ class DriverTest(unittest.TestCase):
         self.assertEqual(trial.read_roots, (trial.cwd, trial.plugin_dir, trial.capture_dir))
 
     def test_the_context_limit_is_the_catalogues(self):
-        self.assertEqual(run_trials.context_limit(), 100_000)
+        self.assertEqual(run_trials.context_limit(), 50_000)
 
     def test_a_run_records_each_scenarios_final_turn_context(self):
         FakeRunner.specs = []
-        FakeRunner.context = {"SCN-02": 41_250, "SCN-03": 100_000}
+        FakeRunner.context = {"SCN-02": 41_250, "SCN-03": 50_000}
         try:
             with tempfile.TemporaryDirectory(prefix="uprof-trial-run-") as directory:
                 run_dir = Path(directory) / "run"
@@ -181,12 +181,12 @@ class DriverTest(unittest.TestCase):
         self.assertEqual((metas["SCN-02"]["context_tokens"], metas["SCN-02"]["context"]),
                          (41_250, "below limit"))
         self.assertEqual((metas["SCN-03"]["context_tokens"], metas["SCN-03"]["context"]),
-                         (100_000, "over limit"))
+                         (50_000, "over limit"))
         self.assertEqual((metas["SCN-08"]["context_tokens"], metas["SCN-08"]["context"]),
                          (None, "not measured"))
         self.assertIn("final-turn context", log)
         self.assertRegex(log, r"\| SCN-02 \|.*\| 41250 below limit \|")
-        self.assertRegex(log, r"\| SCN-03 \|.*\| 100000 over limit \|")
+        self.assertRegex(log, r"\| SCN-03 \|.*\| 50000 over limit \|")
         self.assertRegex(log, r"\| SCN-08 \|.*\| not measured \|")
 
     def test_a_run_folder_inside_the_repository_is_refused(self):

@@ -228,6 +228,14 @@ def _validate(options: CollectOptions) -> None:
     if options.launch and not Path(options.launch[0]).is_file():
         raise UprofError(f"--launch APP must be an existing executable file; got "
                          f"{options.launch[0]!r}; pass the app's path")
+    if options.launch and any(any(char.isspace() for char in argument)
+                              for argument in options.launch[1:]):
+        # Measured with AMDuProfCLI 5.3.521: the app's arguments are passed on unquoted, so an
+        # argument with whitespace arrives split and the app runs with other arguments.
+        raise UprofError("--launch app arguments must not contain whitespace: AMDuProfCLI passes "
+                         "them to the app unquoted, so the app would receive them split; start "
+                         "the app with arguments without whitespace, or wrap the call in a "
+                         "script file and launch that")
     if options.launch and options.pids:
         raise UprofError("--launch starts an app under the capture; it cannot also attach to "
                          "--process PIDs")

@@ -198,7 +198,9 @@ An empty scope prints one `WARNING: no samples in the selected scope` on stderr 
 only when per-context statistics are available.
 
 Samples are counted over the whole capture, not the `--image`/`--pid` scope; CPUs come from the
-dump's `CPU_Number`, or from `UnifiedSampleSeries.coreId` for a PMC capture. The per-CPU figure divides by every CPU, so it is not the delivered cadence.
+dump's `CPU_Number`, or from `UnifiedSampleSeries.coreId` for a PMC capture. The per-CPU figure divides by every CPU, so it is not the delivered cadence. For an attached
+capture whose busiest thread has a measured cadence, the line therefore leads with that thread's
+rate against the request and labels the per-CPU figure as diluted.
 
 The busiest context is the one with the most samples: a CPU for a system-wide dump, a `TID` for an
 attached dump, a core for PMC. For a dump the line reports the median `DeltaTick` gap between

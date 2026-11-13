@@ -1,0 +1,18 @@
+LIBRARY kernel32.dll
+EXPORTS
+    CloseHandle
+    CreateEventA
+    CreateProcessA
+    CreateThread
+    ExitProcess
+    GetCommandLineA
+    GetProcessHeap
+    GetStdHandle
+    GetTickCount64
+    HeapAlloc
+    HeapFree
+    QueryPerformanceCounter
+    QueryPerformanceFrequency
+    VirtualAlloc
+    WaitForSingleObject
+    WriteFile

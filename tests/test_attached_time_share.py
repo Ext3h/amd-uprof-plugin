@@ -11,7 +11,7 @@ thread gives exactly the 21 s span, puts alpha first, and matches the fixed-cycl
 
 Run from the repository root: python tests/run_tests.py test_attached_time_share
 """
-# Spec: SPEC-42
+# Spec: SPEC-59
 
 import json
 import subprocess

@@ -1,5 +1,5 @@
 """top_n is typed as BIGINT in views.sql; verify it is rebound as an integer and not VARCHAR."""
-# Spec: SPEC-23
+# Spec: SPEC-25
 
 import unittest
 from pathlib import Path

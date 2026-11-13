@@ -9,7 +9,7 @@ change; the load-bearing claims may not.
 
 Run from the repository root: python tests/run_tests.py test_docs_guidance
 """
-# Spec: SPEC-31, SPEC-32, SPEC-38
+# Spec: SPEC-34, SPEC-35, SPEC-36, SPEC-37, SPEC-38, SPEC-49, SPEC-50
 
 import re
 import unittest

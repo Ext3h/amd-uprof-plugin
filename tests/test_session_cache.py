@@ -111,6 +111,18 @@ class KeyTest(unittest.TestCase):
                          ["c:/a.dll"])
         connection.close()
 
+    def test_bitness_alone_makes_two_versions(self):
+        connection = duckdb.connect()
+        connection.execute(
+            "CREATE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')")
+        connection.execute("CREATE TABLE Module(id INTEGER, path VARCHAR, size UBIGINT, "
+                           "checksum UBIGINT, is32Bit BOOLEAN)")
+        connection.execute("INSERT INTO Module VALUES (1, 'C:/c.dll', 10, 1, false), "
+                           "(2, 'C:/c.dll', 10, 1, true), (3, 'C:/d.dll', 10, 1, true)")
+        self.assertEqual(uprof_cache.ambiguous_modules(connection, ["c:/c.dll", "c:/d.dll"]),
+                         ["c:/c.dll"])
+        connection.close()
+
 
 class CacheTest(unittest.TestCase):
     def setUp(self):

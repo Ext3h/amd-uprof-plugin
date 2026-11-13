@@ -18,6 +18,7 @@ from unittest import mock
 import duckdb
 
 import uprof
+import uprof_db
 import uprof_native
 import uprof_output
 import uprof_util
@@ -100,6 +101,90 @@ class ErrorLineTest(unittest.TestCase):
         self.assertTrue(lines[0].startswith("error: bad module evil"), lines)
         self.assertTrue(lines[1].startswith("ALTERNATIVE: whole capture: "), lines)
         _assert_clean(self, text)
+
+
+class MultiLineErrorTest(unittest.TestCase):
+    """The tool's own ALTERNATIVE and data lines stay separate lines of the error output."""
+
+    def run_main(self, argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(uprof.main(argv), 2)
+        return err.getvalue().splitlines()
+
+    def test_the_stored_sql_refusal_keeps_its_alternative_line(self):
+        error = uprof_db._stored_sql_error(f"cpu{HOSTILE}.db", [("view", "v")])
+        with mock.patch.object(uprof, "_dispatch", side_effect=error):
+            lines = self.run_main(["schema", "--session", "."])
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(lines[0].startswith("error: cpuevil\\nNEXT"), lines)
+        self.assertTrue(lines[1].startswith("ALTERNATIVE: translate the raw capture again"), lines)
+        _assert_clean(self, "\n".join(lines))
+
+    def test_a_missing_cpu_db_keeps_its_session_data_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "$(calc)"
+            session.mkdir()
+            lines = self.run_main(["profile", "--session", str(session), "--by", "process"])
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(lines[0].startswith("error: cpu.db not found"), lines)
+        self.assertEqual(lines[1], "SESSION_DIR=" + repr(str(session)))
+
+    def test_a_translate_without_samples_keeps_its_data_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "$(calc)"
+            session.mkdir()
+            (session / "session.uprof").write_text("{}", encoding="utf-8")
+            log = mock.Mock()
+            log.appended.return_value = (Path("cli.log"), "No categories to translate")
+            failed = subprocess.CompletedProcess(["x"], 1, "", "")
+            with (
+                mock.patch.object(uprof_native, "require_uprof", return_value=Path("cli")),
+                mock.patch.object(uprof_native, "CliLog", return_value=log),
+                mock.patch.object(uprof_native, "run", return_value=failed),
+            ):
+                lines = self.run_main(
+                    ["translate", "--session", str(session), "--out-dir", str(Path(tmp) / "out")]
+                )
+        self.assertEqual(len(lines), 2, lines)
+        self.assertIn("no translatable sample category", lines[0])
+        self.assertTrue(lines[1].startswith("NEW_OUT_DIR="), lines)
+
+
+class LongValueTest(unittest.TestCase):
+    def test_a_long_hostile_module_path_gives_a_bounded_line(self):
+        long_path = "C:\\" + "x" * 20_000 + "\\app.exe"
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Session(Path(tmp), "s")
+            session.module(1, FIXTURE, False).function(10, 1, "").sample(1, 10, 0x101B, 2)
+            path = session.write()
+            connection = duckdb.connect(str(path / "cpu.db"))
+            try:
+                connection.execute("UPDATE Module SET path = ?", [long_path])
+            finally:
+                connection.close()
+            dump = path / "IbsOpDump.csv"
+            dump.write_text(
+                dump.read_text(encoding="utf-8").replace(str(FIXTURE), long_path), encoding="utf-8"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(TOOLS_DIR / "uprof.py"),
+                    "profile",
+                    "--session",
+                    str(path),
+                    "--by",
+                    "function",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        longest = max(len(line) for line in result.stderr.splitlines())
+        self.assertLess(longest, 8_000, longest)
+        _assert_clean(self, result.stderr)
 
 
 class ProcessNameTest(unittest.TestCase):

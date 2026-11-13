@@ -396,10 +396,11 @@ SELECT CASE
   WHEN dump_samples = 0 THEN
     error('IBS ASCII dump ' || getvariable('uprof_ibs_dump') || ' has no sample rows; regenerate it with AMDuProfCLI translate --ascii ibsop-event-dump on a COPY of the session')
   WHEN expected_ns IS NULL OR expected_ns = 0 THEN
+    (CASE WHEN getvariable('attached') THEN 'WARN, attached: ' ELSE 'WARN, system-wide: ' END) ||
     'dump ' || getvariable('uprof_ibs_dump') || ': ' || CAST(dump_samples AS VARCHAR) ||
     ' samples, ' || CAST(excluded_first AS VARCHAR) ||
     ' first-per-' || context_label ||
-    ' samples excluded; WARN (dump-wide across all processes): session.uprof has no usable duration; total weight was not checked against the capture span'
+    ' samples excluded; session.uprof has no usable duration; total weight was not checked against the capture span'
   WHEN NOT getvariable('attached') AND total_weight > expected_core_ns THEN
     error(printf('dump %s disagrees with session.uprof: %.3f s of core time over %d CPUs exceeds %s %.3f s x %d CPUs = %.3f s implied; delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
                  getvariable('uprof_ibs_dump'), total_weight / 1e9, dump_cpus,
@@ -410,26 +411,20 @@ SELECT CASE
                  span_label, start_ns / 1e9, end_ns / 1e9,
                  first_sample_ns / 1e9, max_last_ns / 1e9))
   WHEN getvariable('attached') THEN
-    printf('dump %s: %d samples, %d first-per-%s samples excluded; OK (attached; dump-wide): %d process(es), %d TID(s), %d active %s (%d/%d samples in the busiest), %d CPU(s) visited; time_share partitions gaps by (PID, TID), so a migrating thread is counted once; a thread''s gaps include off-CPU time, so for a cycle-controlled capture sample_share (fixed cycles per sample) is the CPU-cycle share and the better ranking; the busiest TID covers %.3f s of the %s %.3f s span (%.3f s of thread time over %d TIDs)',
+    printf('OK, attached: dump %s: %d samples, %d first-per-%s samples excluded; %d process(es), %d TID(s), %d active %s (%d/%d samples in the busiest), %d CPU(s) visited; time_share partitions gaps by (PID, TID), so a migrating thread is counted once; a thread''s gaps include off-CPU time, so for a cycle-controlled capture sample_share (fixed cycles per sample) is the CPU-cycle share and the better ranking',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first, context_label,
            dump_pids, dump_threads, active_contexts,
            CASE WHEN active_contexts = 1 THEN 'TID' ELSE 'TIDs' END,
-           busiest_samples, dump_samples, dump_cpus,
-           COALESCE(busiest_weight, 0) / 1e9, span_label, expected_ns / 1e9,
-           COALESCE(total_weight, 0) / 1e9, dump_threads)
+           busiest_samples, dump_samples, dump_cpus)
   WHEN (end_ns - max_last_ns) > (expected_ns / greatest(max_context_samples, 1)) THEN
-    printf('dump %s: %d samples, %d first-per-CPU samples excluded; WARN (dump-wide across all processes): the capture window ends %.3f s before the recorded span, longer than one sampling cadence, so late time is uncovered; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
+    printf('WARN, system-wide: dump %s: %d samples, %d first-per-CPU samples excluded; the capture window ends %.3f s before the recorded span, longer than one sampling cadence, so late time is uncovered; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
            getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
            (end_ns - max_last_ns) / 1e9,
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
            CAST(worst_context AS VARCHAR))
   ELSE
-    printf('dump %s: %d samples, %d first-per-CPU samples excluded; OK (dump-wide across all processes): %.3f s of core time over %d CPUs against %s %.3f s x %d CPUs = %.3f s; boundary gaps %.3f s (leading %.3f s, trailing %.3f s, worst cpu %s)',
-           getvariable('uprof_ibs_dump'), dump_samples, excluded_first,
-           total_weight / 1e9, dump_cpus,
-           span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9,
-           (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
-           CAST(worst_context AS VARCHAR))
+    printf('OK, system-wide: dump %s: %d samples, %d first-per-CPU samples excluded; %d CPU(s); the last sample lies within one sampling cadence of the recorded window end',
+           getvariable('uprof_ibs_dump'), dump_samples, excluded_first, dump_cpus)
 END AS message,
 CAST(tag_values AS BIGINT) AS tag_values
 FROM measured;

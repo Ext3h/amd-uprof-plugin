@@ -235,9 +235,8 @@ class AttachedTimeShareTest(unittest.TestCase):
 
         document = self._profile()
 
-        self.assertIn("OK (attached", document["SANITY"])
+        self.assertIn("OK, attached: ", document["SANITY"])
         self.assertIn("5 TID(s)", document["SANITY"])
-        self.assertIn("0.000 s of thread time over 5 TIDs", document["SANITY"])
 
     def test_achieved_keeps_same_tid_in_different_processes_apart(self):
         # PID 100 samples once a second from 0 to 9 s; PID 200 reuses TID 4242 from 10.5 to 19.5 s.
@@ -264,7 +263,7 @@ class AttachedTimeShareTest(unittest.TestCase):
         document = self._profile()
 
         self.assertIn("within each thread (PID, TID)", document["legend"]["columns"]["time_share"])
-        self.assertIn("OK (attached", document["SANITY"])
+        self.assertIn("OK, attached: ", document["SANITY"])
 
     def test_legend_states_the_thread_partition_and_the_cycle_basis(self):
         legend = self._profile()["legend"]

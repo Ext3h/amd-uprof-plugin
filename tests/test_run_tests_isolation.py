@@ -28,6 +28,7 @@ PROBE = textwrap.dedent('''
             with open(os.environ["PROBE_REPORT"], "w", encoding="utf-8") as handle:
                 json.dump({"cache": os.environ.get("UPROF_SESSION_CACHE_ROOT"),
                            "temp": tempfile.gettempdir(),
+                           "user_cache": os.environ.get("XDG_CACHE_HOME"),
                            "scratch": scratch,
                            "env_temp": [os.environ.get(name) for name in ("TMPDIR", "TEMP", "TMP")],
                            "symbol_vars": {name: os.environ.get(name) for name in (
@@ -66,19 +67,21 @@ class RunnerIsolationTest(unittest.TestCase):
             (probe_dir / "probe_isolation.py").write_text(PROBE, encoding="utf-8")
             report = outer / "report.json"
             env = dict(os.environ, PYTHONPATH=str(probe_dir), PROBE_REPORT=str(report),
-                       UPROF_SESSION_CACHE_ROOT=str(user_cache),
+                       UPROF_SESSION_CACHE_ROOT=str(user_cache), XDG_CACHE_HOME=str(user_cache),
                        TMPDIR=str(user_temp), TEMP=str(user_temp), TMP=str(user_temp))
             run = subprocess.run([sys.executable, str(RUNNER), "probe_isolation"], env=env,
                                  capture_output=True, text=True, timeout=120)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             seen = json.loads(report.read_text(encoding="utf-8"))
 
-            cache, temp, scratch = (Path(seen[key]) for key in ("cache", "temp", "scratch"))
+            cache, temp, scratch, xdg = (Path(seen[key])
+                                         for key in ("cache", "temp", "scratch", "user_cache"))
             self.assertNotEqual(cache.resolve(), user_cache.resolve())
+            self.assertNotEqual(xdg.resolve(), user_cache.resolve())
             self.assertNotEqual(temp.resolve(), user_temp.resolve())
             self.assertIn(temp.resolve(), scratch.resolve().parents)
             self.assertEqual(seen["env_temp"], [str(temp)] * 3)
-            for path in (cache, temp, scratch):
+            for path in (cache, temp, scratch, xdg):
                 self.assertFalse(path.exists(), f"{path} survived the run")
             self.assertEqual(list(user_cache.iterdir()), [])
             self.assertEqual(list(user_temp.iterdir()), [])

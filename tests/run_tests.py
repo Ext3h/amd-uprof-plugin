@@ -55,13 +55,14 @@ SYMBOL_PATH_VARS = ("_NT_SYMBOL_PATH", "_NT_ALT_SYMBOL_PATH", "DEBUGINFOD_URLS")
 
 
 def isolate(root: Path) -> None:
-    """Point the session cache and every temp directory of this process and its children
+    """Point the session cache, the user cache directory and every temp directory of this process and its children
     below root, overriding the caller's settings so a run never touches their cache,
     and clear symbol-path variables so the developer's environment never leaks into tests."""
-    cache, temp = root / "cache", root / "tmp"
-    cache.mkdir()
-    temp.mkdir()
+    cache, temp, user_cache = root / "cache", root / "tmp", root / "user-cache"
+    for directory in (cache, temp, user_cache):
+        directory.mkdir()
     os.environ["UPROF_SESSION_CACHE_ROOT"] = str(cache)
+    os.environ["XDG_CACHE_HOME"] = str(user_cache)
     for name in ("TMPDIR", "TEMP", "TMP"):
         os.environ[name] = str(temp)
     tempfile.tempdir = str(temp)

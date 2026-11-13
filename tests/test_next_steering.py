@@ -84,8 +84,11 @@ class NextSteeringTest(unittest.TestCase):
                     for flag in ("--pid", "--image", "--function", "--module", "--function-start"):
                         if flag in values:
                             value = values[values.index(flag) + 1]
+                            # The only value a NEXT call may leave open is the process the caller
+                            # picks from the rows.
                             self.assertTrue(
-                                value in given or value.startswith("<"), f"{flag} {value} in {call}"
+                                value in given or (flag, value) == ("--pid", "<PID>"),
+                                f"{flag} {value} in {call}",
                             )
 
     def test_following_next_from_the_system_wide_process_ranking_never_loops(self):

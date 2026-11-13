@@ -56,6 +56,11 @@ class HttpSymbolServerTest(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertIn("HTTP://symbols.example/store", lines[0])
 
+    def test_a_plain_http_single_store_entry_warns(self):
+        lines = self.warnings(self.stderr(nt_symbol_path="srv*http://symbols.example/store"))
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("http://symbols.example/store", lines[0])
+
     def test_https_servers_do_not_warn(self):
         self.assertEqual(self.warnings(self.stderr(servers=["https://symbols.example/store"])), [])
 
@@ -99,6 +104,16 @@ class SymbolPathDefinesServersTest(unittest.TestCase):
     def test_its_srv_entries_are_the_only_servers(self):
         entry = r"srv*C:\cache*https://symbols.example/store"
         self.assertEqual(self.servers(entry), [entry])
+
+    def test_a_single_store_entry_is_a_server(self):
+        for value in (
+            "srv*https://msdl.microsoft.com/download/symbols",
+            r"cache*C:\c;srv*https://msdl.microsoft.com/download/symbols",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.servers(value), ["srv*https://msdl.microsoft.com/download/symbols"]
+                )
 
     def test_symbol_server_options_still_append(self):
         self.assertEqual(

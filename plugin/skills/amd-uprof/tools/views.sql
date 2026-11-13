@@ -915,12 +915,13 @@ HAVING count(*) > 0;
 -- function-scoped instruction or line view was requested. It reads the same uncapped aggregated
 -- rows as v_function_rows, so the parent measurement is a sum/join of the capture, never a second
 -- measurement. A derived range is selected by its RVA interval; a uProf Function.id row (no
--- derived range) by its function id.
+-- derived range) by its function id. --module is normalized like every module key, so
+-- Module.path or a Windows path in any case selects the same module.
 CREATE OR REPLACE TEMP VIEW v_function_scope AS
 SELECT * FROM v_function_measured
 WHERE COALESCE(getvariable('uprof_function'), '') <> ''
   AND function_name = getvariable('uprof_function')
-  AND module_name = COALESCE(getvariable('uprof_function_module'), '')
+  AND module_name = module_key(COALESCE(getvariable('uprof_function_module'), ''))
   AND (COALESCE(getvariable('uprof_function_start'), '') = ''
        OR function_start = CAST(getvariable('uprof_function_start') AS BIGINT));
 

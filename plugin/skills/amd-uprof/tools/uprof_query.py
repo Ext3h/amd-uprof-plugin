@@ -946,17 +946,13 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
     """
     if not getattr(args, "function", None):
         return None
-    sql = """
+    # v_function_scope holds the one predicate (normalized --module, --function-start); the
+    # filtered rows read the same view, so the parent and its rows cannot disagree.
+    rows = connection.execute("""
         SELECT module_name, function_name, range_kind, function_start, function_end,
                function_source, function_derived, attribution, function_id,
                samples, weight, tag_cycles, total_samples, total_weight, total_tag_cycles
-        FROM v_function_measured
-        WHERE function_name = ? AND module_name = ?"""
-    params: list[Any] = [args.function, args.module]
-    if getattr(args, "function_start", None) is not None:
-        sql += " AND function_start = ?"
-        params.append(args.function_start)
-    rows = connection.execute(sql, params).fetchall()
+        FROM v_function_scope""").fetchall()
     wanted = (f"--function {args.function!r} --module {args.module!r}"
               + ("" if getattr(args, "function_start", None) is None
                  else f" --function-start 0x{args.function_start:X}"))

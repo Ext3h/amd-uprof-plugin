@@ -129,9 +129,8 @@ derived function ranges — in one DuckDB database per capture session. On Windo
 `%LOCALAPPDATA%\Symbols\uprof-session-cache`, elsewhere under
 `$XDG_CACHE_HOME/amd-uprof/session-cache` (or `~/.cache/...`); the file name is a digest of the
 session path and `cpu.db` size/mtime. `UPROF_SESSION_CACHE_ROOT` relocates the root,
-`UPROF_SESSION_CACHE_DISABLE=1` (also `true`/`yes`/`on`) opts out, `UPROF_SESSION_CACHE_MAX_MB`
-(default 1024) caps a database, `UPROF_SESSION_CACHE_TTL_DAYS` (default 7) ages orphan cleanup,
-and `UPROF_SESSION_CACHE_TIMEOUT` (default 30 s) bounds attach/store retries.
+`UPROF_SESSION_CACHE_DISABLE=1` (also `true`/`yes`/`on`) opts out. A database is capped at
+1024 MB, orphan cleanup waits 7 days, and attach/store retries stop after 30 s.
 
 The capture `cpu.db` stays read-only and is refused if it stores a macro, view or generated column. The cache is attached read-only for lookups and read-write
 for a run that stores; DuckDB permits one writer per file, so a busy cache is waited for up to
@@ -165,7 +164,7 @@ The cache is per session and never shared across sessions. A database over the s
 to store the run and warns; there is no LRU eviction. Orphaned databases whose recorded session
 directory is gone are removed on startup, and a rewritten `cpu.db` (a new digest) removes the
 stale sibling databases for the same live session rather than waiting for the TTL; unreadable
-databases are removed only after `UPROF_SESSION_CACHE_TTL_DAYS`. Cleanup touches only the
+databases are removed only after 7 days. Cleanup touches only the
 digest-named `.duckdb` files and their `.corrupt` copies, so other files in a shared root stay. There are no leases or
 checkpoint policy yet. If a wrong-build PDB is overwritten in place in a location whose
 directory identity does not change, delete `<root>/<digest>.duckdb` or set

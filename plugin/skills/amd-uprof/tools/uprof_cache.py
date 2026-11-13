@@ -17,7 +17,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import math
 import os
 import re
 import sys
@@ -43,17 +42,12 @@ _CORRUPT_NAME = re.compile(r"[0-9a-f]{32}\.duckdb\.corrupt")
 _OWN_ENTRY = re.compile(r"[0-9a-f]{32}\.duckdb(\..*)?", re.IGNORECASE)
 
 
-def _env_float(name: str, default: float) -> float:
-    try:
-        value = float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
-    return value if math.isfinite(value) else default
-
-
-ATTACH_TIMEOUT_S = _env_float("UPROF_SESSION_CACHE_TIMEOUT", 30.0)
-MAX_BYTES = int(_env_float("UPROF_SESSION_CACHE_MAX_MB", 1024.0) * 1024 * 1024)
-TTL_DAYS = _env_float("UPROF_SESSION_CACHE_TTL_DAYS", 7.0)
+# Fixed limits: the tool has no preferences, so two machines treat the same capture alike. Only
+# the cache root (UPROF_SESSION_CACHE_ROOT) and the opt-out (UPROF_SESSION_CACHE_DISABLE) are
+# read from the environment.
+ATTACH_TIMEOUT_S: Final = 30.0
+MAX_BYTES: Final = 1024 * 1024 * 1024
+TTL_DAYS: Final = 7.0
 DISABLE = os.environ.get("UPROF_SESSION_CACHE_DISABLE", "").strip().lower() in (
     "1", "true", "yes", "on")
 _CREDENTIALS = re.compile(r"(?i)([a-z]+://)[^@\s/]+@")

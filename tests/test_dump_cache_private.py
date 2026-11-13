@@ -68,10 +68,10 @@ class _Case(unittest.TestCase):
 class CacheRootLocationTest(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "host: the Windows temp directory is per user")
     def test_the_root_is_outside_the_shared_temp_directory(self):
-        with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.dict(os.environ, {"XDG_CACHE_HOME": tmp}):
+        home = Path(os.sep) / "home" / "user" / ".cache"
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": str(home)}):
             root = uprof_dump.cache_root()
-            self.assertTrue(uprof_util.contains(Path(tmp), root), root)
+            self.assertTrue(uprof_util.contains(home, root), root)
             self.assertFalse(uprof_util.contains(Path(tempfile.gettempdir()), root), root)
 
 

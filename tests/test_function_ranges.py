@@ -17,7 +17,10 @@ from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from unittest import mock
 
+import duckdb
+
 import uprof_context
+import uprof_db
 import uprof_functions
 import uprof_query
 from uprof_context import PeSection
@@ -357,74 +360,49 @@ class SerialDerivationTest(unittest.TestCase):
 
 
 class ProfileFunctionModulesQueryTest(unittest.TestCase):
-    def setUp(self):
+    """profile-function-modules.sql weighs a module's unresolved part by samples, not rows."""
+
+    def modules(self, named_samples: int, unnamed_samples: int) -> list[tuple]:
+        connection = duckdb.connect(":memory:")
+        connection.execute("CREATE TABLE Process(id UINTEGER, name VARCHAR)")
+        connection.execute("CREATE TABLE Module(id UINTEGER, path VARCHAR, "
+                           "isSystemModule BOOLEAN)")
+        connection.execute("CREATE TABLE Function(id UBIGINT, moduleId UINTEGER, name VARCHAR, "
+                           "startOffset UBIGINT, size UBIGINT, srcfileId UINTEGER)")
+        connection.execute('CREATE TABLE UnifiedSampleSeries(moduleId UINTEGER, '
+                           'functionId UBIGINT, moduleRVA UBIGINT, processId UINTEGER, '
+                           'coreId UINTEGER, "event#0x76" BIGINT)')
+        connection.execute("INSERT INTO Process VALUES (100, 'app.exe')")
+        connection.execute("INSERT INTO Module VALUES (1, 'C:\\bin\\a.dll', false)")
+        connection.execute("INSERT INTO Function VALUES (1, 1, 'named', 4096, 64, 0), "
+                           "(2, 1, '', 8192, 64, 0)")
+        connection.execute("INSERT INTO UnifiedSampleSeries VALUES "
+                           "(1, 1, 4096, 100, 0, ?), (1, 2, 8192, 100, 0, ?)",
+                           [named_samples, unnamed_samples])
+        uprof_db.set_variables(connection, {
+            "uprof_ibs_dump": "", "uprof_ibs_parquet": "", "uprof_symbols": "",
+            "uprof_aliases": "", "uprof_pdbs": "", "uprof_functions": "",
+            "uprof_event_column": "event#0x76", "uprof_primary_measure": "samples",
+            "uprof_time_start": "0", "uprof_time_end": "1000000", "uprof_top": "20",
+            "uprof_pid": "", "uprof_image": "%", "uprof_by": "function", "uprof_module": "",
+            "uprof_function": "", "uprof_line": "", "uprof_instruction": "",
+        })
+        uprof_db.run_script(connection, TOOLS_DIR / "views.sql")
         try:
-            import duckdb
-            self.conn = duckdb.connect()
-        except Exception as exc:
-            raise unittest.SkipTest(f"duckdb unavailable: {exc}")
+            _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
+        finally:
+            connection.close()
+        return [tuple(row) for row in rows]
 
-        self.conn.execute("""
-            CREATE MACRO module_key(p) AS regexp_replace(p, '^.*[\\\\/]', '');
-            CREATE TEMP TABLE Function (id BIGINT, name VARCHAR);
-            CREATE TEMP TABLE Module (path VARCHAR);
-        """)
-
-    def test_unresolved_samples_sums_samples_not_rows(self):
-        self.conn.execute("""
-            CREATE OR REPLACE TEMP VIEW v_scoped AS
-            SELECT 'a.dll' AS module_name, 1 AS function_id, 100 AS samples
-            UNION ALL
-            SELECT 'a.dll' AS module_name, 2 AS function_id, 250 AS samples;
-
-            DELETE FROM Function;
-            INSERT INTO Function VALUES (1, 'resolved_func'), (2, '');
-
-            DELETE FROM Module;
-            INSERT INTO Module VALUES ('C:\\bin\\a.dll');
-        """)
-        sql = (TOOLS_DIR / "profile-function-modules.sql").read_text(encoding="utf-8")
-        rows = self.conn.execute(sql).fetchall()
-        self.assertEqual(len(rows), 1)
-        module_name, module_path, unresolved_samples, total_samples = rows[0]
-        self.assertEqual(module_name, "a.dll")
-        self.assertEqual(module_path, "C:\\bin\\a.dll")
-        self.assertEqual(unresolved_samples, 250)
-        self.assertEqual(total_samples, 350)
-
-    def test_module_with_zero_unresolved_samples_is_excluded(self):
-        self.conn.execute("""
-            CREATE OR REPLACE TEMP VIEW v_scoped AS
-            SELECT 'a.dll' AS module_name, 1 AS function_id, 100 AS samples
-            UNION ALL
-            SELECT 'a.dll' AS module_name, 2 AS function_id, 0 AS samples;
-
-            DELETE FROM Function;
-            INSERT INTO Function VALUES (1, 'resolved_func'), (2, '');
-
-            DELETE FROM Module;
-            INSERT INTO Module VALUES ('C:\\bin\\a.dll');
-        """)
-        sql = (TOOLS_DIR / "profile-function-modules.sql").read_text(encoding="utf-8")
-        rows = self.conn.execute(sql).fetchall()
-        self.assertEqual(rows, [])
-
-    def test_fully_resolved_module_is_excluded(self):
-        self.conn.execute("""
-            CREATE OR REPLACE TEMP VIEW v_scoped AS
-            SELECT 'a.dll' AS module_name, 1 AS function_id, 100 AS samples
-            UNION ALL
-            SELECT 'a.dll' AS module_name, 2 AS function_id, 200 AS samples;
-
-            DELETE FROM Function;
-            INSERT INTO Function VALUES (1, 'resolved_func_1'), (2, 'resolved_func_2');
-
-            DELETE FROM Module;
-            INSERT INTO Module VALUES ('C:\\bin\\a.dll');
-        """)
-        sql = (TOOLS_DIR / "profile-function-modules.sql").read_text(encoding="utf-8")
-        rows = self.conn.execute(sql).fetchall()
-        self.assertEqual(rows, [])
+    def test_unresolved_part_is_weighed_by_samples(self):
+        cases = [
+            ("unnamed rows sum their samples", 100, 250,
+             [("c:/bin/a.dll", "C:\\bin\\a.dll", 250, 350)]),
+            ("an unnamed row with no samples needs no range", 100, 0, []),
+        ]
+        for label, named, unnamed, expected in cases:
+            with self.subTest(label):
+                self.assertEqual(self.modules(named, unnamed), expected)
 
 
 if __name__ == "__main__":

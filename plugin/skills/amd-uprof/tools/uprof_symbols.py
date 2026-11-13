@@ -20,7 +20,8 @@ from typing import Final, TextIO
 
 import uprof_db
 from uprof_native import (NtSymbolPath, SymbolizerUnsupported, find_sibling,
-                          parse_nt_symbol_path, require_symbolizer, run, symbol_cache_dir)
+                          parse_nt_symbol_path, require_symbolizer, run, symbol_cache_dir,
+                          tool_operand)
 from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
 
 _GUID = re.compile(r"^\s*GUID:\s*(.+)$")
@@ -234,7 +235,7 @@ def image_build_mismatch(image: str, capture_checksum: object, capture_size: obj
     recorded, recorded_size = _as_int(capture_checksum), _as_int(capture_size)
     if not (recorded or recorded_size) or not readobj:
         return None
-    completed = run([str(readobj), "--file-headers", image], timeout=PDB_PROBE_TIMEOUT)
+    completed = run([str(readobj), "--file-headers", tool_operand(image)], timeout=PDB_PROBE_TIMEOUT)
     if completed.returncode != 0:
         return None
     checksum = size = None
@@ -259,7 +260,7 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
     guid = age = None
     if not readobj:
         return pdb_name, guid, age
-    completed = run([str(readobj), "--coff-debug-directory", exe],
+    completed = run([str(readobj), "--coff-debug-directory", tool_operand(exe)],
                     timeout=PDB_PROBE_TIMEOUT)
     if completed.returncode != 0:
         raise UprofError(f"llvm-readobj exited {completed.returncode}: "
@@ -284,7 +285,7 @@ def _pdb_signature(pdbutil: Path | None, path: Path
     """(GUID, age, error) for a candidate PDB; the error carries the probe exit and stderr."""
     if not pdbutil:
         return None, None, "llvm-pdbutil not found"
-    completed = run([str(pdbutil), "dump", "--summary", str(path)],
+    completed = run([str(pdbutil), "dump", "--summary", tool_operand(path)],
                     timeout=PDB_PROBE_TIMEOUT)
     if completed.returncode != 0:
         return None, None, (f"llvm-pdbutil exited {completed.returncode}: "
@@ -773,7 +774,8 @@ def public_symbols(out_file: str | Path, pdb_file: str | Path,
     # One invocation supplies both records; the run-scoped cache gives each call its own pairs
     # file in the shared scratch directory.
     # A timeout raises, which the caller reports as skipped fold labelling.
-    combined = run([str(pdbutil_path), "dump", "-section-headers", "-publics", str(pdb_path)],
+    combined = run([str(pdbutil_path), "dump", "-section-headers", "-publics",
+                    tool_operand(pdb_path)],
                    timeout=PDB_PROBE_TIMEOUT)
     if combined.returncode != 0:
         detail = tail_lines((combined.stdout or "") + "\n" + (combined.stderr or ""))

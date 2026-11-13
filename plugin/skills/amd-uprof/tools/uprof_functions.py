@@ -16,7 +16,7 @@ from typing import Final, Iterable, Sequence
 
 import uprof_context
 from uprof_context import ContextOmission, PeSection
-from uprof_native import run
+from uprof_native import run, tool_operand
 from uprof_util import UprofError, tail_lines
 
 READOBJ_TIMEOUT: Final = 5 * 60
@@ -115,7 +115,7 @@ def derive_module_ranges(module_name: str, module_path: str | Path,
         return RangeDerivation([], "readobj_missing")
     try:
         completed = run([tool, "--file-headers", "--sections", "--unwind", "--coff-exports",
-                         str(module_path)], timeout=READOBJ_TIMEOUT)
+                         tool_operand(module_path)], timeout=READOBJ_TIMEOUT)
     except UprofError as exc:
         return RangeDerivation([], f"readobj_failed: {exc}")
     if completed.returncode != 0:

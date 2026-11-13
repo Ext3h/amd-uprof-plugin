@@ -292,6 +292,16 @@ def require_llvm(names: Iterable[str], symbolizer: Path | None = None) -> None:
             raise SymbolizerUnsupported(cause)
 
 
+def tool_operand(path: str | os.PathLike[str]) -> str:
+    """A file path as a positional tool argument.
+
+    LLVM tools parse an argument starting with '-' as an option and one starting with '@' as a
+    response file. An absolute path starts with neither, so a capture-supplied path is always
+    read as the file it names.
+    """
+    return os.path.abspath(os.fspath(path))
+
+
 def run(command: Sequence[str], timeout: int | None = None, input_text: str | None = None,
         ) -> subprocess.CompletedProcess[str]:
     """Run a native tool with UTF-8 text output and no console-window flash."""

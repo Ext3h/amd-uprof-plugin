@@ -16,8 +16,9 @@ from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
-REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encoding="utf-8")
-SPEC = (TOOLS_DIR.parent / "references" / "spec.md").read_text(encoding="utf-8")
+DOCS = Path(__file__).resolve().parents[1] / "docs"
+REFERENCE = (DOCS / "reference.md").read_text(encoding="utf-8")
+SPEC = (DOCS / "spec.md").read_text(encoding="utf-8")
 
 FIRST_CALL = ("**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py "
               "profile --session <capture dir> --by function|module|process`; its `NEXT` line "

@@ -76,6 +76,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - Repository layout: the plugin source is now `plugin/` (the marketplace entry points at it);
   maintainer-only tests, fixtures and the timing harness live under `tests/` and `bench/`,
   outside the plugin source. No runtime behavior changes (issue #42).
+- The specification, derivation notes and validation records moved from the skill's
+  `references/` to the repository's `docs/`; the installed skill no longer ships or names them
+  (issue #297).
 
 ## 2.1.0 — 2026-11-08
 

@@ -102,7 +102,7 @@ when the workload's clock differs. `HZ_SOURCE=argument` means `--freq` supplied 
 
 ### Rejected: window weighting
 
-The former `D × count / Σ count over windowId` estimator was removed; do not reintroduce it. The measured deltas that motivated the removal are in `references/validation.md`, "Window weighting (rejected)".
+The former `D × count / Σ count over windowId` estimator was removed; do not reintroduce it. The measured deltas that motivated the removal are in `validation.md`, "Window weighting (rejected)".
 
 ### Dump resolution and cache
 
@@ -302,7 +302,7 @@ predicate.
 The measured case: an unelevated PMC capture with `user=1,os=1` had 21,489 samples and none in a
 kernel image, while an elevated capture of the same event had 45,489 kernel samples across 67
 images; an unelevated translate of that elevated raw capture reproduced the kernel samples, so the
-loss is in capture, not translation. The numbers are recorded in `references/validation.md`.
+loss is in capture, not translation. The numbers are recorded in `validation.md`.
 
 ## Symbolization
 

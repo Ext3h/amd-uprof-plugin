@@ -14,6 +14,7 @@ from unittest import mock
 
 import duckdb
 
+import uprof
 import uprof_collect
 import uprof_db
 import uprof_dump
@@ -347,6 +348,10 @@ class KernelFieldGuardTest(unittest.TestCase):
         self.assertEqual(uprof_query._kernel_coverage_field(
             uprof_session.Sampler(os_requested=True), False, windowed=True), [])
 
+    def test_windowed_pmc_emits_nothing(self):
+        self.assertEqual(uprof_query._kernel_coverage_field(
+            uprof_session.Sampler(pmc=True, os_requested=True, os_mode="os"), False, windowed=True), [])
+
     def test_undetermined_coverage_emits_nothing(self):
         self.assertEqual(uprof_query._kernel_coverage_field(
             uprof_session.Sampler(os_requested=True), None), [])
@@ -441,6 +446,65 @@ class WindowedDumpTest(unittest.TestCase):
     def test_no_recorded_translate_filter_is_none(self):
         self.assertIsNone(uprof_dump.recorded_time_filter(
             self.session("AMDuProfCLI.exe translate -i sess --ascii ibsop-event-dump")))
+
+
+class TranslateTimeFilterKernelCoverageTest(unittest.TestCase):
+    """A translate time filter suppresses the KERNEL_COVERAGE check for PMC and IBS captures."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def _create_pmc_session(self, with_filter: bool):
+        session_dir = self.root / ("filtered" if with_filter else "unfiltered")
+        session_dir.mkdir()
+        meta = pmc_meta(True)
+        if with_filter:
+            meta["translateCommand"] = "AMDuProfCLI.exe translate -i sess --time-filter 10:12"
+
+        connection = duckdb.connect(str(session_dir / "cpu.db"))
+        try:
+            connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
+            connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
+            connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)")
+            connection.execute(
+                "CREATE TABLE ModuleInstance (id UINTEGER, processId UINTEGER, "
+                "moduleId UINTEGER, loadAddress UBIGINT)")
+            connection.execute(
+                "CREATE TABLE UnifiedSampleSeries (processId UINTEGER, threadId UINTEGER, "
+                "moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER, "
+                ' "event#0x3000076" DOUBLE)')
+            connection.execute("INSERT INTO Process VALUES (1, 'test.exe')")
+            connection.execute("INSERT INTO Module VALUES (1, 'c:/app/a.dll')")
+            connection.execute("INSERT INTO ModuleInstance VALUES (1, 1, 1, 65536)")
+            connection.execute(
+                "INSERT INTO UnifiedSampleSeries VALUES (1, 1, 1, NULL, 0, 0, 5.0)")
+        finally:
+            connection.close()
+
+        (session_dir / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+        return session_dir
+
+    def _profile_output(self, session_dir):
+        out = io.StringIO()
+        err = io.StringIO()
+        args = uprof.build_parser().parse_args([
+            "profile", "--session", str(session_dir), "--by", "module"
+        ])
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            uprof_query.run_query_command(args)
+        return out.getvalue() + err.getvalue()
+
+    def test_pmc_capture_with_time_filter_suppresses_kernel_coverage(self):
+        session_dir = self._create_pmc_session(with_filter=True)
+        output = self._profile_output(session_dir)
+        self.assertNotIn("KERNEL_COVERAGE", output)
+
+    def test_pmc_capture_without_time_filter_emits_kernel_coverage(self):
+        session_dir = self._create_pmc_session(with_filter=False)
+        output = self._profile_output(session_dir)
+        self.assertIn("KERNEL_COVERAGE", output)
 
 
 if __name__ == "__main__":

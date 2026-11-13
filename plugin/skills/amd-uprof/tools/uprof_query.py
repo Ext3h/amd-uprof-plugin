@@ -2178,9 +2178,9 @@ def run_query_command(args: argparse.Namespace) -> None:
         _guard_out_file(out_path, list(uprof_dump.samples_parquet_files(dump, session)),
                         "the Parquet dump copy ")
     samples = uprof_dump.samples_parquet(dump, session) if dump is not None else None
-    # The resolved dump may have been produced by the recorded translate window, so the
+    # A recorded translate window means the data may only cover a slice, so the
     # whole-capture claim cannot be made from it.
-    dump_windowed = dump is not None and uprof_dump.recorded_time_filter(session) is not None
+    windowed = uprof_dump.recorded_time_filter(session) is not None
 
     stream = sys.stderr
     primary_measure, _ = _primary_measure(sampler, dump)
@@ -2331,13 +2331,13 @@ def run_query_command(args: argparse.Namespace) -> None:
                                                      sampler.timer)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
-            check_kernel = sampler.os_requested and not dump_windowed
+            check_kernel = sampler.os_requested and not windowed
             achieved, captured_samples, kernel_covered = _achieved_field(
                 connection, dump is not None, args, sampler, dump, check_kernel, timer_contexts)
             if achieved:
                 fields.append(achieved)
             fields.extend(_kernel_coverage_field(
-                sampler, kernel_covered, dump_windowed, captured_samples))
+                sampler, kernel_covered, windowed, captured_samples))
             if args.by == "function":
                 fields.extend(_hot_rva_field(connection))
             coverage = db_coverage if db_coverage is not None else _coverage_values(connection)

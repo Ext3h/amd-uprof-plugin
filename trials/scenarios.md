@@ -107,7 +107,7 @@ A trial run passes when both hold:
 
 ## SCN-02: mine versus the driver and ntdll
 
-- **Session:** `attached`
+- **Session:** `attached`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "My frame loop is slow. I attached AMD uProf (IBS) to my app storage_test.exe; the capture is in `<CAPTURE>`. My own code is fixture_full.exe. How much of the CPU time is mine versus the Vulkan driver (amdvlk64.dll) and ntdll, and what in my code is hot?"
 - **Answer:**
   - **Location:** own hot function `fixture_entry` in `fixture_full.exe`, hot RVA 0x1018.
@@ -122,7 +122,7 @@ A trial run passes when both hold:
 
 ## SCN-03: drill my hottest function to source lines
 
-- **Session:** `attached`
+- **Session:** `attached`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "I have an AMD uProf capture of my app in `<CAPTURE>`. My code is fixture_full.exe (the PDB is next to the exe). Drill my hottest function down to source lines and instructions."
 - **Answer:**
   - **Location:** `fixture_entry` in `fixture_full.exe`, line `fixture_debug.c:7` (recorded as `/build/fixture_debug.c`), instruction 0x1018 `movl 0x24(%rsp), %ecx`.
@@ -138,7 +138,7 @@ A trial run passes when both hold:
 
 ## SCN-04: my PDB is in another folder
 
-- **Session:** `pdb_far`
+- **Session:** `pdb_far`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "I attached AMD uProf to my app; the capture is in `<CAPTURE>`. The PDB for my exe fixture_full.exe is not next to the exe, it is in `<PDB_DIR>`. Show me my hottest function down to source lines."
 - **Answer:**
   - **Location:** `fixture_entry` in `fixture_full.exe`, line `fixture_debug.c:7` at 0x1018.
@@ -152,7 +152,7 @@ A trial run passes when both hold:
 
 ## SCN-05: symbols missing, DLL not on this machine
 
-- **Session:** `attached`
+- **Session:** `attached`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "In my AMD uProf capture (`<CAPTURE>`) symbols are missing for some DLLs, and vendorlib.dll isn't even on this machine. Where is the time going in those DLLs?"
 - **Answer:**
   - **Location:** `amdvlk64.dll`: `fixture_entry` `[0x1000, 0x1030)` hot 0x101B, `fixture_second` `[0x1030, 0x1050)`, derived `pdata_0x1050` `[0x1050, 0x1062)`; `vendorlib.dll`: `<unresolved>`, hot RVA 0x2040, no range.
@@ -165,7 +165,7 @@ A trial run passes when both hold:
 
 ## SCN-06: profile the process I just started
 
-- **Session:** none (needs a live collect on an AMD host)
+- **Session:** none (needs a live collect on an AMD host; its loaded variant is open (D-031): not run: awaiting reference capture (#390))
 - **Question:** "Profile the process I just started, PID `<PID>`, for 30 seconds and tell me where its CPU time goes."
 - **Answer:** the SCN-02 parts for the collected process; values need a capture.
 - **Minimal calls:**
@@ -176,7 +176,7 @@ A trial run passes when both hold:
 
 ## SCN-07: is this hotspot memory-bound
 
-- **Session:** `attached`
+- **Session:** `attached`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "AMD uProf IBS capture of my app: `<CAPTURE>`. My code is fixture_full.exe. Is my hottest spot memory-bound?"
 - **Answer:**
   - **Location:** `fixture_entry` in `fixture_full.exe`, instruction 0x1018 `movl 0x24(%rsp), %ecx` (`fixture_debug.c:7`).
@@ -191,7 +191,7 @@ A trial run passes when both hold:
 
 ## SCN-08: did my fix help
 
-- **Session:** `attached`, `attached_after`
+- **Session:** `attached`, `attached_after`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "Did my fix help? I profiled my app with AMD uProf before and after the fix. Before: `<BEFORE>`  After: `<AFTER>`. My code is fixture_full.exe."
 - **Answer:**
   - **Location:** own `fixture_full.exe` in both captures.
@@ -237,7 +237,7 @@ A trial run passes when both hold:
 
 ## SCN-11: spinning or computing
 
-- **Session:** `attached`
+- **Session:** `attached`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "AMD uProf IBS capture of my app: `<CAPTURE>`. My code is fixture_full.exe. Is the hot spot spinning (waiting) or actually computing?"
 - **Answer:**
   - **Location:** `fixture_entry` in `fixture_full.exe`, instruction 0x1018 `movl 0x24(%rsp), %ecx`.
@@ -265,7 +265,7 @@ A trial run passes when both hold:
 
 ## SCN-13: drill to source lines on Linux
 
-- **Session:** none (no ELF capture fixture)
+- **Session:** none (no ELF capture fixture; its loaded variant is open (D-031): not run: awaiting reference capture (#390))
 - **Question:** "I have an AMD uProf capture of my Linux app in `<CAPTURE>`, built with DWARF. Drill my hottest function down to source lines."
 - **Answer:** the SCN-03 parts, with the lines read from DWARF; values need a capture.
 - **Minimal calls:**
@@ -287,7 +287,7 @@ A trial run passes when both hold:
 
 ## SCN-15: the hot code is inlined
 
-- **Session:** none (no inline-frame fixture)
+- **Session:** none (no inline-frame fixture; its loaded variant is open (D-031): not run: awaiting reference capture (#390))
 - **Question:** "My hottest function in `<CAPTURE>` is mostly inlined code. Which source lines are hot?"
 - **Answer:** the SCN-03 parts, with the innermost inlined `file:line`, its containing function, and the stated limitation that inline overloads of one name are not told apart; values need a capture.
 - **Minimal calls:**
@@ -303,7 +303,7 @@ A trial run passes when both hold:
 
 ## SCN-17: where did time go on an op-count capture
 
-- **Session:** `opcount`
+- **Session:** `opcount`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "AMD uProf capture of my app: `<CAPTURE>`. Where did the time go?"
 - **Answer:**
   - **Location:** the driver's `fixture_entry` at 0x101B is the hottest range; own `fixture_entry` at 0x1018.
@@ -327,7 +327,7 @@ A trial run passes when both hold:
 
 ## SCN-19: memory-bound on a PMC capture
 
-- **Session:** `pmc`
+- **Session:** `pmc`; its loaded variant is open (D-031): not run: awaiting reference capture (#390)
 - **Question:** "AMD uProf capture of my app: `<CAPTURE>`. Is my app memory-bound?"
 - **Answer:**
   - **Location:** n/a (no memory evidence in this capture).

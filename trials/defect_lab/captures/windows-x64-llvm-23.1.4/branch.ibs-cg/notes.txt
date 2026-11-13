@@ -1,0 +1,4 @@
+defect_lab --class branch, ibs-cg, under the stressors
+without call graph: 3 ns per iteration
+with call graph: 3 ns per iteration
+slowdown: 1.00x

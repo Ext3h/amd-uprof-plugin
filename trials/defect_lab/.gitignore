@@ -1,0 +1,3 @@
+# The capture handover bundles the built workload images and their PDBs.
+# Global ignore rules drop *.exe, *.dll and *.pdb, so re-include them here.
+!captures/**/images/*

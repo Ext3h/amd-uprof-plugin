@@ -29,7 +29,7 @@ from uprof_native import (
     symbol_cache_dir,
     tool_operand,
 )
-from uprof_util import UprofError, absolute, read_text, require_file, tail_lines
+from uprof_util import UprofError, absolute, read_text, require_file, same_path, tail_lines
 
 _GUID = re.compile(r"^\s*GUID:\s*(.+)$")
 _AGE = re.compile(r"^\s*Age:\s*(\d+)")
@@ -1498,6 +1498,26 @@ def _symbolize_tasks(
         pool.shutdown(wait=True, cancel_futures=True)
 
 
+def _warn_unused_pdbs(symbol_files: Iterable[str | Path], used: list[str], stream: TextIO) -> None:
+    """One warning per --symbol-path PDB that no module used, so it is not silently ignored."""
+    if os.name == "nt":
+        cause = (
+            "it matches no profiled module's PDB name and GUID; pass the PDB of a profiled "
+            "module, or drop it"
+        )
+    else:
+        cause = (
+            "PDBs are read only on Windows hosts; profile this capture on Windows with the "
+            "same --symbol-path"
+        )
+    for path in symbol_files:
+        if Path(path).suffix.lower() != ".pdb" or any(same_path(path, pdb) for pdb in used):
+            continue
+        print(
+            f"WARNING: --symbol-path {os.fspath(path)} was used for no module: {cause}", file=stream
+        )
+
+
 def symbolize_modules(
     modules: list[tuple[str, str, list[str]]],
     out_dir: str | Path,
@@ -1527,6 +1547,7 @@ def symbolize_modules(
     out_path = absolute(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     require_symbolizer()
+    symbol_files = tuple(symbol_files)
     parquet_inputs: list[tuple[str, Path]] = []
     public_inputs: list[tuple[str, Path]] = []
     pdb_inputs: list[tuple[str, str]] = []
@@ -1559,6 +1580,7 @@ def symbolize_modules(
                 pdb_inputs.append((outcome.module_name, outcome.pdb))
     finally:
         _PUBLICS_CACHE.reset()
+    _warn_unused_pdbs(symbol_files, [pdb for _name, pdb in pdb_inputs], stream)
     if not parquet_inputs:
         return None, None, None, evidence
     symbols_file, publics_file = _combine_artifacts(parquet_inputs, public_inputs, out_path)

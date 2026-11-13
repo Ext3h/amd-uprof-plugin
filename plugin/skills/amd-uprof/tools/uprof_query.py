@@ -901,7 +901,8 @@ _SAMPLE_CAVEAT: Final = (
     "a raw share cannot separate a cheap operation run often from an expensive one run rarely"
 )
 _SYSTEM_MODULE_MEANING: Final = (
-    "Module.isSystemModule: true = OS-shipped module, false = not OS-shipped; "
+    "Module.isSystemModule: uProf's system-module flag (OS components and some vendor "
+    "drivers); false = third-party; "
     "NULL when uncataloged, a remainder row, or an ambiguous basename whose versions disagree"
 )
 # A cycle interval is time only at a frequency; the session records the interval in cycles, not

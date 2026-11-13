@@ -766,6 +766,8 @@ class OutputLegendTest(unittest.TestCase):
         session = self._write_ordering()
         command = json.loads(self.profile(session, "--json"))["legend"]["next"][0]
         self.assertTrue(command.startswith("python "), command)
+        # The caller fills the process it chose from the rows.
+        command = command.replace("<PID>", "100")
         with mock.patch.dict(os.environ, {"PATH": str(fake_dir) + os.pathsep + os.environ["PATH"]}):
             result = self.run_next(command)
         self.assertEqual(result.returncode, 0, result.stderr)

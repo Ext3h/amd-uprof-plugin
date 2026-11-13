@@ -1,7 +1,7 @@
 """uProf tool discovery and translation.
 
-Install paths are probed per OS with `shutil.which` plus a few conventional directories; nothing
-is installed here. The Linux branches are kept but unverified on this host.
+Install paths are probed per OS on the absolute PATH entries (never the current directory) plus a
+few conventional directories; nothing is installed here. The Linux branches are kept but unverified on this host.
 """
 
 from __future__ import annotations
@@ -47,8 +47,49 @@ def _first_existing(candidates: Iterable[str | os.PathLike[str] | None]) -> Path
 
 
 def _which(name: str) -> Path | None:
-    found = shutil.which(name)
-    return Path(found) if found else None
+    """name on PATH, never from the current directory.
+
+    collect runs elevated, and shutil.which (like CreateProcess with a bare name) also looks in
+    the current directory and in '.', empty or relative PATH entries, so a planted executable
+    in a project or capture folder would run as administrator. Only absolute PATH entries other
+    than the current directory are searched.
+    """
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        cwd = None
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        directory = Path(entry) if entry else None
+        if directory is None or not directory.is_absolute():
+            continue
+        try:
+            if cwd is not None and directory.resolve() == cwd:
+                continue
+        except OSError:
+            continue
+        for candidate in _executable_names(name):
+            path = directory / candidate
+            if path.is_file() and (IS_WINDOWS or os.access(path, os.X_OK)):
+                return path
+    return None
+
+
+def _executable_names(name: str) -> list[str]:
+    """name with each PATHEXT extension on Windows (unless it has one), else name itself."""
+    if not IS_WINDOWS or Path(name).suffix:
+        return [name]
+    extensions = os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
+    return [name + extension.lower() for extension in extensions.split(";") if extension]
+
+
+def _system_directory() -> Path:
+    """The Windows system directory as the OS reports it, not from SystemRoot or windir, which
+    the caller's environment can point anywhere."""
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = ctypes.windll.kernel32.GetSystemDirectoryW(buffer, len(buffer))
+    if not 0 < length < len(buffer):
+        raise UprofError("cannot read the Windows system directory (GetSystemDirectoryW failed)")
+    return Path(buffer.value)
 
 
 def _version_key(path: Path) -> tuple[int, ...]:
@@ -451,7 +492,10 @@ def ibs_unavailable_reason() -> str:
     """Explain why IBS counters are missing, naming VBS or a hypervisor when that is the cause."""
     if IS_WINDOWS:
         try:
-            completed = run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+            # By absolute path: a bare name is also looked up in the current directory.
+            powershell = (_system_directory() / "WindowsPowerShell" / "v1.0"
+                          / "powershell.exe")
+            completed = run([str(powershell), "-NoProfile", "-NonInteractive", "-Command",
                              _VIRTUALIZATION_QUERY], timeout=60)
             match = (re.fullmatch(r"\s*(\d+)\s+(\d+)\s*", completed.stdout or "")
                      if completed.returncode == 0 else None)

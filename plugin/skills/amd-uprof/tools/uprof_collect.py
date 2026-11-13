@@ -140,7 +140,8 @@ def _linux_core_frequency(
         except (OSError, ValueError):
             khz = 0
         if khz > 0:
-            return khz * 1000, f"{khz / 1000:g} MHz", str(path)
+            label = " (boost maximum)" if path.name == "cpuinfo_max_freq" else ""
+            return khz * 1000, f"{khz / 1000:g} MHz", f"{path}{label}"
 
     try:
         cpuinfo = cpuinfo_path.read_text(encoding="utf-8", errors="replace")
@@ -150,7 +151,7 @@ def _linux_core_frequency(
     if match:
         hz = int((Decimal(match.group(1)) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
         if hz > 0:
-            return hz, f"{match.group(1)} MHz (current frequency)", f"{cpuinfo_path} cpu MHz (current frequency)"
+            return hz, f"{match.group(1)} MHz", f"{cpuinfo_path} cpu MHz (current frequency)"
 
     raise UprofError(
         "cannot determine the core frequency: neither "

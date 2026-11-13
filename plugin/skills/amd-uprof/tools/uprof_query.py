@@ -2696,6 +2696,13 @@ def _write_profile(
             getattr(args, "symbol_path", None), getattr(args, "image_path", None)
         )
         debug_dirs = tuple(os.fspath(path) for path in paths.debug_dirs)
+        module_at = columns.index("module") if "module" in columns else None
+        ambiguous = uprof_cache.ambiguous_modules(
+            connection,
+            []
+            if module_at is None
+            else [str(row[module_at]) for row in rows if row[module_at] is not None],
+        )
         contexts = uprof_context.instruction_contexts(
             connection,
             columns,
@@ -2704,6 +2711,7 @@ def _write_profile(
             fallback_paths=debug_dirs,
             image_files=paths.image_files,
             image_dirs=paths.image_dirs,
+            ambiguous_modules=ambiguous,
         )
         help_text = uprof_context.context_help(legend or {})
         summary = uprof_context.context_omission_summary(contexts)

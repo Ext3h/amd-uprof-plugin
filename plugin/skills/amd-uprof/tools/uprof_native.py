@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import ctypes
 import functools
+import json
 import os
 import re
 import shutil
@@ -346,19 +347,47 @@ def is_admin() -> bool:
     return hasattr(os, "geteuid") and os.geteuid() == 0
 
 
+def _windows_vbs_state() -> tuple[bool, bool] | None:
+    """Query (vbs_running, hypervisor_present) via CIM; None on failure."""
+    try:
+        cmd = [
+            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+            "ConvertTo-Json @{"
+            "vbs = (Get-CimInstance -ClassName Win32_DeviceGuard "
+            "-Namespace root/Microsoft/Windows/DeviceGuard -ErrorAction SilentlyContinue)"
+            ".VirtualizationBasedSecurityStatus; "
+            "hypervisor = (Get-CimInstance -ClassName Win32_ComputerSystem "
+            "-ErrorAction SilentlyContinue).HypervisorPresent}"
+        ]
+        completed = run(cmd, timeout=15)
+        if completed.returncode == 0 and completed.stdout.strip():
+            data = json.loads(completed.stdout)
+            vbs = data.get("vbs") == 2
+            hypervisor = bool(data.get("hypervisor"))
+            return vbs, hypervisor
+    except Exception:
+        pass
+    return None
+
+
 def ibs_unavailable_reason() -> str:
     """Explain why IBS counters are missing, naming VBS or a hypervisor when that is the cause."""
     if IS_WINDOWS:
-        try:
-            systeminfo = run(["systeminfo"], timeout=60).stdout
-        except UprofError:
-            systeminfo = ""
-        lowered = systeminfo.lower()
-        vbs_line = next((line for line in lowered.splitlines()
-                         if "virtualization-based security" in line), "")
-        disabled = "not running" in vbs_line or "not enabled" in vbs_line
-        vbs = not disabled and ("running" in vbs_line or "enabled" in vbs_line)
-        hypervisor = "hypervisor has been detected" in lowered
+        cim_state = _windows_vbs_state()
+        if cim_state is not None:
+            vbs, hypervisor = cim_state
+        else:
+            try:
+                systeminfo = run(["systeminfo"], timeout=60).stdout
+            except UprofError:
+                systeminfo = ""
+            lowered = systeminfo.lower()
+            vbs_line = next((line for line in lowered.splitlines()
+                             if "virtualization-based security" in line), "")
+            disabled = "not running" in vbs_line or "not enabled" in vbs_line
+            vbs = not disabled and ("running" in vbs_line or "enabled" in vbs_line)
+            hypervisor = "hypervisor has been detected" in lowered
+
         if vbs or hypervisor:
             state = "VBS running" if vbs else "hypervisor detected"
             return (f"hypervisor/VBS is active ({state}; check Win32_DeviceGuard: "
@@ -372,7 +401,7 @@ def ibs_unavailable_reason() -> str:
     except OSError:
         pass
     if any(Path("/sys/module").glob("kvm*")):
-        return "the KVM kernel module is loaded; IBS counters are not exposed to this host"
+        return "the KVM kernel module is loaded; IBS counters may not be exposed to this host"
     return "no IBS counters are available; check the kernel, virtualization and perf permissions"
 
 

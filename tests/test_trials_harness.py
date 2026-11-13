@@ -228,7 +228,7 @@ class DriverTest(unittest.TestCase):
                     "--parallel",
                     "1",
                     "--scenario",
-                    "SCN-01",
+                    "SCN-06",
                     "--scenario",
                     "SCN-08",
                 ],
@@ -247,7 +247,7 @@ class DriverTest(unittest.TestCase):
 
         self.assertEqual([t.trial_id for t in FakeRunner.specs], ["SCN-08"])
         self.assertIn("| SCN-08 | 0 |", log)
-        self.assertIn("| SCN-01 | none", log)
+        self.assertIn("| SCN-06 | none", log)
         self.assertEqual(len(transcript.splitlines()), 3)
         self.assertEqual(meta["tool_calls"], 1)
         self.assertEqual(meta["outside_references"], [])
@@ -279,6 +279,12 @@ class DriverTest(unittest.TestCase):
         self.assertIn("a defect ceiling, not a target", deliver)
         per_trial = rubric.partition("## Per trial")[2].partition("\n## ")[0]
         self.assertRegex(per_trial, r"\| Context growth \|.*same causes as extra calls")
+
+    def test_the_observer_counts_an_unfiltered_function_call_as_extra(self):
+        rubric = " ".join((REPO / "trials" / "observer.md").read_text(encoding="utf-8").split())
+        self.assertIn("unfiltered `--by function` call before the `--pid`/`--image` filter", rubric)
+        self.assertIn("cause (b) while", rubric)
+        self.assertIn("cause (c) once", rubric)
 
     def test_a_run_records_each_scenarios_final_turn_context(self):
         FakeRunner.specs = []

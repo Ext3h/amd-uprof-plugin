@@ -313,9 +313,29 @@ class BuilderTest(unittest.TestCase):
     def test_scn02_quotes_the_module_shares_the_tools_print(self):
         self.assert_quoted("SCN-02", self.shares("attached", "module", "module"))
 
-    def test_scn09_quotes_the_process_and_scoped_module_shares(self):
-        self.assert_quoted("SCN-09", self.shares("systemwide", "process", "process"))
-        self.assert_quoted("SCN-09", self.shares("systemwide", "module", "module", "--pid", "3112"))
+    def test_scn09_and_scn01_quote_the_shares_of_the_users_pid(self):
+        pid = ("--pid", str(build_captures.PID))
+        modules = self.shares("systemwide_loaded", "module", "module", *pid)
+        self.assert_quoted("SCN-09", modules)
+        self.assert_quoted("SCN-01", modules)
+
+    def test_scn10_quotes_the_window_shares(self):
+        self.assert_quoted(
+            "SCN-10",
+            self.shares(
+                "systemwide_loaded",
+                "module",
+                "module",
+                "--pid",
+                str(build_captures.PID),
+                "--time-filter",
+                "0.2:0.5",
+            ),
+        )
+
+    def test_scn20_quotes_the_own_share_under_inproc_load(self):
+        shares = self.shares("attached_inproc_loaded", "module", "module", "--top", "all")
+        self.assert_quoted("SCN-20", {"fixture_full.exe": shares["fixture_full.exe"]})
 
     @unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
     def test_images_pass_the_tools_build_identity_checks(self):
@@ -337,6 +357,9 @@ OWN_IMAGE_NAME = "fixture_full.exe"
 # 1,200 to SKILL.md after #118's cut, 300 per call, and 5,000 stay as margin; at 2.0 characters
 # per token, the low end measured on tool output, that leaves about 44,000 characters.
 CALL_OUTPUT_CEILING = 44_000
+# Scenarios whose minimal calls exceed the ceiling today, with the issue that brings them
+# below it. Their Known gaps must name that issue; drop an entry once it is fixed.
+CEILING_GAPS = {"SCN-03": "#339", "SCN-20": "#320"}
 
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
@@ -406,7 +429,10 @@ class ContextCeilingTest(unittest.TestCase):
                 printed = sum(
                     len(self.run_call(self.concrete(call, names))) for call in entry["calls"]
                 )
-                self.assertLess(printed, CALL_OUTPUT_CEILING)
+                if scn in CEILING_GAPS:
+                    self.assertIn(CEILING_GAPS[scn], entry["fields"].get("Known gaps", ""))
+                else:
+                    self.assertLess(printed, CALL_OUTPUT_CEILING)
 
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")

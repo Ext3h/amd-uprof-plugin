@@ -74,7 +74,7 @@ class CandidateDirectoryTest(unittest.TestCase):
         return str(caught.exception)
 
     def test_hostile_directories_are_named_as_data_not_commands(self):
-        names = [name for name in ("$(touch pwned)", "a`id`", "%PATH%", "a!b", "a&b")
+        names = [name for name in ("$(touch pwned)", "a`id`", "%PATH%", "a!b")
                  if os.name != "nt" or '"' not in name]
         for name in names:
             self.capture(name)

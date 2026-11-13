@@ -746,6 +746,23 @@ def _quote(text: str) -> str:
     return '"' + text.replace('"', '\\"') + '"'
 
 
+# Characters that expand, run a command or end a "..." argument in Git Bash, PowerShell 5.1 or
+# cmd.exe even inside double quotes. A name taken from the capture or from the disk (not from
+# the caller's own arguments) never enters a runnable command with one of them.
+_SHELL_LIVE: Final = frozenset('$`"%!')
+
+
+def _inert(text: str) -> bool:
+    """True when text holds no shell-live or control character."""
+    return not any(char in _SHELL_LIVE or ord(char) < 32 or ord(char) == 127 for char in text)
+
+
+def _image_pattern(name: str) -> str:
+    """An --image ILIKE pattern for a captured process name that is inert in every shell: each
+    character outside a plain set becomes the one-character wildcard, so it still matches."""
+    return "".join(char if char.isalnum() or char in " ._-+,=@#~()" else "_" for char in name)
+
+
 def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
     """A runnable drill-down command that keeps the session and the process/image scope."""
     parts = ["python", _quote(str(TOOLS_DIR / "uprof.py")), "profile",
@@ -818,7 +835,7 @@ def _next_calls(args: argparse.Namespace,
         if pid is None and not image:
             return []
         scoped = argparse.Namespace(**vars(args))
-        scoped.pid, scoped.image = pid, (None if pid is not None else image)
+        scoped.pid, scoped.image = pid, (None if pid is not None else _image_pattern(image))
         calls = [_profile_command(scoped, "module")]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))
@@ -2107,16 +2124,29 @@ def _session_candidates(root: Path) -> list[Path]:
 
 
 def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
-    """The same command on each candidate capture, keeping --by and the scope."""
+    """The same command on each candidate capture, keeping --by and the scope.
+
+    A directory name comes from the disk, so one with a shell-live character is named as data
+    only, never inside a command.
+    """
+    safe = [candidate for candidate in candidates if _inert(str(candidate))]
+    unsafe = [candidate for candidate in candidates if not _inert(str(candidate))]
     calls = []
-    for candidate in candidates[:_CANDIDATE_LIMIT]:
+    for candidate in safe[:_CANDIDATE_LIMIT]:
         scoped = argparse.Namespace(**vars(args))
         scoped.session = str(candidate)
         calls.append(_profile_command(scoped, args.by) if args.command == "profile"
                      else f"python {_quote(str(TOOLS_DIR / 'uprof.py'))} schema --session "
                           f"{_quote(str(candidate))}")
-    shown = "" if len(candidates) <= _CANDIDATE_LIMIT else f" (first {_CANDIDATE_LIMIT})"
-    return f"{len(candidates)} captures below it{shown}; run one of: " + " ; ".join(calls)
+    shown = "" if len(safe) <= _CANDIDATE_LIMIT else f" (first {_CANDIDATE_LIMIT})"
+    parts = [f"{len(candidates)} captures below it{shown}"]
+    if calls:
+        parts.append("run one of: " + " ; ".join(calls))
+    if unsafe:
+        parts.append("not offered as commands because a shell would expand characters in "
+                     "their names: " + ", ".join(repr(str(path))
+                                                 for path in unsafe[:_CANDIDATE_LIMIT]))
+    return "; ".join(parts)
 
 
 def run_query_command(args: argparse.Namespace) -> None:

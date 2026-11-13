@@ -25,6 +25,7 @@ import timer_fixture
 import uprof_collect
 import uprof_dump
 import uprof_native
+import uprof_shell
 import uprof_session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -411,7 +412,8 @@ class TimerFailureTest(_Session):
             first = str(uprof_native.failure("a", ["timer capture (launch)", "Zen host"]))
             second = str(uprof_native.failure("b", ["Zen host", "timer capture (launch)"]))
         self.assertEqual(_alternatives(first), _alternatives(second))
-        self.assertIn(f"ALTERNATIVE: timer capture (launch): {Path(FAKE_CLI)} collect --config tbp "
+        cli = uprof_shell.quote(str(Path(FAKE_CLI)))
+        self.assertIn(f"ALTERNATIVE: timer capture (launch): {cli} collect --config tbp "
                       "-o <NEW_OUT_DIR> <APP>; python ", first)
 
 

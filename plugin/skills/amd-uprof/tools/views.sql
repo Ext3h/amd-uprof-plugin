@@ -652,26 +652,33 @@ ELSE $absent$
 
 -- Module.isSystemModule per module, keyed by the full normalized path and by basename. A dump's
 -- ModuleName may carry a full path while the catalog path differs only in directory, so the
--- basename is the fallback key; bool_or keeps an exact path answer when paths collide.
-CREATE OR REPLACE TEMP VIEW v_module_flags AS
+-- basename is the fallback key; an ambiguous basename (disagreeing full paths) returns NULL.
+CREATE OR REPLACE TEMP VIEW v_module_flags_exact AS
 SELECT * FROM query(CASE WHEN getvariable('has_system_module') THEN $flags$
-  SELECT module_name, bool_or(system_module) AS "isSystemModule"
-  FROM (
-    SELECT module_key(m.path) AS module_name,
-           CAST(m.isSystemModule AS BOOLEAN) AS system_module
-    FROM Module m
-    WHERE COALESCE(m.path, '') <> ''
-    UNION ALL
-    SELECT regexp_extract(module_key(m.path), '([^/]+)$', 1) AS module_name,
-           CAST(m.isSystemModule AS BOOLEAN) AS system_module
-    FROM Module m
-    WHERE COALESCE(m.path, '') <> ''
-  )
-  WHERE module_name <> ''
-  GROUP BY module_name$flags$
+  SELECT module_key(m.path) AS module_name,
+         bool_or(CAST(m.isSystemModule AS BOOLEAN)) AS "isSystemModule"
+  FROM Module m
+  WHERE COALESCE(m.path, '') <> ''
+  GROUP BY module_key(m.path)$flags$
 ELSE $absent$
   SELECT CAST(NULL AS VARCHAR) AS module_name, CAST(NULL AS BOOLEAN) AS "isSystemModule"
   WHERE false$absent$ END);
+
+CREATE OR REPLACE TEMP VIEW v_module_flags_basename AS
+SELECT * FROM query(CASE WHEN getvariable('has_system_module') THEN $flags$
+  SELECT regexp_extract(module_key(m.path), '([^/]+)$', 1) AS basename,
+         CASE WHEN bool_and(CAST(m.isSystemModule AS BOOLEAN)) = bool_or(CAST(m.isSystemModule AS BOOLEAN))
+              THEN bool_or(CAST(m.isSystemModule AS BOOLEAN))
+              ELSE NULL END AS "isSystemModule"
+  FROM Module m
+  WHERE COALESCE(m.path, '') <> ''
+  GROUP BY regexp_extract(module_key(m.path), '([^/]+)$', 1)$flags$
+ELSE $absent$
+  SELECT CAST(NULL AS VARCHAR) AS basename, CAST(NULL AS BOOLEAN) AS "isSystemModule"
+  WHERE false$absent$ END);
+
+CREATE OR REPLACE TEMP VIEW v_module_flags AS
+SELECT * FROM v_module_flags_exact;
 
 -- One row per whole-capture sample, before the process and time filters, with the module it landed
 -- in, the context that produced it (CPU for a dump, coreId for PMC) and whether that module is a
@@ -771,9 +778,12 @@ WITH scanned AS MATERIALIZED (
 ), hot AS (
   SELECT module, hot_rva, hot_samples FROM hot_ranked WHERE hot_rank = 1
 ), flagged AS (
-  SELECT r.*, f."isSystemModule", h.hot_rva, h.hot_samples
+  SELECT r.*,
+         COALESCE(fe."isSystemModule", fb."isSystemModule") AS "isSystemModule",
+         h.hot_rva, h.hot_samples
   FROM ranked r
-  LEFT JOIN v_module_flags f ON f.module_name = r.module
+  LEFT JOIN v_module_flags_exact fe ON fe.module_name = r.module
+  LEFT JOIN v_module_flags_basename fb ON fb.basename = regexp_extract(r.module, '([^/]+)$', 1)
   LEFT JOIN hot h ON h.module = r.module
 )
 SELECT module, samples, weight, tag_cycles, "isSystemModule", hot_rva, hot_samples,
@@ -899,9 +909,10 @@ SELECT m.function_name AS "function", m.module_name AS module,
        CASE WHEN m.hot_rva IS NULL THEN NULL ELSE printf('0x%X', m.hot_rva) END AS hot_rva,
        m.hot_samples,
        m.total_samples, m.total_weight, m.total_tag_cycles, 0 AS sort_key, m.rn,
-       f."isSystemModule"
+       COALESCE(fe."isSystemModule", fb."isSystemModule") AS "isSystemModule"
 FROM v_function_measured m
-LEFT JOIN v_module_flags f ON f.module_name = m.module_name
+LEFT JOIN v_module_flags_exact fe ON fe.module_name = m.module_name
+LEFT JOIN v_module_flags_basename fb ON fb.basename = regexp_extract(m.module_name, '([^/]+)$', 1)
 WHERE getvariable('top_n') = 0 OR m.rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other functions>', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
@@ -1262,9 +1273,10 @@ SELECT m.module_name AS module,
        m.hot_function, m.hot_file, m.hot_line,
        m.attribution, m.symbol_reason,
        COALESCE(m.function_source, 'none') AS function_source, m.function_derived,
-       f."isSystemModule"
+       COALESCE(fe."isSystemModule", fb."isSystemModule") AS "isSystemModule"
 FROM measured m
-LEFT JOIN v_module_flags f ON f.module_name = m.module_name
+LEFT JOIN v_module_flags_exact fe ON fe.module_name = m.module_name
+LEFT JOIN v_module_flags_basename fb ON fb.basename = regexp_extract(m.module_name, '([^/]+)$', 1)
 WHERE getvariable('top_n') = 0 OR m.rn <= getvariable('top_n')
 UNION ALL
 SELECT '<other regions>', NULL, NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),

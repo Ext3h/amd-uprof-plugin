@@ -145,6 +145,15 @@ class CadenceOneQueryTest(unittest.TestCase):
 
         self.assertIn("; 2 active threads", self.translate())
 
+    def test_an_oversized_dump_cell_is_read_without_a_traceback(self):
+        # The removed Python reader needed a guard for csv's field limit; DuckDB's reader takes a
+        # cell this large and counts the row.
+        self.dump = (
+            "DeltaTick,CPU_Number,TID,PID,Offset,ModuleName\n0,0,1,100,4096," + "x" * 200_000 + "\n"
+        )
+
+        self.assertTrue(self.translate().startswith("1 samples"))
+
 
 if __name__ == "__main__":
     unittest.main()

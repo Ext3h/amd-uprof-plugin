@@ -25,7 +25,7 @@ Every `profile` call prints `METRIC`, `SANITY`, `SYMBOL_COVERAGE` and `KERNEL_CO
 
 | Command | What it does |
 |---|---|
-| `collect` | capture PMCx076 cycle or IBS OP samples, system-wide or attached to PIDs; never IBS fetch |
+| `collect` | PMCx076 cycle, IBS OP or timer samples; system-wide, PIDs or `--launch`; no IBS fetch |
 | `translate` | copy the session, resolve symbols, optionally write the IBS ASCII dump |
 | `profile` | samples and time shares by process, module, function, 4 KiB region, source line or instruction; prints SANITY and ACHIEVED |
 | `anchor` | map a workload's QPC reading onto capture-relative seconds (negative = attach latency; `--freq` defaults to 10 MHz) |

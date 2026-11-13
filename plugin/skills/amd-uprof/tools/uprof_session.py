@@ -311,6 +311,13 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
             raise UprofError("PMC event is not sampling")
         if (meta.get("auxiliary") or {}).get("ibsOpSampling"):
             raise UprofError("capture is IBS, not PMC cycle counting")
+    elif event == "timer":
+        if _timer_sampler(meta) is None:
+            raise UprofError("no timer recorded (collection.events.timerInterval); this is not a "
+                             "timer capture")
+        if float(collection_event.get("timerInterval")) != interval:
+            raise UprofError(f"timer interval is {collection_event.get('timerInterval')} ms, "
+                             f"expected {interval} ms")
     else:
         ibs = collection_event.get("ibsEvents") or {}
         if not ibs.get("op"):
@@ -343,6 +350,9 @@ def collect_summary(meta: dict[str, Any], event: str) -> str:
         return (f"hwId={applied.get('hwId')} interval={applied.get('interval')} "
                 f"isSampling={applied.get('isSampling')} systemWide={target.get('systemWide')} "
                 f"ibsOpSampling={auxiliary.get('ibsOpSampling')}")
+    if event == "timer":
+        return (f"timerInterval={collection_event.get('timerInterval'):g} ms "
+                f"systemWide={target.get('systemWide')}")
     ibs = collection_event.get("ibsEvents") or {}
     return (f"ibsOpSampling={auxiliary.get('ibsOpSampling')} ibsOp={ibs.get('op')} "
             f"opInterval={ibs.get('opInterval')} opCycleCount={ibs.get('opCycleCount')} "

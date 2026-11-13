@@ -24,6 +24,7 @@ _IBS_UNAVAILABLE = "ibs counters are not available"
 # AMDuProfCLI's message when the CPU has no CYCLES_NOT_IN_HALT event (for example a non-AMD CPU).
 _CYCLES_REJECTED = "invalid event(cycles_not_in_halt)"
 _CYCLE_DEFAULT = "1ms"
+_UPROF_PY = Path(__file__).resolve().with_name("uprof.py")
 _OP_DEFAULT = "1000000"
 _KERNEL_COVERAGE_NOTE = "kernel-mode (OS) samples are omitted without elevation"
 _FALLBACK_KERNEL_WARNING = ("WARNING: unelevated: the fallback cycle capture omits kernel-mode "
@@ -41,13 +42,16 @@ class CollectOptions:
     out_dir: str
     seconds: int = 60
     pids: list[int] = field(default_factory=list)
-    sample_interval: str | None = None  # time string in cycle modes, work count in op mode
-    event: str = "cycles"  # cycles | ibs-op
+    sample_interval: str | None = None  # time string in cycle/timer modes, work count in op mode
+    event: str = "cycles"  # cycles | ibs-op | timer
     ibs_count_control: str = "op"  # op | cycles
     dry_run: bool = False
+    launch: list[str] = field(default_factory=list)  # app and its arguments (timer only)
 
 
 def _event_spec(options: CollectOptions, event: str, interval: int) -> str:
+    if event == "timer":
+        return f"event=timer,interval={interval}"
     if event == "cycles":
         return f"event=CYCLES_NOT_IN_HALT,interval={interval},user=1,os=1"
     controls = 0 if options.ibs_count_control == "cycles" else 1
@@ -70,7 +74,15 @@ def _unelevated_warning(os_requested: bool) -> str:
     return f"{text}; {_KERNEL_COVERAGE_NOTE}" if os_requested else text
 
 
+def _event_args(options: CollectOptions, event: str, interval: int) -> list[str]:
+    """The AMDuProfCLI arguments that select the sampler."""
+    return ["-e", _event_spec(options, event, interval)]
+
+
 def _target_args(options: CollectOptions) -> tuple[list[str], str]:
+    """The capture target: a launched app (passed last), the PIDs, or the whole system."""
+    if options.launch:
+        return list(options.launch), " ".join(options.launch)
     if not options.pids:
         return ["-a"], "-a"
     spec = ",".join(str(pid) for pid in options.pids)
@@ -78,7 +90,9 @@ def _target_args(options: CollectOptions) -> tuple[list[str], str]:
 
 
 def _interval_mode(options: CollectOptions) -> str:
-    """cycles for a time interval, ops for the IBS dispatched-op work count."""
+    """cycles for a time interval, ops for the IBS dispatched-op work count, ms for the timer."""
+    if options.event == "timer":
+        return "ms"
     return "cycles" if options.event == "cycles" or options.ibs_count_control == "cycles" else "ops"
 
 
@@ -132,6 +146,8 @@ def _resolve_interval(options: CollectOptions, mode: str,
     if text is None:
         text = _OP_DEFAULT if mode == "ops" else _CYCLE_DEFAULT
     text = str(text).strip()
+    if mode == "ms":
+        return _timer_interval(text)
     if mode == "ops":
         if _TIME_INTERVAL.match(text):
             raise UprofError(
@@ -171,6 +187,19 @@ def _resolve_interval(options: CollectOptions, mode: str,
                     f"(source: {source})")
 
 
+def _timer_interval(text: str) -> tuple[int, str]:
+    """The timer interval in whole milliseconds, the unit uProf's timer event takes."""
+    match = _TIME_INTERVAL.match(text)
+    if not match:
+        raise UprofError(f"--sample-interval for --event timer must be a time with a unit, e.g. "
+                         f"1ms or 10ms; got {text!r}")
+    ms = Decimal(match.group(1)) * _TIME_UNITS[match.group(2).lower()] * 1000
+    if ms <= 0 or ms != ms.to_integral_value():
+        raise UprofError(f"--sample-interval {text!r} is not whole milliseconds; uProf's timer "
+                         "event takes whole milliseconds, e.g. 1ms or 10ms")
+    return int(ms), f"SAMPLE_INTERVAL={text} -> {int(ms)} ms timer"
+
+
 def _validate(options: CollectOptions) -> None:
     if options.seconds <= 0:
         raise UprofError(f"--seconds must be positive (got {options.seconds})")
@@ -179,14 +208,34 @@ def _validate(options: CollectOptions) -> None:
         if invalid:
             raise UprofError("--process needs positive PID(s); invalid: "
                              + ", ".join(str(pid) for pid in invalid))
-    if options.event == "cycles" and options.ibs_count_control != "op":
+    if options.event in ("cycles", "timer") and options.ibs_count_control != "op":
         raise UprofError("--ibs-count-control is only valid with --event ibs-op")
+    if options.launch and options.pids:
+        raise UprofError("--launch starts an app under the capture; it cannot also attach to "
+                         "--process PIDs")
+    if options.launch and options.event != "timer":
+        raise UprofError("--launch is only supported with --event timer; for --event "
+                         f"{options.event}, attach to the running app with --process <PID>")
+    if options.event == "timer" and options.pids:
+        # Measured on Windows, elevated and unelevated: the raw sample file stays empty.
+        system_wide = (f"python {uprof_shell.path_arg(str(_UPROF_PY), '<UPROF_PY>')[0]} "
+                       "collect --out-dir "
+                       f"{uprof_shell.path_arg(options.out_dir, '<OUT_DIR>')[0]} --seconds "
+                       f"{options.seconds} --event timer")
+        raise UprofError(
+            "a timer capture attached to --process PIDs records no samples on Windows; capture "
+            f"system-wide and narrow with profile --pid: {system_wide}, or start the app with "
+            "--launch <APP>")
 
 
-def _run_cli(uprof: str, event_spec: str, target_args: list[str],
+def _run_cli(uprof: str, event_args: list[str], target_args: list[str],
              options: CollectOptions) -> subprocess.CompletedProcess[str]:
-    command = [uprof, "collect", "-e", event_spec, *target_args,
-               "-d", str(options.seconds), "-o", options.out_dir]
+    command = [uprof, "collect", *event_args]
+    if options.launch:
+        # AMDuProfCLI takes the launched app and its arguments last.
+        command += ["-d", str(options.seconds), "-o", options.out_dir, *target_args]
+    else:
+        command += [*target_args, "-d", str(options.seconds), "-o", options.out_dir]
     completed = run(command, timeout=max(300, options.seconds * 3 + 120))
     print_output(completed)
     return completed
@@ -258,7 +307,8 @@ def collect(options: CollectOptions) -> None:
     print(interval_line)
     print(f"EVENT={_event_spec(options, options.event, interval)}")
     print(f"COMMAND={uprof_display} collect -e {_event_spec(options, options.event, interval)} "
-          f"{target_display} -d {options.seconds} -o {out_display}")
+          + (f"-d {options.seconds} -o {out_display} {target_display}" if options.launch
+             else f"{target_display} -d {options.seconds} -o {out_display}"))
     for line in command_data:
         print(line)
     elevated = is_admin()
@@ -276,7 +326,7 @@ def collect(options: CollectOptions) -> None:
 
     session_before, children_before = _session_marker(out_dir)
     effective_event = options.event
-    completed = _run_cli(uprof, _event_spec(options, effective_event, interval), target_args,
+    completed = _run_cli(uprof, _event_args(options, effective_event, interval), target_args,
                          options)
     combined = ((completed.stdout or "") + "\n" + (completed.stderr or "")).lower()
     if (completed.returncode != 0 and options.event == "ibs-op"
@@ -301,7 +351,7 @@ def collect(options: CollectOptions) -> None:
         # The fallback cycle capture always requests OS mode; only elevation decides the warning.
         if not elevated:
             print(_FALLBACK_KERNEL_WARNING, file=sys.stderr)
-        completed = _run_cli(uprof, cycle_spec, target_args, options)
+        completed = _run_cli(uprof, ["-e", cycle_spec], target_args, options)
     if completed.returncode != 0:
         detail = failure_detail(completed)
         if (effective_event == "cycles"
@@ -315,6 +365,7 @@ def collect(options: CollectOptions) -> None:
     session = _one_session(out_dir, session_before, children_before)
     print(f"SESSION={absolute(session)}")
     meta = verify_collect(session, effective_event, interval,
-                          options.ibs_count_control, not options.pids, options.pids)
+                          options.ibs_count_control,
+                          not options.pids and not options.launch, options.pids)
     print(f"collectCommand={meta.get('collectCommand')}")
     print(collect_summary(meta, effective_event))

@@ -525,13 +525,16 @@ def _derive_scope_ranges(connection: object, artifacts: Path | None,
             info["absent_by_module"][name] = f"{path} is not on this host"
             continue
         identity = identities.get(name)
-        if identity is not None:
+        if identity is not None and (identity[0] or identity[1]):
             # Ranges read from another build would regroup the captured build's RVAs.
-            readobj = readobj or uprof_context.find_readobj()
+            if readobj is None:
+                readobj = uprof_context.find_readobj() or ""
             mismatch = uprof_symbols.image_build_mismatch(
                 path, identity[0], identity[1], Path(readobj) if readobj else None)
             if mismatch:
-                reason = f"wrong_build: {mismatch}"
+                reason = (f"wrong_build: {mismatch}; put the captured build at {path} and re-run "
+                          "profile --by function, or run profile --by module, which needs no "
+                          "image")
                 info["absent_by_module"][name] = reason
                 print(f"WARNING: no function range derived for {name} ({path}): {reason}",
                       file=stream)

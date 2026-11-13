@@ -10,10 +10,14 @@ skill.
 |---|---|
 | [`scenarios.md`](scenarios.md) | the catalogue: per scenario the question, the session, the correct answer and the minimal calls |
 | [`build_captures.py`](build_captures.py) | writes the synthetic sessions the scenarios run on |
+| [`run_trials.py`](run_trials.py) | runs the scenarios, each as its own isolated agent process, and writes transcripts and a run log |
+| [`runners/`](runners/__init__.py) | the runner interface and its adapters; one ships, for the Claude Code CLI |
+| [`observer.md`](observer.md) | the rubric for judging a run's transcripts, separately from the run |
 
 `tests/test_trials.py` runs in CI: every catalogue call parses with the current CLI, every
 session it names is one the builder writes, and every image a built session records passes the
-tools' build-identity checks. The trial harness and the observer rubric are tracked in #254.
+tools' build-identity checks. `tests/test_trials_harness.py` checks the harness without a model.
+A trial run itself needs a model API and is never part of CI.
 
 ## Building the captures
 
@@ -33,6 +37,40 @@ binary.
 
 Module paths in a session are the absolute paths of the images under `<OUT_DIR>`, so build the
 captures on the host that analyses them and do not move the folder afterwards.
+
+## Running the trials
+
+```console
+python trials/run_trials.py --run-dir <NEW_DIR> --runner claude-code --model <MODEL> --path-prefix <DIR_WITH_PYTHON_AND_DUCKDB> --path-prefix <LLVM_BIN>
+```
+
+Pick `<MODEL>` from the class the skill is optimized for: a small, fast model. `<NEW_DIR>` must
+be outside the repository. Per scenario with a session, the harness:
+
+- copies `plugin/` from `--plugin-rev` (default `HEAD`) once, or uses `--plugin-dir`;
+- builds the scenario's own capture copy, so no session-cache entry is shared between trials,
+  and names the sessions `capture` (`before`/`after` for two), not after the scenario;
+- starts one agent process in a fresh empty folder with only the question, the real paths filled
+  in; reads are limited to that folder, the plugin copy and the capture; the repository, the
+  output folder and the other trials are denied; temp variables point into the trial folder;
+- kills only the trial's own process tree after `--timeout` seconds; runs `--parallel` trials;
+- writes `out/<SCN>/transcript.jsonl` (neutral schema), `meta.json`, the runner's raw output, and
+  `runlog.md` with exit status, wall time, tool calls, tool errors, references to denied paths
+  and the isolation facts the runner reported. It does not judge answers: apply `observer.md`.
+
+Scenarios without a session are listed as skipped with their reason. A known limit of the
+Claude Code adapter: shell commands are allowed, so a write outside the trial folder (for example
+to `/tmp`) cannot be blocked without the CLI's sandbox; the run log shows any tool input naming a
+denied path.
+
+### Adding a runner
+
+A runner adapts another agent harness or model API. Write a module in `runners/` with a class
+that has a `name` and `run(spec: TrialSpec) -> TrialResult`, takes its options as keyword
+strings (`--runner-option key=value`), and add it to `runners()` in `runners/__init__.py`. It must
+start the agent with only the plugin in `spec.plugin_dir`, limit reads to `spec.read_roots`, deny
+`spec.deny_roots`, pass `spec.model`, and return the transcript in the neutral schema documented
+there; `run_process` and `trial_env` handle the timeout and the environment.
 
 ## Running a scenario by hand
 

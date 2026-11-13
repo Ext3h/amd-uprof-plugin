@@ -243,7 +243,7 @@ class BuilderTest(unittest.TestCase):
                 self.assertIsNone(uprof_symbols.image_build_mismatch(
                     str(image), checksum, size, F.READOBJ))
                 headers = uprof_context.run([str(F.READOBJ), "--file-headers", str(image)])
-                build = uprof_context.parse_file_headers(headers.stdout)
+                build = uprof_context.parse_image(headers.stdout).build
                 verified = uprof_context.verify_build(build, checksum, size)
                 self.assertTrue(verified.verified)
                 self.assertEqual(verified.identity, "checksum")

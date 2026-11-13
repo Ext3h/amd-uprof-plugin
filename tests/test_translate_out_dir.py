@@ -52,7 +52,7 @@ class TranslateOutDirTest(unittest.TestCase):
     def translate(self, *, force):
         with (
             mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
-            mock.patch.object(uprof_native, "run", side_effect=self.fake_run),
+            mock.patch.object(uprof_native, "run_watched", side_effect=self.fake_run),
         ):
             uprof_native.translate(self.session, self.out, force=force)
 
@@ -130,7 +130,7 @@ class AliasedOutDirTest(unittest.TestCase):
 
         with (
             mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
-            mock.patch.object(uprof_native, "run", side_effect=fake_run),
+            mock.patch.object(uprof_native, "run_watched", side_effect=fake_run),
             redirect_stdout(io.StringIO()),
         ):
             with self.assertRaisesRegex(UprofError, "--out-dir"):
@@ -259,7 +259,7 @@ class TranslateSymbolizationWarningTest(unittest.TestCase):
             stream = io.StringIO()
             with (
                 mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
-                mock.patch.object(uprof_native, "run", side_effect=fake_run),
+                mock.patch.object(uprof_native, "run_watched", side_effect=fake_run),
                 mock.patch.object(uprof_native, "symbolization_counts", return_value=(1166, 0, 0)),
                 redirect_stdout(stream),
             ):

@@ -1,0 +1,76 @@
+"""`schema` states whether the export matches the contract the query surface reads.
+
+The listing alone made the caller diff columns by eye; the guard in views.sql that profile runs
+already names every missing table and column. schema runs that same guard for the capture's
+mode: a complete export prints a CONTRACT: line, an incomplete one exits 2 naming the missing
+items. The listing itself is unchanged.
+Run from the repository root: python tests/run_tests.py test_schema_verdict
+"""
+
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+try:
+    import duckdb
+except ImportError:  # the suite reports the skip reason
+    duckdb = None
+
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
+EVENT_COLUMN = "event#0x100000000f100"
+PMC_META = {
+    "collection": {
+        "events": {"pmcEvents": {"pmcEventList": [{
+            "hwId": 118, "interval": 4_700_000, "isSampling": True,
+            "user": True, "os": True, "encodedEventId": 0x03000076}]}},
+        "target": {"systemWide": True},
+    },
+    "auxiliary": {},
+}
+
+
+@unittest.skipIf(duckdb is None, "duckdb is required; install duckdb==2.0.0")
+class SchemaVerdictTest(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="uprof-schema-")
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def capture(self, function_columns="id UBIGINT, moduleId UINTEGER, name VARCHAR"):
+        connection = duckdb.connect(str(self.root / "cpu.db"))
+        try:
+            connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
+            connection.execute("CREATE TABLE Module (id UINTEGER, path VARCHAR)")
+            connection.execute(f"CREATE TABLE Function ({function_columns})")
+            connection.execute(
+                "CREATE TABLE UnifiedSampleSeries (processId UINTEGER, threadId UINTEGER, "
+                "moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER, "
+                f'"{EVENT_COLUMN}" DOUBLE)')
+        finally:
+            connection.close()
+        (self.root / "session.uprof").write_text(json.dumps(PMC_META), encoding="utf-8")
+        return self.root
+
+    def schema(self, session):
+        return subprocess.run([sys.executable, str(TOOLS_DIR / "uprof.py"), "schema",
+                               "--session", str(session)],
+                              capture_output=True, text=True, encoding="utf-8")
+
+    def test_a_complete_export_prints_the_match_and_the_listing(self):
+        result = self.schema(self.capture())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CONTRACT: ", result.stderr)
+        self.assertIn("UnifiedSampleSeries", result.stdout)
+
+    def test_a_missing_column_is_named_and_fails(self):
+        result = self.schema(self.capture("id UBIGINT, moduleId UINTEGER"))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("uProf export incomplete: missing column Function.name", result.stderr)
+        self.assertNotIn("CONTRACT: ", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

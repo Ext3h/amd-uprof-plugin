@@ -930,10 +930,6 @@ _NEXT_BY: Final = {
 }
 # Rollups whose unscoped system-wide rows mix every process, so NEXT names --by process first.
 _PROCESS_STEERED: Final = ("module", "function", "region")
-_REGION_MEANING: Final = (
-    "4 KiB address page; samples are grouped by address, not by control flow; a page may span "
-    "unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket"
-)
 _NO_NAMED_FUNCTION_STOP: Final = (
     "a module with no source names is covered by derived function ranges: use profile --by "
     "function, which derives boundaries from the binary (.pdata, PE exports, PDB publics) with "
@@ -973,11 +969,26 @@ def _hot_rva_note(sampler: uprof_session.Sampler) -> str | None:
     return "PMC samples skid"
 
 
+def _hot_rva_suffix(sampler: uprof_session.Sampler) -> str:
+    """The capture mode's hot_rva note in parentheses, or nothing for IBS OP."""
+    note = _hot_rva_note(sampler)
+    return f" ({note})" if note else ""
+
+
 def _hot_rva_attribution(sampler: uprof_session.Sampler, container: str) -> str:
     """The precision or skid semantics of hot_rva in this capture mode."""
-    base = f"the precise attribution inside the {container}"
-    note = _hot_rva_note(sampler)
-    return f"{base} ({note})" if note else base
+    return f"the most precise attribution available inside the {container}" + _hot_rva_suffix(
+        sampler
+    )
+
+
+def _region_meaning(sampler: uprof_session.Sampler) -> str:
+    """What a region row is, with the capture mode's hot_rva note."""
+    return (
+        "4 KiB address page; samples are grouped by address, not by control flow; a page may "
+        "span unrelated code; the hot RVA is the most precise attribution available"
+        f"{_hot_rva_suffix(sampler)} and the page is the coarse bucket"
+    )
 
 
 def _sample_share_meaning(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None) -> str:
@@ -1483,7 +1494,7 @@ def _legend(
             "hot_rva: unique / shared (folded names) / derived (synthetic "
             "binary range) / unresolved (no symbol)"
         )
-        columns["region"] = _REGION_MEANING
+        columns["region"] = _region_meaning(sampler)
         columns["sampled_addresses"] = "distinct RVAs with samples in the page"
         attribution = _hot_rva_attribution(sampler, "page")
         columns["hot_rva"] = (
@@ -1629,11 +1640,9 @@ def _legend(
             if args.by == "function":
                 precise = "hot_rva is the highest-sample RVA inside the function"
             else:
-                note = _hot_rva_note(sampler)
-                suffix = f" ({note})" if note else ""
                 precise = (
-                    f"hot_rva is the highest-sample RVA inside the page and the precise "
-                    f"attribution{suffix}"
+                    "hot_rva is the highest-sample RVA inside the page and the most precise "
+                    f"attribution available{_hot_rva_suffix(sampler)}"
                 )
             result["impact"]["estimate"] += f"; {precise}"
     if args.by == "instruction":
@@ -1712,9 +1721,7 @@ def _legend(
     return result
 
 
-def _read_text(
-    legend: dict[str, Any], system_wide: bool, sampler: uprof_session.Sampler | None = None
-) -> str:
+def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session.Sampler) -> str:
     """The positive reading rule, plus the ranking and remainder rule."""
     sample = legend["columns"]["sample_share"]
     if "function_ranges" in legend:
@@ -1747,17 +1754,10 @@ def _read_text(
             read = f"sample_share orders the pages: {reason}"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
-        note = _hot_rva_note(sampler) if sampler is not None else None
-        if note is None:
-            estimate = legend.get("impact", {}).get("estimate", "")
-            if "fetch samples carry a fetch-block address" in estimate:
-                note = "fetch samples carry a fetch-block address"
-            elif "timer samples skid" in estimate:
-                note = "timer samples skid"
-            elif "PMC samples skid" in estimate:
-                note = "PMC samples skid"
-        suffix = f" ({note})" if note else ""
-        hot_desc = f"hot_rva is the precise attribution inside the page{suffix}"
+        hot_desc = (
+            "hot_rva is the most precise attribution available inside the page"
+            f"{_hot_rva_suffix(sampler)}"
+        )
         read += (
             f"; {hot_desc} and sampled_addresses "
             "shows whether the page is a tight cluster or a diffuse bucket; hot_rva's "
@@ -1833,9 +1833,10 @@ def _next_text(calls: list[str]) -> str:
 def _legend_fields(
     legend: dict[str, Any],
     system_wide: bool,
-    timer: bool = False,
+    timer: bool,
     top_row: str | None = None,
-    sampler: uprof_session.Sampler | None = None,
+    *,
+    sampler: uprof_session.Sampler,
 ) -> list[tuple[str, str]]:
     """The short legend: columns and unit, what to read, and runnable next calls.
 

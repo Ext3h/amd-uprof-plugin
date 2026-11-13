@@ -13,6 +13,7 @@ from pathlib import Path
 
 import uprof
 import uprof_query
+import uprof_shell
 from uprof_util import UprofError
 
 
@@ -47,7 +48,7 @@ class SessionCandidatesTest(unittest.TestCase):
         self.assertNotIn("\n", message)
         self.assertIn("cpu.db not found", message)
         for found in (first, second):
-            self.assertIn(f"--session {uprof_query._quote(str(found))} --by function --pid 100",
+            self.assertIn(f"--session {uprof_shell.quote(str(found))} --by function --pid 100",
                           message)
         self.assertNotIn(str(self.root / "raw"), message)
 

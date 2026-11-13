@@ -617,16 +617,21 @@ class OutputLegendTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
         image_document = json.loads(self.profile(self.session("ibs-op-ops"),
-                                                 "--image", "%workload%", "--json"))
+                                                 "--image", "_:_workload.exe", "--json"))
         image_calls = image_document["legend"]["next"]
-        self.assertTrue(all("--image" in call for call in image_calls))
-        expected_pattern = "%%workload%%" if os.name == "nt" else "%workload%"
-        self.assertTrue(all(expected_pattern in call for call in image_calls))
+        self.assertTrue(all("--image _:_workload.exe" in call for call in image_calls))
         self.assertTrue(any("--by module" in call for call in image_calls))
-        # The image-scope command must run, including the escaped pattern.
+        # The image-scope command must run as printed.
         result = self.run_next(image_calls[0])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("scoped coverage (--image", result.stdout)
+        # A % pattern is not plain in every shell (cmd.exe expands %NAME%), so it is a
+        # placeholder in the call and named as data.
+        pattern_document = json.loads(self.profile(self.session("ibs-op-ops"),
+                                                   "--image", "%workload%", "--json"))
+        self.assertTrue(all("--image <IMAGE>" in call
+                            for call in pattern_document["legend"]["next"]))
+        self.assertEqual(pattern_document["legend"]["next_data"], {"IMAGE": "%workload%"})
 
         top_document = json.loads(self.profile(session, "--pid", "100", "--top", "1", "--json"))
         self.assertTrue(all("--top 1" in call for call in top_document["legend"]["next"]))

@@ -382,12 +382,13 @@ class CollectOsModeTest(unittest.TestCase):
         out = Path(tmp.name) / "out"
         calls = []
 
-        def fake_run_cli(_uprof, spec, _target_args, _options):
+        def fake_run_cli(_uprof, spec, _target_args, options):
             calls.append(spec)
             if len(calls) == 1:
                 return subprocess.CompletedProcess(spec, 1, "", "ibs counters are not available")
-            out.mkdir(parents=True, exist_ok=True)
-            (out / "session.uprof").write_text(json.dumps({
+            session = Path(options.out_dir)
+            session.mkdir(parents=True, exist_ok=True)
+            (session / "session.uprof").write_text(json.dumps({
                 "collection": {
                     "events": {"pmcEvents": {"pmcEventList": [{
                         "hwId": 118, "interval": 4_700_000, "isSampling": True}]}},

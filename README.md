@@ -72,13 +72,13 @@ The skill runs `tools/uprof.py`:
 | `schema` | print the live DuckDB schema for drift checks |
 | `tools` | print resolved tool paths and versions |
 
-`SKILL.md` in `plugin/skills/amd-uprof/` is the entry point and the full contract; `references/`
-carries the derivation notes and validation records.
+`SKILL.md` in `plugin/skills/amd-uprof/` is the entry point and the full contract; `docs/`
+carries the specification, derivation notes and validation records (not installed).
 
 ## Layout
 
 - `plugin/` — the plugin source: `.claude-plugin/plugin.json` and `skills/amd-uprof/` (the
-  skill, its tools and references).
+  skill and its tools).
 - `tests/` — maintainer-only test suite and fixtures; run with `python tests/run_tests.py`.
 - `bench/` — maintainer-only timing harness (added by #40).
 - `examples/` — recorded trial scenarios (prompt, input, expected answer, reference metrics);

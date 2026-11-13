@@ -1,7 +1,7 @@
 # amd-uprof skill — specification
 
 What the skill must do; exact keys, enums and flags are implementation vocabulary in
-`references/reference.md`.
+`reference.md`.
 
 Every normative statement carries one ID (`SPEC-nn`), assigned once. An amended statement
 keeps its ID; a removed statement's ID is retired, listed under "Retired IDs" and never
@@ -200,7 +200,7 @@ documented tie order permits permutation.
 ## 10. Evidence
 
 Measured acceptance figures, their capture, filter and estimator are recorded in
-`references/validation.md`; they are a regression baseline, not requirements.
+`validation.md`; they are a regression baseline, not requirements.
 
 ## Retired IDs
 

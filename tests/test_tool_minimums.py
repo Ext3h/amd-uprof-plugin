@@ -207,8 +207,7 @@ class CiPinsTest(unittest.TestCase):
                                         uprof_native.LLVM_MINIMUM)
 
     def test_the_reference_uprof_meets_the_minimum(self):
-        text = (ROOT / "plugin" / "skills" / "amd-uprof" / "references" / "validation.md"
-                ).read_text(encoding="utf-8")
+        text = (ROOT / "docs" / "validation.md").read_text(encoding="utf-8")
         version = re.search(r"uProf CLI ([\d.]+\d)", text).group(1)
         self.assertGreaterEqual(uprof_native.parse_version(version), uprof_native.UPROF_MINIMUM)
 

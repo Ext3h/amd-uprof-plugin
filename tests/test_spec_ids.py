@@ -11,8 +11,7 @@ import re
 import unittest
 from pathlib import Path
 
-SPEC_PATH = (Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof"
-             / "references" / "spec.md")
+SPEC_PATH = Path(__file__).resolve().parents[1] / "docs" / "spec.md"
 
 MARKER = re.compile(r"\*\*(SPEC-\d{2,})\*\*")
 ANY_ID = re.compile(r"SPEC-\w*")

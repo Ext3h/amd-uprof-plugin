@@ -11,6 +11,7 @@ import csv
 import io
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -262,6 +263,112 @@ class _QuietModuleWarnings(io.TextIOBase):
             self.target.write(self.pending)
         self.pending = ""
         self.target.flush()
+
+
+_MODULE_LINE = re.compile(r"^MODULE: (.+?): \d+ addresses in ")
+_NO_SYMBOLS = re.compile(r"^WARNING: no symbols resolved for (.+?) \((.*?)\): (.*)$")
+_NO_RANGES = re.compile(r"^WARNING: no function range derived for (.+?) \((.*?)\): (.*)$")
+_RANGES_LINE = re.compile(r"^FUNCTION_RANGES: (.+?): (\d+) ranges from ")
+_LISTED_MODULES = 5
+
+
+def _module_key(name: str) -> str:
+    return name.replace("\\", "/").lower()
+
+
+class _SymbolDiagnostics(io.TextIOBase):
+    """Condense the symbolization and range-derivation lines written to it; flush() prints them.
+
+    Lines of modules outside the scope module are dropped. A module that resolved no symbols
+    keeps only its warning, not its MODULE/PDB/FOLDS progress lines. A warning cause shared by
+    several modules is printed once with the modules it covers, and FUNCTION_RANGES lines become
+    one summary. Every other line passes through in order.
+    """
+
+    def __init__(self, target: TextIO, scope_module: str | None = None):
+        self.target = target
+        self.scope = _module_key(scope_module) if scope_module else None
+        self.pending = ""
+        self.lines: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.pending += text
+        *lines, self.pending = self.pending.split("\n")
+        self.lines.extend(lines)
+        return len(text)
+
+    def flush(self) -> None:
+        if self.pending:
+            self.lines.append(self.pending)
+            self.pending = ""
+        if self.lines:
+            self.target.write("".join(line + "\n" for line in self._condensed(self.lines)))
+            self.lines = []
+        self.target.flush()
+
+    def _in_scope(self, module: str) -> bool:
+        return self.scope is None or _module_key(module) == self.scope
+
+    def _condensed(self, lines: list[str]) -> list[str]:
+        # (owner module or None, kind, line, group key)
+        parsed: list[tuple[str | None, str, str, str]] = []
+        current: str | None = None
+        for line in lines:
+            if match := _MODULE_LINE.match(line):
+                current = match.group(1)
+                parsed.append((current, "progress", line, ""))
+            elif match := _NO_SYMBOLS.match(line):
+                parsed.append((match.group(1), "no_symbols", line, match.group(3)))
+                current = None
+            elif match := _NO_RANGES.match(line):
+                parsed.append((match.group(1), "no_ranges", line, match.group(3)))
+            elif match := _RANGES_LINE.match(line):
+                parsed.append((match.group(1), "ranges", line, match.group(2)))
+            elif current is not None and line.startswith(("PDB", "FOLDS:")):
+                parsed.append((current, "progress", line, ""))
+            elif current is not None and line.startswith("WARNING:"):
+                parsed.append((current, "other", line, ""))
+            else:
+                current = None
+                parsed.append((None, "other", line, ""))
+        parsed = [item for item in parsed if item[0] is None or self._in_scope(item[0])]
+        unresolved = {item[0] for item in parsed if item[1] == "no_symbols"}
+        groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        for owner, kind, line, key in parsed:
+            if kind in ("no_symbols", "no_ranges", "ranges"):
+                group = (kind, key if kind != "ranges" else "")
+                groups.setdefault(group, []).append((owner, line))
+        output: list[str] = []
+        printed: set[tuple[str, str]] = set()
+        for owner, kind, line, key in parsed:
+            if kind == "progress" and owner in unresolved:
+                continue
+            if kind not in ("no_symbols", "no_ranges", "ranges"):
+                output.append(line)
+                continue
+            group = (kind, key if kind != "ranges" else "")
+            if group in printed:
+                continue
+            printed.add(group)
+            output.append(self._group_line(kind, key, groups[group]))
+        return output
+
+    @staticmethod
+    def _group_line(kind: str, cause: str, members: list[tuple[str, str]]) -> str:
+        if len(members) == 1:
+            return members[0][1]
+        names = [Path(owner.replace("\\", "/")).name for owner, _line in members]
+        more = (f" and {len(names) - _LISTED_MODULES} more"
+                if len(names) > _LISTED_MODULES else "")
+        if kind == "ranges":
+            counts = [int(_RANGES_LINE.match(line).group(2)) for _owner, line in members]
+            listed = ", ".join(f"{name} {count}" for name, count
+                               in zip(names[:_LISTED_MODULES], counts))
+            return (f"FUNCTION_RANGES: {sum(counts)} ranges from {len(members)} module images "
+                    f"({listed}{more})")
+        listed = ", ".join(names[:_LISTED_MODULES]) + more
+        what = "no symbols resolved" if kind == "no_symbols" else "no function range derived"
+        return f"WARNING: {what} for {len(members)} modules ({listed}): {cause}"
 
 
 def _fully_named_modules(coverage: dict[str, Any] | None) -> set[str]:
@@ -2269,6 +2376,8 @@ def run_query_command(args: argparse.Namespace) -> None:
     stream = sys.stderr
     primary_measure, _ = _primary_measure(sampler, dump)
     function_scoped = getattr(args, "function", None) is not None
+    # A view filtered to one module reports symbolization diagnostics for that module only.
+    diagnostics_scope = getattr(args, "module", None) if function_scoped else None
     sample_interval_s = (_cpu_seconds_interval(sampler)
                          if args.by in ("module", "region", "function") or function_scoped
                          else None)
@@ -2316,16 +2425,20 @@ def run_query_command(args: argparse.Namespace) -> None:
                     range_hit = False
                 # The cache keeps the full symbolization text; only a range view of a module
                 # the uProf DB names fully drops that module's symbol-path advice on output.
-                symbol_out: TextIO = stream
+                # The cache keeps the raw text; the diagnostics filter condenses it on output,
+                # so a cache hit prints what the cold run printed.
+                symbol_out: TextIO = _SymbolDiagnostics(stream, diagnostics_scope)
                 if args.by in RANGE_SCOPES:
                     db_coverage = _coverage_values(connection)
                     quiet = _fully_named_modules(db_coverage)
                     if quiet:
-                        symbol_out = _QuietModuleWarnings(stream, quiet)
+                        symbol_out = _QuietModuleWarnings(symbol_out, quiet)
                 if symbol_hit:
-                    symbol_hit, causes = _apply_symbol_hit(
-                        cache, connection, cache_symbol_key, variables, symbol_out)
-                    symbol_out.flush()
+                    try:
+                        symbol_hit, causes = _apply_symbol_hit(
+                            cache, connection, cache_symbol_key, variables, symbol_out)
+                    finally:
+                        symbol_out.flush()
                     if symbol_hit:
                         symbolized = True
                         symbolizer = _agreement_values(connection)
@@ -2336,9 +2449,11 @@ def run_query_command(args: argparse.Namespace) -> None:
                     if artifacts is None:
                         artifacts = _artifact_dir(stream)
                     symbol_stream = _Tee(symbol_out)
-                    symbols, causes, symbol_transient, pdb_identity, probe_identity = (
-                        _symbolize_scope(connection, artifacts, symbol_stream, args))
-                    symbol_out.flush()
+                    try:
+                        symbols, causes, symbol_transient, pdb_identity, probe_identity = (
+                            _symbolize_scope(connection, artifacts, symbol_stream, args))
+                    finally:
+                        symbol_out.flush()
                     variables.update(symbols)
                     uprof_db.set_variables(connection, symbols)
                     _create_file_views(connection, symbols)
@@ -2358,15 +2473,22 @@ def run_query_command(args: argparse.Namespace) -> None:
             row_attribution: dict[str, int] | None = None
             function_scope: dict[str, Any] | None = None
             if args.by in RANGE_SCOPES or function_scoped:
+                range_out = _SymbolDiagnostics(stream, diagnostics_scope)
                 if range_hit:
-                    range_hit, range_info = _apply_range_hit(
-                        cache, connection, cache_range_key, variables, stream)
+                    try:
+                        range_hit, range_info = _apply_range_hit(
+                            cache, connection, cache_range_key, variables, range_out)
+                    finally:
+                        range_out.flush()
                 if not range_hit:
                     if artifacts is None:
                         artifacts = _artifact_dir(stream)
-                    range_stream = _Tee(stream)
-                    functions_path, range_info = _derive_scope_ranges(
-                        connection, artifacts, range_stream)
+                    range_stream = _Tee(range_out)
+                    try:
+                        functions_path, range_info = _derive_scope_ranges(
+                            connection, artifacts, range_stream)
+                    finally:
+                        range_out.flush()
                     if functions_path is not None:
                         variables["uprof_functions"] = str(functions_path)
                         uprof_db.set_variables(connection,

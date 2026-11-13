@@ -161,6 +161,23 @@ class DriverTest(unittest.TestCase):
     def test_the_context_limit_is_the_catalogues(self):
         self.assertEqual(run_trials.context_limit(), 50_000)
 
+    def test_the_limit_is_read_from_the_pass_criteria_only(self):
+        text = ("## SCN-01: x\n- **Answer:** it used fewer than 9 tokens\n\n## Pass criteria\n\n"
+                "- **Context:** fewer than 50,000 tokens of total context\n\n## Sessions\n")
+        self.assertEqual(run_trials.context_limit(text), 50_000)
+        with self.assertRaises(ValueError):
+            run_trials.context_limit("## SCN-01: x\n- fewer than 9 tokens\n")
+
+    def test_the_observer_treats_the_limit_as_a_defect_ceiling(self):
+        # The limit marks a defective run; the goal is the context the minimal calls need.
+        rubric = (REPO / "trials" / "observer.md").read_text(encoding="utf-8")
+        deliver = " ".join(rubric.partition("## What the skill must deliver")[2]
+                           .partition("\n## ")[0].split())
+        self.assertIn("as little context as the minimal calls need", deliver)
+        self.assertIn("a defect ceiling, not a target", deliver)
+        per_trial = rubric.partition("## Per trial")[2].partition("\n## ")[0]
+        self.assertRegex(per_trial, r"\| Context growth \|.*same causes as extra calls")
+
     def test_a_run_records_each_scenarios_final_turn_context(self):
         FakeRunner.specs = []
         FakeRunner.context = {"SCN-02": 41_250, "SCN-03": 50_000}

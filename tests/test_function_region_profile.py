@@ -181,13 +181,24 @@ class FunctionRangeProfileTest(unittest.TestCase):
         resolved = self.document(self.fixture_session("resolved-stop"))
         self.assertEqual(resolved["legend"]["next"], [])
 
+        # When the only unresolved module is missing on this host, NEXT offers
+        # the --image-path alternative rather than an uninformative --by region.
         session = Session(self.root, "unresolved-stop")
         session.module(1, self.root / "missing.dll", False).function(10, 1, "")
         session.sample(1, 10, 0x2010, 2)
         calls = self.document(session.write())["legend"]["next"]
         self.assertEqual(len(calls), 1)
-        self.assertIn("--by region", calls[0])
-        self.assertNotIn("--by instruction", calls[0])
+        self.assertIn("--by function", calls[0])
+        self.assertIn('--image-path "<dir>"', calls[0])
+        self.assertNotIn("--by region", calls[0])
+
+        # When an unresolved module has an image on this host, --by region is offered.
+        session_img = Session(self.root, "unresolved-image")
+        session_img.module(1, FIXTURE, False).function(10, 1, "")
+        session_img.sample(1, 10, 0x2010, 2)
+        calls_img = self.document(session_img.write())["legend"]["next"]
+        self.assertEqual(len(calls_img), 1)
+        self.assertIn("--by region", calls_img[0])
 
     def test_coverage_and_agreement_split_named_derived_and_unresolved(self):
         result = self.run_profile(self.fixture_session())

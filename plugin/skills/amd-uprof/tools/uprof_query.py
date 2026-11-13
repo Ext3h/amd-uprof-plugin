@@ -674,7 +674,8 @@ def _quote(text: str) -> str:
     return '"' + text.replace('"', '\\"') + '"'
 
 
-def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
+def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False, *,
+                     image_path: list[str] | None = None) -> str:
     """A runnable drill-down command that keeps the session and the process/image scope."""
     parts = ["python", _quote(str(TOOLS_DIR / "uprof.py")), "profile",
              "--session", _quote(str(util.absolute(args.session))), "--by", by]
@@ -694,8 +695,9 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
     if getattr(args, "symbol_path", None):
         for value in args.symbol_path:
             parts += ["--symbol-path", _quote(value)]
-    if getattr(args, "image_path", None):
-        for value in args.image_path:
+    img_paths = image_path if image_path is not None else getattr(args, "image_path", None)
+    if img_paths:
+        for value in img_paths:
             parts += ["--image-path", _quote(value)]
     if args.top != "20":
         parts += ["--top", str(args.top)]
@@ -705,18 +707,37 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
 
 
 def _next_calls(args: argparse.Namespace,
-                row_attribution: dict[str, int] | None = None) -> list[str]:
+                row_attribution: dict[str, Any] | None = None,
+                causes: dict[str, str] | None = None) -> list[str]:
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
-    when function rows still carry unresolved samples; instruction context is a separate request,
-    not a default drill-down. A function-scoped instruction or line view was asked for, so it
-    offers the sibling view with the same --function/--module scope; the unscoped views keep
-    their old stops.
+    when function rows still carry unresolved samples and at least one unresolved module has an
+    image available on this host. When the only unresolved module is missing on this host, region
+    adds no attribution, so NEXT offers the --image-path alternative instead.
     """
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
-        calls.append(_profile_command(args, "region"))
+        unresolved_modules = row_attribution.get("unresolved_modules") or []
+        has_image = False
+        for mod in unresolved_modules:
+            cause = (causes or {}).get(mod, "")
+            if not (cause.startswith("module file not available") or cause == "module_missing"):
+                has_image = True
+                break
+        if not unresolved_modules:
+            missing_causes = [c for c in (causes or {}).values()
+                              if c.startswith("module file not available") or c == "module_missing"]
+            if not (causes and len(missing_causes) == len(causes)):
+                has_image = True
+
+        if has_image:
+            calls.append(_profile_command(args, "region"))
+        else:
+            existing_image_paths = list(getattr(args, "image_path", None) or [])
+            calls.append(_profile_command(
+                args, "function",
+                image_path=list(dict.fromkeys(existing_image_paths + ["<dir>"]))))
     if args.by == "line":
         calls.append(_profile_command(args, "instruction", json_mode=True))
     if args.by == "instruction" and getattr(args, "function", None):
@@ -923,8 +944,9 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             sample_interval_s: float | None = None,
             has_system_module: bool | None = None,
             range_info: dict[str, Any] | None = None,
-            row_attribution: dict[str, int] | None = None,
-            function_scope: dict[str, Any] | None = None) -> dict[str, Any]:
+            row_attribution: dict[str, Any] | None = None,
+            function_scope: dict[str, Any] | None = None,
+            causes: dict[str, str] | None = None) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -1065,7 +1087,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution),
+        "next": _next_calls(args, row_attribution, causes=causes),
     }
     if function_scope is not None:
         result["function_scope"] = _function_scope_json(
@@ -1732,7 +1754,7 @@ def _agreement_values(connection: object) -> dict[str, Any] | None:
     return dict(zip(columns, rows[0])) if rows else None
 
 
-def _row_attribution(connection: object, by: str) -> dict[str, int]:
+def _row_attribution(connection: object, by: str) -> dict[str, Any]:
     """Sample weight by the row attribution for --by function/region.
 
     The row views are the authority: a derived range is an attribution, not a missing symbol, so
@@ -1745,12 +1767,13 @@ def _row_attribution(connection: object, by: str) -> dict[str, int]:
     try:
         connection.execute("SET VARIABLE top_n = ?", ["0"])
         rows = connection.execute(
-            f"SELECT attribution, CAST(sum(samples) AS BIGINT) FROM {view} "
-            "GROUP BY attribution").fetchall()
+            f"SELECT attribution, module, CAST(sum(samples) AS BIGINT) FROM {view} "
+            "GROUP BY attribution, module").fetchall()
     finally:
         connection.execute("SET VARIABLE top_n = ?", [str(previous)])
-    counts = {"named": 0, "derived": 0, "unresolved": 0}
-    for attribution, samples in rows:
+    counts: dict[str, Any] = {"named": 0, "derived": 0, "unresolved": 0, "unresolved_modules": []}
+    unresolved_modules: list[str] = []
+    for attribution, module, samples in rows:
         value = int(samples or 0)
         if attribution in ("unique", "shared"):
             counts["named"] += value
@@ -1758,7 +1781,11 @@ def _row_attribution(connection: object, by: str) -> dict[str, int]:
             counts["derived"] += value
         else:
             counts["unresolved"] += value
-    counts["scoped"] = sum(counts.values())
+            if module and module not in ("<other functions>", "<other regions>"):
+                if module not in unresolved_modules:
+                    unresolved_modules.append(module)
+    counts["unresolved_modules"] = unresolved_modules
+    counts["scoped"] = counts["named"] + counts["derived"] + counts["unresolved"]
     return counts
 
 
@@ -2025,7 +2052,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 "uprof_tag_available": "true" if tag_available else "false"})
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
                              sample_interval_s, has_system_module, range_info, row_attribution,
-                             function_scope)
+                             function_scope, causes=causes)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             # The filter and its parent measurement precede the reading rule; both sit directly
             # below METRIC, after VERSION, before the detailed fields.

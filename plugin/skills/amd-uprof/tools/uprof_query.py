@@ -1945,7 +1945,7 @@ def _symbol_coverage_legend(coverage: dict[str, Any],
         }
         entry["rows_drillable"] = row_attribution["unresolved"] == 0
         return entry
-    if symbolized and symbolizer is not None:
+    if (symbolized or by in FUNCTION_SCOPED) and symbolizer is not None:
         scoped = int(symbolizer["scoped_samples"])
         unresolved = int(symbolizer["unresolved_samples"])
         resolved = max(scoped - unresolved, 0)
@@ -1973,8 +1973,9 @@ def _coverage_field(connection: object,
     time and which profile's symbol-path flags do not change. agreement.sql reads the parquet
     llvm-symbolizer produced for line/instruction rows, counting a sample resolved when the
     symbolizer named its address. When the rows are symbolized and the channels disagree, or when
-    a symbol path was passed explicitly, both are named so a resolved table is never paired with
-    a "cannot be drilled" stop line. causes carries the per-module symbolization outcome.
+    a symbol path was passed explicitly, or for line/instruction scopes where rows were symbolized,
+    both are named so a resolved table is never paired with a "cannot be drilled" stop line.
+    causes carries the per-module symbolization outcome.
 
     For function and region the rows also carry derived ranges, so the emitted row split (named /
     derived / unresolved) is quoted. Quoting the symbolizer's unresolved count there would call
@@ -2010,10 +2011,10 @@ def _coverage_field(connection: object,
         if reasons:
             text += f"; cause by module: {'; '.join(reasons)}"
         return [("SYMBOL_COVERAGE", f"{text}; {_RANGE_UNRESOLVED_STOP}{_SYMBOL_PATH_REMEDY}")]
-    scoped = int(symbolizer["scoped_samples"]) if symbolized and symbolizer else 0
+    scoped = int(symbolizer["scoped_samples"]) if (symbolized or by in FUNCTION_SCOPED) and symbolizer else 0
     unresolved_samples = int(symbolizer["unresolved_samples"]) if scoped else 0
     resolved = max(scoped - unresolved_samples, 0)
-    both = scoped > 0 and (bool(flags) or resolved != named)
+    both = scoped > 0 and (bool(flags) or resolved != named or by in FUNCTION_SCOPED)
     if both:
         text = (f"uProf DB {db_text}; profile symbolizer {resolved}/{scoped} samples "
                 f"({100.0 * resolved / scoped:.1f}%) resolve below module/RVA"
@@ -2460,7 +2461,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                     variables.update(symbols)
                     uprof_db.set_variables(connection, symbols)
                     _create_file_views(connection, symbols)
-                    symbolized = bool(symbols.get("uprof_symbols"))
+                    symbolized = bool(symbols.get("uprof_symbols")) or args.by in FUNCTION_SCOPED
                     symbolizer = _agreement_values(connection)
                     if symbols.get("uprof_symbols") and not symbol_transient:
                         cache.store_symbols(

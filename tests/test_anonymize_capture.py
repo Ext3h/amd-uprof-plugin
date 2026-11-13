@@ -419,6 +419,33 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertNotIn("example.invalid", text)
         self.assertNotIn("C:\\\\", text)
 
+    def test_call_graph_captures_pass_the_call_graph_option(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        settings = record.Settings()
+        timer = record.callgraph_command("timer-cg", self.out / "t", settings)
+        ibs = record.callgraph_command("ibs-cg", self.out / "i", settings)
+        for command in (timer, ibs):
+            self.assertEqual(command[command.index("--call-graph") + 1], "1:64:user:fpo")
+            self.assertIn("-a", command)
+        self.assertIn("event=timer,interval=4", timer)
+        self.assertIn("event=ibs-op,ibsop-count-control=1,interval=16000000", ibs)
+        self.assertIn("timer-cg", record.MODES)
+        self.assertIn("ibs-cg", record.MODES)
+
+    def test_the_overhead_notes_compare_the_iteration_rates(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        self.assertEqual(record.ns_per_iteration("class ns/iteration: 34\n"), 34)
+        self.assertIsNone(record.ns_per_iteration("nothing printed"))
+        notes = record.overhead_notes("lock", "timer-cg", 34, 51)
+        self.assertIn("without call graph: 34 ns", notes)
+        self.assertIn("with call graph: 51 ns", notes)
+        self.assertIn("1.50", notes)
+        self.assertIn("not measured", record.overhead_notes("lock", "ibs-cg", 34, None))
+
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

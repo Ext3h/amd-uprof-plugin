@@ -73,7 +73,7 @@ def llvm_version_skip(symbolizer=None) -> str | None:
     return uprof_native.llvm_cause(os.fspath(symbolizer)) if symbolizer else None
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _zlib_skip(symbolizer: str) -> str | None:
     completed = run(
         symbolizer,
@@ -127,6 +127,7 @@ def run(tool, *args, input_text: str | None = None) -> subprocess.CompletedProce
     command = [os.fspath(tool), *[os.fspath(arg) for arg in args]]
     return subprocess.run(
         command,
+        check=False,
         input=input_text,
         capture_output=True,
         text=True,
@@ -260,6 +261,7 @@ def profile_with_stderr(session, by="line", extra=()) -> tuple[dict, str]:
             "--json",
             *extra,
         ],
+        check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -275,5 +277,4 @@ def profile_with_stderr(session, by="line", extra=()) -> tuple[dict, str]:
 def relative_path_for_fallback(path) -> Path:
     """LLVM's fallback-debug-path candidate: the binary's path without its root."""
     text = str(path)
-    drive, rest = os.path.splitdrive(text)
-    return Path(rest.lstrip("\\/") if drive else rest.lstrip("\\/"))
+    return Path(os.path.splitdrive(text)[1].lstrip("\\/"))

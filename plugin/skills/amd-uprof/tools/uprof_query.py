@@ -23,8 +23,8 @@ from types import MappingProxyType
 from typing import Any, Final, TextIO
 
 import uprof_cache
-import uprof_db
 import uprof_context
+import uprof_db
 import uprof_dump
 import uprof_functions
 import uprof_native
@@ -1373,8 +1373,10 @@ def _function_scope_fields(
     """
     parent = [
         f"{scope['samples']} samples",
-        f"sample_share {_percent_share(scope['samples'], scope['total_samples'])} of the "
-        "scoped capture",
+        (
+            f"sample_share {_percent_share(scope['samples'], scope['total_samples'])} of the "
+            "scoped capture"
+        ),
     ]
     absent = legend.get("absent", {})
     if "time_share" in legend.get("columns", {}):
@@ -1942,8 +1944,10 @@ def _header_fields(
         fields.append(
             (
                 "DUMP",
-                "none; a timer capture has no IBS ASCII dump, so samples are the "
-                f"UnifiedSampleSeries {uprof_session.TIMER_EVENT_NAME} counts",
+                (
+                    "none; a timer capture has no IBS ASCII dump, so samples are the "
+                    f"UnifiedSampleSeries {uprof_session.TIMER_EVENT_NAME} counts"
+                ),
             )
         )
     elif dump is None:
@@ -1960,23 +1964,29 @@ def _header_fields(
         fields.append(
             (
                 "DUMP",
-                "none; this PMC capture has no IBS ASCII dump, so samples are the "
-                f"UnifiedSampleSeries event-column counts; {share}",
+                (
+                    "none; this PMC capture has no IBS ASCII dump, so samples are the "
+                    f"UnifiedSampleSeries event-column counts; {share}"
+                ),
             )
         )
         fields.append(
             (
                 "TIME_SHARE",
-                "not applicable; this export aggregates PMC samples per "
-                "window, so time_share is omitted; capture with --event "
-                "ibs-op (IBS OP with per-sample timestamps) to get it",
+                (
+                    "not applicable; this export aggregates PMC samples per "
+                    "window, so time_share is omitted; capture with --event "
+                    "ibs-op (IBS OP with per-sample timestamps) to get it"
+                ),
             )
         )
         fields.append(
             (
                 "TAG_TO_RETIRE_SHARE",
-                "not applicable; this export has no tag-to-retire "
-                "counter, so tag_to_retire_share is omitted",
+                (
+                    "not applicable; this export has no tag-to-retire "
+                    "counter, so tag_to_retire_share is omitted"
+                ),
             )
         )
     else:
@@ -1987,8 +1997,10 @@ def _header_fields(
             fields.append(
                 (
                     "DB",
-                    f"only the dump in {dump_dir} is valid; cpu.db must come from "
-                    f"the original session ({session_full / 'cpu.db'})",
+                    (
+                        f"only the dump in {dump_dir} is valid; cpu.db must come from "
+                        f"the original session ({session_full / 'cpu.db'})"
+                    ),
                 )
             )
         window = (
@@ -2000,12 +2012,14 @@ def _header_fields(
             fields.append(
                 (
                     "TIME_SHARE",
-                    "share of time estimated from the per-sample DeltaTick "
-                    f"gaps within {window}; an estimate: idle/wait is "
-                    "charged to the ending sample, the first sample per CPU "
-                    "inside the window is ignored (no gap before it), and "
-                    "NULL sorts last; with few samples the share is coarse, "
-                    "so check sample_share",
+                    (
+                        "share of time estimated from the per-sample DeltaTick "
+                        f"gaps within {window}; an estimate: idle/wait is "
+                        "charged to the ending sample, the first sample per CPU "
+                        "inside the window is ignored (no gap before it), and "
+                        "NULL sorts last; with few samples the share is coarse, "
+                        "so check sample_share"
+                    ),
                 )
             )
         else:
@@ -2018,15 +2032,17 @@ def _header_fields(
             fields.append(
                 (
                     "TIME_SHARE",
-                    "share of elapsed thread time estimated from the "
-                    "per-sample DeltaTick gaps within "
-                    f"{window}; the partition is (PID, TID), so a thread that "
-                    "migrates between CPUs is counted once; an estimate: "
-                    "idle/wait, including off-CPU time, is charged to the "
-                    "ending sample, the first sample per thread inside the "
-                    "window is ignored (no gap before it), and NULL sorts "
-                    "last; with few samples the share is coarse, so check "
-                    f"sample_share{cycle_basis}",
+                    (
+                        "share of elapsed thread time estimated from the "
+                        "per-sample DeltaTick gaps within "
+                        f"{window}; the partition is (PID, TID), so a thread that "
+                        "migrates between CPUs is counted once; an estimate: "
+                        "idle/wait, including off-CPU time, is charged to the "
+                        "ending sample, the first sample per thread inside the "
+                        "window is ignored (no gap before it), and NULL sorts "
+                        "last; with few samples the share is coarse, so check "
+                        f"sample_share{cycle_basis}"
+                    ),
                 )
             )
         if sampler.ibs_dump_kind == "ibsop-event-dump":
@@ -2034,44 +2050,52 @@ def _header_fields(
                 fields.append(
                     (
                         "TAG_TO_RETIRE_SHARE",
-                        "not available for this dump: no "
-                        "IbsTagToRetCtr column; sample_share and "
-                        "time_share are unaffected",
+                        (
+                            "not available for this dump: no "
+                            "IbsTagToRetCtr column; sample_share and "
+                            "time_share are unaffected"
+                        ),
                     )
                 )
             elif tag_available:
                 fields.append(
                     (
                         "TAG_TO_RETIRE_SHARE",
-                        "share of tag-to-retire cycles summed "
-                        "over sampled ops (AMD tag at dispatch to "
-                        "retirement, queue/stalls included; 16-bit "
-                        "counter clipped at 65535); a total, not "
-                        "per-op latency: a higher share means more "
-                        "total tag-to-retire cycles, not a higher "
-                        "per-op cost",
+                        (
+                            "share of tag-to-retire cycles summed "
+                            "over sampled ops (AMD tag at dispatch to "
+                            "retirement, queue/stalls included; 16-bit "
+                            "counter clipped at 65535); a total, not "
+                            "per-op latency: a higher share means more "
+                            "total tag-to-retire cycles, not a higher "
+                            "per-op cost"
+                        ),
                     )
                 )
             else:
                 fields.append(
                     (
                         "TAG_TO_RETIRE_SHARE",
-                        "not available for this dump: IbsTagToRetCtr "
-                        "has no nonzero values, so every "
-                        "tag_to_retire_share is NULL; the "
-                        "tag-to-retire counter comes from an IBS OP "
-                        "capture (--event ibs-op), not from PMC or "
-                        "IBS fetch; sample_share and time_share are "
-                        "unaffected",
+                        (
+                            "not available for this dump: IbsTagToRetCtr "
+                            "has no nonzero values, so every "
+                            "tag_to_retire_share is NULL; the "
+                            "tag-to-retire counter comes from an IBS OP "
+                            "capture (--event ibs-op), not from PMC or "
+                            "IBS fetch; sample_share and time_share are "
+                            "unaffected"
+                        ),
                     )
                 )
         else:
             fields.append(
                 (
                     "TAG_TO_RETIRE_SHARE",
-                    "not applicable; this export has no "
-                    "tag-to-retire counter, so "
-                    "tag_to_retire_share is omitted",
+                    (
+                        "not applicable; this export has no "
+                        "tag-to-retire counter, so "
+                        "tag_to_retire_share is omitted"
+                    ),
                 )
             )
     if sampler.timer:
@@ -2520,8 +2544,10 @@ def _coverage_field(
             return [
                 (
                     "SYMBOL_COVERAGE",
-                    f"{text}; every scoped sample is attributed below module/RVA; a derived row "
-                    "is actionable at its hot RVA",
+                    (
+                        f"{text}; every scoped sample is attributed below module/RVA; a derived "
+                        "row is actionable at its hot RVA"
+                    ),
                 )
             ]
         reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
@@ -2546,9 +2572,11 @@ def _coverage_field(
             return [
                 (
                     "SYMBOL_COVERAGE",
-                    f"{text}; every scoped sample is drillable below module/RVA; the uProf DB "
-                    "share reflects only what translate recorded, and profile's symbol paths "
-                    "affect the rows, not that share",
+                    (
+                        f"{text}; every scoped sample is drillable below module/RVA; the uProf DB "
+                        "share reflects only what translate recorded, and profile's symbol paths "
+                        "affect the rows, not that share"
+                    ),
                 )
             ]
         reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
@@ -2910,9 +2938,11 @@ def run_query_command(args: argparse.Namespace) -> None:
         session_arg, data = uprof_shell.path_arg(session, "<SESSION_DIR>")
         raise util.LinesError(
             [
-                f"cpu.db not found: {cpu_db} (run translate --session "
-                f"{session_arg} --out-dir <COPY_DIR> first, then query the "
-                "original session)",
+                (
+                    f"cpu.db not found: {cpu_db} (run translate --session "
+                    f"{session_arg} --out-dir <COPY_DIR> first, then query the "
+                    "original session)"
+                ),
                 data or "",
             ]
         )

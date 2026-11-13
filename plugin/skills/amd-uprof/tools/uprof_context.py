@@ -10,6 +10,7 @@ reported as unsupported rather than disassembled with different rules.
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import sys
@@ -269,9 +270,8 @@ def parse_image(text: str) -> ParsedImage:
             elif rva is None and bare.startswith("RVA:"):
                 if match := _EXPORT_RVA.match(line):
                     rva = int(match.group(1), 16)
-            elif name is None and bare.startswith("Name:"):
-                if match := _EXPORT_NAME.match(line):
-                    name = match.group(1) or None
+            elif name is None and bare.startswith("Name:") and (match := _EXPORT_NAME.match(line)):
+                name = match.group(1) or None
             continue
         if bare.startswith("Section") and _SECTION_BLOCK.match(line):
             current, in_section = {}, True
@@ -289,9 +289,12 @@ def parse_image(text: str) -> ParsedImage:
         elif bare.startswith("Magic:"):
             if magic is None and (match := _MAGIC.match(line)):
                 magic = int(match.group(1), 16)
-        elif bare.startswith("TimeDateStamp:"):
-            if date_stamp is None and (match := _DATE_STAMP.match(line)):
-                date_stamp = int(match.group(1), 16)
+        elif (
+            bare.startswith("TimeDateStamp:")
+            and date_stamp is None
+            and (match := _DATE_STAMP.match(line))
+        ):
+            date_stamp = int(match.group(1), 16)
     missing = [
         name
         for name, value in (
@@ -690,25 +693,25 @@ def ibs_summary(record: dict[str, object], fields: tuple[str, ...]) -> dict[str,
     """Per-RVA IBS labels keyed by field name; fields the capture lacks are omitted."""
     samples = int(record.get("samples") or 0)
     summary: dict[str, object] = {"samples": samples}
-    for field in fields:
-        if field in IBS_DISTRIBUTIONS:
-            counts = record.get(field)
+    for key in fields:
+        if key in IBS_DISTRIBUTIONS:
+            counts = record.get(key)
             if isinstance(counts, dict) and counts:
-                summary[field] = {
+                summary[key] = {
                     str(code): int(count)
                     for code, count in sorted(
                         counts.items(), key=lambda item: _code_key(str(item[0]))
                     )
                 }
-        elif field in IBS_FLAGS:
-            summary[field] = {"set": int(record.get(field) or 0), "of": samples}
-        elif field == IBS_LATENCY:
-            observed = int(record.get(f"{field}_samples") or 0)
+        elif key in IBS_FLAGS:
+            summary[key] = {"set": int(record.get(key) or 0), "of": samples}
+        elif key == IBS_LATENCY:
+            observed = int(record.get(f"{key}_samples") or 0)
             if observed:
-                summary[field] = {
+                summary[key] = {
                     "samples": observed,
-                    "sum": int(record.get(f"{field}_sum") or 0),
-                    "max": int(record.get(f"{field}_max") or 0),
+                    "sum": int(record.get(f"{key}_sum") or 0),
+                    "max": int(record.get(f"{key}_max") or 0),
                 }
     return summary
 
@@ -783,7 +786,7 @@ def parse_objdump(text: str, image_base: int) -> list[DecodedInstruction]:
         if not instruction:
             continue
         decoded.append(DecodedInstruction(address - image_base, instruction))
-    for current, following in zip(decoded, decoded[1:]):
+    for current, following in itertools.pairwise(decoded):
         current.next_rva = following.rva
     return decoded
 

@@ -107,11 +107,16 @@ class RecordedPdbPathTest(unittest.TestCase):
                 ),
                 mock.patch.object(uprof_symbols, "_choose_pdb", side_effect=RuntimeError("stop")),
             )
-            with patches[0], patches[1], patches[2], patches[3] as choose:
-                with self.assertRaises(RuntimeError):
-                    uprof_symbols.symbolize_module(
-                        str(module), rvas, root / "out", module_name="fixture.exe"
-                    )
+            with (
+                patches[0],
+                patches[1],
+                patches[2],
+                patches[3] as choose,
+                self.assertRaises(RuntimeError),
+            ):
+                uprof_symbols.symbolize_module(
+                    str(module), rvas, root / "out", module_name="fixture.exe"
+                )
 
         self.assertEqual(choose.call_args.kwargs["recorded_pdb"], Path(recorded))
 

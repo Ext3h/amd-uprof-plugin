@@ -12,10 +12,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import debug_fixtures as F
 import uprof_dump
 import uprof_util
-
-import debug_fixtures as F
 
 HEADER = "DeltaTick,CPU_Number,TID,PID,Offset,ModuleName,IbsTagToRetCtr"
 NOT_PRIVATE = "is not private to this user"

@@ -18,7 +18,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_context
 import uprof_query
 import uprof_session
@@ -131,6 +130,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
                 by,
                 *extra,
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

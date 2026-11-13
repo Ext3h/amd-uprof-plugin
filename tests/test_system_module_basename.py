@@ -9,9 +9,9 @@ Run from repository root: python tests/run_tests.py test_system_module_basename
 """
 
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import duckdb
 import uprof_db

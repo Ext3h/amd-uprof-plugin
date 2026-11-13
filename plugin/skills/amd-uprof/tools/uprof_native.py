@@ -32,7 +32,6 @@ from uprof_util import (
     contains,
     copy_session,
     inline,
-    one_line,
     parse_time_filter,
     skill_identity,
     tail_lines,
@@ -237,12 +236,16 @@ def _elevated_lookup_error() -> LinesError:
     )
     return LinesError(
         [
-            "AMDuProfCLI not found in an admin-writable install location; an elevated run ignores "
-            f"AMDUPROF_CLI and PATH{named}. Install AMD uProf to its default location ({default}), "
-            "then re-run collect",
-            "ALTERNATIVE: unelevated capture (user-mode samples only; OS-mode and IBS captures need "
-            f"elevation): from an unelevated shell, python {script} collect --out-dir <NEW_OUT_DIR> "
-            "--seconds <S>",
+            (
+                "AMDuProfCLI not found in an admin-writable install location; an elevated run "
+                f"ignores AMDUPROF_CLI and PATH{named}. Install AMD uProf to its default location "
+                f"({default}), then re-run collect"
+            ),
+            (
+                "ALTERNATIVE: unelevated capture (user-mode samples only; OS-mode and IBS captures "
+                f"need elevation): from an unelevated shell, python {script} collect --out-dir "
+                "<NEW_OUT_DIR> --seconds <S>"
+            ),
             script_data or "",
         ]
     )
@@ -400,7 +403,7 @@ class SymbolizerUnsupported(UprofError):
     """An LLVM tool is below LLVM_MINIMUM; the message is the cause and the remedy."""
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def llvm_cause(path: str) -> str | None:
     """None when the LLVM tool at path meets LLVM_MINIMUM, else its one-line cause.
 
@@ -456,7 +459,7 @@ def run(
     if IS_WINDOWS:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        return subprocess.run(command, **kwargs)
+        return subprocess.run(command, check=False, **kwargs)
     except FileNotFoundError as exc:
         raise UprofError(f"cannot run {command[0]}: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
@@ -699,10 +702,12 @@ def _translate_failure_lines(
     if NO_CATEGORY_LOG in log_text:
         cycles, ibs, data = recapture_commands(session)
         return [
-            f"{what} failed with {code}{crash}: the session has no translatable sample "
-            "category (per the AMDuProfCLI log), so it holds no samples to translate; "
-            f"remedy: capture again with {cycles} (cycles) or {ibs} (IBS), then translate "
-            "that session",
+            (
+                f"{what} failed with {code}{crash}: the session has no translatable sample "
+                "category (per the AMDuProfCLI log), so it holds no samples to translate; "
+                f"remedy: capture again with {cycles} (cycles) or {ibs} (IBS), then translate "
+                "that session"
+            ),
             *(data.split("\n") if data else []),
         ]
     if crash and log_path:
@@ -1109,7 +1114,7 @@ def symbolization_counts(cpu_db: Path | str) -> tuple[int, int | None, int] | No
 
     try:
         connection = uprof_db.connect(cpu_db)
-    except Exception:
+    except Exception:  # noqa: BLE001 - None means not inspectable; the caller says so
         return None
     try:
         columns = {
@@ -1126,7 +1131,7 @@ def symbolization_counts(cpu_db: Path | str) -> tuple[int, int | None, int] | No
         )
         functions = connection.execute("SELECT count(*) FROM Function").fetchone()[0]
         return int(modules), (None if with_debug is None else int(with_debug)), int(functions)
-    except Exception:
+    except Exception:  # noqa: BLE001 - None means not inspectable; the caller says so
         return None
     finally:
         connection.close()

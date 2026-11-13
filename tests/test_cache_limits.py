@@ -29,7 +29,12 @@ print(json.dumps([uprof_cache.ATTACH_TIMEOUT_S, uprof_cache.MAX_BYTES, uprof_cac
 def limits(extra_env):
     env = dict(os.environ, PYTHONPATH=str(TOOLS_DIR), **extra_env)
     completed = subprocess.run(
-        [sys.executable, "-c", PROBE], env=env, capture_output=True, text=True, encoding="utf-8"
+        [sys.executable, "-c", PROBE],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     return completed
 

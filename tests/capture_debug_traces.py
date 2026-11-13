@@ -13,7 +13,6 @@ the traces are symbol/debug-format and production-pipeline evidence, not hardwar
 """
 
 import argparse
-import json
 import os
 import re
 import shutil
@@ -27,7 +26,6 @@ sys.path.insert(0, str(HERE.parent / "plugin" / "skills" / "amd-uprof" / "tools"
 sys.path.insert(0, str(HERE))
 
 import debug_fixtures as F
-import uprof_symbols
 
 
 @dataclass(frozen=True)
@@ -176,10 +174,10 @@ def readobj_section(case: Case) -> list[str]:
         (r"^\s+Entry: (0x[0-9A-Fa-f]+)$", "entry"),
         (r"^\s+PointerToSymbolTable: (.+)$", "pointer_to_symbol_table"),
     ):
-        match = re.search(pattern, text, re.M)
+        match = re.search(pattern, text, re.MULTILINE)
         if match:
             facts.append(f"{label}={match.group(1).strip()}")
-    image_type = re.search(r"^\s+Type: (.+)$", text, re.M)
+    image_type = re.search(r"^\s+Type: (.+)$", text, re.MULTILINE)
     if image_type:
         facts.append(("debug_type=" if pe else "type=") + image_type.group(1).strip())
     sections = []
@@ -197,9 +195,9 @@ def readobj_section(case: Case) -> list[str]:
         facts.append("sections=" + ",".join(sections))
     if compressed:
         facts.append("compressed=" + ",".join(dict.fromkeys(compressed)))
-    filename = re.search(r"^\s+PDBFileName: (.+)$", text, re.M)
-    guid = re.search(r"^\s+PDBGUID: (.+)$", text, re.M)
-    age = re.search(r"^\s+PDBAge: (.+)$", text, re.M)
+    filename = re.search(r"^\s+PDBFileName: (.+)$", text, re.MULTILINE)
+    guid = re.search(r"^\s+PDBGUID: (.+)$", text, re.MULTILINE)
+    age = re.search(r"^\s+PDBAge: (.+)$", text, re.MULTILINE)
     if filename or guid or age:
         name = F.embedded_basename(filename.group(1).strip()) if filename else "unknown"
         parts = [f"pdb={name}"]
@@ -208,7 +206,7 @@ def readobj_section(case: Case) -> list[str]:
         if age:
             parts.append(f"age={age.group(1).strip()}")
         facts.append("debug " + " ".join(parts))
-    build_id = re.search(r"^\s+Build ID: (\S+)$", text, re.M)
+    build_id = re.search(r"^\s+Build ID: (\S+)$", text, re.MULTILINE)
     if build_id:
         facts.append(f"build_id={build_id.group(1)}")
     return facts
@@ -269,10 +267,10 @@ def pdb_section(case: Case) -> list[str]:
     types = run_tool(F.PDBUTIL, "dump", "--types", pdb)
     headers = run_tool(F.PDBUTIL, "dump", "--section-headers", pdb)
     publics = run_tool(F.PDBUTIL, "dump", "--publics", pdb)
-    guid = re.search(r"^\s+GUID: (.+)$", summary, re.M)
-    age = re.search(r"^\s+Age: (.+)$", summary, re.M)
-    has_types = re.search(r"^\s+Has Types: (.+)$", summary, re.M)
-    has_publics = re.search(r"^\s+Has Publics: (.+)$", summary, re.M)
+    guid = re.search(r"^\s+GUID: (.+)$", summary, re.MULTILINE)
+    age = re.search(r"^\s+Age: (.+)$", summary, re.MULTILINE)
+    has_types = re.search(r"^\s+Has Types: (.+)$", summary, re.MULTILINE)
+    has_publics = re.search(r"^\s+Has Publics: (.+)$", summary, re.MULTILINE)
     type_count = re.search(r"Showing (\d+) records", types)
     section_addresses = {}
     current = None
@@ -409,7 +407,7 @@ def fallback_case() -> tuple[str, list[str]]:
         target = fallback / F.relative_path_for_fallback(moved.parent) / "fixture_debuglink.debug"
         target.parent.mkdir(parents=True)
         shutil.copyfile(F.ELF / "fixture_debuglink.debug", target)
-        module, records, stream = F.production(moved, [F.ELF_ENTRY], symbol_dirs=[fallback])
+        module, records, _stream = F.production(moved, [F.ELF_ENTRY], symbol_dirs=[fallback])
     facts = [
         "# fixture: elf/fixture_debuglink (moved to another directory)",
         "# production fallback-root layout",

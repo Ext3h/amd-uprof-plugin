@@ -9,7 +9,6 @@ Run from the repository root: python tests/run_tests.py test_function_ranges
 # Spec: SPEC-56, SPEC-57
 
 import io
-import os
 import sys
 import tempfile
 import unittest
@@ -18,7 +17,6 @@ from pathlib import Path
 from unittest import mock
 
 import duckdb
-
 import uprof_context
 import uprof_db
 import uprof_functions
@@ -365,9 +363,11 @@ class DeriveCandidatesPoolTest(unittest.TestCase):
             def submit(self, *args):
                 return FakeFuture(error=KeyboardInterrupt())
 
-        with mock.patch.object(uprof_query, "ProcessPoolExecutor", InterruptingPool):
-            with self.assertRaises(KeyboardInterrupt):
-                uprof_query._derive_candidates([("a.dll", "p"), ("b.dll", "p")], {}, "readobj")
+        with (
+            mock.patch.object(uprof_query, "ProcessPoolExecutor", InterruptingPool),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            uprof_query._derive_candidates([("a.dll", "p"), ("b.dll", "p")], {}, "readobj")
 
 
 class ReadobjResolutionTest(unittest.TestCase):

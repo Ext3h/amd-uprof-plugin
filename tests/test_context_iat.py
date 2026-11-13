@@ -10,7 +10,6 @@ from unittest import mock
 
 import uprof_context
 
-
 IMPORTS = """\
 File: fixture.exe
 Format: COFF-x86-64
@@ -149,9 +148,11 @@ class LoadImportsTest(unittest.TestCase):
         build = uprof_context.BuildIdentity(0x140000000, 0, 0x100, 0x20B)
         completed = subprocess.CompletedProcess(["llvm-readobj"], 1, "", "boom")
 
-        with mock.patch.object(uprof_context, "run", return_value=completed):
-            with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.load_imports("fixture.exe", build, readobj="llvm-readobj.exe")
+        with (
+            mock.patch.object(uprof_context, "run", return_value=completed),
+            self.assertRaises(uprof_context.ContextOmission) as caught,
+        ):
+            uprof_context.load_imports("fixture.exe", build, readobj="llvm-readobj.exe")
 
         self.assertEqual(caught.exception.reason, "imports_failed")
 

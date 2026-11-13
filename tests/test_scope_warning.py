@@ -50,6 +50,7 @@ class ScopeWarningTest(unittest.TestCase):
                 "module",
                 *extra,
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

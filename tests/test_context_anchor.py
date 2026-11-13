@@ -8,7 +8,6 @@ import unittest
 
 import uprof_context
 
-
 FILE_HEADERS = """\
 File: fixture.exe
 Format: COFF-x86-64

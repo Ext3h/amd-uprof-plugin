@@ -34,7 +34,6 @@ from uprof_native import (
     find_sibling,
     find_symbolizer,
     parse_nt_symbol_path,
-    symbol_cache_dir,
 )
 from uprof_util import contains, is_remote_path, one_line, same_path
 
@@ -616,10 +615,9 @@ class SessionCache:
     def _detach(self) -> None:
         if self.mode is None:
             return
-        try:
+        # A failed detach cannot change the result.
+        with contextlib.suppress(Exception):
             self.connection.execute(f"DETACH {CACHE_ALIAS}")
-        except Exception:  # noqa: BLE001 - a failed detach cannot change the result
-            pass
         self.mode = None
 
     def ensure_read(self) -> bool:
@@ -940,8 +938,10 @@ class SessionCache:
             (
                 "uprof_symbols_source",
                 "symbols",
-                "SELECT module_name, address, function, function_short, containing_function, "
-                "file, line",
+                (
+                    "SELECT module_name, address, function, function_short, containing_function, "
+                    "file, line"
+                ),
             ),
             (
                 "uprof_aliases_source",

@@ -26,15 +26,15 @@ import subprocess
 import sys
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 TRIALS = Path(__file__).resolve().parent
 REPO = TRIALS.parent
 sys.path.insert(0, str(TRIALS))
 
-import build_captures  # noqa: E402
-from runners import TrialSpec, runners  # noqa: E402
+import build_captures
+from runners import TrialSpec, runners
 
 FIELD = re.compile(r"^- \*\*(\w[\w ]*):\*\*\s*(.*)$")
 
@@ -188,8 +188,7 @@ def run_one(
     )
     result = runner.run(spec)
     with open(out / "transcript.jsonl", "w", encoding="utf-8", newline="\n") as handle:
-        for event in result.events:
-            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+        handle.writelines(json.dumps(event, ensure_ascii=False) + "\n" for event in result.events)
     meta = {
         "scenario": scn,
         "prompt": prompt,
@@ -222,8 +221,10 @@ def runlog(run_dir: Path, header: dict[str, str], metas: list[dict], skipped: di
         "Answers are not judged here; apply `trials/observer.md` to the transcripts.",
         f"Context is the final-turn context in tokens; a run passes only below {context_limit()}.",
         "",
-        "| Scenario | Exit | Wall s | Tool calls | Tools | Tool errors | Answered | "
-        "Outside references | Context |",
+        (
+            "| Scenario | Exit | Wall s | Tool calls | Tools | Tool errors | Answered | "
+            "Outside references | Context |"
+        ),
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for meta in sorted(metas, key=lambda m: m["scenario"]):
@@ -295,7 +296,7 @@ def main(argv: list[str] | None = None, registry: dict[str, type] | None = None)
             )
         )
     header = {
-        "Started": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "Started": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
         "Runner": runner.name,
         "Model": args.model,
         "Plugin": source,

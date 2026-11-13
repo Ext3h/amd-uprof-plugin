@@ -21,7 +21,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_db
 import uprof_session
 
@@ -113,7 +112,7 @@ class AttachedTimeShareTest(unittest.TestCase):
             )
             connection.execute(f"INSERT INTO Module VALUES (1, '{ALPHA}'), (2, '{BETA}')")
             connection.execute(
-                f"INSERT INTO Function VALUES (10, 1, 'alpha_fn'), (20, 2, 'beta_fn')"
+                "INSERT INTO Function VALUES (10, 1, 'alpha_fn'), (20, 2, 'beta_fn')"
             )
             connection.execute(
                 f"INSERT INTO UnifiedSampleSeries VALUES "
@@ -149,6 +148,7 @@ class AttachedTimeShareTest(unittest.TestCase):
                 "function",
                 *extra,
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -167,6 +167,7 @@ class AttachedTimeShareTest(unittest.TestCase):
                 "--by",
                 "function",
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

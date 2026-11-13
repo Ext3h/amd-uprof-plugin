@@ -9,7 +9,6 @@ Run from the repository root: python tests/run_tests.py test_timer_capture
 """
 
 import contextlib
-import copy
 import io
 import json
 import math
@@ -21,12 +20,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import timer_fixture
 import debug_fixtures as F
+import timer_fixture
 import uprof_collect
 import uprof_dump
 import uprof_native
-import uprof_shell
 import uprof_session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -90,6 +88,7 @@ class _Session(unittest.TestCase):
     def run_tool(self, *args):
         result = subprocess.run(
             [sys.executable, str(TOOLS_DIR / "uprof.py"), *args],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -342,7 +341,7 @@ class TimerOutputTest(_Session):
                 text = self.symbolized(
                     by, "--function", HASH_NAME, "--module", timer_fixture.IMAGE_KEY
                 )
-                parent = re.search(r"^PARENT: .*$", text, re.M).group(0)
+                parent = re.search(r"^PARENT: .*$", text, re.MULTILINE).group(0)
                 self.assertIn("cpu_seconds absent (on the reference host", parent)
 
     def test_module_rows_keep_the_external_share(self):
@@ -372,21 +371,23 @@ class TimerOutputTest(_Session):
             f"top row {timer_fixture.IMAGE_KEY} {100 * share:.1f}% "
             f"±{100 * half:.1f} points (95% binomial, n={TOTAL})"
         )
-        read = re.search(r"^READ: .*$", self.profile("module"), re.M).group(0)
+        read = re.search(r"^READ: .*$", self.profile("module"), re.MULTILINE).group(0)
         self.assertTrue(read.endswith(expected), read)
         self.assertIn("72.8% ±2.3 points", expected)
 
     def test_read_states_no_interval_below_thirty_samples(self):
         session = timer_fixture.build(self.root / "small", keep_rows=20)
-        read = re.search(r"^READ: .*$", self.profile("module", session=session), re.M).group(0)
+        read = re.search(
+            r"^READ: .*$", self.profile("module", session=session), re.MULTILINE
+        ).group(0)
         self.assertRegex(read, r"top row \S+ \d+\.\d% \(n=(\d|1\d|2\d); no interval\)$")
 
     def test_read_states_no_interval_for_a_whole_share(self):
-        read = re.search(r"^READ: .*$", self.profile("process"), re.M).group(0)
+        read = re.search(r"^READ: .*$", self.profile("process"), re.MULTILINE).group(0)
         self.assertTrue(read.endswith(f"100.0% (n={TOTAL}; no interval)"), read)
 
     def test_achieved_reports_the_busiest_thread_without_warning(self):
-        achieved = re.search(r"^ACHIEVED: .*$", self.profile("process"), re.M).group(0)
+        achieved = re.search(r"^ACHIEVED: .*$", self.profile("process"), re.MULTILINE).group(0)
         self.assertIn(f"{TOTAL} samples", achieved)
         self.assertIn("busiest thread", achieved)
         self.assertIn("1 active thread", achieved)
@@ -463,9 +464,11 @@ class TimerFailureTest(_Session):
         session = self.root / "none"
         session.mkdir()
         (session / "session.uprof").write_text(json.dumps({"collection": {}}), encoding="utf-8")
-        with mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)):
-            with self.assertRaises(uprof_native.UprofError) as raised:
-                uprof_dump.resolve_dump(session, uprof_session.derive_sampler(session))
+        with (
+            mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)),
+            self.assertRaises(uprof_native.UprofError) as raised,
+        ):
+            uprof_dump.resolve_dump(session, uprof_session.derive_sampler(session))
         text = str(raised.exception)
         self.assertEqual(text.splitlines()[0], "session.uprof records no IBS, PMC or timer event")
         self.assertEqual(_labels(text), ["timer capture", "timer capture (launch)", "Zen host"])
@@ -514,9 +517,9 @@ class CollectRejectionTest(unittest.TestCase):
             ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(uprof_native.UprofError) as raised,
         ):
-            with self.assertRaises(uprof_native.UprofError) as raised:
-                uprof_collect.collect(options)
+            uprof_collect.collect(options)
         return str(raised.exception), calls
 
     def test_rejected_cycle_event(self):

@@ -12,29 +12,29 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path, PureWindowsPath
+from typing import ClassVar
 
 import debug_fixtures as F
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "trials"))
-import run_trials  # noqa: E402
-from runners import TrialResult, TrialSpec  # noqa: E402
-from runners import claude_code  # noqa: E402
+import run_trials
+from runners import TrialResult, TrialSpec, claude_code
 
 
 def spec(root: Path, **overrides) -> TrialSpec:
-    values = dict(
-        trial_id="SCN-02",
-        prompt="Where did the time go?",
-        model="small-model",
-        plugin_dir=root / "plugin",
-        capture_dir=root / "captures" / "SCN-02",
-        cwd=root / "trials" / "SCN-02",
-        out_dir=root / "out" / "SCN-02",
-        read_roots=(root / "trials" / "SCN-02", root / "plugin", root / "captures" / "SCN-02"),
-        deny_roots=(root / "repo",),
-        timeout_s=60,
-    )
+    values = {
+        "trial_id": "SCN-02",
+        "prompt": "Where did the time go?",
+        "model": "small-model",
+        "plugin_dir": root / "plugin",
+        "capture_dir": root / "captures" / "SCN-02",
+        "cwd": root / "trials" / "SCN-02",
+        "out_dir": root / "out" / "SCN-02",
+        "read_roots": (root / "trials" / "SCN-02", root / "plugin", root / "captures" / "SCN-02"),
+        "deny_roots": (root / "repo",),
+        "timeout_s": 60,
+    }
     values.update(overrides)
     return TrialSpec(**values)
 
@@ -185,8 +185,8 @@ class ClaudeCodeAdapterTest(unittest.TestCase):
 
 class FakeRunner:
     name = "fake"
-    specs: list = []
-    context: dict = {}
+    specs: ClassVar[list] = []
+    context: ClassVar[dict] = {}
 
     def run(self, trial: TrialSpec) -> TrialResult:
         FakeRunner.specs.append(trial)

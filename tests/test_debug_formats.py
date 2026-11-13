@@ -390,7 +390,7 @@ class PeMismatchedPdbTest(FixtureTestCase):
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
     def test_production_reports_no_accepted_pdb(self):
-        module, records, stream = F.production(F.PE / "fixture_mismatch.exe", [F.PE_ENTRY])
+        module, _records, stream = F.production(F.PE / "fixture_mismatch.exe", [F.PE_ENTRY])
         self.assertIsNone(module.pdb)
         self.assertEqual(module.evidence.outcome, "no_pdb")
         self.assertIn("PDB=none", stream)
@@ -616,14 +616,14 @@ class ElfSeparateDebugTest(FixtureTestCase):
         self.assert_names_line(with_root[F.ELF_ENTRY], "fixture_entry", 6)
 
     def test_production_passes_the_buildid_debug_root_to_the_symbolizer(self):
-        module, records, stream = F.production(
+        module, records, _stream = F.production(
             F.ELF / "fixture_buildid", [F.ELF_ENTRY], symbol_dirs=[F.ELF / "debug" / "buildid"]
         )
         self.assertIsNone(module.pdb)
         self.assert_names_line(frames(records)[F.ELF_ENTRY], "fixture_entry", 6)
 
     def test_production_uses_a_debuglink_sidecar_by_adjacency(self):
-        module, records, stream = F.production(
+        module, records, _stream = F.production(
             F.ELF / "fixture_debuglink", [F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY]
         )
         self.assertIsNone(module.pdb)
@@ -636,7 +636,7 @@ class ElfSeparateDebugTest(FixtureTestCase):
             target = Path(root) / relative / "fixture_debuglink.debug"
             target.parent.mkdir(parents=True)
             shutil.copyfile(F.ELF / "fixture_debuglink.debug", target)
-            missing, missing_records, _ = F.production(binary, [F.ELF_ENTRY])
+            _missing, missing_records, _ = F.production(binary, [F.ELF_ENTRY])
             module, records, _ = F.production(binary, [F.ELF_ENTRY], symbol_dirs=[root])
         self.assertFalse(frames(missing_records)[F.ELF_ENTRY].get("Line"))
         self.assertIsNone(module.pdb)
@@ -677,7 +677,7 @@ class ElfSymbolTableTest(FixtureTestCase):
         self.assert_names_no_line(resolved[F.ELF_ENTRY], "fixture_entry")
 
     def test_production_keeps_the_names_without_lines(self):
-        module, records, stream = F.production(
+        module, records, _stream = F.production(
             F.ELF / "fixture_symtab", [F.ELF_HELPER, F.ELF_ENTRY]
         )
         self.assertIsNone(module.pdb)
@@ -712,7 +712,7 @@ class ElfNoSymbolsTest(FixtureTestCase):
         self.assertEqual(resolved[F.ELF_HELPER].get("Line"), 0)
 
     def test_production_writes_the_empty_frame_without_failing(self):
-        module, records, stream = F.production(F.ELF / "fixture_nosym", [F.ELF_HELPER])
+        module, records, _stream = F.production(F.ELF / "fixture_nosym", [F.ELF_HELPER])
         self.assertIsNone(module.pdb)
         self.assertEqual(len(records), 1)
         frame = F.innermost(records[0])

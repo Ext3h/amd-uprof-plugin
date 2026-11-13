@@ -27,7 +27,7 @@ REPO = Path(__file__).resolve().parents[1]
 UPROF = REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"
 TRIALS = REPO / "trials"
 sys.path.insert(0, str(TRIALS))
-import build_captures  # noqa: E402
+import build_captures
 
 CALL = re.compile(r"^\s+\d+\. `python <SKILL_DIR>/tools/uprof\.py (.+)`$")
 FIELD = re.compile(r"^- \*\*(\w[\w ]*):\*\*\s*(.*)$")

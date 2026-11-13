@@ -22,19 +22,19 @@ import uprof_db
 from uprof_native import (
     NtSymbolPath,
     SymbolizerUnsupported,
+    ToolTimeout,
     find_sibling,
     parse_nt_symbol_path,
     require_symbolizer,
     run,
     symbol_cache_dir,
-    ToolTimeout,
     tool_operand,
 )
 from uprof_util import (
     UprofError,
     absolute,
-    is_remote_path,
     inline,
+    is_remote_path,
     one_line,
     read_text,
     require_file,
@@ -978,7 +978,7 @@ def symbolize_module(
     out_path.mkdir(parents=True, exist_ok=True)
     jsonl_file = out_path / "symbols.jsonl"
     parquet_file = out_path / "symbols.parquet"
-    publics_file = out_path / "symbols.publics.csv"
+    out_path / "symbols.publics.csv"
     symbolizer_path = require_symbolizer()
     evidence = ModuleEvidence(module_name or exe, exe, found_debug_info=found_debug_info)
     pdb: Path | None = None
@@ -1239,8 +1239,10 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
     if evidence.outcome == "resolved":
         return
     facts = [
-        f"image GUID {evidence.image_guid or 'unknown'} "
-        f"age {evidence.image_age if evidence.image_age is not None else 'unknown'}",
+        (
+            f"image GUID {evidence.image_guid or 'unknown'} "
+            f"age {evidence.image_age if evidence.image_age is not None else 'unknown'}"
+        ),
         "debug info recorded: "
         + (
             "no"
@@ -1460,7 +1462,7 @@ def _symbolize_worker(
             publics=result.publics,
             pdb=str(result.pdb) if result.pdb else None,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the caller reports each module's error
         return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence, error=exc)
 
 

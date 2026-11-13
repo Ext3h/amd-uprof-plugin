@@ -17,7 +17,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_db
 import uprof_session
 
@@ -154,6 +153,7 @@ class ModuleProfileTest(unittest.TestCase):
                 by,
                 *extra,
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -225,9 +225,9 @@ class ModuleProfileTest(unittest.TestCase):
             f"1000000000,0,1,100,4096,{WORKLOAD},10",
             f"2000000000,0,1,100,4096,{WORKLOAD},20",
             f"3000000000,0,1,100,8192,{WORKLOAD},30",
-            f"4000000000,0,1,100,8192,ntdll.dll,40",
+            "4000000000,0,1,100,8192,ntdll.dll,40",
         ]
-        columns, module_rows = self.run_sql(self.session("hot-rva", body=rows))
+        _columns, module_rows = self.run_sql(self.session("hot-rva", body=rows))
         by_module = {row["module"]: row for row in module_rows}
 
         # Workload has two samples at 0x1000 and one at 0x2000; ntdll has one at 0x2000.

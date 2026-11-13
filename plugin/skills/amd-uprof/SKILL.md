@@ -179,7 +179,7 @@ This path is an **attached, cycle-controlled IBS** capture (`collect --event ibs
 - `region` groups by module + RVA aligned down to 4096. The page may span unrelated code; `hot_rva` is the most precise attribution and `sampled_addresses` tells a tight cluster from a diffuse bucket.
 - **Inline-overload limitation:** an inlined frame carries no signature. It keys on the short name, so when only one out-of-line signature exists for that name it is displayed under that signature even if it belongs to a different same-named overload.
 - Sentinels: `<no symbol>` (no function name; groups per module), `<no source line>` (function but no file/line; groups per module + function), `<multiple>` (a line group whose function or module annotations disagree). A frame with a file/line but no function stays under `<no symbol>`, and its weight is disclosed in `AGREEMENT`.
-- `attribution` per row: `unique`, `shared` (folded address), `derived` (synthetic binary range) or `unresolved`; function rows are `unique`, `derived` or `unresolved`; a region row describes its hot RVA. Remainder rows carry `NULL`.
+- `attribution` per row: `unique`, `shared` (folded address), `derived` (synthetic binary range) or `unresolved`; a region row describes its hot RVA. Remainder rows carry `NULL`.
 
 ## Instruction context (JSON only)
 
@@ -225,7 +225,7 @@ The aggregate `<other instructions>` row carries no `context`.
 
 ## Shared addresses
 
-`/OPT:ICF` folds identical bodies, so one RVA can carry several public names. When `llvm-pdbutil` is available on Windows, symbolization builds a per-module public-symbol cache and labels each folded start `shared: nameA | nameB` with `attribution = shared`, at `region`, `line` and `instruction` granularity. Report that share as shared, not under one name. Without `llvm-pdbutil` no PDB is used (`no_pdb`), so there is no fold cache (`FOLDS: skipped`). Resolved Linux DWARF symbols are all `unique` (unverified here).
+`/OPT:ICF` folds identical bodies, so one RVA can carry several public names. When `llvm-pdbutil` is available on Windows, symbolization builds a per-module public-symbol cache and labels each folded start `shared: nameA | nameB` with `attribution = shared`, at `function`, `region`, `line` and `instruction` granularity. Report that share as shared, not under one name. Without `llvm-pdbutil` no PDB is used (`no_pdb`), so there is no fold cache (`FOLDS: skipped`). Resolved Linux DWARF symbols are all `unique` (unverified here).
 
 ## Failure behaviour
 

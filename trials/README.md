@@ -27,8 +27,9 @@ python trials/build_captures.py <OUT_DIR> attached pdb_far
 `<OUT_DIR>` must not exist. It receives one directory per session and `bins/` with the images
 those sessions record. The images are copies of committed test fixtures, and the PE CheckSum and
 SizeOfImage recorded in `cpu.db` are read from those copies, so a rebuilt fixture never leaves a
-stale identity behind. The system modules (`amdvlk64.dll`, `ntdll.dll`) are the repository's own
-`tests/fixtures/fixture.exe` under those names, never a copied vendor or OS binary.
+stale identity behind. The other modules (`amdvlk64.dll`, `ntdll.dll`, `node.exe`) are the
+repository's own `tests/fixtures/fixture.exe` under those names, never a copied vendor or OS
+binary.
 
 Module paths in a session are the absolute paths of the images under `<OUT_DIR>`, so build the
 captures on the host that analyses them and do not move the folder afterwards.

@@ -98,7 +98,8 @@ and the remainder carry the same parent shares, so they sum to the parent total.
 
 `--symbol-path` and `--image-path` affect the symbolized rows and the profile symbolizer share, not
 the share of samples the capture itself named; a source needs verified identity or, if
-unverifiable, the module's PDB name and a warning; another build's source fails.
+unverifiable, the module's PDB name and a warning; another build's source is a resolution failure,
+not success.
 
 ### 3.4 Time filter
 

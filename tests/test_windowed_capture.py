@@ -73,7 +73,7 @@ def pmc_capture(root, translate_command):
             "moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER, "
             f'"{PMC_COLUMN}" DOUBLE)'
         )
-        connection.execute("INSERT INTO Process VALUES (1, 'app.exe')")
+        connection.execute("INSERT INTO Process VALUES (1, 'c:\\capture\\app.exe')")
         connection.execute("INSERT INTO Module VALUES (1, 'c:/app/app.exe')")
         connection.execute("INSERT INTO UnifiedSampleSeries VALUES (1, 1, 1, NULL, 16, 0, 5)")
     finally:

@@ -57,7 +57,7 @@ class FunctionSharedTest(unittest.TestCase):
                     "functionId UBIGINT, moduleRVA UBIGINT, "
                     'processId UINTEGER, coreId UINTEGER, "event#0x76" BIGINT)'
                 )
-                connection.execute("INSERT INTO Process VALUES (100, 'app.exe')")
+                connection.execute("INSERT INTO Process VALUES (100, 'c:\\capture\\app.exe')")
                 connection.execute("INSERT INTO Module VALUES (1, 'C:\\bin\\a.dll', false)")
                 connection.execute("INSERT INTO Function VALUES (1, 1, '', 4096, 128, 0)")
                 connection.execute(

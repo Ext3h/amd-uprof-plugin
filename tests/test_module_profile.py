@@ -88,7 +88,7 @@ class ModuleProfileTest(unittest.TestCase):
                 "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
                 "functionId UBIGINT, moduleRVA UBIGINT)"
             )
-            connection.execute("INSERT INTO Process VALUES (100, 'workload.exe')")
+            connection.execute("INSERT INTO Process VALUES (100, 'c:\\capture\\workload.exe')")
             for module_id, path, system in modules:
                 if flags:
                     connection.execute(

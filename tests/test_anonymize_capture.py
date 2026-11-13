@@ -144,6 +144,47 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertIn("UnifiedSampleSeries.moduleId", stderr)
         self.assertFalse((self.out / "cpu.db").exists())
 
+    def change_schema(self, *statements):
+        import duckdb
+
+        connection = duckdb.connect(str(self.session / "cpu.db"))
+        try:
+            for statement in statements:
+                connection.execute(statement)
+        finally:
+            connection.close()
+
+    def test_keys_and_foreign_keys_in_the_capture_do_not_stop_the_filter(self):
+        # A schema with a primary key on Process and a foreign key from its threads must not
+        # make deleting another process's rows fail.
+        self.change_schema(
+            "CREATE TABLE keyed (id UINTEGER PRIMARY KEY, name VARCHAR)",
+            "INSERT INTO keyed SELECT id, name FROM Process",
+            "DROP TABLE Process",
+            "ALTER TABLE keyed RENAME TO Process",
+            "CREATE TABLE ProcessThread (id UBIGINT, processId UINTEGER REFERENCES Process(id), "
+            "threadId UINTEGER, threadName VARCHAR)",
+            "INSERT INTO ProcessThread SELECT DISTINCT threadId, processId, threadId, "
+            "'C:\\Users\\alice\\t' FROM UnifiedSampleSeries",
+        )
+        code, stderr = self.run_main()
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(
+            self.query("SELECT DISTINCT processId FROM ProcessThread"), [(build_captures.PID,)]
+        )
+
+    def test_a_duckdb_failure_ends_in_one_cause_line(self):
+        self.change_schema(
+            "CREATE TABLE Odd (processId VARCHAR)", "INSERT INTO Odd VALUES ('not a number')"
+        )
+        code, stderr = self.run_main()
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", stderr)
+        lines = [line for line in stderr.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1, stderr)
+        self.assertIn("Odd", lines[0])
+        self.assertIn("DuckDB", lines[0])
+
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

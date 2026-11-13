@@ -75,6 +75,25 @@ The skill runs `tools/uprof.py`:
 `SKILL.md` in `plugin/skills/amd-uprof/` is the entry point and the full contract; `docs/`
 carries the specification, derivation notes and validation records (not installed).
 
+## Elevation
+
+Only `collect` needs administrator or root rights, and only for AMDuProfCLI's capture; run
+`translate` and `profile` from a normal shell. An elevated `collect` reaches exactly these:
+
+| Path | What runs or is read elevated |
+|---|---|
+| interpreter and plugin code | `python` as the elevated shell resolves it, the standard library, `PYTHONPATH`, user site-packages, the plugin directory (its `__pycache__` is written there) |
+| AMDuProfCLI lookup and run | `AMDUPROF_CLI`, `PATH`, the Program Files or `/opt` installs; `--version`, then `collect` (argument list, no shell) |
+| core frequency | `HKLM` registry, `/sys`, `/proc` (read only) |
+| elevation check, skill identity | read only |
+| IBS fallback cause (Windows) | PowerShell CIM query for VBS and hypervisor state |
+| output directory | uProf's `-o`; the IBS-to-cycles fallback creates a new `<out-dir>-cycles-*` directory and deletes nothing |
+| session verification | reads the new `session.uprof` |
+
+An elevated `collect` loads no DuckDB, no LLVM tool and no cache, and makes no network access.
+`tests/test_elevated_collect.py` checks the imports, that nothing is deleted and that its
+messages are the tool's own text.
+
 ## Layout
 
 - `plugin/` — the plugin source: `.claude-plugin/plugin.json` and `skills/amd-uprof/` (the

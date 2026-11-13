@@ -7,10 +7,10 @@ the session this run created from a stale session.uprof in the same parent.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+import tempfile
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -192,13 +192,13 @@ def _run_cli(uprof: str, event_spec: str, target_args: list[str],
     return completed
 
 
-def _session_marker(out_dir: Path) -> tuple[bool, bool, set[Path]]:
+def _session_marker(out_dir: Path) -> tuple[bool, set[Path]]:
     existed = out_dir.is_dir()
     session_before = existed and (out_dir / "session.uprof").is_file()
     children: set[Path] = set()
     if existed:
         children = {child for child in out_dir.iterdir() if child.is_dir()}
-    return existed, session_before, children
+    return session_before, children
 
 
 def _new_sessions(out_dir: Path, session_before: bool, children_before: set[Path]) -> list[Path]:
@@ -214,16 +214,20 @@ def _new_sessions(out_dir: Path, session_before: bool, children_before: set[Path
     return found
 
 
-def _discard_failed_attempt(out_dir: Path, existed: bool, children_before: set[Path]) -> None:
-    """Remove directories the failed IBS run created, so the fallback starts clean."""
-    if not existed and out_dir.is_dir():
-        shutil.rmtree(out_dir, ignore_errors=True)
-        return
-    if not out_dir.is_dir():
-        return
-    for child in out_dir.iterdir():
-        if child.is_dir() and child not in children_before:
-            shutil.rmtree(child, ignore_errors=True)
+def _fallback_dir(out_dir: Path) -> Path:
+    """A new directory beside out_dir for the cycle capture.
+
+    collect runs elevated in a directory an unelevated process can change, so the failed IBS
+    attempt is never removed: a link swapped in for out_dir or a parent would turn that into an
+    elevated delete of the link's target. A directory the tool just created also holds no
+    session planted during the IBS run.
+    """
+    try:
+        out_dir.parent.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=f"{out_dir.name}-cycles-", dir=out_dir.parent))
+    except OSError as exc:
+        raise UprofError(f"cannot create a directory beside {out_dir} for the cycle capture: "
+                         f"{exc}; pass an --out-dir in a writable directory and re-run") from exc
 
 
 def _one_session(out_dir: Path, session_before: bool, children_before: set[Path]) -> Path:
@@ -270,7 +274,7 @@ def collect(options: CollectOptions) -> None:
         return
     uprof = require_uprof()
 
-    existed, session_before, children_before = _session_marker(out_dir)
+    session_before, children_before = _session_marker(out_dir)
     effective_event = options.event
     completed = _run_cli(uprof, _event_spec(options, effective_event, interval), target_args,
                          options)
@@ -279,8 +283,11 @@ def collect(options: CollectOptions) -> None:
             and _IBS_UNAVAILABLE in combined):
         reason = ibs_unavailable_reason()
         print(f"SAMPLER: falling back to cycle sampling (time-based); IBS unavailable: {reason}")
-        _discard_failed_attempt(out_dir, existed, children_before)
-        existed, session_before, children_before = _session_marker(out_dir)
+        out_dir = _fallback_dir(out_dir)
+        print(f"NOTE: the failed IBS attempt is left in {options.out_dir}; the cycle capture "
+              f"goes to {out_dir}", file=sys.stderr)
+        options = replace(options, out_dir=str(out_dir))
+        session_before, children_before = _session_marker(out_dir)
         effective_event = "cycles"
         if mode != "cycles":
             # An op count is not a time; the fallback uses the documented cycle default.

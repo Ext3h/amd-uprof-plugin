@@ -50,6 +50,6 @@ key names, for #237.
 
 | File | Role |
 |---|---|
-| `trials/defect_lab/*.c`, `lab.h`, `kernel32.def`, `build.py` | the workload and its build (freestanding C, no C runtime; sources compiled under relative names, so no host path reaches the PDBs) |
+| `trials/defect_lab/*.c`, `lab.h`, `kernel32.def`, `build.py` | the workload and its build (freestanding C, no C runtime; sources compiled under relative names, so no host path reaches the PDBs; frame pointers and unwind tables (`.pdata`) so uProf can walk call stacks through the lab's frames) |
 | `trials/defect_lab/record.py` | starts the stressors and the class, records each mode, translates, writes `keys.txt`, anonymizes |
 | `trials/anonymize_capture.py` | keeps the named processes, deletes the rest, rewrites host paths, empties HostInfo, bundles the matching images and PDBs (`--bundle`), writes `review.txt` and checks it |

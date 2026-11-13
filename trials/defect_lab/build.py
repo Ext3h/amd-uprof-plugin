@@ -28,6 +28,10 @@ CFLAGS = [
     "-ffreestanding",
     "-fno-builtin",
     "-fno-stack-protector",
+    # uProf walks call stacks by frame pointer or by unwind information (.pdata); without both
+    # the -cg captures held only the sampled frame.
+    "-fno-omit-frame-pointer",
+    "-fasynchronous-unwind-tables",
 ]
 LFLAGS = ["/nodefaultlib", "/debug", "/pdbaltpath:%_PDB%", "/pdbsourcepath:.", "/release"]
 SOURCES = ("lab_vendor", "lab_core", "lab_busy", "defect_lab")

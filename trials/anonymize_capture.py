@@ -27,7 +27,6 @@ import getpass
 import json
 import os
 import re
-import shutil
 import socket
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -107,31 +106,61 @@ def kept_processes(connection, names: list[str]) -> list[int]:
     return sorted(pid for pids in found.values() for pid in pids)
 
 
-def filter_rows(connection, pids: list[int]) -> None:
+def run(connection, sql: str, step: str, params=()):
+    """Execute sql; a DuckDB failure becomes a Refused with one cause line."""
+    import duckdb
+
+    try:
+        return connection.execute(sql, list(params))
+    except duckdb.Error as exc:
+        detail = " ".join(str(exc).split())[:300]
+        raise Refused(f"DuckDB {duckdb.__version__} failed while {step}: {detail}; send this "
+                      "line and the table list `review.txt` would show (or the output of "
+                      "`SELECT table_name, column_name, data_type FROM duckdb_columns()` on "
+                      "the capture's cpu.db)") from exc
+
+
+def copy_filtered(connection, pids: list[int]) -> None:
+    """Copy every table of src into packed, keeping only the kept processes' rows.
+
+    Copying into a fresh database instead of deleting from a copy keeps no key or foreign-key
+    constraint of the capture, so removing another process's rows cannot violate one.
+    """
     pid_list = ", ".join(str(pid) for pid in pids)
-    tables = tables_of(connection)
-    for table in tables:
-        columns = columns_of(connection, table)
-        if table == "Process":
-            connection.execute(f'DELETE FROM "Process" WHERE id NOT IN ({pid_list})')
-        elif "processId" in columns:
-            connection.execute(f'DELETE FROM "{table}" WHERE "processId" IS NULL '
-                               f'OR "processId" NOT IN ({pid_list})')
-        if "host" in table.lower():
-            connection.execute(f'DELETE FROM "{table}"')
-    modules = {row[0] for row in connection.execute(
-        "SELECT DISTINCT moduleId FROM UnifiedSampleSeries WHERE moduleId IS NOT NULL").fetchall()}
+    tables = [name for (name,) in run(
+        connection, "SELECT table_name FROM duckdb_tables() WHERE database_name = 'src' "
+        "ORDER BY table_name", "listing the tables").fetchall()]
+
+    def columns(table: str) -> set[str]:
+        return {name for (name,) in run(
+            connection, "SELECT column_name FROM duckdb_columns() WHERE database_name = 'src' "
+            "AND table_name = ?", f"reading the columns of {table}", [table]).fetchall()}
+
+    modules = {row[0] for row in run(
+        connection, f"SELECT DISTINCT moduleId FROM src.UnifiedSampleSeries WHERE moduleId IS "
+        f"NOT NULL AND processId IN ({pid_list})", "selecting the kept modules").fetchall()}
     if "ModuleInstance" in tables:
-        modules |= {row[0] for row in connection.execute(
-            "SELECT DISTINCT moduleId FROM ModuleInstance").fetchall()}
+        modules |= {row[0] for row in run(
+            connection, f"SELECT DISTINCT moduleId FROM src.ModuleInstance WHERE moduleId IS "
+            f"NOT NULL AND processId IN ({pid_list})",
+            "selecting the kept module instances").fetchall()}
     module_list = ", ".join(str(int(m)) for m in modules) or "NULL"
     for table in tables:
-        columns = columns_of(connection, table)
-        if table == "Module":
-            connection.execute(f'DELETE FROM "Module" WHERE id NOT IN ({module_list})')
-        elif "moduleId" in columns and table not in ("UnifiedSampleSeries", "ModuleInstance"):
-            connection.execute(f'DELETE FROM "{table}" WHERE "moduleId" IS NULL '
-                               f'OR "moduleId" NOT IN ({module_list})')
+        names = columns(table)
+        if "host" in table.lower():
+            where = "FALSE"
+        elif table == "Process":
+            where = f"id IN ({pid_list})"
+        elif "processId" in names:
+            where = f'"processId" IN ({pid_list})'
+        elif table == "Module":
+            where = f"id IN ({module_list})"
+        elif "moduleId" in names:
+            where = f'"moduleId" IN ({module_list})'
+        else:
+            where = "TRUE"
+        run(connection, f'CREATE TABLE packed."{table}" AS SELECT * FROM src."{table}" '
+                        f"WHERE {where}", f"copying table {table}")
 
 
 def rewrite_strings(connection) -> None:
@@ -139,17 +168,18 @@ def rewrite_strings(connection) -> None:
         for column, kind in columns_of(connection, table).items():
             if kind != "VARCHAR":
                 continue
+            step = f"rewriting {table}.{column}"
             if table == "ProcessThread" and column == "threadName":
-                connection.execute(f'UPDATE "{table}" SET "{column}" = \'\'')
+                run(connection, f'UPDATE "{table}" SET "{column}" = \'\'', step)
                 continue
-            values = [value for (value,) in connection.execute(
-                f'SELECT DISTINCT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL'
-            ).fetchall()]
+            values = [value for (value,) in run(
+                connection, f'SELECT DISTINCT "{column}" FROM "{table}" '
+                f'WHERE "{column}" IS NOT NULL', step).fetchall()]
             for value in values:
                 replaced = rewrite_path(value)
                 if replaced != value:
-                    connection.execute(f'UPDATE "{table}" SET "{column}" = ? '
-                                       f'WHERE "{column}" = ?', [replaced, value])
+                    run(connection, f'UPDATE "{table}" SET "{column}" = ? WHERE "{column}" = ?',
+                        step, [replaced, value])
 
 
 def sanitize_command(command: object) -> object:
@@ -240,41 +270,48 @@ def anonymize(session: Path, keep: list[str], out: Path) -> Path:
             raise Refused(f"{session / name} is missing; pass a translated session directory")
     if out.exists() and any(out.iterdir()):
         raise Refused(f"{out} is not empty; pass a new directory")
-    source = duckdb.connect(str(session / "cpu.db"), read_only=True)
     try:
-        check_schema(source)
-        kept = kept_processes(source, keep)
+        source = duckdb.connect(str(session / "cpu.db"), read_only=True)
+    except duckdb.Error as exc:
+        detail = " ".join(str(exc).split())[:300]
+        raise Refused(f"DuckDB {duckdb.__version__} cannot open the capture's cpu.db: {detail}; "
+                      "it may be written by a uProf whose DuckDB storage version this DuckDB "
+                      "does not read") from exc
+    try:
+        try:
+            check_schema(source)
+            kept = kept_processes(source, keep)
+        except duckdb.Error as exc:
+            detail = " ".join(str(exc).split())[:300]
+            raise Refused(f"DuckDB {duckdb.__version__} failed while reading the capture: "
+                          f"{detail}") from exc
     finally:
         source.close()
     out.mkdir(parents=True, exist_ok=True)
-    work = out / "work.db"
-    shutil.copyfile(session / "cpu.db", work)
     meta = reduced_meta(json.loads((session / "session.uprof").read_text(
         encoding="utf-8-sig")))
     (out / "session.uprof").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
+    # The capture is only read. The kept rows go into a fresh file with small blocks (a few
+    # thousand rows take about 0.5 MB instead of ~5 MB).
+    connection = duckdb.connect()
     try:
-        connection = duckdb.connect(str(work))
-        try:
-            filter_rows(connection, kept)
-            rewrite_strings(connection)
-        finally:
-            connection.close()
-        # A fresh file holds only the kept rows; the working copy keeps the deleted rows' space.
-        # Small blocks keep a capture of a few thousand rows at about 0.5 MB instead of ~5 MB.
-        connection = duckdb.connect()
-        try:
-            connection.execute(f"ATTACH '{work.as_posix()}' AS work (READ_ONLY)")
-            connection.execute(f"ATTACH '{(out / 'cpu.db').as_posix()}' AS packed "
-                               "(BLOCK_SIZE 16384)")
-            connection.execute("COPY FROM DATABASE work TO packed")
-        finally:
-            connection.close()
+        run(connection, f"ATTACH '{(session / 'cpu.db').as_posix()}' AS src (READ_ONLY)",
+            "attaching the capture read-only")
+        run(connection, f"ATTACH '{(out / 'cpu.db').as_posix()}' AS packed (BLOCK_SIZE 16384)",
+            "creating the filtered cpu.db")
+        copy_filtered(connection, kept)
     finally:
-        work.unlink(missing_ok=True)
-        Path(str(work) + ".wal").unlink(missing_ok=True)
-    connection = duckdb.connect(str(out / "cpu.db"), read_only=True)
+        connection.close()
+    connection = duckdb.connect(str(out / "cpu.db"))
     try:
-        review = dump(connection, meta)
+        rewrite_strings(connection)
+        run(connection, "CHECKPOINT", "writing the filtered cpu.db")
+        try:
+            review = dump(connection, meta)
+        except duckdb.Error as exc:
+            detail = " ".join(str(exc).split())[:300]
+            raise Refused(f"DuckDB {duckdb.__version__} failed while dumping the filtered "
+                          f"cpu.db: {detail}") from exc
     finally:
         connection.close()
     (out / "review.txt").write_text(review, encoding="utf-8")

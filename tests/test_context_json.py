@@ -234,6 +234,29 @@ class BuildContextTest(unittest.TestCase):
         self.assertNotIn('"symbol"', json.dumps(context))
 
 
+    def test_a_run_names_a_file_the_context_lacks_and_a_tie_takes_the_first_frame(self):
+        build = uprof_context.parse_image(FILE_HEADERS).build
+        verified = uprof_context.verify_build(build, 0x1234ABCD)
+        window = [uprof_context.DecodedInstruction(rva, "nop", None)
+                  for rva in (0x1000, 0x1001, 0x1002)]
+
+        def context_for(symbols):
+            return uprof_context.build_context(
+                uprof_context.Anchor("section", 0x1000), verified, 0x1000, window,
+                samples={}, total_samples=0, symbols=symbols, imports={}, ibs={})
+
+        context = context_for({0x1000: uprof_context.SymbolInfo("main", None, None),
+                               0x1001: uprof_context.SymbolInfo("main", None, None),
+                               0x1002: uprof_context.SymbolInfo("main", "a.c", 4)})
+        self.assertEqual(context["function"], "main")
+        self.assertNotIn("file", context)
+        self.assertEqual(context["runs"][1], {"file": "a.c", "line": 4,
+                                              "instructions": context["runs"][1]["instructions"]})
+
+        tie = context_for({0x1000: uprof_context.SymbolInfo("b", "b.c", 1),
+                           0x1001: uprof_context.SymbolInfo("a", "a.c", 1)})
+        self.assertEqual((tie["function"], tie["file"]), ("b", "b.c"))
+
     def test_ibs_samples_are_kept_when_no_other_field_is_present(self):
         build = uprof_context.parse_image(FILE_HEADERS).build
         verified = uprof_context.verify_build(build, 0x1234ABCD)

@@ -9,11 +9,11 @@ Capture: 60 s, 16 CPUs, system-wide, `--config ibs`, op interval 1,000,000 ops. 
 `session.uprof`. The 1.861 s deficit is the per-CPU boundary gaps, so the current check reports
 OK without a tolerance. The 0:10 window has 296,917 rows, 16 first-in-window.
 Environment: Windows 11, Ryzen 7 9800X3D, Python 3.14.6, DuckDB 2.0.0, uProf CLI 5.3.521.0,
-LLVM 23.1.4 (llvm-symbolizer/llvm-pdbutil/llvm-readobj).
+LLVM (llvm-symbolizer/llvm-pdbutil/llvm-readobj).
 
 ## Archive acceptance figures
 
-Cached dump reused. Command prefix for every row:
+Reproduced 2026-11-07 with the cached dump reused. Command prefix for every row:
 `python tools/uprof.py profile --session <capture>`.
 
 | Command scope | Quantity | Value | Denominator |

@@ -203,6 +203,23 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertNotIn("GENERATING DUMP", result.stderr)
         self.assertIn("c:/capture/fixture_full.exe", result.stdout)
 
+    def test_the_handed_over_dump_keeps_only_the_columns_the_tools_read(self):
+        import csv
+
+        dump = self.session / "IbsOpDump.csv"
+        lines = dump.read_text(encoding="utf-8").splitlines()
+        dump.write_text("\n".join([lines[0] + ",IbsDcPhyAd"] + [f"{line},0x1234" for line in
+                                                               lines[1:]]) + "\n",
+                        encoding="utf-8")
+        code, stderr = self.run_main()
+        self.assertEqual(code, 0, stderr)
+        with open(self.out / "IbsOpDump.csv", encoding="utf-8", newline="") as handle:
+            columns = next(csv.reader(handle))
+        self.assertNotIn("IbsDcPhyAd", columns)
+        self.assertLessEqual(set(columns), set(anonymize_capture.DUMP_COLUMNS))
+        for needed in ("DeltaTick", "PID", "ModuleName", "IbsTagToRetCtr", "DataSrc"):
+            self.assertIn(needed, columns)
+
     def test_a_host_string_in_the_dump_fails_the_run(self):
         dump = self.session / "IbsOpDump.csv"
         lines = dump.read_text(encoding="utf-8").splitlines()

@@ -1,11 +1,14 @@
-"""Names from capture data or from disk never reach a runnable command with live shell syntax.
+"""Names from capture data or from disk enter runnable commands only as plain characters.
 
 A process image name (the system-wide ranking's NEXT when the top row has no PID) and the names
 of capture directories found below a wrong --session come from the capture or an extracted
-archive, not from the caller. Pasted into Git Bash, PowerShell 5.1 or cmd.exe, a `$(...)`,
-backtick, `%VAR%`, `!`, quote or `&` in such a name must not run or expand. The process name
-enters --image as an ILIKE pattern with each unsafe character replaced by the one-character
-wildcard; a directory that cannot be written safely is named as data, not as a command.
+archive, not from the caller. A command pasted into Git Bash, PowerShell 5.1 or cmd.exe must not
+run or expand anything such a name holds: `$(...)`, backticks and `$VAR` (bash, PowerShell),
+`%VAR%` and `!VAR!` (cmd.exe), straight or typographic double quotes (PowerShell reads U+201C,
+U+201D and U+201E as `"`), control and bidi characters. So only an allow-list of plain
+characters may reach a command: the process name enters --image as an ILIKE pattern with every
+other character replaced by the one-character wildcard, and a directory with any other character
+is named as data, not as a command.
 Run from the repository root: python tests/run_tests.py test_hostile_names
 """
 
@@ -20,10 +23,29 @@ import uprof_query
 from uprof_util import UprofError
 
 SESSION = "C:/captures/run" if os.name == "nt" else "/captures/run"
-HOSTILE = ["x$(touch pwned).exe", "a`id`.exe", "%PATH%.exe", "a&b.exe", 'a"b.exe', "a'b.exe",
-           "a!b.exe", "a;b|c.exe", "$HOME.exe"]
-# Characters that expand, run or end the quoting inside "..." in at least one of the shells.
-LIVE = set("$`\"%!")
+# One hostile name per shell-specific hazard, plus shared ones.
+HOSTILE_IMAGES = [
+    "x$(touch pwned).exe",      # bash and PowerShell subexpression
+    "a`id`.exe",                # bash command substitution, PowerShell escape
+    "$HOME.exe",                # bash and PowerShell variable
+    "%PATH%.exe",               # cmd.exe variable
+    "a!b!.exe",                 # cmd.exe delayed expansion
+    'a"b.exe',                  # ends the argument everywhere
+    "a\u201d;calc;\u201cb.exe",  # PowerShell typographic quotes
+    "a\u202eexe.txt",           # bidi override
+    "a;b|c.exe",
+    "-rf.exe",                  # read as an option when unquoted
+]
+HOSTILE_DIRECTORIES = ["$(touch pwned)", "a`id`", "%PATH%", "a!b!", "a\u201d;calc;\u201cb",
+                       "a\u202eexe.txt"]
+# The characters a capture- or disk-derived name may carry into a command; independent of the
+# implementation's own list so that a missing hazard shows up here.
+IMAGE_PLAIN = set(" ._-+,=@#~()")
+PATH_PLAIN = IMAGE_PLAIN | set("\\/:'&;[]{}")
+
+
+def plain(text, allowed):
+    return all(char.isalnum() or char in allowed for char in text)
 
 
 def image_argument(call):
@@ -39,15 +61,19 @@ class ProcessNameTest(unittest.TestCase):
         self.assertEqual(len(calls), 1, calls)
         return calls[0]
 
-    def test_a_hostile_image_name_becomes_an_inert_pattern_that_still_matches(self):
-        for name in HOSTILE:
+    def test_a_hostile_image_name_becomes_a_plain_pattern_that_still_matches(self):
+        for name in HOSTILE_IMAGES:
             with self.subTest(name=name):
-                pattern = image_argument(self.next_call(name))
+                call = self.next_call(name)
+                pattern = image_argument(call)
                 self.assertIsNotNone(pattern)
-                self.assertFalse(LIVE & set(pattern), pattern)
-                self.assertNotIn(";", pattern.replace("_", ""))
+                self.assertTrue(plain(pattern, IMAGE_PLAIN), pattern)
+                self.assertFalse(pattern.startswith("-"), pattern)
                 regex = "".join("." if char == "_" else re.escape(char) for char in pattern)
                 self.assertRegex(name, re.compile(f"^{regex}$", re.IGNORECASE))
+                args = uprof.build_parser().parse_args(
+                    ["profile", "--session", SESSION, "--by", "module", "--image", pattern])
+                self.assertEqual(args.image, pattern)
 
     def test_a_plain_image_name_is_kept(self):
         self.assertEqual(image_argument(self.next_call("workload.exe")), "workload.exe")
@@ -73,26 +99,30 @@ class CandidateDirectoryTest(unittest.TestCase):
             uprof_query.run_query_command(args)
         return str(caught.exception)
 
+    def offered_sessions(self, message):
+        return re.findall(r' profile --session ("[^"]*"|\S+)', message)
+
     def test_hostile_directories_are_named_as_data_not_commands(self):
-        names = [name for name in ("$(touch pwned)", "a`id`", "%PATH%", "a!b")
-                 if os.name != "nt" or '"' not in name]
-        for name in names:
+        for name in HOSTILE_DIRECTORIES:
             self.capture(name)
-        safe = self.capture("run 1")
+        safe = self.capture("run 1 & co")
         message = self.message()
         self.assertNotIn("\n", message)
-        commands = message.split("run one of: ", 1)[1].split("; not offered as commands", 1)[0]
-        self.assertIn(f"--session {uprof_query._quote(str(safe))} --by module", commands)
-        for name in names:
+        offered = [value.strip('"') for value in self.offered_sessions(message)]
+        self.assertEqual(offered, [str(safe).replace("%", "%%") if os.name == "nt"
+                                   else str(safe)])
+        for value in offered:
+            self.assertTrue(plain(value, PATH_PLAIN), value)
+        for name in HOSTILE_DIRECTORIES:
             with self.subTest(name=name):
-                self.assertNotIn(name, commands)
                 self.assertIn(repr(str(self.root / name)), message)
 
     def test_only_hostile_directories_still_end_in_one_cause_line(self):
-        self.capture("$(touch pwned)")
+        self.capture("a\u201d;calc;\u201cb")
         message = self.message()
         self.assertNotIn("\n", message)
         self.assertNotIn("run one of", message)
+        self.assertEqual(self.offered_sessions(message), [])
         self.assertIn("not offered as commands", message)
 
 

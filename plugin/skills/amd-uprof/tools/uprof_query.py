@@ -1754,14 +1754,23 @@ def _dump_sanity(connection: object, has_dump: bool, scope_filtered: bool,
     return message, tag_values
 
 
+def _capture_windowed(session: Path) -> bool:
+    """True when the session records a translate --time-filter.
+
+    What profile reads may then hold only that window (the IBS dump, and a PMC or timer cpu.db
+    translated with the filter), so no claim about the whole capture can be made from it.
+    """
+    return uprof_dump.recorded_time_filter(session) is not None
+
+
 def _kernel_coverage_field(sampler: uprof_session.Sampler, kernel_covered: bool | None,
                            windowed: bool = False,
                            captured_samples: int | None = None) -> list[tuple[str, str]]:
     """Whole-capture kernel coverage, checked only when the applied sampler requested OS mode.
 
     kernel_covered comes from the ACHIEVED scan and None means it was not determined. windowed
-    suppresses the field: the resolved dump may have been produced by the session's recorded
-    translate --time-filter, so it need not hold the whole capture. captured_samples is the
+    suppresses the field: with a recorded translate --time-filter, the dump or cpu.db profile
+    reads need not hold the whole capture (see _capture_windowed). captured_samples is the
     capture total that same scan counted.
     """
     if not sampler.os_requested or windowed or kernel_covered is None:
@@ -2228,9 +2237,7 @@ def run_query_command(args: argparse.Namespace) -> None:
         _guard_out_file(out_path, list(uprof_dump.samples_parquet_files(dump, session)),
                         "the Parquet dump copy ")
     samples = uprof_dump.samples_parquet(dump, session) if dump is not None else None
-    # The resolved dump may have been produced by the recorded translate window, so the
-    # whole-capture claim cannot be made from it.
-    dump_windowed = dump is not None and uprof_dump.recorded_time_filter(session) is not None
+    capture_windowed = _capture_windowed(session)
 
     stream = sys.stderr
     primary_measure, _ = _primary_measure(sampler, dump)
@@ -2382,13 +2389,13 @@ def run_query_command(args: argparse.Namespace) -> None:
                                                      sampler.timer)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
-            check_kernel = sampler.os_requested and not dump_windowed
+            check_kernel = sampler.os_requested and not capture_windowed
             achieved, captured_samples, kernel_covered = _achieved_field(
                 connection, dump is not None, args, sampler, dump, check_kernel, timer_contexts)
             if achieved:
                 fields.append(achieved)
             fields.extend(_kernel_coverage_field(
-                sampler, kernel_covered, dump_windowed, captured_samples))
+                sampler, kernel_covered, capture_windowed, captured_samples))
             if args.by == "function":
                 fields.extend(_hot_rva_field(connection))
             coverage = db_coverage if db_coverage is not None else _coverage_values(connection)

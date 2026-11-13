@@ -47,6 +47,16 @@ captures.
 - **Caller paths (#187):** captures carry no stacks, so no answer may attribute an outside hot
   path to the own call sites that lead into it.
 
+## Pass criteria
+
+A trial run passes when both hold:
+
+- **Answer:** the final answer gives the scenario's answer, with every part of the contract.
+- **Context:** the run ends with fewer than 100,000 tokens of total context: the model's input at
+  its final turn, the harness system prompt included. Where the harness reports usage, that is
+  the final turn's input tokens plus cache-read and cache-creation tokens. A harness that reports
+  no usage records the context as "not measured", and the run cannot pass this criterion.
+
 ## Sessions
 
 | Session | Shape |

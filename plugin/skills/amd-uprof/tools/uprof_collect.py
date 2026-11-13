@@ -29,6 +29,11 @@ _TIME_UNITS = {"ns": Decimal("0.000000001"), "us": Decimal("0.000001"),
                "ms": Decimal("0.001"), "s": Decimal(1)}
 _TIME_INTERVAL = re.compile(r"^\s*(\d+(?:\.\d*)?|\.\d+)\s*(ns|us|ms|s)\s*$", re.IGNORECASE)
 _WINDOWS_FREQUENCY_KEY = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+_LINUX_CPUFREQ_PATHS = (
+    Path("/sys/devices/system/cpu/cpu0/cpufreq/base_frequency"),
+    Path("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"),
+)
+_LINUX_CPUINFO_PATH = Path("/proc/cpuinfo")
 
 
 @dataclass
@@ -79,46 +84,57 @@ def _interval_mode(options: CollectOptions) -> str:
     return "cycles" if options.event == "cycles" or options.ibs_count_control == "cycles" else "ops"
 
 
-def _core_frequency() -> tuple[int, str, str]:
-    """The machine's reported core frequency: (Hz, printed value, source)."""
-    if IS_WINDOWS:
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _WINDOWS_FREQUENCY_KEY) as key:
-                mhz = int(winreg.QueryValueEx(key, "~MHz")[0])
-        except (ImportError, OSError, TypeError, ValueError):
-            mhz = 0
-        if mhz > 0:
-            return (mhz * 1_000_000, f"{mhz} MHz",
-                    "Windows registry HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0\\~MHz")
-        raise UprofError(
-            "cannot read the core frequency from the Windows registry "
-            "(HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0\\~MHz); check that the "
-            "~MHz value exists and is nonzero (Get-ItemProperty "
-            "'HKLM:\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0' '~MHz'), or capture with "
-            "--event ibs-op --ibs-count-control op, whose interval is a work count")
+def _windows_core_frequency() -> tuple[int, str, str]:
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _WINDOWS_FREQUENCY_KEY) as key:
+            mhz = int(winreg.QueryValueEx(key, "~MHz")[0])
+    except (ImportError, OSError, TypeError, ValueError):
+        mhz = 0
+    if mhz > 0:
+        return (mhz * 1_000_000, f"{mhz} MHz",
+                "Windows registry HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0\\~MHz")
+    raise UprofError(
+        "cannot read the core frequency from the Windows registry "
+        "(HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0\\~MHz); check that the "
+        "~MHz value exists and is nonzero (Get-ItemProperty "
+        "'HKLM:\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0' '~MHz'), or capture with "
+        "--event ibs-op --ibs-count-control op, whose interval is a work count")
 
-    base_frequency = Path("/sys/devices/system/cpu/cpu0/cpufreq/base_frequency")
+
+def _linux_core_frequency(
+        cpufreq_paths: tuple[Path, ...] = _LINUX_CPUFREQ_PATHS,
+        cpuinfo_path: Path = _LINUX_CPUINFO_PATH) -> tuple[int, str, str]:
+    for path in cpufreq_paths:
+        try:
+            khz = int(path.read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            khz = 0
+        if khz > 0:
+            return khz * 1000, f"{khz / 1000:g} MHz", str(path)
+
     try:
-        khz = int(base_frequency.read_text(encoding="ascii").strip())
-    except (OSError, ValueError):
-        khz = 0
-    if khz > 0:
-        return khz * 1000, f"{khz / 1000:g} MHz", str(base_frequency)
-    try:
-        cpuinfo = Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace")
+        cpuinfo = cpuinfo_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         cpuinfo = ""
     match = re.search(r"(?mi)^\s*cpu MHz\s*:\s*(\d+(?:\.\d+)?)\s*$", cpuinfo)
     if match:
         hz = int((Decimal(match.group(1)) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
         if hz > 0:
-            return hz, f"{match.group(1)} MHz", "/proc/cpuinfo cpu MHz"
+            return hz, f"{match.group(1)} MHz (current frequency)", f"{cpuinfo_path} cpu MHz (current frequency)"
+
     raise UprofError(
         "cannot determine the core frequency: neither "
-        "/sys/devices/system/cpu/cpu0/cpufreq/base_frequency nor a 'cpu MHz' line in /proc/cpuinfo "
-        "is available; check that cpufreq exposes cpu0, or capture with --event ibs-op "
-        "--ibs-count-control op, whose interval is a work count")
+        "/sys/devices/system/cpu/cpu0/cpufreq/{base_frequency,cpuinfo_max_freq} nor a 'cpu MHz' "
+        "line in /proc/cpuinfo is available; check that cpufreq exposes cpu0, or capture with "
+        "--event ibs-op --ibs-count-control op, whose interval is a work count")
+
+
+def _core_frequency() -> tuple[int, str, str]:
+    """The machine's reported core frequency: (Hz, printed value, source)."""
+    if IS_WINDOWS:
+        return _windows_core_frequency()
+    return _linux_core_frequency()
 
 
 def _resolve_interval(options: CollectOptions, mode: str,

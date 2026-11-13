@@ -33,6 +33,11 @@ they are distributed under the repository's license.
 The tests read the checksum, timestamp and sizes from the file, so a rebuild
 that changes them does not invalidate them.
 
+`trials/build_captures.py` also copies `fixture.exe` under system-module names
+(`amdvlk64.dll`, `ntdll.dll`, `node.exe`) for its synthetic captures and reads
+the identity values it records from the copy. Those modules are this
+repository's own build, never a copied vendor or OS binary.
+
 ## Building
 
 Built with LLVM 23.1.4 (Windows). Run from this directory:

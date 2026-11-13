@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -219,6 +220,50 @@ def read_text(path: os.PathLike[str] | str) -> str:
         raise UprofError(f"cannot read {path}: {exc}") from exc
 
 
+def _is_link(info: os.stat_result) -> bool:
+    """A symlink, or on Windows any reparse point such as a junction."""
+    return (stat.S_ISLNK(info.st_mode)
+            or bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT))
+
+
+def _refuse_links(source: Path) -> None:
+    """Fail on the first link in what copy_session copies, before anything is copied.
+
+    Copying follows links, so a link in a capture would copy files from outside it, a whole
+    disk, or the capture into itself.
+    """
+    roots = [source / "session.uprof", *(source / name for name in COPY_DIRS)]
+    for root in roots:
+        try:
+            info = os.lstat(root)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise UprofError(f"cannot inspect {root}: {exc}; fix its permissions and "
+                             "re-run") from exc
+        pending = [root] if stat.S_ISDIR(info.st_mode) and not _is_link(info) else []
+        if _is_link(info):
+            _link_error(root)
+        while pending:
+            directory = pending.pop()
+            try:
+                entries = list(os.scandir(directory))
+            except OSError as exc:
+                raise UprofError(f"cannot list {directory}: {exc}; fix its permissions and "
+                                 "re-run") from exc
+            for entry in entries:
+                if _is_link(entry.stat(follow_symlinks=False)):
+                    _link_error(Path(entry.path))
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+
+
+def _link_error(link: Path) -> None:
+    raise UprofError(f"the capture contains a link: {link}; copying would follow it out of the "
+                     "capture. Replace the link with the files it points to, or remove it, and "
+                     "re-run")
+
+
 def copy_session(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> None:
     """Copy session.uprof and the raw directories translate reads into dst.
 
@@ -227,6 +272,7 @@ def copy_session(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> No
     """
     source = Path(src)
     target = Path(dst)
+    _refuse_links(source)
     if target.exists() and not target.is_dir():
         raise UprofError(f"output path exists and is not a directory: {target}; choose another "
                          "output directory")

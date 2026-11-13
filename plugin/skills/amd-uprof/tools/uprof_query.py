@@ -962,15 +962,22 @@ _SYMBOL_PATH_FLAGS: Final = (
 )
 
 
-def _hot_rva_attribution(sampler: uprof_session.Sampler, container: str) -> str:
-    """The precision or skid semantics of hot_rva in this capture mode."""
-    if sampler.ibs_dump_kind == "ibsop-event-dump":
-        return f"the precise attribution inside the {container}"
+def _hot_rva_note(sampler: uprof_session.Sampler) -> str | None:
+    """A short note on skid or fetch address for non-IBS-OP captures."""
     if sampler.ibs_dump_kind == "ibsfetch-event-dump":
         return "fetch samples carry a fetch-block address"
+    if sampler.ibs_dump_kind == "ibsop-event-dump":
+        return None
     if sampler.timer:
         return "timer samples skid"
     return "PMC samples skid"
+
+
+def _hot_rva_attribution(sampler: uprof_session.Sampler, container: str) -> str:
+    """The precision or skid semantics of hot_rva in this capture mode."""
+    base = f"the precise attribution inside the {container}"
+    note = _hot_rva_note(sampler)
+    return f"{base} ({note})" if note else base
 
 
 def _sample_share_meaning(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None) -> str:
@@ -1621,19 +1628,13 @@ def _legend(
         if args.by in ("function", "region"):
             if args.by == "function":
                 precise = "hot_rva is the highest-sample RVA inside the function"
-            elif sampler.ibs_dump_kind == "ibsop-event-dump":
-                precise = (
-                    "hot_rva is the highest-sample RVA inside the page and the precise attribution"
-                )
-            elif sampler.ibs_dump_kind == "ibsfetch-event-dump":
-                precise = (
-                    "hot_rva is the highest-sample RVA inside the page; "
-                    "fetch samples carry a fetch-block address"
-                )
-            elif sampler.timer:
-                precise = "hot_rva is the highest-sample RVA inside the page; timer samples skid"
             else:
-                precise = "hot_rva is the highest-sample RVA inside the page; PMC samples skid"
+                note = _hot_rva_note(sampler)
+                suffix = f" ({note})" if note else ""
+                precise = (
+                    f"hot_rva is the highest-sample RVA inside the page and the precise "
+                    f"attribution{suffix}"
+                )
             result["impact"]["estimate"] += f"; {precise}"
     if args.by == "instruction":
         measure, reason = _primary_measure(sampler, dump)
@@ -1746,31 +1747,17 @@ def _read_text(
             read = f"sample_share orders the pages: {reason}"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
-        if sampler is not None:
-            if sampler.ibs_dump_kind == "ibsop-event-dump":
-                hot_desc = "hot_rva is the precise attribution inside the page"
-            elif sampler.ibs_dump_kind == "ibsfetch-event-dump":
-                hot_desc = (
-                    "hot_rva is the highest-sample RVA inside the page "
-                    "(fetch samples carry a fetch-block address)"
-                )
-            elif sampler.timer:
-                hot_desc = "hot_rva is the highest-sample RVA inside the page (timer samples skid)"
-            else:
-                hot_desc = "hot_rva is the highest-sample RVA inside the page (PMC samples skid)"
-        else:
+        note = _hot_rva_note(sampler) if sampler is not None else None
+        if note is None:
             estimate = legend.get("impact", {}).get("estimate", "")
             if "fetch samples carry a fetch-block address" in estimate:
-                hot_desc = (
-                    "hot_rva is the highest-sample RVA inside the page "
-                    "(fetch samples carry a fetch-block address)"
-                )
+                note = "fetch samples carry a fetch-block address"
             elif "timer samples skid" in estimate:
-                hot_desc = "hot_rva is the highest-sample RVA inside the page (timer samples skid)"
+                note = "timer samples skid"
             elif "PMC samples skid" in estimate:
-                hot_desc = "hot_rva is the highest-sample RVA inside the page (PMC samples skid)"
-            else:
-                hot_desc = "hot_rva is the precise attribution inside the page"
+                note = "PMC samples skid"
+        suffix = f" ({note})" if note else ""
+        hot_desc = f"hot_rva is the precise attribution inside the page{suffix}"
         read += (
             f"; {hot_desc} and sampled_addresses "
             "shows whether the page is a tight cluster or a diffuse bucket; hot_rva's "

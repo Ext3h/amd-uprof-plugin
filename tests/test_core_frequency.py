@@ -41,7 +41,7 @@ class CoreFrequencyLinuxTest(unittest.TestCase):
 
             self.assertEqual(hz, 4_700_000_000)
             self.assertEqual(display, "4700 MHz")
-            self.assertEqual(source, str(max_freq))
+            self.assertEqual(source, f"{max_freq} (boost maximum)")
 
     def test_proc_cpuinfo_fallback_labels_current_frequency(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,8 +58,8 @@ class CoreFrequencyLinuxTest(unittest.TestCase):
                 cpufreq_paths=(base, max_freq), cpuinfo_path=cpuinfo)
 
             self.assertEqual(hz, 2_842_125_000)
-            self.assertEqual(display, "2842.125 MHz (current frequency)")
-            self.assertIn("cpu MHz (current frequency)", source)
+            self.assertEqual(display, "2842.125 MHz")
+            self.assertEqual(source, f"{cpuinfo} cpu MHz (current frequency)")
 
     def test_all_sources_missing_raises_uprof_error(self):
         with tempfile.TemporaryDirectory() as tmp:

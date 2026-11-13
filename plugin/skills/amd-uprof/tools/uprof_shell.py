@@ -69,12 +69,3 @@ def app_arg(value: str, placeholder: str) -> tuple[str, str | None]:
         quoted = value if all(char in _BARE for char in value) else f'"{value}"'
         return quoted, None
     return placeholder, f"{placeholder.strip('<>')}={value!r}"
-
-
-def image_pattern(name: str) -> str:
-    """An ILIKE pattern that matches name and is plain: every character off the list, and a
-    leading - or @, becomes the one-character wildcard _."""
-    pattern = "".join(char if char in PLAIN and char != "\\" else "_" for char in name)
-    if pattern and pattern[0] in "-@":
-        pattern = "_" + pattern[1:]
-    return pattern or "_"

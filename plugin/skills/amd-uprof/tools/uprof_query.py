@@ -667,6 +667,17 @@ _SYMBOL_PATH_FLAGS: Final = (
 )
 
 
+def _hot_rva_attribution(sampler: uprof_session.Sampler, container: str) -> str:
+    """The precision or skid semantics of hot_rva in this capture mode."""
+    if sampler.ibs_dump_kind == "ibsop-event-dump":
+        return f"the precise attribution inside the {container}"
+    if sampler.ibs_dump_kind == "ibsfetch-event-dump":
+        return "fetch samples carry a fetch-block address"
+    if sampler.timer:
+        return "timer samples skid"
+    return "PMC samples skid"
+
+
 def _sample_share_meaning(sampler: uprof_session.Sampler,
                           dump: uprof_dump.DumpInfo | None) -> str:
     """What sample_share is a fraction of in this capture mode."""
@@ -1030,8 +1041,9 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
                                       "Function.id or is unresolved)")
         columns["function_derived"] = ("true when the displayed name is synthetic "
                                        "(sub_<rva>/pdata_<start>), not a source symbol")
-        columns["hot_rva"] = ("highest-sample RVA in the function; ties pick the lowest RVA; the "
-                              "precise attribution inside the range")
+        attribution = _hot_rva_attribution(sampler, "range")
+        columns["hot_rva"] = (f"highest-sample RVA in the function; ties pick the lowest RVA; "
+                              f"{attribution}")
         columns["hot_samples"] = "samples at hot_rva"
         columns["other_samples"] = ("samples outside hot_rva: samples - hot_samples; the rest of "
                                     "the function, not a second hot address")
@@ -1061,7 +1073,9 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
                                   "binary range) / unresolved (no symbol)")
         columns["region"] = _REGION_MEANING
         columns["sampled_addresses"] = "distinct RVAs with samples in the page"
-        columns["hot_rva"] = "highest-sample RVA in the page; ties pick the lowest RVA"
+        attribution = _hot_rva_attribution(sampler, "page")
+        columns["hot_rva"] = (f"highest-sample RVA in the page; ties pick the lowest RVA; "
+                              f"{attribution}")
         columns["hot_samples"] = "samples at hot_rva"
         columns["hot_sample_share"] = ("hot_rva's samples as a share of the scoped capture "
                                        "total")
@@ -1127,8 +1141,9 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
                         + (_CYCLE_BASIS if _cycle_controlled(sampler) else ""))
     if args.by in ("module", "region", "function"):
         if args.by == "module":
-            columns["hot_rva"] = ("highest-sample RVA in the module; ties pick the lowest RVA; "
-                                  "the precise attribution inside the module")
+            attribution = _hot_rva_attribution(sampler, "module")
+            columns["hot_rva"] = (f"highest-sample RVA in the module; ties pick the lowest RVA; "
+                                  f"{attribution}")
             columns["hot_samples"] = "samples at hot_rva"
             columns["other_samples"] = ("samples outside hot_rva: samples - hot_samples; the "
                                         "rest of the module, not a second hot address")
@@ -1170,10 +1185,18 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             f"{reason}; --top selects the highest rows by {measure}, so the default 20 already "
             f"carries the hot {noun}")
         if args.by in ("function", "region"):
-            precise = ("hot_rva is the highest-sample RVA inside the function"
-                       if args.by == "function"
-                       else ("hot_rva is the highest-sample RVA inside the page and the precise "
-                             "attribution"))
+            if args.by == "function":
+                precise = "hot_rva is the highest-sample RVA inside the function"
+            elif sampler.ibs_dump_kind == "ibsop-event-dump":
+                precise = ("hot_rva is the highest-sample RVA inside the page and the precise "
+                           "attribution")
+            elif sampler.ibs_dump_kind == "ibsfetch-event-dump":
+                precise = ("hot_rva is the highest-sample RVA inside the page; "
+                           "fetch samples carry a fetch-block address")
+            elif sampler.timer:
+                precise = "hot_rva is the highest-sample RVA inside the page; timer samples skid"
+            else:
+                precise = "hot_rva is the highest-sample RVA inside the page; PMC samples skid"
             result["impact"]["estimate"] += f"; {precise}"
     if args.by == "instruction":
         measure, reason = _primary_measure(sampler, dump)
@@ -1235,7 +1258,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
     return result
 
 
-def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
+def _read_text(legend: dict[str, Any], system_wide: bool,
+               sampler: uprof_session.Sampler | None = None) -> str:
     """The positive reading rule, plus the ranking and remainder rule."""
     sample = legend["columns"]["sample_share"]
     if "function_ranges" in legend:
@@ -1266,7 +1290,32 @@ def _read_text(legend: dict[str, Any], system_wide: bool) -> str:
             read = f"sample_share orders the pages: {reason}"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
-        read += ("; hot_rva is the precise attribution inside the page and sampled_addresses "
+        if sampler is not None:
+            if sampler.ibs_dump_kind == "ibsop-event-dump":
+                hot_desc = "hot_rva is the precise attribution inside the page"
+            elif sampler.ibs_dump_kind == "ibsfetch-event-dump":
+                hot_desc = ("hot_rva is the highest-sample RVA inside the page "
+                            "(fetch samples carry a fetch-block address)")
+            elif sampler.timer:
+                hot_desc = ("hot_rva is the highest-sample RVA inside the page "
+                            "(timer samples skid)")
+            else:
+                hot_desc = ("hot_rva is the highest-sample RVA inside the page "
+                            "(PMC samples skid)")
+        else:
+            estimate = legend.get("impact", {}).get("estimate", "")
+            if "fetch samples carry a fetch-block address" in estimate:
+                hot_desc = ("hot_rva is the highest-sample RVA inside the page "
+                            "(fetch samples carry a fetch-block address)")
+            elif "timer samples skid" in estimate:
+                hot_desc = ("hot_rva is the highest-sample RVA inside the page "
+                            "(timer samples skid)")
+            elif "PMC samples skid" in estimate:
+                hot_desc = ("hot_rva is the highest-sample RVA inside the page "
+                            "(PMC samples skid)")
+            else:
+                hot_desc = "hot_rva is the precise attribution inside the page"
+        read += (f"; {hot_desc} and sampled_addresses "
                  "shows whether the page is a tight cluster or a diffuse bucket; hot_rva's "
                  "function_source names the boundary source and function_derived=true marks a "
                  "synthetic binary name; a page may span unrelated code, so do not read it as a "
@@ -1326,7 +1375,8 @@ def _next_text(calls: list[str]) -> str:
 
 
 def _legend_fields(legend: dict[str, Any], system_wide: bool,
-                   timer: bool = False, top_row: str | None = None) -> list[tuple[str, str]]:
+                   timer: bool = False, top_row: str | None = None,
+                   sampler: uprof_session.Sampler | None = None) -> list[tuple[str, str]]:
     """The short legend: columns and unit, what to read, and runnable next calls.
 
     A timer capture states its missing measures once, in METRIC, so COLUMNS does not repeat them.
@@ -1376,7 +1426,7 @@ def _legend_fields(legend: dict[str, Any], system_wide: bool,
         parts.append(f"cpu_seconds = {legend['columns']['cpu_seconds']}")
     elif "cpu_seconds" in legend["absent"]:
         parts.append(f"cpu_seconds absent ({legend['absent']['cpu_seconds']})")
-    read = _read_text(legend, system_wide)
+    read = _read_text(legend, system_wide, sampler=sampler)
     if top_row:
         read += f"; {top_row}"
     fields = [("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
@@ -2277,7 +2327,8 @@ def run_query_command(args: argparse.Namespace) -> None:
             top_row = _top_row_precision(connection, args.by) if sampler.timer else None
             # The filter and its parent measurement precede the reading rule; both sit directly
             # below METRIC, after VERSION, before the detailed fields.
-            fields[2:2] = _legend_fields(legend, system_wide, sampler.timer, top_row)
+            fields[2:2] = _legend_fields(legend, system_wide, sampler.timer, top_row,
+                                          sampler=sampler)
             if function_scope is not None:
                 fields[2:2] = _function_scope_fields(function_scope, legend, sample_interval_s,
                                                      sampler.timer)

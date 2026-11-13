@@ -283,6 +283,13 @@ class DocsGuidanceTest(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, spec)
 
+    def test_a_function_row_can_be_shared(self):
+        # The function view marks a range at a folded public start shared, as the other
+        # symbolized views mark the address; the skill must not rule that value out.
+        skill = _flat(SKILL)
+        self.assertNotIn("function rows are `unique`, `derived` or `unresolved`", skill)
+        self.assertIn("at `function`, `region`, `line` and `instruction` granularity", skill)
+
     def test_the_example_stops_below_a_symbol_less_module(self):
         start = SKILL.index("## Worked example: where did CPU time go?")
         end = SKILL.index("## Header lines", start)

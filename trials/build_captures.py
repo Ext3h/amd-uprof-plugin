@@ -204,7 +204,11 @@ class Builder:
                 f"moduleId UINTEGER, functionId UBIGINT, moduleRVA UBIGINT, coreId UINTEGER"
                 f"{extra})"
             )
-            connection.executemany("INSERT INTO Process VALUES (?, ?)", list(processes))
+            # uProf records the full image path; --image matches all of it.
+            connection.executemany(
+                "INSERT INTO Process VALUES (?, ?)",
+                [(pid, f"c:\\apps\\{name}") for pid, name in processes],
+            )
             connection.executemany(
                 "INSERT INTO Module VALUES (?, ?, ?, ?, ?, false, ?)",
                 [(m.id, m.path, m.system, m.size, m.checksum, m.debug_info) for m in modules],

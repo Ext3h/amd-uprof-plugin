@@ -30,7 +30,8 @@ captures.
   the user's rows sit below the top rows. A question about the user's own code narrows with
   `--pid` or `--image` before the function view; an unfiltered function call before that
   filter is a wasted turn. `--pid` and `--image` select processes: `--pid` one instance,
-  `--image` every instance of that image.
+  `--image` every instance of that image. uProf records the full process path, and `--image`
+  matches all of it, so the calls write `--image %<exe>`; the sessions record full paths too.
 - A question about the user's own code names the process (exe name, and PID where the
   capture holds more than one instance) as well as the module (D-019).
 - **Open steps** say `open (D-nnn)`:
@@ -204,7 +205,7 @@ A trial run passes when both hold:
 - **Question:** "This is a system-wide AMD uProf capture: `<CAPTURE>`. What is slow in my process storage_test.exe, PID 3112?"
 - **Answer:**
   - **Location:** in PID 3112: own `fixture_entry` at 0x1018; outside, `amdvlk64.dll` `fixture_entry` at 0x101B.
-  - **Proof:** scoped to PID 3112 (194 samples): `amdvlk64.dll` `fixture_entry` 80 samples, own `fixture_entry` 18, `attribution` unique. `--image storage_test.exe` would also count PID 3113, an unrelated instance of the same image, and raise `fixture_full.exe` from 24 to 34 samples.
+  - **Proof:** scoped to PID 3112 (194 samples): `amdvlk64.dll` `fixture_entry` 80 samples, own `fixture_entry` 18, `attribution` unique. `--image %storage_test.exe` would also count PID 3113, an unrelated instance of the same image, and raise `fixture_full.exe` from 24 to 34 samples.
   - **Cost:** shares of PID 3112's samples: `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052; own `fixture_entry` 0.093. The PID's share of the whole capture is not printed under `--pid`. `cpu_seconds` = samples × 4.7 M cycles / core frequency.
   - **Confidence:** PID ±7% (194 samples), own module ±20% (24).
   - **Saving:** at most own `fixture_entry`'s `cpu_seconds`.
@@ -346,4 +347,4 @@ A trial run passes when both hold:
 - **Known gaps:** #345 (outside code inside the process pushes the own functions out of the default rows).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --top all`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image storage_test.exe`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %storage_test.exe`

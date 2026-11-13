@@ -163,7 +163,7 @@ class PeCoffSymbolTableTest(FixtureTestCase):
         self.assertNotIn("PDBGUID", output)
 
     def test_image_debug_directory_records_no_pdb(self):
-        name, guid, age = uprof_symbols._readobj_info(
+        name, guid, age, _ = uprof_symbols._readobj_info(
             os.fspath(F.PE / "fixture_coff.exe"), F.READOBJ
         )
         self.assertEqual(name, "fixture_coff.pdb")
@@ -200,7 +200,7 @@ class PeFullPdbTest(FixtureTestCase):
     """Row 3: PE CodeView with a full PDB (lines, publics and types)."""
 
     def test_image_debug_directory_names_the_pdb_guid_and_age(self):
-        name, guid, age = uprof_symbols._readobj_info(
+        name, guid, age, _ = uprof_symbols._readobj_info(
             os.fspath(F.PE / "fixture_full.exe"), F.READOBJ
         )
         self.assertEqual(F.embedded_basename(name or ""), "fixture_full.pdb")
@@ -208,7 +208,7 @@ class PeFullPdbTest(FixtureTestCase):
         self.assertIsNotNone(age)
 
     def test_pdb_signature_matches_and_the_probe_accepts_it(self):
-        _, image_guid, image_age = uprof_symbols._readobj_info(
+        _, image_guid, image_age, _ = uprof_symbols._readobj_info(
             os.fspath(F.PE / "fixture_full.exe"), F.READOBJ
         )
         guid, age, error = uprof_symbols._pdb_signature(F.PDBUTIL, F.PE / "fixture_full.pdb")
@@ -219,13 +219,17 @@ class PeFullPdbTest(FixtureTestCase):
         self.assertEqual(probe.status, "accepted")
 
     def test_probe_rejects_a_matching_guid_with_another_age(self):
-        _, guid, age = uprof_symbols._readobj_info(os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
+        _, guid, age, _ = uprof_symbols._readobj_info(
+            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ
+        )
         probe = uprof_symbols._probe_pdb(F.PDBUTIL, F.PE / "fixture_full.pdb", guid, age + 1)
         self.assertEqual(probe.status, "mismatch")
         self.assertIn("GUID matches", probe.detail)
 
     def test_probe_trusts_a_guid_age_cache_key_when_the_pdb_age_differs(self):
-        _, guid, age = uprof_symbols._readobj_info(os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
+        _, guid, age, _ = uprof_symbols._readobj_info(
+            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ
+        )
         key_age = age + 1  # image age for the key; the PDB keeps its own age
         with tempfile.TemporaryDirectory() as root:
             cache = Path(root) / f"{guid}{key_age:X}"
@@ -284,7 +288,9 @@ class PeFullPdbTest(FixtureTestCase):
     @unittest.skipIf(NO_PDB_OPTION, NO_PDB_OPTION or "")
     def test_production_accepts_a_guid_age_cache_key_directory(self):
         exe = self.temporary_copy(F.PE / "fixture_full.exe")
-        _, guid, age = uprof_symbols._readobj_info(os.fspath(F.PE / "fixture_full.exe"), F.READOBJ)
+        _, guid, age, _ = uprof_symbols._readobj_info(
+            os.fspath(F.PE / "fixture_full.exe"), F.READOBJ
+        )
         with tempfile.TemporaryDirectory() as root:
             cache = Path(root) / f"{guid}{age:X}"
             cache.mkdir()
@@ -300,7 +306,7 @@ class PeMismatchedPdbTest(FixtureTestCase):
     """Row 5: a PDB whose GUID differs from the image is rejected; its age happens to match."""
 
     def test_image_names_the_wrong_pdb_that_sits_beside_it(self):
-        name, guid, age = uprof_symbols._readobj_info(
+        name, guid, age, _ = uprof_symbols._readobj_info(
             os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ
         )
         self.assertEqual(F.embedded_basename(name or ""), "fixture_other.pdb")
@@ -308,7 +314,7 @@ class PeMismatchedPdbTest(FixtureTestCase):
         self.assertIsNotNone(age)
 
     def test_probe_rejects_the_other_pdb_with_the_guid_in_the_detail(self):
-        _, image_guid, image_age = uprof_symbols._readobj_info(
+        _, image_guid, image_age, _ = uprof_symbols._readobj_info(
             os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ
         )
         other_guid, _, _ = uprof_symbols._pdb_signature(F.PDBUTIL, F.PE / "fixture_other.pdb")
@@ -334,7 +340,7 @@ class PeMismatchedPdbTest(FixtureTestCase):
         self.assertIsNone(module.pdb)
         self.assertEqual(module.evidence.outcome, "no_pdb")
         self.assertIn("PDB=none", stream)
-        _, image_guid, _ = uprof_symbols._readobj_info(
+        _, image_guid, _, _ = uprof_symbols._readobj_info(
             os.fspath(F.PE / "fixture_mismatch.exe"), F.READOBJ
         )
         other_guid, _, _ = uprof_symbols._pdb_signature(F.PDBUTIL, F.PE / "fixture_other.pdb")
@@ -403,7 +409,7 @@ class PeDwarfTest(FixtureTestCase):
         self.assertIn(".debug_info", output)
         self.assertIn(".debug_line", output)
         self.assertNotIn("PDBGUID", output)
-        _, guid, _ = uprof_symbols._readobj_info(
+        _, guid, _, _ = uprof_symbols._readobj_info(
             os.fspath(F.PE / "fixture_pe_dwarf.exe"), F.READOBJ
         )
         self.assertIsNone(guid)

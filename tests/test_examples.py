@@ -2,13 +2,15 @@
 
 The timer-heap-churn scenario's README lists the minimal calls; this test runs exactly those
 commands against the committed timer fixture and compares the output with expected.json, so a
-tool change that alters the expected answer, the call chain or a documented command fails here
-(issue #37).
+tool change that alters the expected answer, the call chain or a documented command fails here.
+Every share in the README's expected answer must follow from expected.json, so the prose cannot
+go stale on its own (issue #37).
 
 Run from the repository root: python tests/run_tests.py test_examples
 """
 
 import json
+import math
 import re
 import shlex
 import subprocess
@@ -25,7 +27,7 @@ EXAMPLES = REPO / "examples"
 SCENARIO = EXAMPLES / "timer-heap-churn"
 SKILL_DIR = REPO / "plugin" / "skills" / "amd-uprof"
 COMMAND = re.compile(r"^\d+\. `python <SKILL_DIR>/tools/uprof\.py (profile [^`]+)`$", re.M)
-STEP = re.compile(r"^\d+\. ", re.M)
+STEP = re.compile(r"^\d+\. (.*)$", re.M)
 
 
 def _skip_reason():
@@ -37,6 +39,38 @@ def _skip_reason():
     if symbolizer is None:
         return "llvm-symbolizer is required; install LLVM"
     return uprof_native.llvm_cause(str(symbolizer))
+
+
+def _readme():
+    return (SCENARIO / "README.md").read_text(encoding="utf-8")
+
+
+def _expected():
+    return json.loads((SCENARIO / "expected.json").read_text(encoding="utf-8"))
+
+
+def _section(text, title):
+    return text.split(f"## {title}", 1)[1].split("\n## ", 1)[0]
+
+
+def _counts(expected):
+    """Every sample count the expected answer may quote a share of."""
+    total = expected["total_samples"]
+    own = expected["modules"][expected["own_module"]]["samples"]
+    counts = {values["samples"] for values in expected["modules"].values()}
+    counts |= set(expected["functions"].values())
+    counts.add(total - own)
+    counts.add(sum(expected["functions"][name] for name in expected["heap_functions"]))
+    return counts
+
+
+def _percent(count, total):
+    return f"{100 * count / total:.1f}"
+
+
+def _half_width(count, total):
+    share = count / total
+    return f"{100 * 1.96 * math.sqrt(share * (1 - share) / total):.1f}"
 
 
 class ExamplesLayoutTest(unittest.TestCase):
@@ -54,12 +88,43 @@ class ExamplesLayoutTest(unittest.TestCase):
         self.assertIn("**Status: not reproducible.**", text)
 
     def test_documented_call_count_matches_the_steps(self):
-        text = (SCENARIO / "README.md").read_text(encoding="utf-8")
-        expected = json.loads((SCENARIO / "expected.json").read_text(encoding="utf-8"))
-        section = text.split("## Minimal path: ", 1)[1].split("\n## ", 1)[0]
+        expected = _expected()
+        section = _section(_readme(), "Minimal path: ")
         count = int(section.split(" ", 1)[0])
         self.assertEqual(count, expected["minimal_tool_calls"])
         self.assertEqual(len(STEP.findall(section)), count)
+        self.assertEqual(len(COMMAND.findall(section)), count)
+        self.assertIn(f"Tool calls: {count} ", _section(_readme(), "Reference metrics"))
+
+    def test_the_path_follows_the_skill_for_an_attached_capture(self):
+        # SKILL.md picks the first call from the question; an attached capture has no process
+        # ranking step, and loading the skill is not a counted step.
+        steps = STEP.findall(_section(_readme(), "Minimal path: "))
+        self.assertNotIn("--by process", steps[0])
+        self.assertIn("--by module", steps[0])
+        for step in steps:
+            self.assertNotIn("SKILL.md", step)
+        self.assertEqual([re.search(r"--by (\w+)", step).group(1) for step in steps],
+                         _expected()["calls"])
+
+    def test_every_share_in_the_answer_follows_from_expected_json(self):
+        expected = _expected()
+        total = expected["total_samples"]
+        counts = _counts(expected)
+        answer = _section(_readme(), "Expected answer")
+        percents = {_percent(count, total) for count in counts}
+        widths = {_half_width(count, total) for count in counts}
+        quoted = re.findall(r"(?<![\d±])(\d+\.\d)%", answer)
+        self.assertTrue(quoted)
+        for value in quoted:
+            with self.subTest(percent=value):
+                self.assertIn(value, percents)
+        for value in re.findall(r"±(\d+\.\d) points", answer):
+            with self.subTest(width=value):
+                self.assertIn(value, widths)
+        for count in re.findall(r"(\d+) samples", answer):
+            with self.subTest(samples=count):
+                self.assertIn(int(count), counts | {total, expected["hot_rva"]["samples"]})
 
 
 class TimerScenarioTest(unittest.TestCase):
@@ -72,9 +137,8 @@ class TimerScenarioTest(unittest.TestCase):
             raise unittest.SkipTest(reason)
         cls.tmp = tempfile.TemporaryDirectory()
         cls.session = timer_fixture.build(Path(cls.tmp.name) / "session")
-        cls.expected = json.loads((SCENARIO / "expected.json").read_text(encoding="utf-8"))
-        text = (SCENARIO / "README.md").read_text(encoding="utf-8")
-        cls.commands = COMMAND.findall(text)
+        cls.expected = _expected()
+        cls.commands = COMMAND.findall(_readme())
         cls.outputs = [cls.run_documented(command) for command in cls.commands]
 
     @classmethod
@@ -82,12 +146,16 @@ class TimerScenarioTest(unittest.TestCase):
         cls.tmp.cleanup()
 
     @classmethod
-    def run_documented(cls, command):
-        args = [arg.replace("<SESSION_DIR>", str(cls.session))
+    def args(cls, command):
+        return [arg.replace("<SESSION_DIR>", str(cls.session))
                    .replace("<FIXTURE_DIR>", str(timer_fixture.IMAGE_DIR))
                 for arg in shlex.split(command)]
-        result = subprocess.run([sys.executable, str(SKILL_DIR / "tools" / "uprof.py"), *args],
-                                capture_output=True, text=True, encoding="utf-8")
+
+    @classmethod
+    def run_documented(cls, command):
+        result = subprocess.run(
+            [sys.executable, str(SKILL_DIR / "tools" / "uprof.py"), *cls.args(command)],
+            capture_output=True, text=True, encoding="utf-8")
         if result.returncode != 0:
             raise AssertionError(f"{command} exited {result.returncode}: {result.stderr}")
         return result.stdout
@@ -104,28 +172,27 @@ class TimerScenarioTest(unittest.TestCase):
                      if f"--by {by}" in command)
         return self.outputs[index]
 
-    def test_the_readme_documents_four_profile_calls(self):
-        self.assertEqual([re.search(r"--by (\w+)", c).group(1) for c in self.commands],
-                         ["process", "module", "function", "line"])
-
-    def test_each_call_is_the_previous_calls_next_step(self):
-        for previous, following in (("process", "module"), ("module", "function")):
-            with self.subTest(previous=previous):
-                next_line = re.search(r"^NEXT: .*$", self.output(previous), re.M).group(0)
-                self.assertIn(f"--by {following}", next_line)
+    def test_the_second_call_is_the_first_calls_next_line(self):
+        next_line = re.search(r"^NEXT: (.*)$", self.output("module"), re.M).group(1)
+        printed = shlex.split(next_line, posix=False)
+        tail = printed[printed.index("profile"):]
+        documented = self.args(self.commands[1])
+        self.assertEqual([arg.strip('"') for arg in tail], documented)
 
     def test_metric_and_module_split(self):
         module = self.output("module")
+        total = self.expected["total_samples"]
+        own = self.expected["modules"][self.expected["own_module"]]["samples"]
         self.assertIn(self.expected["metric_prefix"], module)
-        self.assertIn(self.expected["module_read_clause"], module)
+        self.assertIn(f"top row {self.expected['own_module']} {_percent(own, total)}% "
+                      f"±{_half_width(own, total)} points (95% binomial, n={total})", module)
         rows = {row["module"]: row for row in self.rows(module)}
         for name, values in self.expected["modules"].items():
             with self.subTest(module=name):
                 self.assertEqual(int(rows[name]["samples"]), values["samples"])
                 self.assertEqual(rows[name]["isSystemModule"],
                                  str(values["isSystemModule"]).lower())
-        self.assertEqual(sum(int(row["samples"]) for row in rows.values()),
-                         self.expected["total_samples"])
+        self.assertEqual(sum(int(row["samples"]) for row in rows.values()), total)
 
     def test_functions_and_hot_rva(self):
         function = self.output("function")
@@ -140,10 +207,16 @@ class TimerScenarioTest(unittest.TestCase):
                                    r"samples")
 
     def test_hash_block_lines(self):
+        # The split between the loop's lines depends on the line table, so only the line set,
+        # the top line and the total are pinned.
+        lines = self.expected["hash_block_lines"]
         rows = self.rows(self.output("line"))
-        got = [{"file": row["file"], "line": int(row["line"]), "samples": int(row["samples"])}
-               for row in rows[:len(self.expected["hash_block_lines"])]]
-        self.assertEqual(got, self.expected["hash_block_lines"])
+        top = rows[:len(lines["lines"])]
+        self.assertEqual({row["file"] for row in top}, {lines["file"]})
+        self.assertEqual(sorted(int(row["line"]) for row in top), lines["lines"])
+        self.assertEqual(int(top[0]["line"]), lines["top_line"])
+        self.assertEqual(sum(int(row["samples"]) for row in top),
+                         self.expected["functions"][self.expected["top_function"]])
 
 
 if __name__ == "__main__":

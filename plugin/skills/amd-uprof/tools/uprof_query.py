@@ -739,9 +739,22 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
     return " ".join(parts)
 
 
+def _unscoped(args: argparse.Namespace) -> bool:
+    """No --pid, --image or --function narrows the rows to one process or function."""
+    return (args.pid is None and args.image in (None, "%")
+            and not getattr(args, "function", None))
+
+
+def _top_pid(connection: object) -> int | None:
+    """The PID of the top-ranked process row, or None when no process row carries one."""
+    rows = connection.execute("SELECT pid FROM v_process_rows WHERE sort_key = 0 "
+                              "AND pid IS NOT NULL ORDER BY rn LIMIT 1").fetchall()
+    return int(rows[0][0]) if rows else None
+
+
 def _next_calls(args: argparse.Namespace,
                 row_attribution: dict[str, int] | None = None,
-                system_wide: bool = False) -> list[str]:
+                system_wide: bool = False, top_pid: int | None = None) -> list[str]:
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
@@ -750,13 +763,18 @@ def _next_calls(args: argparse.Namespace,
     offers the sibling view with the same --function/--module scope; the unscoped views keep
     their old stops. An unscoped module, function or region rollup of a system-wide capture mixes
     every process, so it names the process ranking first; line and instruction views are asked-for
-    drill-downs and keep their calls. The first call itself is chosen by the question.
+    drill-downs and keep their calls. The first call itself is chosen by the question. The
+    system-wide process ranking scopes its module call to the top process (top_pid), so following
+    NEXT never returns to the ranking.
     """
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
-    unscoped = (args.pid is None and args.image in (None, "%")
-                and not getattr(args, "function", None))
+    unscoped = _unscoped(args)
     if system_wide and unscoped and args.by in _PROCESS_STEERED:
         calls.insert(0, _profile_command(args, "process"))
+    if system_wide and unscoped and args.by == "process" and top_pid is not None:
+        scoped = argparse.Namespace(**vars(args))
+        scoped.pid, scoped.image = top_pid, None
+        calls = [_profile_command(scoped, "module")]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))
     if args.by == "line":
@@ -979,7 +997,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             has_system_module: bool | None = None,
             range_info: dict[str, Any] | None = None,
             row_attribution: dict[str, int] | None = None,
-            function_scope: dict[str, Any] | None = None) -> dict[str, Any]:
+            function_scope: dict[str, Any] | None = None,
+            top_pid: int | None = None) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -1126,7 +1145,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution, system_wide),
+        "next": _next_calls(args, row_attribution, system_wide, top_pid),
     }
     if function_scope is not None:
         result["function_scope"] = _function_scope_json(
@@ -2198,9 +2217,11 @@ def run_query_command(args: argparse.Namespace) -> None:
             uprof_db.set_variables(connection, {
                 "uprof_tag_available": "true" if tag_available else "false"})
             timer_contexts = (_timer_contexts(connection, sampler) if sampler.timer else None)
+            top_pid = (_top_pid(connection)
+                       if system_wide and args.by == "process" and _unscoped(args) else None)
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
                              sample_interval_s, has_system_module, range_info, row_attribution,
-                             function_scope)
+                             function_scope, top_pid)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             top_row = _top_row_precision(connection, args.by) if sampler.timer else None
             # The filter and its parent measurement precede the reading rule; both sit directly

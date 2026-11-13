@@ -745,16 +745,20 @@ def _unscoped(args: argparse.Namespace) -> bool:
             and not getattr(args, "function", None))
 
 
-def _top_pid(connection: object) -> int | None:
-    """The PID of the top-ranked process row, or None when no process row carries one."""
-    rows = connection.execute("SELECT pid FROM v_process_rows WHERE sort_key = 0 "
-                              "AND pid IS NOT NULL ORDER BY rn LIMIT 1").fetchall()
-    return int(rows[0][0]) if rows else None
+def _top_process(connection: object) -> tuple[int | None, str | None] | None:
+    """(PID, image name) of the top-ranked process row, or None when there is no process row."""
+    rows = connection.execute("SELECT pid, process FROM v_process_rows WHERE sort_key = 0 "
+                              "ORDER BY rn LIMIT 1").fetchall()
+    if not rows:
+        return None
+    pid, name = rows[0]
+    return (None if pid is None else int(pid)), (None if name is None else str(name))
 
 
 def _next_calls(args: argparse.Namespace,
                 row_attribution: dict[str, int] | None = None,
-                system_wide: bool = False, top_pid: int | None = None) -> list[str]:
+                system_wide: bool = False,
+                top_process: tuple[int | None, str | None] | None = None) -> list[str]:
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
@@ -764,16 +768,20 @@ def _next_calls(args: argparse.Namespace,
     their old stops. An unscoped module, function or region rollup of a system-wide capture mixes
     every process, so it names the process ranking first; line and instruction views are asked-for
     drill-downs and keep their calls. The first call itself is chosen by the question. The
-    system-wide process ranking scopes its module call to the top process (top_pid), so following
-    NEXT never returns to the ranking.
+    system-wide process ranking scopes its module call to the top process (top_process: its PID,
+    else its image name), so following NEXT never returns to the ranking; with neither, it offers
+    no module call.
     """
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
     unscoped = _unscoped(args)
     if system_wide and unscoped and args.by in _PROCESS_STEERED:
         calls.insert(0, _profile_command(args, "process"))
-    if system_wide and unscoped and args.by == "process" and top_pid is not None:
+    if system_wide and unscoped and args.by == "process":
+        pid, image = top_process or (None, None)
+        if pid is None and not image:
+            return []
         scoped = argparse.Namespace(**vars(args))
-        scoped.pid, scoped.image = top_pid, None
+        scoped.pid, scoped.image = pid, (None if pid is not None else image)
         calls = [_profile_command(scoped, "module")]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))
@@ -998,7 +1006,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             range_info: dict[str, Any] | None = None,
             row_attribution: dict[str, int] | None = None,
             function_scope: dict[str, Any] | None = None,
-            top_pid: int | None = None) -> dict[str, Any]:
+            top_process: tuple[int | None, str | None] | None = None) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -1145,7 +1153,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution, system_wide, top_pid),
+        "next": _next_calls(args, row_attribution, system_wide, top_process),
     }
     if function_scope is not None:
         result["function_scope"] = _function_scope_json(
@@ -2217,11 +2225,11 @@ def run_query_command(args: argparse.Namespace) -> None:
             uprof_db.set_variables(connection, {
                 "uprof_tag_available": "true" if tag_available else "false"})
             timer_contexts = (_timer_contexts(connection, sampler) if sampler.timer else None)
-            top_pid = (_top_pid(connection)
-                       if system_wide and args.by == "process" and _unscoped(args) else None)
+            top_process = (_top_process(connection)
+                           if system_wide and args.by == "process" and _unscoped(args) else None)
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
                              sample_interval_s, has_system_module, range_info, row_attribution,
-                             function_scope, top_pid)
+                             function_scope, top_process)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             top_row = _top_row_precision(connection, args.by) if sampler.timer else None
             # The filter and its parent measurement precede the reading rule; both sit directly

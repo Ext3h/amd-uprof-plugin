@@ -34,6 +34,8 @@ from uprof_util import (
     UprofError,
     absolute,
     check_session_meta_size,
+    inline,
+    one_line,
     read_text,
     require_file,
     same_path,
@@ -608,7 +610,7 @@ def _run_symbolizer(
             )
         )
         if warn_failure:
-            print(f"WARNING: {exe}: {run_result.errors[-1][1]}", file=stream)
+            print(f"WARNING: {inline(exe)}: {one_line(run_result.errors[-1][1])}", file=stream)
     if completed.returncode != 0 and not (completed.stdout or "").strip():
         detail = (
             run_result.errors[0][1]
@@ -620,12 +622,13 @@ def _run_symbolizer(
         reason = run_result.errors[0][1] if run_result.errors else tail_lines(run_result.stderr)
         suffix = f": {reason}" if reason else ""
         print(
-            f"WARNING: llvm-symbolizer exited {completed.returncode} for {exe}{suffix}; the "
+            f"WARNING: llvm-symbolizer exited {completed.returncode} for {inline(exe)}"
+            f"{one_line(suffix)}; the "
             "addresses it could not symbolize become '<no symbol>'",
             file=stream,
         )
     if completed.returncode == 0 and run_result.stderr.strip() and warn_failure:
-        print(f"WARNING: llvm-symbolizer: {tail_lines(run_result.stderr)}", file=stream)
+        print(f"WARNING: llvm-symbolizer: {one_line(tail_lines(run_result.stderr))}", file=stream)
     with open(out_file, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(completed.stdout or "")
     return run_result
@@ -1275,8 +1278,9 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
             "module, which needs no image"
         )
     print(
-        f"WARNING: no symbols resolved for {evidence.module_name} "
-        f"({evidence.module_path}): {'; '.join(facts)}" + (f"; {remedy}" if remedy else ""),
+        f"WARNING: no symbols resolved for {inline(evidence.module_name)} "
+        f"({inline(evidence.module_path)}): {one_line('; '.join(facts))}"
+        + (f"; {one_line(remedy)}" if remedy else ""),
         file=stream,
     )
 
@@ -1391,7 +1395,10 @@ def _symbolize_worker(
                 f"cannot write the symbol work files in {module_dir}: {exc}; "
                 "check free space and permissions on the artifact directory"
             ) from exc
-        print(f"MODULE: {module_name}: {len(rvas)} addresses in {module_path}", file=output)
+        print(
+            f"MODULE: {inline(module_name)}: {len(rvas)} addresses in {inline(module_path)}",
+            file=output,
+        )
         try:
             result = symbolize_module(
                 module_path,

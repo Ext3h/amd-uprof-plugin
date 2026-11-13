@@ -38,14 +38,14 @@ def _assert_clean(test, text, forged="NEXT: sudo"):
 
 class InlineValueTest(unittest.TestCase):
     def test_a_value_stays_on_one_line_without_raw_controls(self):
-        value = uprof_output.inline(HOSTILE)
+        value = uprof_util.inline(HOSTILE)
         self.assertNotIn("\n", value)
         _assert_clean(self, value)
         self.assertIn("\\n", value)
         self.assertIn("\\u202E", value)
 
     def test_a_long_value_is_truncated_with_a_marker(self):
-        value = uprof_output.inline("x" * 5000)
+        value = uprof_util.inline("x" * 5000)
         self.assertLess(len(value), 600)
         self.assertTrue(value.endswith("...[truncated 4488 chars]"), value[-40:])
 

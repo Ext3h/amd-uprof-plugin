@@ -20,7 +20,7 @@ from typing import Any, Final
 
 from uprof_native import find_sibling, find_symbolizer, run, tool_operand
 from uprof_symbols import resolve_image
-from uprof_util import UprofError, tail_lines
+from uprof_util import UprofError, inline, one_line, tail_lines
 
 ANCHOR_DISTANCE_CAP: Final = 1 << 20
 WINDOW_BEFORE: Final = 32
@@ -631,7 +631,8 @@ def symbolize_rvas(
             detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
         message = f"llvm-symbolizer exited {completed.returncode}: {detail or 'no output'}"
         print(
-            f"WARNING: {module_path}: {message}; affected instructions carry no symbol",
+            f"WARNING: {inline(module_path)}: {one_line(message)}; affected instructions "
+            "carry no symbol",
             file=sys.stderr,
         )
         raise ContextOmission("symbolizer_failed", message)
@@ -643,7 +644,7 @@ def symbolize_rvas(
             f"llvm-symbolizer resolved no address ({records} empty Symbol entries); "
             f"the PDB {Path(pdb).name} is probably for another build"
         )
-        print(f"WARNING: {module_path}: {message}", file=sys.stderr)
+        print(f"WARNING: {inline(module_path)}: {one_line(message)}", file=sys.stderr)
         raise ContextOmission("symbolizer_failed", message)
     return symbols
 
@@ -852,7 +853,9 @@ def decode_stream(
         if not (completed.stdout or "").strip():
             raise ContextOmission("objdump_failed", message)
         print(
-            f"WARNING: {module_path}: {message}; using the instructions it printed", file=sys.stderr
+            f"WARNING: {inline(module_path)}: {one_line(message)}; using the instructions "
+            "it printed",
+            file=sys.stderr,
         )
     decoded = parse_objdump(completed.stdout or "", build.image_base)
     if not decoded:

@@ -36,7 +36,7 @@ from uprof_native import (
     parse_nt_symbol_path,
     symbol_cache_dir,
 )
-from uprof_util import contains, same_path
+from uprof_util import contains, one_line, same_path
 
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 
@@ -541,7 +541,7 @@ class SessionCache:
     # ---------------------------------------------------------------- attachment
 
     def _warn(self, message: str) -> None:
-        print(f"WARNING: session cache: {message}", file=self.stream)
+        print(f"WARNING: session cache: {one_line(message)}", file=self.stream)
 
     def disable(self, exc: object) -> None:
         if not self.disabled:

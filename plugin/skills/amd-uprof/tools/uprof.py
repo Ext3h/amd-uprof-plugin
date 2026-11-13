@@ -276,14 +276,17 @@ def main(argv: list[str] | None = None) -> int:
         _dispatch(args)
         return 0
     except util.UprofError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        # A failure's own lines (cause, ALTERNATIVE ...) were escaped when they were built; any
+        # other message is one line, whatever capture text it carries.
+        text = str(exc) if getattr(exc, "escaped_lines", False) else util.one_line(exc)
+        print(f"error: {text}", file=sys.stderr)
         return 2
     except BrokenPipeError:
         return 0
     except KeyboardInterrupt:
         return 130
     except OSError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {util.one_line(exc)}", file=sys.stderr)
         return 2
 
 

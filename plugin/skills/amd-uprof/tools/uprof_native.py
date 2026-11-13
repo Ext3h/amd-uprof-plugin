@@ -34,6 +34,7 @@ from uprof_session import (
 from uprof_util import (
     COPY_DIRS,
     DUMP_FILENAMES,
+    one_line,
     UprofError,
     absolute,
     contains,
@@ -234,12 +235,14 @@ def failure(
             "--event <ibs-op|cycles>" + then
         ),
     }
-    lines = [cause] + [
+    lines = [one_line(cause)] + [
         f"ALTERNATIVE: {label}: {chains[label]}" for label in sorted(set(labels), key=str.lower)
     ]
     # A path that is not plain is a placeholder in the commands and named here as data only.
-    lines += [data for data in (cli_data, script_data, known_data) if data]
-    return UprofError("\n".join(lines))
+    lines += [one_line(data) for data in (cli_data, script_data, known_data) if data]
+    error = UprofError("\n".join(lines))
+    error.escaped_lines = True
+    return error
 
 
 def require_symbolizer() -> Path:

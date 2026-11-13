@@ -796,7 +796,9 @@ def _derive_scope_ranges(
                 )
                 info["absent_by_module"][name] = reason
                 print(
-                    f"WARNING: no function range derived for {name} ({path}): {reason}", file=stream
+                    f"WARNING: no function range derived for {util.inline(name)} "
+                    f"({util.inline(path)}): {util.one_line(reason)}",
+                    file=stream,
                 )
                 continue
         candidates.append((name, path))
@@ -817,16 +819,28 @@ def _derive_scope_ranges(
         if isinstance(result, BaseException):
             reason = f"range derivation failed: {result}"
             info["absent_by_module"][name] = reason
-            print(f"WARNING: no function range derived for {name} ({path}): {reason}", file=stream)
+            print(
+                f"WARNING: no function range derived for {util.inline(name)} "
+                f"({util.inline(path)}): {util.one_line(reason)}",
+                file=stream,
+            )
             continue
         if not result.ranges:
             reason = result.reason or "no function range"
             info["absent_by_module"][name] = reason
-            print(f"WARNING: no function range derived for {name} ({path}): {reason}", file=stream)
+            print(
+                f"WARNING: no function range derived for {util.inline(name)} "
+                f"({util.inline(path)}): {util.one_line(reason)}",
+                file=stream,
+            )
             continue
         ranges.extend(result.ranges)
         info["modules"] += 1
-        print(f"FUNCTION_RANGES: {name}: {len(result.ranges)} ranges from {path}", file=stream)
+        print(
+            f"FUNCTION_RANGES: {util.inline(name)}: {len(result.ranges)} ranges from "
+            f"{util.inline(path)}",
+            file=stream,
+        )
     info["ranges"] = len(ranges)
     if not ranges:
         return None, info
@@ -2539,7 +2553,9 @@ def _scope_warning(connection: object, image_pattern: str | None = None) -> list
                 ).fetchall()
             ]
             if names:
-                shown = ", ".join(names[:10]) + (" ..." if len(names) > 10 else "")
+                shown = ", ".join(util.inline(name) for name in names[:10]) + (
+                    " ..." if len(names) > 10 else ""
+                )
                 message += f"; available images in this capture: {shown}"
             else:
                 message += "; this capture records no process image names"

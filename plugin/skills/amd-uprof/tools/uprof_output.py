@@ -181,6 +181,11 @@ def _write_file(data: bytes, out_path: Path) -> None:
         temp_path = Path(name)
         with os.fdopen(handle, "wb") as stream:
             stream.write(data)
+        if os.name != "nt":
+            # mkstemp creates 0600; give the table the mode a plain create would.
+            umask = os.umask(0)
+            os.umask(umask)
+            os.chmod(temp_path, 0o666 & ~umask)
         os.replace(temp_path, out_path)
     except OSError as exc:
         if temp_path is not None:

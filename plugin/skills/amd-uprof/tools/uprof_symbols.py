@@ -55,8 +55,9 @@ _PUBLIC_ADDRESS = re.compile(r"flags\s*=\s*([^,]*),\s*addr\s*=\s*(\d+):(\d+)")
 _PUBLICS_MARKER = re.compile(r"^\s*Public Symbols\s*$", re.MULTILINE)
 
 PDB_PROBE_TIMEOUT: Final = 5 * 60
-# One module's symbolizer pass. Measured: 0.09 s for the slowest module of a 34-module real-size
-# capture, 4.1 s for 5000 addresses in a 1.3 GB PDB; a pass beyond ten minutes is not a real one.
+# One llvm-symbolizer pass (a module runs up to three). Measured: 0.09 s for the slowest module
+# of a 34-module real-size capture; a 1.3 GB PDB took 4.1 s for 5,000 addresses and 26.7 s for
+# 200,000, about 0.08 ms per address after the load. A pass beyond ten minutes is not a real one.
 SYMBOLIZER_TIMEOUT: Final = 10 * 60
 # Module work is native-tool and DuckDB bound and releases the GIL, so a small fixed pool stops
 # short of oversubscribing instead of scaling with the module count.
@@ -579,8 +580,8 @@ def _run_symbolizer(
     except ToolTimeout as exc:
         raise UprofError(
             f"llvm-symbolizer did not finish {exe} within {SYMBOLIZER_TIMEOUT} s, "
-            "far beyond any real PDB measured; run profile --by module, which needs "
-            "no symbols, or pass --image-path naming a different build"
+            "far beyond any real PDB measured; run profile --session <SESSION_DIR> "
+            "--by module, which needs no symbols"
         ) from exc
     records, empty_records = _symbol_record_stats(completed.stdout or "")
     run_result = SymbolizerRun(

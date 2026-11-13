@@ -353,6 +353,17 @@ class BuilderTest(unittest.TestCase):
 
 OWN_IMAGE_NAME = "fixture_full.exe"
 LAB_CLASSES = ("memory", "lock", "branch", "os", "vendor", "wait", "chain", "efficient")
+# The views each class's scenario takes after the module and function prefix.
+DRILL_VIEWS = {
+    "memory": ["instruction"],
+    "lock": ["instruction"],
+    "branch": ["instruction"],
+    "os": [],
+    "vendor": [],
+    "wait": [],
+    "chain": ["instruction"],
+    "efficient": ["line", "instruction"],
+}
 
 
 class LabScenarioTest(unittest.TestCase):
@@ -372,17 +383,23 @@ class LabScenarioTest(unittest.TestCase):
                     self.assertIn(word, entry["fields"]["Question"])
                 self.assertIn("open (D-028)", entry["fields"]["Session"])
                 self.assertIn("<IMAGE_DIR>", entry["fields"]["Question"])
-                self.assertEqual(len(entry["calls"]), 3)
-                for call in entry["calls"]:
+                calls = entry["calls"]
+                for call in calls:
                     self.assertIn("--image %defect_lab.exe", call)
-                # The drill-down reads the bundled images, so it needs no image on the host.
-                drill = entry["calls"][2]
-                self.assertIn("--by instruction", drill)
-                self.assertIn("--module c:/capture/", drill)
-                self.assertIn("--image-path <IMAGE_DIR>", drill)
+                self.assertIn("--by module", calls[0])
+                self.assertIn("--by function", calls[1])
+                # After the prefix, each class takes the views its evidence calls for: none where
+                # the prefix already answers (outside code in the process's function view, or a
+                # small on-CPU share), line then instruction for efficient, else the instruction
+                # drill. A drill reads the bundled images, so it needs no image on the host.
+                views = [call.split("--by ")[1].split()[0] for call in calls[2:]]
+                self.assertEqual(views, DRILL_VIEWS[name])
+                for call in calls[2:]:
+                    self.assertIn("--module c:/capture/lab_core.dll", call)
+                    self.assertIn("--image-path <IMAGE_DIR>", call)
 
-    def test_each_scenario_names_its_capture_and_leaves_the_numbers_open(self):
-        # The numbers come from the owner's re-run; none is taken from an earlier capture set.
+    def test_each_scenario_names_its_capture_and_gives_the_re_run_values(self):
+        # The numbers come from the owner's re-run with the rebuilt images, and from no other set.
         catalogue = scenarios()
         modes = {"os": "timer-cg", "vendor": "timer-cg"}
         for number, name in enumerate(LAB_CLASSES, start=21):
@@ -391,12 +408,15 @@ class LabScenarioTest(unittest.TestCase):
                 session = entry["fields"]["Session"]
                 self.assertIn(f"`{name}.timer`", session)
                 if name in ("memory", "lock", "branch", "chain"):
-                    # The cause needs a system-wide IBS capture, which SANITY refuses today.
+                    # The cause needs the system-wide IBS capture.
                     self.assertIn(f"`{name}.ibs`", session)
-                    self.assertIn("#358", session)
+                # SANITY refuses these two IBS captures of the re-run.
+                self.assertEqual("#358" in session, name in ("memory", "lock"))
                 if name in modes:
                     self.assertIn(f"`{name}.{modes[name]}`", session)
-                self.assertIn("TODO(re-run)", entry["fields"]["Answer"])
+                answer = entry["fields"]["Answer"]
+                self.assertNotIn("TODO", answer)
+                self.assertIn(f"On `{name}.timer`:", answer)
 
     def test_the_timer_and_efficient_rules_are_in_the_answers(self):
         catalogue = scenarios()

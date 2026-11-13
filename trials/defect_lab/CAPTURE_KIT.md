@@ -7,13 +7,17 @@ Delete the branch when the captures are handed over.
 ## What it records
 
 Per defect class (memory, lock, branch, os, vendor, wait, chain, efficient), `defect_lab.exe`
-runs one class while 24 stressor processes (`busy_01.exe` ... `busy_24.exe`, copies of
-`lab_busy.exe`) load the machine. A 3 s system-wide capture is recorded in each mode the CPU
+runs one class while 15 stressor processes (`busy_01.exe` ... `busy_15.exe`, copies of
+`lab_busy.exe`) load the machine. A 2 s system-wide capture is recorded in each mode the CPU
 allows:
 
-- `timer`: `AMDuProfCLI collect -e event=timer,interval=10` (any x86 CPU)
-- `ibs`: `uprof.py collect --event ibs-op` (AMD CPU with IBS; VBS/Hyper-V must be off, see below)
-- `pmc`: `uprof.py collect --event cycles` (core PMC sampling)
+- `timer`: `AMDuProfCLI collect -e event=timer,interval=4` (any x86 CPU)
+- `ibs`: `uprof.py collect --event ibs-op --sample-interval 16000000` (AMD CPU with IBS; VBS/Hyper-V must be off, see below)
+- `pmc`: `uprof.py collect --event cycles --sample-interval 4ms` (core PMC sampling)
+
+The coarse intervals and short runs keep each capture at about 1–2 MB with its dump (estimated),
+with a few hundred samples in the class's own module. `--seconds`, `--ibs-interval`,
+`--timer-ms`, `--pmc-interval` and `--stressors` change them.
 
 Two plain captures without workload (`plain.ibs`, `plain.pmc`) record only the `session.uprof`
 key names, for #237.

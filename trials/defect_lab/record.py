@@ -1,18 +1,23 @@
 """Record the defect_lab capture set: every class under load, as timer, IBS and PMC captures.
 
 Usage: python trials/defect_lab/record.py <bin_dir> <raw_dir> [--modes timer,ibs,pmc]
-           [--classes memory,lock,...] [--anonymize <out_dir>]
+           [--classes memory,lock,...] [--seconds S] [--ibs-interval OPS] [--timer-ms MS]
+           [--pmc-interval TIME] [--stressors N] [--anonymize <out_dir>]
 
-<bin_dir> holds the images build.py wrote. For each class and mode this starts 24 copies of
-lab_busy.exe under neutral names (busy_01.exe ... busy_24.exe) as the load, starts
-defect_lab.exe --class <class>, records a 3 s system-wide capture, stops the processes it
-started, and translates the capture with uprof.py. Modes:
-  timer  AMDuProfCLI collect -e event=timer,interval=10 -a -d 3 (any x86 CPU)
-  ibs    uprof.py collect --event ibs-op --seconds 3 (AMD CPU with IBS)
-  pmc    uprof.py collect --event cycles --seconds 3 (CPU with core PMC access)
+<bin_dir> holds the images build.py wrote. For each class and mode this starts N copies of
+lab_busy.exe under neutral names (busy_01.exe ...) as the load, starts defect_lab.exe --class
+<class>, records a short system-wide capture, stops the processes it started, and translates
+the capture with uprof.py (an IBS capture with its ASCII dump). Modes:
+  timer  AMDuProfCLI collect -e event=timer,interval=<ms> -a -d <S> (any x86 CPU)
+  ibs    uprof.py collect --event ibs-op --sample-interval <ops> --seconds <S> (AMD with IBS)
+  pmc    uprof.py collect --event cycles --sample-interval <time> --seconds <S>
 A mode the CPU or driver cannot record is reported and skipped. Two plain captures (ibs and pmc,
 no workload) show the session.uprof key names. Each capture also gets <name>.keys.txt: the
 session.uprof key paths with value types and no values, safe to hand over as they are.
+
+The defaults keep each capture small (about 1-2 MB with its dump, estimated) while the class's
+own module still gets a few hundred samples: 2 s, IBS every 16,000,000 ops, timer and PMC every
+4 ms, 15 stressors.
 
 --anonymize <out_dir> runs trials/anonymize_capture.py on every translated capture into
 <out_dir>/<name>, keeping defect_lab and the stressors. The raw and translated captures hold
@@ -29,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -36,15 +42,23 @@ UPROF = REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"
 ANONYMIZE = REPO / "trials" / "anonymize_capture.py"
 CLASSES = ("memory", "lock", "branch", "os", "vendor", "wait", "chain", "efficient")
 MODES = ("timer", "ibs", "pmc")
-STRESSORS = 24
-SECONDS = 3
-INTERVAL_MS = 10
-KEEP = ["defect_lab.exe"] + [f"busy_{index:02d}.exe" for index in range(1, STRESSORS + 1)]
 
 
-def stressor_images(bin_dir: Path) -> list[Path]:
+@dataclass(frozen=True)
+class Settings:
+    seconds: int = 2
+    ibs_interval: int = 16_000_000
+    timer_ms: int = 4
+    pmc_interval: str = "4ms"
+    stressors: int = 15
+
+    def keep(self) -> list[str]:
+        return ["defect_lab.exe"] + [f"busy_{n:02d}.exe" for n in range(1, self.stressors + 1)]
+
+
+def stressor_images(bin_dir: Path, count: int) -> list[Path]:
     images = []
-    for index in range(1, STRESSORS + 1):
+    for index in range(1, count + 1):
         image = bin_dir / f"busy_{index:02d}.exe"
         if not image.exists():
             shutil.copyfile(bin_dir / "lab_busy.exe", image)
@@ -52,16 +66,19 @@ def stressor_images(bin_dir: Path) -> list[Path]:
     return images
 
 
-def collect(mode: str, raw: Path) -> Path:
+def collect(mode: str, raw: Path, settings: Settings) -> Path:
     """Record one capture; return the session directory."""
     if mode == "timer":
-        subprocess.run(["AMDuProfCLI", "collect", "-e", f"event=timer,interval={INTERVAL_MS}",
-                        "-a", "-d", str(SECONDS), "-o", str(raw)], check=True,
+        subprocess.run(["AMDuProfCLI", "collect", "-e",
+                        f"event=timer,interval={settings.timer_ms}", "-a", "-d",
+                        str(settings.seconds), "-o", str(raw)], check=True,
                        stdout=subprocess.DEVNULL)
         return raw
-    event = {"ibs": "ibs-op", "pmc": "cycles"}[mode]
+    event, interval = {"ibs": ("ibs-op", str(settings.ibs_interval)),
+                       "pmc": ("cycles", settings.pmc_interval)}[mode]
     done = subprocess.run([sys.executable, str(UPROF), "collect", "--out-dir", str(raw),
-                           "--seconds", str(SECONDS), "--event", event],
+                           "--seconds", str(settings.seconds), "--event", event,
+                           "--sample-interval", interval],
                           capture_output=True, text=True)
     sys.stdout.write(done.stdout[-2000:])
     if done.returncode != 0:
@@ -99,9 +116,10 @@ def translate(session: Path, translated: Path, mode: str) -> None:
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 
 
-def record(bin_dir: Path, raw_dir: Path, name: str, mode: str) -> Path | None:
+def record(bin_dir: Path, raw_dir: Path, name: str, mode: str,
+           settings: Settings) -> Path | None:
     started = [subprocess.Popen([str(image)], cwd=bin_dir)
-               for image in stressor_images(bin_dir)]
+               for image in stressor_images(bin_dir, settings.stressors)]
     # AMDuProfCLI takes several seconds to start sampling, so the workload runs well past the
     # capture and is stopped afterwards.
     started.append(subprocess.Popen([str(bin_dir / "defect_lab.exe"), "--class", name,
@@ -110,7 +128,7 @@ def record(bin_dir: Path, raw_dir: Path, name: str, mode: str) -> Path | None:
     raw = raw_dir / f"{name}.{mode}.raw"
     try:
         time.sleep(1)
-        session = collect(mode, raw)
+        session = collect(mode, raw, settings)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
         print(f"skipped {name} {mode}: {exc}", file=sys.stderr)
         return None
@@ -124,33 +142,51 @@ def record(bin_dir: Path, raw_dir: Path, name: str, mode: str) -> Path | None:
     return translated
 
 
-def plain(raw_dir: Path, mode: str) -> None:
+def plain(raw_dir: Path, mode: str, settings: Settings) -> None:
     """A capture without workload, for the session.uprof key names of the mode."""
     try:
-        session = collect(mode, raw_dir / f"plain.{mode}.raw")
+        session = collect(mode, raw_dir / f"plain.{mode}.raw", settings)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
         print(f"skipped plain {mode}: {exc}", file=sys.stderr)
         return
     write_keys(session, raw_dir / f"plain.{mode}.keys.txt")
 
 
+def parser() -> argparse.ArgumentParser:
+    defaults = Settings()
+    result = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    result.add_argument("bin_dir", type=Path)
+    result.add_argument("raw_dir", type=Path)
+    result.add_argument("--modes", default=",".join(MODES))
+    result.add_argument("--classes", default=",".join(CLASSES))
+    result.add_argument("--seconds", type=int, default=defaults.seconds)
+    result.add_argument("--ibs-interval", type=int, default=defaults.ibs_interval,
+                        metavar="OPS", help="IBS op-count interval (dispatched ops per sample)")
+    result.add_argument("--timer-ms", type=int, default=defaults.timer_ms, metavar="MS")
+    result.add_argument("--pmc-interval", default=defaults.pmc_interval, metavar="TIME")
+    result.add_argument("--stressors", type=int, default=defaults.stressors, metavar="N")
+    result.add_argument("--anonymize", type=Path, metavar="OUT_DIR")
+    return result
+
+
+def settings_from(args: argparse.Namespace) -> Settings:
+    return Settings(seconds=args.seconds, ibs_interval=args.ibs_interval,
+                    timer_ms=args.timer_ms, pmc_interval=args.pmc_interval,
+                    stressors=args.stressors)
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("bin_dir", type=Path)
-    parser.add_argument("raw_dir", type=Path)
-    parser.add_argument("--modes", default=",".join(MODES))
-    parser.add_argument("--classes", default=",".join(CLASSES))
-    parser.add_argument("--anonymize", type=Path, metavar="OUT_DIR")
-    args = parser.parse_args(argv)
+    args = parser().parse_args(argv)
+    settings = settings_from(args)
     bin_dir, raw_dir = args.bin_dir.resolve(), args.raw_dir.resolve()
     raw_dir.mkdir(parents=True, exist_ok=True)
     modes = [mode for mode in args.modes.split(",") if mode]
     translated = []
     for mode in modes:
         if mode in ("ibs", "pmc"):
-            plain(raw_dir, mode)
+            plain(raw_dir, mode, settings)
         for name in args.classes.split(","):
-            result = record(bin_dir, raw_dir, name, mode)
+            result = record(bin_dir, raw_dir, name, mode, settings)
             if result:
                 print(result)
                 translated.append((f"{name}.{mode}", result))
@@ -158,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         failed = []
         for label, session in translated:
             code = subprocess.run([sys.executable, str(ANONYMIZE), str(session),
-                                   "--keep-process", *KEEP, "--out",
+                                   "--keep-process", *settings.keep(), "--out",
                                    str(args.anonymize / label)]).returncode
             print(f"anonymize {label}: exit {code}")
             if code != 0:

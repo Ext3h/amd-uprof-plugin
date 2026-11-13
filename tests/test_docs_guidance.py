@@ -207,6 +207,16 @@ class DocsGuidanceTest(unittest.TestCase):
         self.assertLess(SKILL.index("# AMD uProf profile"), SKILL.index(FIRST_CALL))
         self.assertLess(SKILL.index(FIRST_CALL), SKILL.index("## Quickstart"))
 
+    def test_the_function_lens_is_offered_before_the_module_lens(self):
+        # Small models take the first option offered; most questions need --by function first,
+        # and only "where did time go" or mine-versus-the-rest starts at --by module.
+        first_line = SKILL[SKILL.index("**First call"):SKILL.index("One entry point")]
+        self.assertIn("--by function|module|process", first_line)
+        quickstart = SKILL[SKILL.index("## Quickstart"):SKILL.index("## Commands")]
+        choice = quickstart[quickstart.index("First call by question"):]
+        self.assertLess(choice.index("`--by function`"), choice.index("`--by module`"))
+        self.assertNotIn("the CPU-time path is module, then function", SKILL)
+
     def test_no_fixed_first_call_or_self_read_is_mandated(self):
         # A loaded skill needs no Read of itself, and an attached capture goes straight to the
         # lens the question needs; only a system-wide capture starts with the process ranking.

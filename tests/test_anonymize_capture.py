@@ -43,6 +43,7 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.session = build_captures.build(root / "c", ["systemwide"])["systemwide"]
         connection = duckdb.connect(str(self.session / "cpu.db"))
         try:
+            (built,) = connection.execute("SELECT path FROM Module WHERE id = 1").fetchone()
             connection.execute("CREATE TABLE HostInfo (id INTEGER, hostName VARCHAR)")
             connection.execute("INSERT INTO HostInfo VALUES (1, ?)", [HOST])
             connection.execute("UPDATE Process SET name = ? || '\\' || name", [PROFILE])
@@ -51,6 +52,16 @@ class AnonymizeCaptureTest(unittest.TestCase):
             )
         finally:
             connection.close()
+        # The IBS dump names the module by the same path as cpu.db, as a real capture does; the
+        # builder wrote the build host's path, which is a POSIX path on Linux.
+        dump = self.session / "IbsOpDump.csv"
+        dump.write_text(
+            dump.read_text(encoding="utf-8").replace(
+                f",{built},", f",{PROFILE}\\fixture_full.exe,"
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
         meta = json.loads((self.session / "session.uprof").read_text(encoding="utf-8"))
         meta["hpc"] = {"hostName": HOST}
         meta["collectCommand"] = f"AMDuProfCLI.exe collect -a -o {PROFILE}\\out"
@@ -594,7 +605,7 @@ class AnonymizeCaptureTest(unittest.TestCase):
         )
         self.assertTrue(all(Path(path).parent == self.out.resolve() for path in bundled))
 
-    @unittest.skipIf(sys.platform != "win32", "builds Windows images")
+    @unittest.skipIf(sys.platform != "win32", "host: the lab builds Windows images")
     def test_the_lab_build_leaves_no_host_path_in_images_or_pdbs(self):
         sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
         import build

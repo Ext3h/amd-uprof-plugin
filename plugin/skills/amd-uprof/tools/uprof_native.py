@@ -476,6 +476,7 @@ def _stop_tree(process: subprocess.Popen[str]) -> None:
         try:
             subprocess.run(
                 [str(_system_directory() / "taskkill.exe"), "/T", "/F", "/PID", str(process.pid)],
+                check=False,
                 capture_output=True,
                 timeout=60,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -656,13 +657,19 @@ def translate_stopped(
         else f"translate did not finish within {TRANSLATE_CEILING // 60} min"
     )
     lines = [
-        f"{stop} and was stopped: a slow or unreachable symbol server or share is the usual "
-        f"cause, since AMDuProfCLI fetches symbols during translate (symbol servers: {sources}; "
-        "and the shares in _NT_SYMBOL_PATH)",
-        f"ALTERNATIVE: local symbols only: python {script} translate --session {session_arg} "
-        f"--out-dir {out_arg} --force",
-        "run it with _NT_SYMBOL_PATH set to a local folder only: a set _NT_SYMBOL_PATH "
-        "defines the symbol servers exactly, and an unset one uses the Microsoft server",
+        (
+            f"{stop} and was stopped: a slow or unreachable symbol server or share is the "
+            "usual cause, since AMDuProfCLI fetches symbols during translate (symbol servers: "
+            f"{sources}; and the shares in _NT_SYMBOL_PATH)"
+        ),
+        (
+            f"ALTERNATIVE: local symbols only: python {script} translate --session {session_arg} "
+            f"--out-dir {out_arg} --force"
+        ),
+        (
+            "run it with _NT_SYMBOL_PATH set to a local folder only: a set _NT_SYMBOL_PATH "
+            "defines the symbol servers exactly, and an unset one uses the Microsoft server"
+        ),
     ]
     lines += [data for data in (script_data, session_data, out_data) if data]
     return LinesError(lines)

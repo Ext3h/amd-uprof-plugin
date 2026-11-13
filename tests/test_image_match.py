@@ -13,7 +13,6 @@ from contextlib import redirect_stderr
 from pathlib import Path
 
 import duckdb
-
 import uprof_db
 import uprof_query
 

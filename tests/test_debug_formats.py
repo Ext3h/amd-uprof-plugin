@@ -345,10 +345,13 @@ class PeMismatchedPdbTest(FixtureTestCase):
         )
         other_guid, _, _ = uprof_symbols._pdb_signature(F.PDBUTIL, F.PE / "fixture_other.pdb")
         probes = module.evidence.search.probes
+        # The same wrong PDB may also sit at the build path the image records, on the host
+        # that linked the fixtures; every rejection must name the other build's GUID.
         mismatch = [probe for probe in probes if probe.status == "mismatch"]
-        self.assertEqual(len(mismatch), 1)
-        self.assertEqual(mismatch[0].pdb_guid, other_guid)
-        self.assertIn(image_guid, mismatch[0].detail)
+        self.assertTrue(mismatch)
+        for probe in mismatch:
+            self.assertEqual(probe.pdb_guid, other_guid)
+            self.assertIn(image_guid, probe.detail)
         self.assertFalse([probe for probe in probes if probe.status == "accepted"])
 
 

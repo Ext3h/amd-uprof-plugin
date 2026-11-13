@@ -41,6 +41,28 @@ class WindowsCauseTest(unittest.TestCase):
         self.assertNotIn("\n", reason)
         self.assertFalse(any("systeminfo" in " ".join(map(str, call)) for call in calls))
 
+    def test_the_query_reads_both_cim_classes_without_a_profile(self):
+        _, calls = windows_reason("2 1")
+        command = " ".join(map(str, calls[0]))
+        for part in ("powershell", "-NoProfile", "-NonInteractive", "Win32_DeviceGuard",
+                     "VirtualizationBasedSecurityStatus", "Win32_ComputerSystem",
+                     "HypervisorPresent"):
+            self.assertIn(part, command)
+
+    def test_the_remedy_does_not_repeat_the_cycle_fallback(self):
+        # The reason is printed on the SAMPLER line after collect already chose cycle sampling.
+        for stdout in ("2 1", "0 1", "0 0", ""):
+            with self.subTest(stdout=stdout):
+                reason, _ = windows_reason(stdout)
+                self.assertNotIn("--event cycles", reason)
+
+    def test_vbs_enabled_but_not_running_is_not_named(self):
+        reason, _ = windows_reason("1 0")
+        self.assertNotIn("VBS is running", reason)
+        self.assertIn("no hypervisor or VBS is active", reason)
+        reason, _ = windows_reason("1 1")
+        self.assertIn("hypervisor is present", reason)
+
     def test_a_hypervisor_without_vbs_is_named(self):
         reason, _ = windows_reason("0 1")
         self.assertIn("hypervisor is present", reason)

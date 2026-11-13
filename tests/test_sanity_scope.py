@@ -132,6 +132,13 @@ class SanityScopeTest(unittest.TestCase):
         self.assertIn("scoped coverage (--pid 100 --time-filter 0.000:5.000 s): WARN", line)
         self.assertIn("3.100 s before the scope window end at 5.000 s", line)
 
+    def test_a_system_wide_ok_leads_with_its_verdict_and_compares_nothing(self):
+        line = self.sanity_line()
+
+        self.assertIn("SANITY: OK, system-wide: ", line)
+        self.assertNotIn("span", line)
+        self.assertNotIn("s of core time", line)
+
     def test_unfiltered_run_makes_no_scoped_claim(self):
         line = self.sanity_line()
 
@@ -143,7 +150,7 @@ class SanityScopeTest(unittest.TestCase):
 
         line = self.sanity_line("--pid", "100")
 
-        self.assertIn("OK (attached", line)
+        self.assertIn("SANITY: OK, attached: ", line)
         self.assertNotIn("scoped", line)
 
     def test_missing_system_wide_is_treated_as_attached(self):
@@ -191,9 +198,8 @@ class SanityScopeTest(unittest.TestCase):
 
         line = self.sanity_line("--pid", "100", "--time-filter", "0:10")
 
-        self.assertIn(
-            "WARN (dump-wide across all processes): session.uprof has no usable duration", line
-        )
+        self.assertIn("SANITY: WARN, system-wide: ", line)
+        self.assertIn("session.uprof has no usable duration", line)
         self.assertIn("scoped coverage (--pid 100 --time-filter 0.000:10.000 s): WARN", line)
 
     def test_pmc_scope_has_no_verdict_without_timestamps(self):

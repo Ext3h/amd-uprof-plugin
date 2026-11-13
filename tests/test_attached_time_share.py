@@ -200,7 +200,10 @@ class AttachedTimeShareTest(unittest.TestCase):
         document = self._profile()
         sanity = document["SANITY"]
 
-        self.assertIn("OK (attached", sanity)
+        # The verdict and scope lead in a fixed form; an OK line compares no thread with the span.
+        self.assertTrue(sanity.startswith("OK, attached: "), sanity)
+        self.assertNotIn("span", sanity)
+        self.assertNotIn("busiest TID covers", sanity)
         self.assertIn("1 active TID (46/46 samples in the busiest)", sanity)
         self.assertIn("2 CPU(s) visited", sanity)
         self.assertIn("partitions gaps by (PID, TID)", sanity)

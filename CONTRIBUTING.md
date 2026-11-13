@@ -62,8 +62,8 @@ Maintainers are the people with write access to this repository.
   in the mode it was recorded in, and the output states once which measures that mode lacks.
   Why: a silent switch produces answers the caller cannot trust.
 - DC-04 Guidance lives in tool output. Step-by-step guidance goes into NEXT/READ/cause lines
-  where it applies; SKILL.md and the references do not grow; shipped text never points outside
-  the installed plugin.
+  where it applies; SKILL.md, `docs/reference.md` and `docs/validation.md` do not grow; shipped
+  text never points outside the installed plugin.
   Why: the plugin must be as friendly as possible to local LLMs with a small context window;
   SKILL.md is loaded on every run, tool output only where it applies (serves PG-03, PG-04,
   PG-06).
@@ -80,7 +80,7 @@ Maintainers are the people with write access to this repository.
 - `docs/spec.md` defines what the tools do. Every change conforms to it.
   Changing the spec itself needs an accepted issue first.
 - The product goals and design constraints above define what the plugin is for and how it may be built.
-- `SKILL.md`, the other references and the tool output follow the spec and never extend it. Where they
+- `SKILL.md`, `docs/reference.md`, `docs/validation.md` and the tool output follow the spec and never extend it. Where they
   disagree with it, that is a bug.
 
 ## Sensitive changes

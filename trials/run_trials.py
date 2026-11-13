@@ -37,6 +37,10 @@ import build_captures
 from runners import TrialSpec, runners
 
 FIELD = re.compile(r"^- \*\*(\w[\w ]*):\*\*\s*(.*)$")
+# Committed reference captures, as repository paths, and how a Session names them.
+CAPTURES = "trials/defect_lab/captures"
+IMAGES = "images"
+COMMITTED = "defect_lab/"
 
 
 def catalogue() -> dict[str, dict[str, str]]:
@@ -85,16 +89,95 @@ def plugin_copy(run_dir: Path, rev: str | None, directory: Path | None) -> tuple
     return target, f"git archive {commit} plugin"
 
 
-def prepare(run_dir: Path, scn: str, fields: dict[str, str]) -> tuple[str, Path]:
-    """Build the trial's captures and return its prompt with real paths, and the capture root."""
+def git(*args: str) -> bytes:
+    return subprocess.run(["git", "-C", str(REPO), *args], check=True, capture_output=True).stdout
+
+
+def capture_revision(plugin_rev: str, plugin_dir: Path | None) -> str:
+    """The commit the committed captures come from: the plugin's revision, else HEAD.
+
+    Captures are never taken from the working tree; a tested plugin folder is not a revision.
+    """
+    return git("rev-parse", "HEAD" if plugin_dir is not None else plugin_rev).decode().strip()
+
+
+def tree_names(rev: str, folder: str) -> list[str]:
+    listing = git("ls-tree", "--name-only", rev, f"{folder}/").decode().split()
+    return [name.rsplit("/", 1)[-1] for name in listing]
+
+
+def choose_platform(platforms: list[str], name: str, rev: str) -> str:
+    if not platforms:
+        raise ValueError(f"no platform folder under {CAPTURES} at {rev}")
+    if len(platforms) > 1:
+        raise ValueError(
+            f"{name}: several platforms under {CAPTURES} at {rev} ({', '.join(platforms)}); "
+            f"name one as {COMMITTED}<platform>/{name}"
+        )
+    return platforms[0]
+
+
+def committed_folder(name: str, rev: str) -> str:
+    """The repository path of a committed capture named defect_lab/[<platform>/]<capture>."""
+    parts = name[len(COMMITTED) :].split("/")
+    platforms = tree_names(rev, CAPTURES)
+    if len(parts) == 2:
+        platform, capture = parts
+        if platform not in platforms:
+            raise ValueError(
+                f"no platform {platform} under {CAPTURES} at {rev}; "
+                f"available: {', '.join(platforms) or 'none'}"
+            )
+    else:
+        capture = parts[0]
+        platform = choose_platform(platforms, capture, rev)
+    available = [n for n in tree_names(rev, f"{CAPTURES}/{platform}") if n != IMAGES]
+    if capture not in available:
+        raise ValueError(f"no committed capture {name} at {rev}; available: {', '.join(available)}")
+    return f"{CAPTURES}/{platform}/{capture}"
+
+
+def extract(rev: str, folder: str, target: Path) -> None:
+    """Write a committed folder's files from rev into target (not from the working tree)."""
+    archive = git("archive", "--format=tar", rev, folder)
+    target.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        for member in tar.getmembers():
+            if member.isfile():
+                relative = member.name[len(folder) + 1 :]
+                path = target / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(tar.extractfile(member).read())
+
+
+def prepare(
+    run_dir: Path, scn: str, fields: dict[str, str], rev: str = "HEAD"
+) -> tuple[str, Path, list[str]]:
+    """Set up the trial's captures and return its prompt with real paths, the capture root and
+    the "<commit>:<path>" source of each committed capture.
+
+    Built sessions come from build_captures; a name defect_lab/[<platform>/]<capture> is copied
+    with its platform's images/ from the committed revision rev, so the trial reads it inside
+    its own capture root.
+    """
     names = sessions_of(fields)
     root = run_dir / "captures" / scn
-    built = build_captures.build(root, names)
+    commit = git("rev-parse", rev).decode().strip()
+    # Refuse an unknown committed name before anything is built.
+    folders = {name: committed_folder(name, commit) for name in names if name.startswith(COMMITTED)}
+    built_names = [name for name in names if name not in folders]
+    built = build_captures.build(root, built_names) if built_names else {}
     # Neutral session names, so the folder names do not describe the scenario.
     labels = ["before", "after"] if len(names) == 2 else ["capture"]
     paths = {}
+    sources = []
     for label, name in zip(labels, names):
-        built[name].rename(root / label)
+        if name in folders:
+            extract(commit, folders[name], root / label)
+            extract(commit, f"{folders[name].rsplit('/', 1)[0]}/{IMAGES}", root / IMAGES)
+            sources.append(f"{commit}:{folders[name]}")
+        else:
+            built[name].rename(root / label)
         paths[label] = root / label
     prompt = question(fields)
     replacements = {
@@ -102,7 +185,8 @@ def prepare(run_dir: Path, scn: str, fields: dict[str, str]) -> tuple[str, Path]
         "<BEFORE>": paths.get("before"),
         "<AFTER>": paths.get("after"),
         "<PDB_DIR>": root / "bins" / "pdbs",
-        "<IMAGE_DIR>": root / "bins" / "timer",
+        # A committed capture brings the images it was recorded with.
+        "<IMAGE_DIR>": root / IMAGES if folders else root / "bins" / "timer",
     }
     for placeholder, path in replacements.items():
         if path is not None:
@@ -110,7 +194,7 @@ def prepare(run_dir: Path, scn: str, fields: dict[str, str]) -> tuple[str, Path]
     prompt = prompt.replace("`", "")
     if re.search(r"<[A-Z_]+>", prompt):
         raise ValueError(f"{scn}: unreplaced placeholder in {prompt!r}")
-    return prompt, root
+    return prompt, root, sources
 
 
 def context_limit(text: str | None = None) -> int:
@@ -160,7 +244,7 @@ def outside_references(events: list[dict], denied: list[Path]) -> list[str]:
 def run_one(
     runner, run_dir: Path, scn: str, fields, plugin: Path, args, others: list[str]
 ) -> dict[str, object]:
-    prompt, capture_root = prepare(run_dir, scn, fields)
+    prompt, capture_root, sources = prepare(run_dir, scn, fields, args.capture_rev)
     cwd = run_dir / "trials" / scn
     (cwd / "_temp").mkdir(parents=True)
     out = run_dir / "out" / scn
@@ -198,6 +282,7 @@ def run_one(
         "wall_s": result.wall_s,
         "cwd": str(cwd),
         "capture": str(capture_root),
+        "capture_source": sources,
         "evidence": result.evidence,
         "context_tokens": result.context_tokens,
         "context": context_verdict(result.context_tokens, context_limit()),
@@ -281,6 +366,7 @@ def main(argv: list[str] | None = None, registry: dict[str, type] | None = None)
         raise SystemExit(f"unknown scenario(s): {', '.join(unknown)}")
     skipped = {scn: scenarios[scn]["Session"] for scn in chosen if not sessions_of(scenarios[scn])}
     runnable = [scn for scn in chosen if scn not in skipped]
+    args.capture_rev = capture_revision(args.plugin_rev, args.plugin_dir)
     args.run_dir.mkdir(parents=True)
     plugin, source = plugin_copy(
         args.run_dir, None if args.plugin_dir else args.plugin_rev, args.plugin_dir
@@ -300,6 +386,7 @@ def main(argv: list[str] | None = None, registry: dict[str, type] | None = None)
         "Runner": runner.name,
         "Model": args.model,
         "Plugin": source,
+        "Committed captures": f"from commit {args.capture_rev}",
         "Timeout per trial": f"{args.timeout} s",
         "Parallel": str(args.parallel),
     }

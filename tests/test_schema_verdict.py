@@ -20,7 +20,8 @@ except ImportError:  # the suite reports the skip reason
     duckdb = None
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
-EVENT_COLUMN = "event#0x100000000f100"
+# The column name the sampler derives from encodedEventId 0x03000076 below.
+EVENT_COLUMN = "event#0x3000076"
 PMC_META = {
     "collection": {
         "events": {"pmcEvents": {"pmcEventList": [{

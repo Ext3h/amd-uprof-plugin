@@ -73,6 +73,22 @@ class RunWatchedTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0)
         self.assertIn("done", completed.stdout)
 
+    def test_new_output_counts_as_progress(self):
+        # The progress value never changes; the child's output alone keeps it alive.
+        code = (
+            "import time\nfor _ in range(40):\n    print('step', flush=True)\n    time.sleep(0.1)\n"
+        )
+        completed = uprof_native.run_watched(
+            [sys.executable, "-c", code],
+            progress=lambda: 0,
+            stall_s=2.0,
+            ceiling_s=60.0,
+            poll_s=0.1,
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout.count("step"), 40)
+
     def test_the_ceiling_stops_a_child_that_keeps_progressing(self):
         with self.assertRaises(uprof_native.ToolTimeout):
             uprof_native.run_watched(
@@ -118,7 +134,10 @@ class TranslateStallTest(unittest.TestCase):
         out, _ = uprof_shell.path_arg(self.out, "<OUT_DIR>")
         self.assertIn(f"translate --session {session} --out-dir {out} --force", alternative)
         self.assertTrue(alternative.split(": ", 2)[2].startswith("python "), alternative)
-        self.assertIn("run it with _NT_SYMBOL_PATH unset or set to a local folder only", message)
+        # An unset _NT_SYMBOL_PATH falls back to the Microsoft server, so only a variable set to
+        # local folders runs the translate without a network symbol source.
+        self.assertIn("run it with _NT_SYMBOL_PATH set to a local folder only", message)
+        self.assertNotIn("unset or set", message)
 
     def test_a_stalled_translate_names_the_stall_and_the_alternative(self):
         message = self.failure(uprof_native.ToolStalled("stalled"))

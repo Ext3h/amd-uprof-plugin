@@ -674,7 +674,10 @@ def _quote(text: str) -> str:
     return '"' + text.replace('"', '\\"') + '"'
 
 
-def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
+def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False, *,
+                     function: str | None = None,
+                     module: str | None = None,
+                     function_start: int | None = None) -> str:
     """A runnable drill-down command that keeps the session and the process/image scope."""
     parts = ["python", _quote(str(TOOLS_DIR / "uprof.py")), "profile",
              "--session", _quote(str(util.absolute(args.session))), "--by", by]
@@ -684,13 +687,16 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
         parts += ["--image", _quote(args.image)]
     if args.time_filter:
         parts += ["--time-filter", _quote(args.time_filter)]
-    if getattr(args, "function", None):
-        parts += ["--function", _quote(args.function)]
-        module = getattr(args, "module", None)
-        if module:
-            parts += ["--module", _quote(module)]
-        if getattr(args, "function_start", None) is not None:
-            parts += ["--function-start", f"0x{args.function_start:X}"]
+    fn = function if function is not None else getattr(args, "function", None)
+    if fn:
+        parts += ["--function", _quote(fn)]
+        mod = module if module is not None else getattr(args, "module", None)
+        if mod:
+            parts += ["--module", _quote(mod)]
+        fn_start = (function_start if function_start is not None
+                    else getattr(args, "function_start", None))
+        if fn_start is not None:
+            parts += ["--function-start", f"0x{fn_start:X}"]
     if getattr(args, "symbol_path", None):
         for value in args.symbol_path:
             parts += ["--symbol-path", _quote(value)]
@@ -809,6 +815,47 @@ def _function_scope_json(scope: dict[str, Any], sample_interval_s: float | None,
     }
 
 
+def _matching_function_calls(connection: object, args: argparse.Namespace) -> list[str]:
+    """Runnable calls for closest matching function rows in v_function_measured."""
+    function = getattr(args, "function", None)
+    module = getattr(args, "module", None)
+    if not function or not module:
+        return []
+    sql = """
+        SELECT module_name, function_name, function_start,
+               CASE
+                 WHEN function_name = ? AND lower(module_name) = lower(?) THEN 1
+                 WHEN lower(function_name) = lower(?) AND lower(module_name) = lower(?) THEN 2
+                 WHEN function_name = ? THEN 3
+                 WHEN lower(function_name) = lower(?) THEN 4
+                 WHEN lower(module_name) = lower(?) THEN 5
+                 ELSE 6
+               END AS rank,
+               samples
+        FROM v_function_measured
+        WHERE function_name IS NOT NULL AND module_name IS NOT NULL
+          AND (function_name = ? OR lower(function_name) = lower(?) OR lower(module_name) = lower(?))
+        ORDER BY rank, samples DESC, module_name, function_name, function_start NULLS LAST"""
+    try:
+        rows = connection.execute(
+            sql, [function, module, function, module, function, function, module,
+                  function, function, module]).fetchall()
+    except Exception:
+        return []
+    seen: set[tuple[str, str, int | None]] = set()
+    calls: list[str] = []
+    for mod_name, fn_name, fn_start, _rank, _samples in rows:
+        key = (mod_name, fn_name, fn_start)
+        if key in seen:
+            continue
+        seen.add(key)
+        calls.append(_profile_command(
+            args, args.by, function=fn_name, module=mod_name, function_start=fn_start))
+        if len(calls) == 5:
+            break
+    return calls
+
+
 def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, Any] | None:
     """The parent function selected by --function/--module/--function-start, or None.
 
@@ -832,6 +879,11 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
               + ("" if getattr(args, "function_start", None) is None
                  else f" --function-start 0x{args.function_start:X}"))
     if not rows:
+        candidates = _matching_function_calls(connection, args)
+        if candidates:
+            rendered = "\n".join(f"  {cmd}" for cmd in candidates)
+            raise util.UprofError(
+                f"no function row matches {wanted}; runnable alternatives:\n{rendered}")
         raise util.UprofError(
             f"no function row matches {wanted}; copy the function, module and function_start "
             "cells from a --by function row (the filter uses the same --pid/--image/"
@@ -1865,9 +1917,12 @@ def run_query_command(args: argparse.Namespace) -> None:
     session = util.require_dir(args.session, "capture directory")
     cpu_db = session / "cpu.db"
     if not cpu_db.is_file():
-        raise util.UprofError(f"cpu.db not found: {cpu_db} (run translate --session "
-                              f"'{session}' --out-dir <COPY_DIR> first, then query the original "
-                              "session)")
+        translated = f"{util.absolute(session)}-translated"
+        translate_call = (f"python {_quote(str(TOOLS_DIR / 'uprof.py'))} translate "
+                          f"--session {_quote(str(util.absolute(session)))} "
+                          f"--out-dir {_quote(str(translated))}")
+        raise util.UprofError(f"cpu.db not found: {cpu_db} (run {translate_call} first, "
+                              "then query the translated session)")
     out_path = _out_path(args, cpu_db, session)
 
     if args.command == "schema":

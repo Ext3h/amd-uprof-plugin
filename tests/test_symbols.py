@@ -314,7 +314,7 @@ class NoPdbEvidenceTest(unittest.TestCase):
                     side_effect=lambda _tool, name: Path(name + ".exe"),
                 ),
                 mock.patch.object(
-                    uprof_symbols, "_readobj_info", return_value=("fixture.pdb", None, None)
+                    uprof_symbols, "_readobj_info", return_value=("fixture.pdb", None, None, None)
                 ),
                 mock.patch.object(
                     uprof_symbols,

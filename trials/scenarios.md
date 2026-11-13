@@ -6,15 +6,18 @@ installed plugin, then compares its calls and answer with this catalogue.
 
 `tests/test_trials.py` checks the catalogue: every scenario has its fields and every answer part,
 every call parses with the current `uprof.py`, every session it names is one `build_captures.py`
-writes, and the key shares quoted for SCN-02 and SCN-09 are what the tools print for the built
-captures.
+writes or a committed reference capture, the key shares quoted for SCN-02 and SCN-09 are what
+the tools print for the built captures, and the values SCN-21..28 quote are what the tools
+print for the committed ones.
 
 ## Conventions
 
 - Scenario IDs `SCN-nn` are stable. A dropped scenario's ID is retired, never reused.
   Retired IDs: none.
-- **Session**: the `build_captures.py` session the scenario runs on, or `none` with the reason.
-  The sessions are synthetic: they exercise the tools' code paths, not real capture statistics.
+- **Session**: the `build_captures.py` session the scenario runs on, a committed reference
+  capture `defect_lab/<class>.<mode>`, or `none` with the reason. Only the backticked names are
+  sessions; a note names other captures in plain text. The built sessions are synthetic: they
+  exercise the tools' code paths, not real capture statistics.
 - **Question**: the prompt, phrased as a user would write it. `<CAPTURE>` is the session
   directory; `<BEFORE>`/`<AFTER>` are two sessions, `<PDB_DIR>` and `<IMAGE_DIR>` the folders
   the user names.
@@ -35,9 +38,6 @@ captures.
 - A question about the user's own code names the process (exe name, and PID where the
   capture holds more than one instance) as well as the module (D-019).
 - **Open steps** say `open (D-nnn)`:
-  - open (D-028): the `defect_lab` captures for SCN-21..28 come from the owner's re-run on the
-    reference machine with the images rebuilt for call stacks. The scenarios' values come from
-    that re-run; the captures are not committed yet.
   - open (D-031): not run: awaiting reference capture (#390). The loaded attached captures,
     with a parallel stressor process as the load, are recorded on the owner's reference
     machine. Until they exist, SCN-02..08, 11, 17 and 19 run on their unloaded sessions, and
@@ -88,6 +88,7 @@ A trial run passes when both hold:
 | `pmc` | `attached` as a PMC `CYCLES_NOT_IN_HALT` capture without an IBS dump |
 | `timer` | the committed real timer capture of `heap_churn.exe` (see `examples/timer-heap-churn`); image and PDB in `bins/timer` |
 | `systemwide_loaded` | `systemwide` under desktop load: 26 more processes of 22 images (browser, antivirus, indexer and others), 4,660 samples. `storage_test.exe` PID 3112 holds `attached`'s samples doubled (194, 4.2 %, rank 11 of 28 processes); PID 3113 is an unrelated instance of the same image (10 samples, all in `fixture_full.exe`). The unfiltered function view's 20 rows are all foreign |
+| `defect_lab/<class>.<mode>` | a committed reference capture from `trials/defect_lab/captures/<platform>/`, recorded on the owner's reference machine: one per defect class as timer, timer-cg, ibs and ibs-cg. The trial gets a copy from the committed revision, with the platform's `images/` (the lab images and PDBs) as `<IMAGE_DIR>` |
 | `attached_inproc_loaded` | `attached` plus 22 runtime, graphics and vendor DLLs inside the same process, each hotter than the own `fixture_entry`; 746 samples |
 
 ## SCN-01: where did my app's CPU time go
@@ -355,9 +356,14 @@ A trial run passes when both hold:
 
 ## SCN-21: what can I improve (memory class)
 
-- **Session:** none (open (D-028): needs `memory.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; the cause also needs `memory.ibs`, the system-wide IBS capture, which SANITY refuses: that part is blocked on #358)
+- **Session:** `defect_lab/memory.timer`. Note: the cause needs memory.ibs, the system-wide IBS capture, which SANITY refuses (#358)
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_memory` in `lab_core.dll` and its hot RVA. Proof: its samples; on an IBS capture, `IbsDcMiss` set and long tag-to-retire at the hot load make it memory-bound; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture. Cost: its share of `defect_lab.exe`'s samples and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by changing the access pattern or data layout. On `memory.timer`: `lab_memory` holds all 515 of `defect_lab.exe`'s samples; the hot instruction is RVA 0x10BB in the inlined `xorshift` at `lab_core.c:23`, 277 samples (54 %); `cpu_seconds` is absent: the tool derives no seconds from a timer capture; confidence ±4.4 % (1/√515). `memory.ibs` is refused by SANITY (#358), so the miss evidence is not available.
+- **Answer:**
+  - **Location:** `lab_memory` in `lab_core.dll`; its hot instruction is RVA 0x10BB in the inlined `xorshift` at `lab_core.c:23`, 277 samples.
+  - **Proof:** on `memory.timer`, hotspot and cost shown, cause not determinable from a timer capture. On an IBS capture, `IbsDcMiss` set and long tag-to-retire at the hot load would make it memory-bound; memory.ibs is refused by SANITY (#358).
+  - **Cost:** all 515 of `defect_lab.exe`'s samples (share 1.0); `cpu_seconds` is absent: the tool derives no seconds from a timer capture.
+  - **Confidence:** ±4.4 % (515 samples).
+  - **Saving:** at most its CPU time, by changing the access pattern or data layout.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
@@ -365,9 +371,14 @@ A trial run passes when both hold:
 
 ## SCN-22: what can I improve (lock class)
 
-- **Session:** none (open (D-028): needs `lock.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; the cause also needs `lock.ibs`, the system-wide IBS capture, which SANITY refuses: that part is blocked on #358)
+- **Session:** `defect_lab/lock.timer`. Note: the cause needs lock.ibs, the system-wide IBS capture, which SANITY refuses (#358)
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_lock` and `lock_thread` in `lab_core.dll`. Proof: on an IBS capture, `IbsDcLockedOp` and a `pause` spin in the decoded window show the time is waiting for the lock; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture (the `lock cmpxchg` and `pause` in the code may be named as facts). Cost: their share and `cpu_seconds`. Confidence: 1/√samples. Saving: by reducing contention, at most their `cpu_seconds`. On `lock.timer`: `lock_thread` has 520 (56 %) and `lab_lock` 415 (44 %) of `defect_lab.exe`'s 935 samples; the hot instruction is RVA 0x125A in the inlined `spin_lock` at `lab_core.c:54`, 235 samples (25 %); `cpu_seconds` is absent: the tool derives no seconds from a timer capture; confidence ±3.3 % (1/√935). `lock.ibs` is refused by SANITY (#358), so the locked-operation evidence is not available.
+- **Answer:**
+  - **Location:** `lock_thread` and `lab_lock` in `lab_core.dll`; the hot instruction is RVA 0x125A in the inlined `spin_lock` at `lab_core.c:54`, 235 samples.
+  - **Proof:** on `lock.timer`, hotspot and cost shown, cause not determinable from a timer capture (the `lock cmpxchg` and `pause` in the code may be named as facts). On an IBS capture, `IbsDcLockedOp` and a `pause` spin in the decoded window would show the time is waiting for the lock; lock.ibs is refused by SANITY (#358).
+  - **Cost:** `lock_thread` 520 (0.556) and `lab_lock` 415 (0.444) of `defect_lab.exe`'s 935 samples; `cpu_seconds` is absent: the tool derives no seconds from a timer capture.
+  - **Confidence:** ±4.4 % (520 samples).
+  - **Saving:** by reducing contention, at most their CPU time.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
@@ -375,9 +386,14 @@ A trial run passes when both hold:
 
 ## SCN-23: what can I improve (branch class)
 
-- **Session:** none (open (D-028): needs `branch.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; the cause also needs `branch.ibs`, the system-wide IBS capture, which SANITY passes with a WARN)
+- **Session:** `defect_lab/branch.timer`. Note: the cause needs branch.ibs, the system-wide IBS capture, which SANITY passes with a WARN
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_branch` in `lab_core.dll` and its hot RVA. Proof: on an IBS capture, `IbsOpBrnMisp` set at the hot branch shows mispredictions; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture. Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by making the branch predictable or branch-free. On `branch.timer`: `lab_branch` has 334 (66 %) and `taken` 172 (34 %) of `defect_lab.exe`'s 506 samples; the hot instruction is RVA 0x1353 at `lab_core.c:105`, 142 samples (28 %); `cpu_seconds` is absent: the tool derives no seconds from a timer capture; confidence ±4.4 % (1/√506). On `branch.ibs` (SANITY passes it with a WARN): `lab_branch` has 314 of 433 samples (73 %).
+- **Answer:**
+  - **Location:** `lab_branch` in `lab_core.dll`; its hot instruction is RVA 0x1353 at `lab_core.c:105`, 142 samples. `taken` is the second function.
+  - **Proof:** on `branch.timer`, hotspot and cost shown, cause not determinable from a timer capture. On an IBS capture, `IbsOpBrnMisp` set at the hot branch would show mispredictions (branch.ibs passes SANITY with a WARN).
+  - **Cost:** `lab_branch` 334 (0.660) and `taken` 172 (0.340) of `defect_lab.exe`'s 506 samples; `cpu_seconds` is absent: the tool derives no seconds from a timer capture.
+  - **Confidence:** ±5.5 % (334 samples).
+  - **Saving:** at most its CPU time, by making the branch predictable or branch-free.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
@@ -385,9 +401,14 @@ A trial run passes when both hold:
 
 ## SCN-24: what can I improve (os class)
 
-- **Session:** none (open (D-028): needs `os.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; and `os.timer-cg` for the call stacks from `lab_os` into `ntdll.dll`)
+- **Session:** `defect_lab/os.timer`. Note: os.timer-cg holds the call stacks from lab_os into ntdll.dll
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
-- **Answer:** the parts' shape. Location: outside the user's module, the `ntdll.dll` heap functions; `lab_os` itself is small. Proof: their samples within `defect_lab.exe`; own call sites into them cannot be attributed (#187). Cost: `ntdll.dll`'s share of the process. Confidence: 1/√samples. Saving: by allocating less often from `lab_os`, a hypothesis, not measured. On `os.timer`: `ntdll.dll` holds 483 of `defect_lab.exe`'s 495 samples (98 %), led by `RtlpLowFragHeapAllocFromContext` with 207 (42 %) and `RtlFreeHeap` with 177 (36 %); `lab_os` itself has 7 (1.4 %); `cpu_seconds` is absent: the tool derives no seconds from a timer capture; confidence ±4.6 % (1/√483). `os.timer-cg` holds call stacks through `lab_os` into the heap functions, which no view shows yet (#187).
+- **Answer:**
+  - **Location:** outside the user's module: the `ntdll.dll` heap functions, led by `RtlpLowFragHeapAllocFromContext` (207 samples) and `RtlFreeHeap` (177); `lab_os` itself has 7.
+  - **Proof:** their samples within `defect_lab.exe` on `os.timer`; own call sites into them cannot be attributed (#187), although os.timer-cg holds the call stacks.
+  - **Cost:** `ntdll.dll` 483 of `defect_lab.exe`'s 495 samples (0.976); `cpu_seconds` is absent: the tool derives no seconds from a timer capture.
+  - **Confidence:** ±4.6 % (483 samples).
+  - **Saving:** by allocating less often from `lab_os`, a hypothesis, not measured.
 - **Known gaps:** #187 (own call paths into outside code; the timer-cg capture holds the stacks, no view shows them yet)
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
@@ -395,9 +416,14 @@ A trial run passes when both hold:
 
 ## SCN-25: what can I improve (vendor class)
 
-- **Session:** none (open (D-028): needs `vendor.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; and `vendor.timer-cg` for the call stacks from `lab_core.dll` into `lab_vendor.dll`)
+- **Session:** `defect_lab/vendor.timer`. Note: vendor.timer-cg holds the call stacks from lab_core.dll into lab_vendor.dll
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
-- **Answer:** the parts' shape. Location: outside the user's module, `vendor_work` in `lab_vendor.dll`, kept as one outside line. Proof: its samples within `defect_lab.exe`; own call sites into it cannot be attributed (#187). Cost: its share of the process. Confidence: 1/√samples. Saving: by calling it less, or by a vendor change; a hypothesis, not measured. On `vendor.timer`: `vendor_work` in `lab_vendor.dll` holds 480 of `defect_lab.exe`'s 481 samples (99.8 %); `lab_vendor` in `lab_core.dll` has 1; `cpu_seconds` is absent: the tool derives no seconds from a timer capture; confidence ±4.6 % (1/√480). `vendor.timer-cg` holds call stacks through `lab_vendor` into it, which no view shows yet (#187).
+- **Answer:**
+  - **Location:** outside the user's module: `vendor_work` in `lab_vendor.dll`, kept as one outside line; `lab_vendor` in `lab_core.dll` has 1 sample.
+  - **Proof:** its samples within `defect_lab.exe` on `vendor.timer`; own call sites into it cannot be attributed (#187), although vendor.timer-cg holds the call stacks.
+  - **Cost:** `vendor_work` 480 of `defect_lab.exe`'s 481 samples (0.998); `cpu_seconds` is absent: the tool derives no seconds from a timer capture.
+  - **Confidence:** ±4.6 % (480 samples).
+  - **Saving:** by calling it less, or by a vendor change; a hypothesis, not measured.
 - **Known gaps:** #187 (own call paths into outside code; the timer-cg capture holds the stacks, no view shows them yet)
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
@@ -405,18 +431,28 @@ A trial run passes when both hold:
 
 ## SCN-26: what can I improve (wait class)
 
-- **Session:** none (open (D-028): needs `wait.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it)
+- **Session:** `defect_lab/wait.timer`
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_wait` in `lab_core.dll`, the little code that runs. Proof: few samples against the capture's wall time: CPU sampling only samples running threads, so the time the thread spends blocked is off-CPU and does not appear. Cost: its small share and `cpu_seconds`, CPU time, not wall-clock time. Confidence: 1/√samples. Saving: n/a: the improvement lies in what the program waits for, which needs a wait or I/O analysis outside this skill. On `wait.timer`: `lab_wait` has 139 samples in the 2.04 s capture, about 27 % of the 250 per second that a thread running throughout gets at 4 ms; `cpu_seconds` is absent: the tool derives no seconds from a timer capture; confidence ±8.5 % (1/√139).
+- **Answer:**
+  - **Location:** `lab_wait` in `lab_core.dll`, the little code that runs.
+  - **Proof:** 139 samples in the 2.04 s capture, about 27 % of the 250 per second that a thread running throughout gets at 4 ms: CPU sampling only samples running threads, so the time the thread spends blocked is off-CPU and does not appear.
+  - **Cost:** its 139 samples, CPU time, not wall-clock time; `cpu_seconds` is absent: the tool derives no seconds from a timer capture.
+  - **Confidence:** ±8.5 % (139 samples).
+  - **Saving:** n/a: the improvement lies in what the program waits for, which needs a wait or I/O analysis outside this skill.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
 
 ## SCN-27: what can I improve (chain class)
 
-- **Session:** none (open (D-028): needs `chain.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it; the cause also needs `chain.ibs`, the system-wide IBS capture, which SANITY passes with a WARN)
+- **Session:** `defect_lab/chain.timer`. Note: the cause needs chain.ibs, the system-wide IBS capture, which SANITY passes with a WARN
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_chain` in `lab_core.dll` and its hot RVA. Proof: on an IBS capture, no `IbsDcMiss` and long tag-to-retire on `imul`/`div` show a latency-bound dependency chain; on a timer capture, hotspot and cost shown, cause not determinable from a timer capture (the `imul`/`div` chain may be named as a fact). Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, by breaking the chain into independent accumulators or replacing the divide. On `chain.timer`: `lab_chain` holds all 511 of `defect_lab.exe`'s samples; the hot instruction is RVA 0x1679 at `lab_core.c:179`, 384 samples (75 %); `cpu_seconds` is absent: the tool derives no seconds from a timer capture; confidence ±4.4 % (1/√511). On `chain.ibs` (SANITY passes it with a WARN): 277 samples, hot RVA 0x1676 at the same line with 67.
+- **Answer:**
+  - **Location:** `lab_chain` in `lab_core.dll`; its hot instruction is RVA 0x1679 at `lab_core.c:179`, 384 samples.
+  - **Proof:** on `chain.timer`, hotspot and cost shown, cause not determinable from a timer capture (the `imul`/`div` chain may be named as a fact). On an IBS capture, no `IbsDcMiss` and long tag-to-retire on `imul`/`div` would show a latency-bound dependency chain (chain.ibs passes SANITY with a WARN).
+  - **Cost:** all 511 of `defect_lab.exe`'s samples (share 1.0); `cpu_seconds` is absent: the tool derives no seconds from a timer capture.
+  - **Confidence:** ±4.4 % (511 samples).
+  - **Saving:** at most its CPU time, by breaking the chain into independent accumulators or replacing the divide.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
@@ -424,9 +460,14 @@ A trial run passes when both hold:
 
 ## SCN-28: what can I improve (efficient class)
 
-- **Session:** none (open (D-028): needs `efficient.timer` from the owner's re-run with the rebuilt images, under `trials/defect_lab/captures/<platform>/` with `images/` beside it)
+- **Session:** `defect_lab/efficient.timer`
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
-- **Answer:** the parts' shape. Location: `lab_efficient` in `lab_core.dll` and its hot RVA. Proof: its samples; the answer names the hotspot and its cost and never claims that no algorithmic optimization is left, because a profile cannot show that. Cost: its share and `cpu_seconds`. Confidence: 1/√samples. Saving: at most its `cpu_seconds`, from doing less work or a different algorithm, found by reading the source. A run that proposes an instruction-level fix without evidence, or declares the code optimal, fails. On `efficient.timer`: `lab_efficient` holds 498 of `defect_lab.exe`'s 499 samples (99.8 %); line `lab_core.c:213`, the multiply-add, has 479 of them (96 %); the hot instruction is RVA 0x17BE on that line, 168 samples (34 %); `cpu_seconds` is absent: the tool derives no seconds from a timer capture; confidence ±4.5 % (1/√498).
+- **Answer:**
+  - **Location:** `lab_efficient` in `lab_core.dll`; line `lab_core.c:213`, the multiply-add, holds 479 of its samples, and the hot instruction on it is RVA 0x17BE, 168 samples.
+  - **Proof:** its samples on `efficient.timer`; the answer names the hotspot and its cost and never claims that no algorithmic optimization is left, because a profile cannot show that. A run that proposes an instruction-level fix without evidence, or declares the code optimal, fails.
+  - **Cost:** 498 of `defect_lab.exe`'s 499 samples (0.998); `cpu_seconds` is absent: the tool derives no seconds from a timer capture.
+  - **Confidence:** ±4.5 % (498 samples).
+  - **Saving:** at most its CPU time, from doing less work or a different algorithm, found by reading the source.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`

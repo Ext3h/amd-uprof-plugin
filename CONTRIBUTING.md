@@ -23,9 +23,57 @@ Maintainers are the people with write access to this repository.
 - The full suite passes (`python tests/run_tests.py`) and CI is green.
   Why: the suite is the contract; a red build blocks everyone.
 
+## Product goals
+
+- PG-01 Actionable answers. A profiling answer names the offending instruction range or source
+  lines, gives the evidence (samples/events, verified build), and a cost estimate with its basis
+  and uncertainty.
+  Why: that is what the user acts on.
+- PG-02 Honest scoping. The caller can narrow to the components under their control without the
+  output understating the cost of components outside it (OS, drivers, runtimes); outside
+  components appear as a summary, not as rows.
+  Why: the user fixes their own code but must see the real price.
+- PG-03 Minimal wall time for a small model. Each output steers the caller to the next call of
+  the minimal sequence for typical questions, so an agent on a small, fast model never wastes a
+  turn.
+  Why: wall time is dominated by turns.
+- PG-04 Works cold. An agent that has only the installed plugin — no repository, tests, issues,
+  project memory or prior context — answers the typical questions on the minimal path.
+  Why: that is how the skill is actually used.
+- PG-05 No overclaiming. Output and guidance never imply what the data cannot show (e.g.
+  caller-path attribution into external code without full stacks).
+  Why: an implied capability misleads.
+- PG-06 Friendly to low-context local LLMs. The plugin works as well as possible for local LLMs
+  with a small context window: what is always loaded (SKILL.md) stays minimal, and everything
+  else arrives in tool output only when it applies.
+  Why: that is the target user's setup.
+
 ## Design constraints
 
-See issue #251; the list is being finalized.
+- DC-01 Technology stack. Python, the LLVM tool suite, AMD uProf, and DuckDB as the data engine
+  under Python — nothing else.
+  Why: a fixed stack keeps installs and reviews predictable.
+- DC-02 Minimum tool versions. uProf ≥ 5.3 (DuckDB output) and LLVM ≥ 23.1.0
+  (`llvm-symbolizer --pdb`, `llvm-objdump --no-symbolize-operands`); `tools` checks them; no
+  workarounds for older versions.
+  Why: workarounds hide wrong results.
+- DC-03 No fallbacks. The tool never switches capture or analysis mode on its own; an
+  unsupported case fails with one cause line plus runnable alternatives. A capture is analysed
+  in the mode it was recorded in, and the output states once which measures that mode lacks.
+  Why: a silent switch produces answers the caller cannot trust.
+- DC-04 Guidance lives in tool output. Step-by-step guidance goes into NEXT/READ/cause lines
+  where it applies; SKILL.md and the references do not grow; shipped text never points outside
+  the installed plugin.
+  Why: the plugin must be as friendly as possible to local LLMs with a small context window;
+  SKILL.md is loaded on every run, tool output only where it applies (serves PG-03, PG-04,
+  PG-06).
+- DC-05 Verified by isolated small-model trials. Changes to guidance or output are checked with
+  an isolated trial on a small, fast model in any agent harness (own process, plugin only, no
+  project context) against the minimal call sequences.
+  Why: only a cold small model shows wasted turns (serves PG-03, PG-04).
+- DC-07 Test-first, hermetic tests. A failing test precedes every fix; tests do not depend on
+  the developer's environment (symbol paths, caches, temp roots).
+  Why: proves the defect and keeps CI and local runs equal.
 
 ## Sensitive changes
 

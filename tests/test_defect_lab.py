@@ -19,7 +19,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 LAB = REPO / "trials" / "defect_lab"
 sys.path.insert(0, str(LAB))
-import build  # noqa: E402
+import build
 
 CLASSES = ("memory", "lock", "branch", "os", "vendor", "wait", "chain", "efficient")
 IMAGES = ("defect_lab.exe", "lab_core.dll", "lab_vendor.dll", "lab_busy.exe")
@@ -97,7 +97,10 @@ class DefectLabBuildTest(unittest.TestCase):
 
     def test_the_program_rejects_an_unknown_class(self):
         result = subprocess.run(
-            [str(self.out / "defect_lab.exe"), "--class", "none"], capture_output=True, text=True
+            [str(self.out / "defect_lab.exe"), "--class", "none"],
+            check=False,
+            capture_output=True,
+            text=True,
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("usage: defect_lab --class", result.stdout)

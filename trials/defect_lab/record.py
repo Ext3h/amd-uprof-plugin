@@ -144,6 +144,7 @@ def collect(
             "--sample-interval",
             interval,
         ],
+        check=False,
         capture_output=True,
         text=True,
     )
@@ -151,7 +152,7 @@ def collect(
     sys.stderr.write(done.stderr[-2000:])
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip()[-2000:] or f"collect exited {done.returncode}")
-    match = re.search(r"^SESSION=(.+)$", done.stdout, re.M)
+    match = re.search(r"^SESSION=(.+)$", done.stdout, re.MULTILINE)
     return Path(match.group(1).strip()) if match else raw
 
 
@@ -424,7 +425,8 @@ def main(argv: list[str] | None = None) -> int:
                     str(args.anonymize / label),
                     "--bundle",
                     *bundle_files(bin_dir),
-                ]
+                ],
+                check=False,
             ).returncode
             print(f"anonymize {label}: exit {code}")
             if code != 0:

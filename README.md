@@ -86,6 +86,7 @@ carries the derivation notes and validation records.
 - `.claude-plugin/` — marketplace entry and the icon (`icon.svg` master, `icon.png` raster).
 
 Validate a change with `claude plugin validate ./plugin`.
+Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md) (issue first, test first).
 
 Drives the AMD uProf CLI; not affiliated with or endorsed by Advanced Micro Devices.
 The icon's micro sign is set in Open Sans (Apache-2.0), the typeface uProf ships.

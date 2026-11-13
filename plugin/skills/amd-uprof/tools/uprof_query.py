@@ -233,6 +233,43 @@ class _Tee(io.TextIOBase):
         self.target.flush()
 
 
+class _QuietModuleWarnings(io.TextIOBase):
+    """Forward a stream, dropping the symbolizer warning lines of the given modules.
+
+    A function or region view of a module whose every scoped sample has a uProf DB name prints
+    the same rows whatever --symbol-path/--image-path adds, so that module's "no symbols
+    resolved" advice would only invite a re-run. Lines are matched whole.
+    """
+
+    def __init__(self, target: TextIO, modules: set[str]):
+        self.target = target
+        self.prefixes = tuple(f"WARNING: no symbols resolved for {module} ("
+                              for module in sorted(modules))
+        self.pending = ""
+
+    def write(self, text: str) -> int:
+        self.pending += text
+        *lines, self.pending = self.pending.split("\n")
+        for line in lines:
+            if not line.startswith(self.prefixes):
+                self.target.write(line + "\n")
+        return len(text)
+
+    def flush(self) -> None:
+        if self.pending and not self.pending.startswith(self.prefixes):
+            self.target.write(self.pending)
+        self.pending = ""
+        self.target.flush()
+
+
+def _fully_named_modules(coverage: dict[str, Any] | None) -> set[str]:
+    """Modules whose every scoped sample has a uProf DB function name."""
+    if coverage is None:
+        return set()
+    return {str(row["module_name"]) for row in coverage["rows"]
+            if int(row["samples"]) == int(row["named_samples"])}
+
+
 def _create_file_views(connection: object, variables: dict[str, str]) -> None:
     """Create the artifact source views over the per-run files that exist."""
     sources = (
@@ -2168,6 +2205,7 @@ def run_query_command(args: argparse.Namespace) -> None:
             symbol_transient = False
             cache_symbol_key: str | None = None
             cache_range_key: str | None = None
+            db_coverage: dict[str, Any] | None = None
             if args.by in SYMBOLIZED:
                 cache = uprof_cache.SessionCache(connection, session, stream)
                 range_needed = args.by in RANGE_SCOPES or function_scoped
@@ -2191,9 +2229,18 @@ def run_query_command(args: argparse.Namespace) -> None:
                 if (not symbol_hit or (range_needed and not range_hit)) and not cache.ensure_write():
                     symbol_hit = False
                     range_hit = False
+                # The cache keeps the full symbolization text; only a range view of a module
+                # the uProf DB names fully drops that module's symbol-path advice on output.
+                symbol_out: TextIO = stream
+                if args.by in RANGE_SCOPES:
+                    db_coverage = _coverage_values(connection)
+                    quiet = _fully_named_modules(db_coverage)
+                    if quiet:
+                        symbol_out = _QuietModuleWarnings(stream, quiet)
                 if symbol_hit:
                     symbol_hit, causes = _apply_symbol_hit(
-                        cache, connection, cache_symbol_key, variables, stream)
+                        cache, connection, cache_symbol_key, variables, symbol_out)
+                    symbol_out.flush()
                     if symbol_hit:
                         symbolized = True
                         symbolizer = _agreement_values(connection)
@@ -2203,9 +2250,10 @@ def run_query_command(args: argparse.Namespace) -> None:
                     range_hit = False
                     if artifacts is None:
                         artifacts = _artifact_dir(stream)
-                    symbol_stream = _Tee(stream)
+                    symbol_stream = _Tee(symbol_out)
                     symbols, causes, symbol_transient, pdb_identity, probe_identity = (
                         _symbolize_scope(connection, artifacts, symbol_stream, args))
+                    symbol_out.flush()
                     variables.update(symbols)
                     uprof_db.set_variables(connection, symbols)
                     _create_file_views(connection, symbols)
@@ -2292,7 +2340,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 sampler, kernel_covered, dump_windowed, captured_samples))
             if args.by == "function":
                 fields.extend(_hot_rva_field(connection))
-            coverage = _coverage_values(connection)
+            coverage = db_coverage if db_coverage is not None else _coverage_values(connection)
             flags = _symbol_path_flags(args)
             fields.extend(_coverage_field(
                 connection, causes, symbolizer, symbolized, flags, coverage,

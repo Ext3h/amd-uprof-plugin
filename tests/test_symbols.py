@@ -254,7 +254,9 @@ class PdbManifestTest(unittest.TestCase):
 
 class NoPdbEvidenceTest(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
-    def test_the_no_pdb_branch_keeps_the_symbolizer_error(self):
+    def test_the_no_pdb_branch_runs_no_symbolizer_pass(self):
+        # Without --pdb, llvm-symbolizer would load the PDB the image's CodeView entry
+        # names with no GUID check; the searched candidates are the evidence instead.
         with tempfile.TemporaryDirectory(prefix="uprof-no-pdb-") as directory:
             root = Path(directory)
             module = root / "fixture.exe"
@@ -293,8 +295,8 @@ class NoPdbEvidenceTest(unittest.TestCase):
 
         self.assertIsNone(result.pdb)
         self.assertEqual(result.evidence.outcome, "no_pdb")
-        self.assertIs(result.evidence.symbolizer, failed)
-        self.assertIsNone(symbolizer.call_args.args[2])
+        self.assertIs(result.evidence.search, search)
+        symbolizer.assert_not_called()
 
     @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
     def test_missing_guid_without_explicit_pdb_records_no_pdb_note(self):

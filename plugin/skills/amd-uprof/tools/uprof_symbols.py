@@ -967,13 +967,22 @@ def symbolize_module(
         # Only a PDB whose GUID and age match the image is used. Without the image's identity or
         # without llvm-pdbutil a PDB could be picked only by name, and a stale build's PDB of the
         # same name gives plausible but wrong names.
+        image_remedy = (
+            "pass profile --image-path <file|dir> naming an image of the captured "
+            "build that records a PDB identity (linked with /DEBUG), then re-run "
+            "profile; a third-party module with no symbols is a finding, not a "
+            "blocker"
+        )
         if module_guid is None:
             if readobj is None:
                 evidence.note = "llvm-readobj not found beside llvm-symbolizer or on PATH"
+                evidence.remedy = _install_remedy(symbolizer_path, "llvm-readobj")
             elif readobj_error:
                 evidence.note = readobj_error
+                evidence.remedy = image_remedy
             else:
                 evidence.note = "the image's debug directory records no PDB"
+                evidence.remedy = image_remedy
             evidence.outcome = "no_debug_info" if found_debug_info is False else "readobj_failed"
             if pdb_files:
                 shown = ", ".join(os.fspath(path) for path in pdb_files)
@@ -982,30 +991,8 @@ def symbolize_module(
                     f"the image records no PDB identity ({evidence.note}), so "
                     f"--symbol-path {shown} cannot be verified and is not used"
                 )
-                evidence.remedy = (
-                    _install_remedy(symbolizer_path, "llvm-readobj")
-                    if readobj is None
-                    else "pass profile --image-path <file|dir> naming an image of the captured "
-                    "build that records a PDB identity (linked with /DEBUG), then re-run "
-                    "profile; a third-party module with no symbols is a finding, not a "
-                    "blocker"
-                )
-            evidence.symbolizer = _run_symbolizer(
-                symbolizer_path,
-                exe_input,
-                None,
-                rva_path,
-                jsonl_file,
-                warn_failure=False,
-                debug_dirs=debug_dirs,
-                fallback_paths=fallback_paths,
-                stream=stream,
-            )
-            print("PDB=none", file=stream)
-            parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
-            print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
-            return SymbolizedModule(parquet, None, None, evidence)
-        if pdbutil:
+            pdb = None
+        elif pdbutil:
             evidence.search = _choose_pdb(
                 pdbutil,
                 exe_path,
@@ -1040,27 +1027,33 @@ def symbolize_module(
             ]
             evidence.search = PdbSearch(probes=probes)
             pdb = None
-            if any(probe.status == "unverified" for probe in probes):
-                evidence.outcome = "no_pdb"
-                evidence.note = (
-                    "llvm-pdbutil not found beside llvm-symbolizer or on PATH, so "
-                    "no PDB can be GUID-verified and none is used"
-                )
-                evidence.remedy = _install_remedy(symbolizer_path, "llvm-pdbutil")
+            evidence.outcome = "no_pdb"
+            evidence.note = (
+                "llvm-pdbutil not found beside llvm-symbolizer or on PATH, so no PDB "
+                "can be GUID-verified and none is used"
+            )
+            evidence.remedy = _install_remedy(symbolizer_path, "llvm-pdbutil")
         if not pdb:
             if evidence.remedy is None:
                 evidence.outcome = "no_debug_info" if found_debug_info is False else "no_pdb"
-            evidence.symbolizer = _run_symbolizer(
-                symbolizer_path,
-                exe_input,
-                None,
-                rva_path,
-                jsonl_file,
-                warn_failure=False,
-                debug_dirs=debug_dirs,
-                fallback_paths=fallback_paths,
-                stream=stream,
-            )
+            # Without --pdb, llvm-symbolizer still loads the PDB the image's CodeView entry
+            # names (at the recorded path or beside the image) with no GUID check. So it runs
+            # only when llvm-readobj showed that the image records no PDB; then DWARF and the
+            # COFF symbol table are its only sources.
+            if readobj is not None and readobj_error is None and module_guid is None:
+                evidence.symbolizer = _run_symbolizer(
+                    symbolizer_path,
+                    exe_input,
+                    None,
+                    rva_path,
+                    jsonl_file,
+                    warn_failure=False,
+                    debug_dirs=debug_dirs,
+                    fallback_paths=fallback_paths,
+                    stream=stream,
+                )
+            else:
+                jsonl_file.write_text("", encoding="utf-8")
             print("PDB=none", file=stream)
             parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)

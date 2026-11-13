@@ -526,6 +526,8 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
     """One-line per-module cause for SYMBOL_COVERAGE; the stderr evidence line has the detail."""
     if evidence.outcome == "no_debug_info":
         return "no debug information is recorded for this module in the capture"
+    if evidence.outcome == "no_pdb" and evidence.remedy:
+        return evidence.note or "no PDB could be GUID-verified"
     if evidence.outcome == "no_pdb":
         if evidence.symbolizer and evidence.symbolizer.errors:
             return f"no PDB found; llvm-symbolizer: {evidence.symbolizer.errors[0][1]}"
@@ -539,8 +541,6 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
         return f"module file not available: {evidence.note or 'no recorded path'}"
     if evidence.outcome == "wrong_build":
         return evidence.note or "the image is a different build than the capture recorded"
-    if evidence.outcome == "pdb_unmatched":
-        return evidence.note or "the --symbol-path PDB names another module"
     return f"symbolization failed: {evidence.note or evidence.outcome}"
 
 

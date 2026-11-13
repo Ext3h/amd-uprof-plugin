@@ -8,6 +8,7 @@ order, the remainder row and the runnable NEXT calls. No capture or external too
 Run from the repository root: python tests/run_tests.py test_output_legend
 """
 
+import argparse
 import json
 import os
 import shlex
@@ -21,6 +22,7 @@ from unittest import mock
 import duckdb
 
 import uprof_db
+import uprof_query
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 EVENT_COLUMN = "event#0x3000076"
@@ -720,6 +722,81 @@ class OutputLegendTest(unittest.TestCase):
         second = json.loads(self.profile(session, "--json"))
         self.assertEqual(first["legend"], second["legend"])
         self.assertEqual(first["rows"], second["rows"])
+
+
+class FunctionNextMissingImageTest(unittest.TestCase):
+    """Function NEXT offers --by region only when an unresolved module has an image."""
+
+    def test_next_offers_region_when_unresolved_module_has_image(self):
+        args = argparse.Namespace(
+            session="dummy_session", by="function", pid=None, image=None, time_filter=None,
+            symbol_path=None, image_path=None, top="20", json=False)
+        row_attr = {
+            "named": 10, "derived": 0, "unresolved": 5, "scoped": 15,
+            "unresolved_modules": ["known_mod.dll"],
+        }
+        causes = {"known_mod.dll": "no PDB found beside the module"}
+        calls = uprof_query._next_calls(args, row_attribution=row_attr, causes=causes)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--by region", calls[0])
+        self.assertNotIn("--image-path", calls[0])
+
+    def test_next_offers_image_path_when_unresolved_module_image_is_missing(self):
+        args = argparse.Namespace(
+            session="dummy_session", by="function", pid=None, image=None, time_filter=None,
+            symbol_path=None, image_path=None, top="20", json=False)
+        row_attr = {
+            "named": 10, "derived": 0, "unresolved": 5, "scoped": 15,
+            "unresolved_modules": ["vendorlib.dll"],
+        }
+        causes = {"vendorlib.dll": "module file not available: C:\\Vendor\\vendorlib.dll is not on this host"}
+        calls = uprof_query._next_calls(args, row_attribution=row_attr, causes=causes)
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("--by region", calls[0])
+        self.assertIn("--by function", calls[0])
+        self.assertIn('--image-path "<dir>"', calls[0])
+
+    def test_next_offers_region_when_one_unresolved_module_has_image_and_one_missing(self):
+        args = argparse.Namespace(
+            session="dummy_session", by="function", pid=None, image=None, time_filter=None,
+            symbol_path=None, image_path=None, top="20", json=False)
+        row_attr = {
+            "named": 10, "derived": 0, "unresolved": 5, "scoped": 15,
+            "unresolved_modules": ["vendorlib.dll", "local.dll"],
+        }
+        causes = {
+            "vendorlib.dll": "module file not available: not on this host",
+            "local.dll": "no PDB found beside the module",
+        }
+        calls = uprof_query._next_calls(args, row_attribution=row_attr, causes=causes)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--by region", calls[0])
+        self.assertNotIn("--image-path", calls[0])
+
+    def test_next_offers_nothing_when_all_rows_resolved(self):
+        args = argparse.Namespace(
+            session="dummy_session", by="function", pid=None, image=None, time_filter=None,
+            symbol_path=None, image_path=None, top="20", json=False)
+        row_attr = {
+            "named": 15, "derived": 0, "unresolved": 0, "scoped": 15,
+            "unresolved_modules": [],
+        }
+        calls = uprof_query._next_calls(args, row_attribution=row_attr, causes={})
+        self.assertEqual(calls, [])
+
+    def test_next_preserves_existing_image_paths_with_dir(self):
+        args = argparse.Namespace(
+            session="dummy_session", by="function", pid=None, image=None, time_filter=None,
+            symbol_path=None, image_path=["C:\\existing\\images"], top="20", json=False)
+        row_attr = {
+            "named": 10, "derived": 0, "unresolved": 5, "scoped": 15,
+            "unresolved_modules": ["vendorlib.dll"],
+        }
+        causes = {"vendorlib.dll": "module file not available: not on this host"}
+        calls = uprof_query._next_calls(args, row_attribution=row_attr, causes=causes)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--image-path C:\\existing\\images", calls[0])
+        self.assertIn('--image-path "<dir>"', calls[0])
 
 
 if __name__ == "__main__":

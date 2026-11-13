@@ -9,6 +9,7 @@ in fixtures/README.md. Run from the repository root: python tests/run_tests.py t
 import unittest
 from pathlib import Path
 
+import debug_fixtures as F
 import uprof_context
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "fixture.exe"
@@ -223,10 +224,11 @@ class FixtureTest(unittest.TestCase):
                           "distance": HOT_RVA - TEXT_RVA})
         self.assertTrue(context["build"]["verified"])
         self.assertEqual(context["build"]["identity"], "checksum")
-        hot = next(item for item in context["instructions"] if item["rva"] == "0x101B")
+        hot, run = next(pair for pair in F.context_instructions(context)
+                        if pair[0]["rva"] == "0x101B")
         self.assertEqual(hot["samples"], 4)
         self.assertEqual(hot["sample_share"], 0.4)
-        self.assertEqual(hot["symbol"], {"function": "fixture_entry"})
+        self.assertEqual(F.context_frame(context, run), ("fixture_entry", None, None))
         self.assertEqual(hot["import"],
                          {"dll": "KERNEL32.dll", "name": "ExitProcess",
                           "slot_rva": f"0x{IAT_SLOT:X}"})

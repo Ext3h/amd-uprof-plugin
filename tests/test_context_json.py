@@ -14,6 +14,8 @@ import uprof_context
 import uprof_db
 import uprof_output
 import uprof_query
+from debug_fixtures import context_frame as frame
+from debug_fixtures import context_instructions as flat
 from uprof_util import UprofError
 
 
@@ -167,13 +169,16 @@ class BuildContextTest(unittest.TestCase):
                          {"kind": "export", "rva": "0x1000", "name": "fixture_entry",
                           "distance": 0x1B})
         self.assertTrue(context["build"]["verified"])
-        self.assertEqual([item["rva"] for item in context["instructions"]],
+        self.assertEqual([item["rva"] for item, _run in flat(context)],
                          ["0x1000", "0x1004", "0x1015", "0x101B", "0x1021", "0x1024"])
-        hot = context["instructions"][3]
+        hot, run = flat(context)[3]
         self.assertEqual(hot["samples"], 3)
         self.assertAlmostEqual(hot["sample_share"], 3 / 60)
-        self.assertEqual(hot["symbol"],
-                         {"function": "main", "file": r"src\main.cpp", "line": 12})
+        self.assertNotIn("symbol", hot)
+        self.assertEqual(frame(context, run), ("main", r"src\main.cpp", 12))
+        # The instructions without a frame around it are runs of their own that say so.
+        self.assertEqual([len(item["instructions"]) for item in context["runs"]], [3, 1, 2])
+        self.assertEqual(frame(context, context["runs"][0]), (None, None, None))
         self.assertEqual(hot["import"],
                          {"dll": "KERNEL32.dll", "name": "ExitProcess",
                           "slot_rva": "0x2088"})
@@ -188,12 +193,45 @@ class BuildContextTest(unittest.TestCase):
             uprof_context.Anchor("section", 0x1000), verified, 0x1000, [instruction],
             samples={}, total_samples=0, symbols={}, imports={}, ibs={})
 
-        entry = context["instructions"][0]
+        entry, run = flat(context)[0]
         self.assertEqual(entry["samples"], 0)
         self.assertIsNone(entry["sample_share"])
         self.assertNotIn("symbol", entry)
         self.assertNotIn("import", entry)
         self.assertNotIn("ibs", entry)
+        self.assertNotIn("function", context)
+        self.assertNotIn("file", context)
+        self.assertEqual(run, {"line": None, "instructions": [entry]})
+
+    def test_runs_group_instructions_by_source_line_and_state_function_and_file_once(self):
+        build = uprof_context.parse_image(FILE_HEADERS).build
+        verified = uprof_context.verify_build(build, 0x1234ABCD)
+        window = [uprof_context.DecodedInstruction(rva, "nop", None)
+                  for rva in (0x1000, 0x1001, 0x1002, 0x1003, 0x1004, 0x1005)]
+        main = r"src\main.cpp"
+        symbols = {0x1000: uprof_context.SymbolInfo("main", main, 7),
+                   0x1001: uprof_context.SymbolInfo("main", main, 7),
+                   0x1002: uprof_context.SymbolInfo("main", main, 8),
+                   0x1003: uprof_context.SymbolInfo("main", main, 7),
+                   0x1004: uprof_context.SymbolInfo("helper", r"src\helper.h", 3),
+                   0x1005: uprof_context.SymbolInfo("main", main, 9)}
+
+        context = uprof_context.build_context(
+            uprof_context.Anchor("section", 0x1000), verified, 0x1002, window,
+            samples={}, total_samples=0, symbols=symbols, imports={}, ibs={})
+
+        self.assertEqual((context["function"], context["file"]), ("main", main))
+        runs = context["runs"]
+        self.assertEqual([run["line"] for run in runs], [7, 8, 7, 3, 9])
+        self.assertEqual([[item["rva"] for item in run["instructions"]] for run in runs],
+                         [["0x1000", "0x1001"], ["0x1002"], ["0x1003"], ["0x1004"],
+                          ["0x1005"]])
+        # Only the inlined run names its own function and file.
+        self.assertEqual(runs[3], {"function": "helper", "file": r"src\helper.h", "line": 3,
+                                   "instructions": runs[3]["instructions"]})
+        for run in runs[:3] + runs[4:]:
+            self.assertEqual(set(run), {"line", "instructions"})
+        self.assertNotIn('"symbol"', json.dumps(context))
 
 
     def test_ibs_samples_are_kept_when_no_other_field_is_present(self):
@@ -206,7 +244,7 @@ class BuildContextTest(unittest.TestCase):
             samples={}, total_samples=10, symbols={}, imports={},
             ibs={0x1000: {"samples": 2}})
 
-        self.assertEqual(context["instructions"][0]["ibs"], {"samples": 2})
+        self.assertEqual(flat(context)[0][0]["ibs"], {"samples": 2})
 
 
 class InstructionProfileTest(unittest.TestCase):
@@ -279,24 +317,29 @@ class ContextHelpTest(unittest.TestCase):
     def test_document_help_names_the_emitted_context_fields(self):
         fields = uprof_context.context_help(self.LEGEND)["fields"]
 
-        for name in ("anchor", "build", "instructions", "instructions[].symbol",
-                     "instructions[].import", "instructions[].ibs", "omitted"):
+        for name in ("anchor", "build", "function, file", "runs", "runs[].instructions",
+                     "runs[].instructions[].import", "runs[].instructions[].ibs", "omitted"):
             self.assertIn(name, fields)
+        self.assertNotIn("instructions[].symbol", fields)
         self.assertIn("kind", fields["anchor"])
         self.assertIn("verified", fields["build"])
-        self.assertIn("sample_share", fields["instructions"])
-        self.assertIn("65535", fields["instructions[].ibs"])
-        self.assertIn("unsigned decimal integer", fields["instructions[].ibs"])
+        self.assertIn("frame 0", fields["function, file"])
+        self.assertIn("differs from the context", fields["runs"])
+        self.assertIn("null", fields["runs"])
+        self.assertIn("sample_share", fields["runs[].instructions"])
+        self.assertIn("65535", fields["runs[].instructions[].ibs"])
+        self.assertIn("unsigned decimal integer", fields["runs[].instructions[].ibs"])
 
     def test_document_help_qualifies_instruction_text_and_ibs_values(self):
         fields = uprof_context.context_help(self.LEGEND)["fields"]
 
-        self.assertIn("nearest-symbol <...> decoration", fields["instructions"])
-        self.assertIn("not the frame-0 symbol", fields["instructions"])
-        self.assertIn("use symbol for the real frame", fields["instructions"])
+        self.assertIn("nearest-symbol <...> decoration", fields["runs[].instructions"])
+        self.assertIn("not the frame-0 symbol", fields["runs[].instructions"])
+        self.assertIn("use the run's function for the real frame",
+                      fields["runs[].instructions"])
         self.assertIn("AMD-encoded hardware fields (counts or histograms)",
-                      fields["instructions[].ibs"])
-        self.assertIn("not decoded meanings", fields["instructions[].ibs"])
+                      fields["runs[].instructions[].ibs"])
+        self.assertIn("not decoded meanings", fields["runs[].instructions[].ibs"])
 
     def test_document_help_says_the_cap_counts_row_slots(self):
         scope = uprof_context.context_help(self.LEGEND)["scope"]
@@ -489,9 +532,9 @@ class InstructionContextsTest(unittest.TestCase):
         context = contexts[0]
         self.assertEqual(context["anchor"]["kind"], "export")
         self.assertEqual(context["anchor"]["name"], "fixture_entry")
-        hot = next(item for item in context["instructions"] if item["rva"] == "0x101B")
+        hot, run = next(pair for pair in flat(context) if pair[0]["rva"] == "0x101B")
         self.assertEqual(hot["import"]["name"], "ExitProcess")
-        self.assertEqual(hot["symbol"]["function"], "main")
+        self.assertEqual(frame(context, run)[0], "main")
 
     def contexts_with(self, connection, run_side_effect, rows=None):
         with mock.patch.object(uprof_context, "run", side_effect=run_side_effect):

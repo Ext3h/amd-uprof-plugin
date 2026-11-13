@@ -444,6 +444,53 @@ class CommittedCaptureTest(unittest.TestCase):
         # A plugin folder is not a revision; the captures still come from a commit.
         self.assertEqual(run_trials.capture_revision("HEAD~1", REPO / "plugin"), self.head)
 
+    def run_main(self, catalogue: dict[str, dict[str, str]]):
+        from unittest import mock
+
+        FakeRunner.specs = []
+        run_dir = self.run_dir / "run"
+        with mock.patch.object(run_trials, "catalogue", return_value=catalogue):
+            code = run_trials.main(
+                [
+                    "--run-dir",
+                    str(run_dir),
+                    "--runner",
+                    "fake",
+                    "--model",
+                    "small-model",
+                    "--plugin-dir",
+                    str(REPO / "plugin"),
+                    "--parallel",
+                    "1",
+                ],
+                registry={"fake": FakeRunner},
+            )
+        return code, run_dir
+
+    def test_a_bad_committed_name_stops_the_run_before_any_trial_starts(self):
+        # Trials run in parallel, so a name checked only when its trial starts would let the
+        # others spend model calls first.
+        catalogue = {
+            "SCN-97": {"Session": "`attached`", "Question": '"`<CAPTURE>`"'},
+            "SCN-98": {"Session": "`defect_lab/lock.nomode`", "Question": '"`<CAPTURE>`"'},
+        }
+        with self.assertRaises(SystemExit) as caught:
+            self.run_main(catalogue)
+        self.assertIn("SCN-98: no committed capture defect_lab/lock.nomode", str(caught.exception))
+        self.assertEqual(FakeRunner.specs, [])
+        self.assertFalse((self.run_dir / "run").exists())
+
+    def test_a_trial_records_where_its_committed_capture_came_from(self):
+        catalogue = {
+            "SCN-97": {"Session": "`defect_lab/wait.timer`", "Question": '"`<CAPTURE>`"'},
+        }
+        code, run_dir = self.run_main(catalogue)
+        self.assertEqual(code, 0)
+        meta = json.loads((run_dir / "out" / "SCN-97" / "meta.json").read_text(encoding="utf-8"))
+        # With a plugin folder the captures come from HEAD.
+        self.assertEqual(meta["capture_source"], [f"{self.head}:{self.folder}/wait.timer"])
+        self.assertIn(f"from commit {self.head}", (run_dir / "runlog.md").read_text("utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

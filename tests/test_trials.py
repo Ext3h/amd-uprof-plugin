@@ -148,7 +148,7 @@ class CatalogueTest(unittest.TestCase):
         text = (TRIALS / "scenarios.md").read_text(encoding="utf-8")
         section = text.partition("\n## Pass criteria\n")[2].partition("\n## ")[0]
         self.assertTrue(section, "the catalogue has no Pass criteria section")
-        self.assertIn("fewer than 100,000 tokens", section)
+        self.assertIn("fewer than 50,000 tokens", section)
         self.assertIn("system prompt", section)
         self.assertIn("not measured", section)
 

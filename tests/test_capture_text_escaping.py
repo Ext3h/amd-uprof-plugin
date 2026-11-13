@@ -17,6 +17,7 @@ from unittest import mock
 
 import duckdb
 
+import debug_fixtures as F
 import uprof
 import uprof_db
 import uprof_native
@@ -110,7 +111,7 @@ class MultiLineErrorTest(unittest.TestCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(uprof.main(argv), 2)
-        return err.getvalue().splitlines()
+        return F.without_elevation_warning(err.getvalue()).splitlines()
 
     def test_the_stored_sql_refusal_keeps_its_alternative_line(self):
         error = uprof_db._stored_sql_error(f"cpu{HOSTILE}.db", [("view", "v")])

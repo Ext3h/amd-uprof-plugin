@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+import uprof_db
 from uprof_native import (TRANSLATE_TIMEOUT, CliLog, failure, require_uprof, run,
                           translate_command, translate_failure)
 from uprof_session import Sampler
@@ -292,7 +293,7 @@ def _build_samples(source: Path, target: Path, meta_path: Path, unsupported_path
     try:
         connection = None
         try:
-            connection = duckdb.connect()
+            connection = uprof_db.memory_connection()
             # The CSV order is the tie-break for lag() over equal DeltaTick values; keep it.
             connection.execute("SET preserve_insertion_order = true")
             columns = ", ".join(f'"{name}"' for name in SAMPLE_COLUMNS)

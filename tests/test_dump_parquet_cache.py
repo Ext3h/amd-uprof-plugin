@@ -157,7 +157,7 @@ class SamplesParquetTest(unittest.TestCase):
                 Error = Exception
 
                 @staticmethod
-                def connect():
+                def connect(*_args, **_kwargs):
                     return FakeConnection()
 
             with mock.patch.dict(sys.modules, {"duckdb": FakeDuckDB}):

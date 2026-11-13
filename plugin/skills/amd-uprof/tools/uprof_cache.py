@@ -399,8 +399,7 @@ def cleanup_orphans(root: Path | None = None) -> None:
         version = None
         readable = False
         try:
-            import duckdb
-            connection = duckdb.connect(str(path), read_only=True)
+            connection = uprof_db.file_connection(path)
             try:
                 rows = connection.execute(
                     "SELECT max(version), any_value(session_path) FROM cache_meta").fetchall()

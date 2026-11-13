@@ -133,7 +133,7 @@ session path and `cpu.db` size/mtime. `UPROF_SESSION_CACHE_ROOT` relocates the r
 (default 1024) caps a database, `UPROF_SESSION_CACHE_TTL_DAYS` (default 7) ages orphan cleanup,
 and `UPROF_SESSION_CACHE_TIMEOUT` (default 30 s) bounds attach/store retries.
 
-The capture `cpu.db` stays read-only. The cache is attached read-only for lookups and read-write
+The capture `cpu.db` stays read-only and is refused if it stores a macro, view or generated column. The cache is attached read-only for lookups and read-write
 for a run that stores; DuckDB permits one writer per file, so a busy cache is waited for up to
 the timeout and then the run continues uncached without disabling it. A file that cannot be
 opened is moved aside as `.corrupt` and recreated once; a file written by another DuckDB storage

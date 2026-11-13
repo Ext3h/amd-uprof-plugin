@@ -8,10 +8,11 @@ columns before any query runs. Rendering is uprof_output's job; this module only
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from uprof_output import header_text, json_document, markdown_table, write_payload
 from uprof_util import UprofError
@@ -50,12 +51,82 @@ def _duckdb() -> Any:
     return duckdb
 
 
+# No connection installs or loads a DuckDB extension on its own: a capture file or a path
+# must never make DuckDB fetch or run code that the skill did not ask for.
+_NO_AUTO_EXTENSIONS: Final = {"autoinstall_known_extensions": False,
+                              "autoload_known_extensions": False}
+CAPTURE_ALIAS: Final = "uprof_capture"
+_SHOWN_OBJECTS: Final = 5
+
+# A uProf translation writes base tables only. Any macro, view or generated column in a capture
+# is foreign SQL; once the capture is on the search path, a macro named like a builtin would
+# replace that builtin in every query. The lookup runs before the capture is on the search path,
+# so its own function calls resolve to the builtins.
+_STORED_SQL: Final = """
+SELECT kind, name FROM (
+    SELECT 'macro' AS kind, function_name AS name FROM duckdb_functions()
+    WHERE database_name = $alias AND NOT internal
+    UNION ALL
+    SELECT 'view', view_name FROM duckdb_views() WHERE database_name = $alias AND NOT internal
+    UNION ALL
+    SELECT 'generated column', table_name || '.' || column_name FROM duckdb_columns()
+    WHERE database_name = $alias AND is_generated)
+ORDER BY kind, name
+"""
+
+
+def memory_connection() -> Any:
+    """An in-memory DuckDB connection that installs and loads no extension on its own."""
+    import duckdb
+    return duckdb.connect(config=dict(_NO_AUTO_EXTENSIONS))
+
+
+def file_connection(path: Path | str) -> Any:
+    """A read-only connection to one of the skill's own DuckDB files, without extension autoload.
+
+    DuckDB errors pass through unchanged so the caller can tell a storage version mismatch.
+    """
+    import duckdb
+    return duckdb.connect(str(path), read_only=True, config=dict(_NO_AUTO_EXTENSIONS))
+
+
+def _shown_name(name: object) -> str:
+    """A catalog name as one printable token: a hostile name cannot add or forge output lines."""
+    return str(name).encode("unicode_escape").decode("ascii")[:80]
+
+
+def _stored_sql_error(cpu_db: Path | str, objects: list[tuple[str, str]]) -> UprofError:
+    from uprof_native import _shell_arg
+
+    shown = ", ".join(f"{kind} {_shown_name(name)}" for kind, name in objects[:_SHOWN_OBJECTS])
+    more = len(objects) - _SHOWN_OBJECTS
+    if more > 0:
+        shown += f" and {more} more"
+    tool = "python " + _shell_arg(os.fspath(Path(__file__).resolve().parent / "uprof.py"))
+    return UprofError(
+        f"{cpu_db} defines SQL objects that a uProf translation never writes ({shown}); the "
+        "skill does not run SQL stored in a capture, so it is not queried\n"
+        f"ALTERNATIVE: translate the raw capture again: {tool} translate --session "
+        "<RAW_SESSION_DIR> --out-dir <NEW_TR_DIR>")
+
+
 def connect(cpu_db: Path | str) -> Any:
+    """The capture attached read-only to an in-memory database, refused if it stores SQL."""
     duckdb = _duckdb()
+    connection = memory_connection()
     try:
-        return duckdb.connect(str(cpu_db), read_only=True)
+        quoted = str(cpu_db).replace("'", "''")
+        connection.execute(f"ATTACH '{quoted}' AS {CAPTURE_ALIAS} (READ_ONLY)")
+        objects = connection.execute(_STORED_SQL, {"alias": CAPTURE_ALIAS}).fetchall()
+        if not objects:
+            connection.execute(f"USE {CAPTURE_ALIAS}")
     except (duckdb.Error, OSError) as exc:
+        connection.close()
         raise UprofError(f"cannot open {cpu_db} read-only: {exc}") from exc
+    if objects:
+        connection.close()
+        raise _stored_sql_error(cpu_db, objects)
+    return connection
 
 
 def set_variables(connection: Any, variables: dict[str, str]) -> None:

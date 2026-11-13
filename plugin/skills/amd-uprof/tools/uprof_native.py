@@ -778,12 +778,10 @@ def symbolization_counts(cpu_db: Path | str) -> tuple[int, int | None, int] | No
     module got symbols, so these counts are the only evidence that translation resolved any.
     Returns None when the database cannot be inspected; the caller reports that, not success.
     """
+    import uprof_db
+
     try:
-        import duckdb
-    except ImportError:
-        return None
-    try:
-        connection = duckdb.connect(str(cpu_db), read_only=True)
+        connection = uprof_db.connect(cpu_db)
     except Exception:
         return None
     try:

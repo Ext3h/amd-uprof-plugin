@@ -40,12 +40,12 @@ HOSTILE_DIRECTORIES = ["$(touch pwned)", "a`id`", "%PATH%", "a!b!", "a\u201d;cal
                        "a\u202eexe.txt"]
 # The characters a capture- or disk-derived name may carry into a command; independent of the
 # implementation's own list so that a missing hazard shows up here.
-IMAGE_PLAIN = set(" ._-+,=@#~()")
-PATH_PLAIN = IMAGE_PLAIN | set("\\/:'&;[]{}")
+PATH_PLAIN = set(" ._-+,=@#~()\\/:'&;[]{}")
+IMAGE_PLAIN = PATH_PLAIN - {"\\"}
 
 
 def plain(text, allowed):
-    return all(char.isalnum() or char in allowed for char in text)
+    return all((char.isascii() and char.isalnum()) or char in allowed for char in text)
 
 
 def image_argument(call):

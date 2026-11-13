@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+import uprof_shell
 from uprof_session import (ContextCadence, achieved_summary, derive_sampler, read_meta,
                            run_gap_limit_ns, system_wide)
 from uprof_util import (COPY_DIRS, DUMP_FILENAMES, UprofError, absolute, contains,
@@ -116,18 +117,6 @@ def require_uprof() -> Path:
     return found
 
 
-def _shell_arg(text: str) -> str:
-    """One argument as a shell would need it: double-quoted unless it is plain.
-
-    On Windows a % is doubled so cmd.exe does not expand %NAME%.
-    """
-    if IS_WINDOWS:
-        text = text.replace("%", "%%")
-    if text and all(char.isalnum() or char in "._-/:\\+," for char in text):
-        return text
-    return '"' + text.replace('"', '\\"') + '"'
-
-
 def failure(cause: str, labels: Iterable[str], *,
             session: str | os.PathLike[str] | None = None) -> UprofError:
     """An unsupported case: the cause, then one runnable ALTERNATIVE line per applicable option.
@@ -138,9 +127,13 @@ def failure(cause: str, labels: Iterable[str], *,
     <PLACEHOLDER>, so an option is the same text wherever it is offered.
     """
     found = find_uprof()
-    cli = _shell_arg(os.fspath(found)) if found else '"<AMDUPROFCLI>"'
-    tool = "python " + _shell_arg(os.fspath(Path(__file__).resolve().parent / "uprof.py"))
-    known = _shell_arg(os.fspath(absolute(session))) if session else "<SESSION_DIR>"
+    cli, cli_data = (uprof_shell.path_arg(found, "<AMDUPROFCLI>") if found
+                     else ("<AMDUPROFCLI>", None))
+    script, script_data = uprof_shell.path_arg(Path(__file__).resolve().parent / "uprof.py",
+                                               "<UPROF_PY>")
+    tool = "python " + script
+    known, known_data = (uprof_shell.path_arg(absolute(session), "<SESSION_DIR>") if session
+                         else ("<SESSION_DIR>", None))
     then = (f"; {tool} translate --session <NEW_OUT_DIR> --out-dir <NEW_TR_DIR>; "
             f"{tool} profile --session <NEW_TR_DIR> --by process")
     chains = {
@@ -158,6 +151,8 @@ def failure(cause: str, labels: Iterable[str], *,
     }
     lines = [cause] + [f"ALTERNATIVE: {label}: {chains[label]}"
                        for label in sorted(set(labels), key=str.lower)]
+    # A path that is not plain is a placeholder in the commands and named here as data only.
+    lines += [data for data in (cli_data, script_data, known_data) if data]
     return UprofError("\n".join(lines))
 
 
@@ -326,12 +321,15 @@ class CliLog:
         return None, ""
 
 
-def recapture_commands(session: Path) -> tuple[str, str]:
-    """Runnable cycle and IBS collect commands writing next to session, for a capture that
-    holds nothing to translate."""
-    script = Path(__file__).resolve().with_name("uprof.py")
-    cycles = f'python "{script}" collect --out-dir "{session}-recapture" --seconds 60'
-    return cycles, cycles + " --event ibs-op"
+def recapture_commands(session: Path) -> tuple[str, str, str | None]:
+    """Cycle and IBS collect commands writing next to session, for a capture that holds nothing
+    to translate, and the data lines for any path that had to become a placeholder."""
+    script, script_data = uprof_shell.path_arg(Path(__file__).resolve().with_name("uprof.py"),
+                                               "<UPROF_PY>")
+    out_dir, out_data = uprof_shell.path_arg(f"{session}-recapture", "<NEW_OUT_DIR>")
+    cycles = f"python {script} collect --out-dir {out_dir} --seconds 60"
+    data = "\n".join(line for line in (script_data, out_data) if line) or None
+    return cycles, cycles + " --event ibs-op", data
 
 
 def translate_failure(what: str, completed: subprocess.CompletedProcess[str],
@@ -343,11 +341,11 @@ def translate_failure(what: str, completed: subprocess.CompletedProcess[str],
         if code in ACCESS_VIOLATION_EXITS else ""
     log_path, log_text = log.appended()
     if NO_CATEGORY_LOG in log_text:
-        cycles, ibs = recapture_commands(session)
+        cycles, ibs, data = recapture_commands(session)
         return (f"{what} failed with {code}{crash}: the session has no translatable sample "
                 "category (per the AMDuProfCLI log), so it holds no samples to translate; "
                 f"remedy: capture again with {cycles} (cycles) or {ibs} (IBS), then translate "
-                "that session")
+                "that session" + (f"\n{data}" if data else ""))
     if crash and log_path:
         return f"{what} failed with {code}{crash}: {detail}; AMDuProfCLI log: {log_path}"
     return f"{what} failed with {code}{crash}: {detail}"

@@ -28,6 +28,7 @@ import uprof_dump
 import uprof_functions
 import uprof_native
 import uprof_session
+import uprof_shell
 import uprof_symbols
 import uprof_util as util
 
@@ -738,33 +739,18 @@ def _cpu_seconds_interval(sampler: uprof_session.Sampler) -> float | None:
 
 
 def _quote(text: str) -> str:
-    """Quote one shell argument; on Windows also protect %NAME% from cmd.exe expansion."""
+    """Quote one shell argument; on Windows also protect %NAME% from cmd.exe expansion.
+
+    Plain text takes the quoting every shell reads alike; the caller's own non-plain arguments
+    keep the older quoting.
+    """
+    if uprof_shell.is_plain(text):
+        return uprof_shell.quote(text)
     if os.name == "nt":
         text = text.replace("%", "%%")
     if text and all(char.isalnum() or char in "._-/:\\%+," for char in text):
         return text
     return '"' + text.replace('"', '\\"') + '"'
-
-
-# A name taken from the capture or from the disk (not from the caller's own arguments) reaches a
-# runnable command only when every character is a letter, a digit or one of these, which are
-# inert inside "..." in Git Bash, PowerShell 5.1 and cmd.exe. An allow-list, because each shell
-# adds its own live characters ($, backtick, %, !, PowerShell's typographic quotes, controls).
-_IMAGE_PLAIN: Final = frozenset(" ._-+,=@#~()")
-_PATH_PLAIN: Final = _IMAGE_PLAIN | frozenset("\\/:'&;[]{}")
-
-
-def _plain_path(text: str) -> bool:
-    """True when every character of a disk path may appear inside a runnable command."""
-    return all(char.isalnum() or char in _PATH_PLAIN for char in text)
-
-
-def _image_pattern(name: str) -> str:
-    """An --image ILIKE pattern for a captured process name that is inert in every shell: each
-    character outside the plain set, and a leading dash argparse would read as an option,
-    becomes the one-character wildcard, so the pattern still matches the name."""
-    pattern = "".join(char if char.isalnum() or char in _IMAGE_PLAIN else "_" for char in name)
-    return "_" + pattern[1:] if pattern.startswith("-") else pattern
 
 
 def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
@@ -839,7 +825,7 @@ def _next_calls(args: argparse.Namespace,
         if pid is None and not image:
             return []
         scoped = argparse.Namespace(**vars(args))
-        scoped.pid, scoped.image = pid, (None if pid is not None else _image_pattern(image))
+        scoped.pid, scoped.image = pid, (None if pid is not None else uprof_shell.image_pattern(image))
         calls = [_profile_command(scoped, "module")]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))
@@ -2133,8 +2119,9 @@ def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
     A directory name comes from the disk, so one with a character outside the plain set is
     named as data (escaped by repr) only, never inside a command.
     """
-    safe = [candidate for candidate in candidates if _plain_path(str(candidate))]
-    unsafe = [candidate for candidate in candidates if not _plain_path(str(candidate))]
+    safe = [candidate for candidate in candidates if uprof_shell.is_plain(str(candidate))]
+    unsafe = [candidate for candidate in candidates
+              if not uprof_shell.is_plain(str(candidate))]
     calls = []
     for candidate in safe[:_CANDIDATE_LIMIT]:
         scoped = argparse.Namespace(**vars(args))
@@ -2163,9 +2150,10 @@ def run_query_command(args: argparse.Namespace) -> None:
         if candidates:
             raise util.UprofError(f"cpu.db not found: {cpu_db}; --session must be one translated "
                                   f"capture, and {_candidate_calls(args, candidates)}")
+        session_arg, data = uprof_shell.path_arg(session, "<SESSION_DIR>")
         raise util.UprofError(f"cpu.db not found: {cpu_db} (run translate --session "
-                              f"'{session}' --out-dir <COPY_DIR> first, then query the original "
-                              "session)")
+                              f"{session_arg} --out-dir <COPY_DIR> first, then query the "
+                              "original session)" + (f"\n{data}" if data else ""))
     out_path = _out_path(args, cpu_db, session)
 
     if args.command == "schema":

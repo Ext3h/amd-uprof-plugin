@@ -822,8 +822,9 @@ def _dump_rows(reader: Iterable[list[str]], path: Path) -> Iterator[list[str]]:
         yield from reader
     except csv.Error as exc:
         raise UprofError(
-            f"{path} is not a uProf ASCII dump ({exc}); regenerate it with "
-            "translate --ascii or remove it so profile generates one"
+            f"{path} is not a uProf ASCII dump ({exc}); the capture is damaged "
+            "or not uProf output, so capture again: collect --out-dir "
+            "<NEW_OUT_DIR> --seconds <S>"
         ) from exc
 
 
@@ -843,7 +844,7 @@ def dump_cadence(
     ticks: dict[tuple[str, ...], list[int]] = {}
     keys = (context_key,) if isinstance(context_key, str) else context_key
     with open(path, "r", encoding="utf-8", errors="replace", newline="") as handle:
-        reader = csv.reader(handle)
+        reader = _dump_rows(csv.reader(handle), path)
         header = next(reader, None)
         if header is None:
             return 0, 0, []
@@ -857,7 +858,7 @@ def dump_cadence(
             if all(key in header for key in keys)
             else [cpu_index]
         )
-        for row in _dump_rows(reader, path):
+        for row in reader:
             if not row:
                 continue
             samples += 1

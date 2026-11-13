@@ -246,9 +246,9 @@ def check_session_meta_size(path: os.PathLike[str] | str) -> None:
         return
     if size > SESSION_META_LIMIT:
         raise UprofError(
-            f"{path} is {size} bytes, above the {SESSION_META_LIMIT} a session.uprof "
-            "can hold; it is not uProf capture metadata: copy the session again "
-            "from the machine that captured it"
+            f"{path} is {size} bytes, above the {SESSION_META_LIMIT}-byte limit "
+            "(real files are a few KiB); it is not uProf capture metadata: copy the "
+            "session again from the machine that captured it"
         )
 
 

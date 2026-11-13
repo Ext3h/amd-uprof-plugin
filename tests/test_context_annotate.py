@@ -184,7 +184,7 @@ class IbsTest(unittest.TestCase):
     def test_tag_to_retire_is_clipped_at_the_16_bit_maximum(self):
         expressions = " ".join(uprof_context.ibs_expression("IbsTagToRetCtr"))
 
-        self.assertIn("LEAST(TRY_CAST(\"IbsTagToRetCtr\" AS BIGINT), 65535)", expressions)
+        self.assertIn("LEAST(TRY_CAST(\"IbsTagToRetCtr\" AS DOUBLE), 65535)", expressions)
 
     def test_no_dump_means_no_ibs_rows(self):
         connection = mock.Mock()
@@ -225,6 +225,35 @@ class IbsScopeTest(unittest.TestCase):
         self.connection.execute(
             "INSERT INTO Process VALUES (4524, 'a.exe'), (7132, 'b.exe')")
         self.connection.execute("SET VARIABLE uprof_ibs_dump = ?", [str(self.dump)])
+        self.connection.execute(
+            "CREATE OR REPLACE TEMP VIEW v_dump_source AS "
+            "SELECT * FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)")
+        self.connection.execute(
+            "CREATE OR REPLACE TEMP VIEW v_scoped AS "
+            "SELECT CAST(d.DeltaTick AS BIGINT) AS delta_tick, "
+            "CAST(d.CPU_Number AS INTEGER) AS cpu, "
+            "CAST(d.TID AS INTEGER) AS tid, "
+            "CAST(d.PID AS INTEGER) AS pid, "
+            "CAST(d.\"Offset\" AS BIGINT) AS rva, "
+            "module_key(d.ModuleName) AS module_name "
+            "FROM v_dump_source d "
+            "LEFT JOIN Process p ON p.id = TRY_CAST(d.PID AS INTEGER) "
+            "WHERE TRY_CAST(d.DeltaTick AS BIGINT) >= getvariable('time_start') "
+            "  AND TRY_CAST(d.DeltaTick AS BIGINT) < getvariable('time_end') "
+            "  AND (getvariable('uprof_pid') = '' "
+            "       OR TRY_CAST(d.PID AS INTEGER) = CAST(getvariable('uprof_pid') AS INTEGER)) "
+            "  AND COALESCE(p.name, '') ILIKE getvariable('uprof_image')")
+        self.connection.execute(
+            "CREATE OR REPLACE TEMP VIEW v_dump_scoped AS "
+            "SELECT d.* "
+            "FROM v_dump_source d "
+            "JOIN v_scoped s "
+            "  ON TRY_CAST(d.DeltaTick AS BIGINT) = s.delta_tick "
+            " AND TRY_CAST(d.CPU_Number AS INTEGER) = s.cpu "
+            " AND TRY_CAST(d.TID AS INTEGER) = s.tid "
+            " AND TRY_CAST(d.PID AS INTEGER) = s.pid "
+            " AND TRY_CAST(d.\"Offset\" AS BIGINT) = s.rva "
+            " AND module_key(d.ModuleName) = s.module_name")
         self.set_scope(time_start=0, time_end=1000, pid="", image="%")
 
     def set_scope(self, time_start, time_end, pid, image):
@@ -254,6 +283,11 @@ class IbsScopeTest(unittest.TestCase):
     def test_filters_combine(self):
         self.set_scope(time_start=0, time_end=1000, pid="7132", image="b.exe")
         self.assertEqual(self.samples(), 3)
+
+    def test_ibs_rows_reads_from_v_dump_scoped(self):
+        rows = uprof_context.ibs_rows(self.connection, "mod.dll", [0x100])
+        self.assertEqual(rows[0x100]["samples"], 4)
+        self.assertIn("DataSrc", rows[0x100])
 
 
 class ModuleRowTest(unittest.TestCase):

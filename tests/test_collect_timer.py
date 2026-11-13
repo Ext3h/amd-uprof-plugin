@@ -115,12 +115,22 @@ class TimerCollectTest(unittest.TestCase):
         self.assertIn("<APP_ARG_2>", command)
         self.assertIn("APP_ARG_2=" + repr("$(whoami)"), lines)
 
-    def test_a_launch_argument_with_whitespace_is_refused(self):
-        # Measured: AMDuProfCLI passes the app's arguments on unquoted, so "x y" arrives as two.
-        for argument in ("x y", "a\tb", "line\nbreak"):
+    def test_a_launch_argument_the_unquoted_join_breaks_is_refused(self):
+        # Measured: AMDuProfCLI joins the app's arguments unquoted, so "x y" arrives as two; an
+        # empty argument then vanishes and a double quote merges neighbours.
+        for argument in ("x y", "a\tb", "", 'a"b'):
             with self.subTest(argument=argument), self.assertRaises(UprofError) as caught:
                 dry_run(options(launch=[str(APP), argument]))
-            self.assertIn("whitespace", str(caught.exception))
+            message = str(caught.exception)
+            self.assertIn("unquoted", message)
+            # The alternative is the runnable, measured system-wide timer capture.
+            self.assertIn("collect --out-dir out --seconds 3 --event timer", message)
+            self.assertNotIn("script", message)
+
+    def test_whitespace_windows_does_not_split_on_is_allowed(self):
+        for argument in ("line\nbreak", "a\u00a0b", "a\vb"):
+            with self.subTest(argument=argument):
+                command_line(dry_run(options(launch=[str(APP), argument])))
 
     def test_the_parser_keeps_an_empty_launch_distinct(self):
         args = uprof.build_parser().parse_args(["collect", "--out-dir", "o", "--event", "timer",

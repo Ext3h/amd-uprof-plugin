@@ -41,7 +41,8 @@ from uprof_util import contains, same_path
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 
 CACHE_ALIAS = "uprof_cache"
-SCHEMA_VERSION = 3
+# Raised when a stored result's meaning changes, so a run never replays an older rule's result.
+SCHEMA_VERSION = 4
 # The only files the cache owns in its root: cache_db_path names and their quarantined copies.
 _CACHE_NAME = re.compile(r"[0-9a-f]{32}\.duckdb")
 _CORRUPT_NAME = re.compile(r"[0-9a-f]{32}\.duckdb\.corrupt")

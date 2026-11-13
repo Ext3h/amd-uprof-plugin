@@ -371,9 +371,32 @@ class LabScenarioTest(unittest.TestCase):
                 for word in ("lab_core.dll", "defect_lab.exe"):
                     self.assertIn(word, entry["fields"]["Question"])
                 self.assertIn("open (D-028)", entry["fields"]["Session"])
-                self.assertEqual(len(entry["calls"]), 2)
+                self.assertIn("<IMAGE_DIR>", entry["fields"]["Question"])
+                self.assertEqual(len(entry["calls"]), 3)
                 for call in entry["calls"]:
                     self.assertIn("--image %defect_lab.exe", call)
+                # The drill-down reads the bundled images, so it needs no image on the host.
+                drill = entry["calls"][2]
+                self.assertIn("--by instruction", drill)
+                self.assertIn("--module c:/capture/", drill)
+                self.assertIn("--image-path <IMAGE_DIR>", drill)
+
+    def test_each_scenario_names_its_capture_and_leaves_the_numbers_open(self):
+        # The numbers come from the owner's re-run; none is taken from an earlier capture set.
+        catalogue = scenarios()
+        modes = {"os": "timer-cg", "vendor": "timer-cg"}
+        for number, name in enumerate(LAB_CLASSES, start=21):
+            entry = catalogue[f"SCN-{number}"]
+            with self.subTest(defect_class=name):
+                session = entry["fields"]["Session"]
+                self.assertIn(f"`{name}.timer`", session)
+                if name in ("memory", "lock", "branch", "chain"):
+                    # The cause needs a system-wide IBS capture, which SANITY refuses today.
+                    self.assertIn(f"`{name}.ibs`", session)
+                    self.assertIn("#358", session)
+                if name in modes:
+                    self.assertIn(f"`{name}.{modes[name]}`", session)
+                self.assertIn("TODO(re-run)", entry["fields"]["Answer"])
 
     def test_the_timer_and_efficient_rules_are_in_the_answers(self):
         catalogue = scenarios()

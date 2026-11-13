@@ -746,21 +746,25 @@ def _quote(text: str) -> str:
     return '"' + text.replace('"', '\\"') + '"'
 
 
-# Characters that expand, run a command or end a "..." argument in Git Bash, PowerShell 5.1 or
-# cmd.exe even inside double quotes. A name taken from the capture or from the disk (not from
-# the caller's own arguments) never enters a runnable command with one of them.
-_SHELL_LIVE: Final = frozenset('$`"%!')
+# A name taken from the capture or from the disk (not from the caller's own arguments) reaches a
+# runnable command only when every character is a letter, a digit or one of these, which are
+# inert inside "..." in Git Bash, PowerShell 5.1 and cmd.exe. An allow-list, because each shell
+# adds its own live characters ($, backtick, %, !, PowerShell's typographic quotes, controls).
+_IMAGE_PLAIN: Final = frozenset(" ._-+,=@#~()")
+_PATH_PLAIN: Final = _IMAGE_PLAIN | frozenset("\\/:'&;[]{}")
 
 
-def _inert(text: str) -> bool:
-    """True when text holds no shell-live or control character."""
-    return not any(char in _SHELL_LIVE or ord(char) < 32 or ord(char) == 127 for char in text)
+def _plain_path(text: str) -> bool:
+    """True when every character of a disk path may appear inside a runnable command."""
+    return all(char.isalnum() or char in _PATH_PLAIN for char in text)
 
 
 def _image_pattern(name: str) -> str:
     """An --image ILIKE pattern for a captured process name that is inert in every shell: each
-    character outside a plain set becomes the one-character wildcard, so it still matches."""
-    return "".join(char if char.isalnum() or char in " ._-+,=@#~()" else "_" for char in name)
+    character outside the plain set, and a leading dash argparse would read as an option,
+    becomes the one-character wildcard, so the pattern still matches the name."""
+    pattern = "".join(char if char.isalnum() or char in _IMAGE_PLAIN else "_" for char in name)
+    return "_" + pattern[1:] if pattern.startswith("-") else pattern
 
 
 def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
@@ -2126,11 +2130,11 @@ def _session_candidates(root: Path) -> list[Path]:
 def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
     """The same command on each candidate capture, keeping --by and the scope.
 
-    A directory name comes from the disk, so one with a shell-live character is named as data
-    only, never inside a command.
+    A directory name comes from the disk, so one with a character outside the plain set is
+    named as data (escaped by repr) only, never inside a command.
     """
-    safe = [candidate for candidate in candidates if _inert(str(candidate))]
-    unsafe = [candidate for candidate in candidates if not _inert(str(candidate))]
+    safe = [candidate for candidate in candidates if _plain_path(str(candidate))]
+    unsafe = [candidate for candidate in candidates if not _plain_path(str(candidate))]
     calls = []
     for candidate in safe[:_CANDIDATE_LIMIT]:
         scoped = argparse.Namespace(**vars(args))
@@ -2143,8 +2147,9 @@ def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
     if calls:
         parts.append("run one of: " + " ; ".join(calls))
     if unsafe:
-        parts.append("not offered as commands because a shell would expand characters in "
-                     "their names: " + ", ".join(repr(str(path))
+        held = "" if len(unsafe) <= _CANDIDATE_LIMIT else f" (first {_CANDIDATE_LIMIT})"
+        parts.append(f"{len(unsafe)} not offered as commands because their names hold "
+                     f"characters a shell may expand{held}: " + ", ".join(repr(str(path))
                                                  for path in unsafe[:_CANDIDATE_LIMIT]))
     return "; ".join(parts)
 

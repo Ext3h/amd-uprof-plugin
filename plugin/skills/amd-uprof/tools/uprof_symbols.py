@@ -981,8 +981,9 @@ def symbolize_module(
                 evidence.note = readobj_error
                 evidence.remedy = image_remedy
             else:
+                # No PDB can serve this image, but DWARF or a separate debug file still can, so
+                # the default remedy stays unless a --symbol-path PDB was refused below.
                 evidence.note = "the image's debug directory records no PDB"
-                evidence.remedy = image_remedy
             evidence.outcome = "no_debug_info" if found_debug_info is False else "readobj_failed"
             if pdb_files:
                 shown = ", ".join(os.fspath(path) for path in pdb_files)
@@ -991,6 +992,7 @@ def symbolize_module(
                     f"the image records no PDB identity ({evidence.note}), so "
                     f"--symbol-path {shown} cannot be verified and is not used"
                 )
+                evidence.remedy = evidence.remedy or image_remedy
             pdb = None
         elif pdbutil:
             evidence.search = _choose_pdb(
@@ -1034,7 +1036,7 @@ def symbolize_module(
             )
             evidence.remedy = _install_remedy(symbolizer_path, "llvm-pdbutil")
         if not pdb:
-            if evidence.remedy is None:
+            if evidence.remedy is None and module_guid is not None:
                 evidence.outcome = "no_debug_info" if found_debug_info is False else "no_pdb"
             # Without --pdb, llvm-symbolizer still loads the PDB the image's CodeView entry
             # names (at the recorded path or beside the image) with no GUID check. So it runs

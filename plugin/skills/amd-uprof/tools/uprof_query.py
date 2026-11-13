@@ -370,6 +370,8 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
         return f"module file not available: {evidence.note or 'no recorded path'}"
     if evidence.outcome == "wrong_build":
         return evidence.note or "the image is a different build than the capture recorded"
+    if evidence.outcome == "pdb_unmatched":
+        return evidence.note or "the --symbol-path PDB names another module"
     return f"symbolization failed: {evidence.note or evidence.outcome}"
 
 

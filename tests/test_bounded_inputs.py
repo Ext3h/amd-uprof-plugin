@@ -53,6 +53,22 @@ class OutFileTempTest(unittest.TestCase):
         self.assertEqual(len(set(names)), 2, names)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["table.txt"])
 
+    @unittest.skipIf(os.name == "nt", "host: POSIX permission bits do not apply on Windows")
+    def test_the_written_file_follows_the_umask_like_a_plain_create(self):
+        out = self.root / "table.txt"
+        old = os.umask(0o022)
+        try:
+            uprof_output.write_payload("rows\n", out)
+        finally:
+            os.umask(old)
+        self.assertEqual(out.stat().st_mode & 0o777, 0o644)
+
+    def test_skill_md_names_no_fixed_temporary_file(self):
+        skill = (Path(uprof_output.__file__).resolve().parents[1] / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("<path>.tmp", skill)
+
 
 class SessionMetaSizeTest(unittest.TestCase):
     def test_an_oversized_session_file_is_refused_with_its_size(self):
@@ -63,6 +79,7 @@ class SessionMetaSizeTest(unittest.TestCase):
             with self.assertRaisesRegex(uprof_util.UprofError, "session.uprof") as raised:
                 uprof_session.read_meta(tmp)
             self.assertIn(str(uprof_util.SESSION_META_LIMIT + 1), str(raised.exception))
+            self.assertIn(f"{uprof_util.SESSION_META_LIMIT}-byte limit", str(raised.exception))
 
 
 class DumpFieldTest(unittest.TestCase):
@@ -72,7 +89,19 @@ class DumpFieldTest(unittest.TestCase):
             dump.write_text(
                 "DeltaTick,CPU_Number,ModuleName\n1,0," + "x" * 200_000 + "\n", encoding="utf-8"
             )
-            with self.assertRaisesRegex(uprof_util.UprofError, str(dump).replace("\\", "\\\\")):
+            with self.assertRaisesRegex(
+                uprof_util.UprofError, str(dump).replace("\\", "\\\\")
+            ) as raised:
+                uprof_native.dump_cadence(dump)
+        # The only caller is translate --ascii, which just wrote this dump.
+        self.assertNotIn("translate --ascii", str(raised.exception))
+        self.assertIn("collect --out-dir <NEW_OUT_DIR>", str(raised.exception))
+
+    def test_a_huge_header_cell_is_a_cause_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dump = Path(tmp) / "IbsOpDump.csv"
+            dump.write_text("x" * 200_000 + ",CPU_Number\n1,0\n", encoding="utf-8")
+            with self.assertRaises(uprof_util.UprofError):
                 uprof_native.dump_cadence(dump)
 
 
@@ -107,7 +136,10 @@ class SymbolizerTimeoutTest(unittest.TestCase):
 
         with self.assertRaisesRegex(uprof_util.UprofError, "app.exe") as raised:
             self.run_symbolizer(fake_run)
-        self.assertIn("--by module", str(raised.exception))
+        message = str(raised.exception)
+        # The build-identity check refuses another build, so --image-path is no alternative.
+        self.assertNotIn("--image-path", message)
+        self.assertIn("profile --session <SESSION_DIR> --by module", message)
 
 
 if __name__ == "__main__":

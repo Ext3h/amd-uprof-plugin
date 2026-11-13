@@ -773,7 +773,10 @@ class OutputLegendTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_attribution_definition_is_emitted(self):
-        definition = "unique / derived (synthetic binary range) / unresolved (no symbol)"
+        definition = (
+            "unique / shared (folded names) / derived (synthetic binary range) / "
+            "unresolved (no symbol)"
+        )
         session = self._write_ordering()
         document = json.loads(self.profile(session, "--by", "function", "--json"))
         self.assertEqual(document["legend"]["columns"]["attribution"], definition)

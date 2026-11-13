@@ -225,7 +225,7 @@ The aggregate `<other instructions>` row carries no `context`.
 
 ## Shared addresses
 
-`/OPT:ICF` folds identical bodies, so one RVA can carry several public names. When `llvm-pdbutil` is available on Windows, symbolization builds a per-module public-symbol cache and labels each folded start `shared: nameA | nameB` with `attribution = shared`, at `region`, `line` and `instruction` granularity. Report that share as shared, not under one name. Without `llvm-pdbutil` the cache is absent (`FOLDS: skipped`) and every resolved row is `unique`; unresolved rows still exist. Resolved Linux DWARF symbols are all `unique` (unverified here).
+`/OPT:ICF` folds identical bodies, so one RVA can carry several public names. When `llvm-pdbutil` is available on Windows, symbolization builds a per-module public-symbol cache and labels each folded start `shared: nameA | nameB` with `attribution = shared`, at `region`, `line` and `instruction` granularity. Report that share as shared, not under one name. Without `llvm-pdbutil` no PDB is used (`no_pdb`), so there is no fold cache (`FOLDS: skipped`). Resolved Linux DWARF symbols are all `unique` (unverified here).
 
 ## Failure behaviour
 

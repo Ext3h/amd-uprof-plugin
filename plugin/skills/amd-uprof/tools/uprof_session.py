@@ -397,6 +397,22 @@ def requested_interval(sampler: Sampler, frequency_hz: float | None = None
     return None, f"{sampler.interval} fetch events", ""
 
 
+def cycle_frequency_hz(sampler: Sampler) -> float | None:
+    """The core frequency a cycle interval converts at, read once per report.
+
+    The run-gap limit and the ACHIEVED text must convert at the same frequency: the Linux
+    fallback reads the current MHz, which can change between two reads. None when the interval
+    is not in cycles or no frequency is readable; requested_interval then states the cause.
+    """
+    if sampler.timer or sampler.interval_units != "cycles":
+        return None
+    try:
+        from uprof_collect import _core_frequency
+        return float(_core_frequency()[0])
+    except Exception:
+        return None
+
+
 def run_gap_limit_ns(sampler: Sampler, frequency_hz: float | None = None) -> float | None:
     """The largest gap still counted as continuous sampling, in nanoseconds.
 

@@ -1802,10 +1802,12 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
     label = "CPU"
     window_s: float | None = None
     samples, cpus, kernel_covered = _capture_scan(connection, check_kernel)
+    frequency_hz = uprof_session.cycle_frequency_hz(sampler)
     if has_dump:
         wide = uprof_session.system_wide(args.session)
         label = "CPU" if wide else "thread"
-        contexts = _dump_contexts(connection, uprof_session.run_gap_limit_ns(sampler))
+        contexts = _dump_contexts(connection,
+                                  uprof_session.run_gap_limit_ns(sampler, frequency_hz))
         if dump is not None and dump.time_filter:
             bounds = util.parse_time_filter(dump.time_filter)
             if bounds is not None:
@@ -1827,7 +1829,7 @@ def _achieved_field(connection: object, has_dump: bool, args: argparse.Namespace
         except (TypeError, ValueError):
             window_s = None
     field = ("ACHIEVED", uprof_session.achieved_summary(samples, window_s, cpus, sampler,
-                                                        contexts, label))
+                                                        contexts, label, frequency_hz))
     return field, samples, kernel_covered
 
 

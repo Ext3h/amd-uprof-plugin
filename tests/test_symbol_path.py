@@ -2,7 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_symbol_path
 """
-# Spec: SPEC-28, SPEC-29
+# Spec: SPEC-45, SPEC-46, SPEC-47, SPEC-48
 
 import os
 import tempfile

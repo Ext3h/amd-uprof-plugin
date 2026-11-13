@@ -2,7 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_context_iat
 """
-# Spec: SPEC-55
+# Spec: SPEC-88
 
 import subprocess
 import unittest

@@ -7,7 +7,7 @@ in the command and a NAME='...' data line; a plain path, including one with `'`,
 in "..." quoting. The quoting itself is exercised in real shells by test_shell_quoting.
 Run from the repository root: python tests/run_tests.py test_printed_paths
 """
-# Spec: SPEC-47
+# Spec: SPEC-77
 
 import contextlib
 import io

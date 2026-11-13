@@ -5,7 +5,7 @@ The goldens are produced by tests/capture_debug_traces.py in the
 fixtures/debug/traces/<os>/. A Linux golden is evidence from the Linux runner, not from a
 Windows cross-read. Run from the repository root: python tests/run_tests.py test_debug_traces
 """
-# Spec: SPEC-72
+# Spec: SPEC-113
 
 import os
 import subprocess

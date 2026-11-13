@@ -2,7 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_tools_report
 """
-# Spec: SPEC-20
+# Spec: SPEC-32
 
 import contextlib
 import io

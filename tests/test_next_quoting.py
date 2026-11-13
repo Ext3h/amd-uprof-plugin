@@ -9,7 +9,7 @@ field per placeholder), never inside a command. A plain call pasted into a real 
 every argument unchanged.
 Run from the repository root: python tests/run_tests.py test_next_quoting
 """
-# Spec: SPEC-47
+# Spec: SPEC-77
 
 import base64
 import json

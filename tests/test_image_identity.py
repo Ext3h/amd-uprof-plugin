@@ -3,7 +3,7 @@
 The capture records each module's PE CheckSum and SizeOfImage. An image on disk that disagrees
 is a different build: its names would be attached to the captured build's addresses.
 """
-# Spec: SPEC-40
+# Spec: SPEC-68
 
 import os
 import re

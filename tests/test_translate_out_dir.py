@@ -2,7 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_translate_out_dir
 """
-# Spec: SPEC-15
+# Spec: SPEC-25, SPEC-26
 
 import io
 import os

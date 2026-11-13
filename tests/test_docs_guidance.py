@@ -9,7 +9,8 @@ change; the load-bearing claims may not.
 
 Run from the repository root: python tests/run_tests.py test_docs_guidance
 """
-# Spec: SPEC-34, SPEC-35, SPEC-36, SPEC-37, SPEC-38, SPEC-49, SPEC-50
+# Spec: SPEC-56, SPEC-57, SPEC-58, SPEC-59, SPEC-60, SPEC-61,
+#       SPEC-62, SPEC-63, SPEC-79, SPEC-80, SPEC-81
 
 import re
 import unittest
@@ -19,7 +20,8 @@ TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-upr
 SKILL = (TOOLS_DIR.parent / "SKILL.md").read_text(encoding="utf-8")
 DOCS = Path(__file__).resolve().parents[1] / "docs"
 REFERENCE = (DOCS / "reference.md").read_text(encoding="utf-8")
-SPEC = (DOCS / "spec.md").read_text(encoding="utf-8")
+# The spec wording without its requirement ID markup.
+SPEC = re.sub(r"\*\*SPEC-\d{2,}\*\* ", "", (DOCS / "spec.md").read_text(encoding="utf-8"))
 VALIDATION = (DOCS / "validation.md").read_text(encoding="utf-8")
 
 FIRST_CALL = ("**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py "

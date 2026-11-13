@@ -29,6 +29,9 @@ import build_captures  # noqa: E402
 
 CALL = re.compile(r"^\s+\d+\. `python <SKILL_DIR>/tools/uprof\.py (.+)`$")
 FIELD = re.compile(r"^- \*\*(\w[\w ]*):\*\*\s*(.*)$")
+PART = re.compile(r"^\s+- \*\*(\w+):\*\*\s*(.*)$")
+ANSWER_PARTS = ("Location", "Proof", "Cost", "Confidence", "Saving")
+NONE_WITH_REASON = re.compile(r"^none \(\S.*\)$")
 # Concrete stand-ins for the catalogue's placeholders, so a call parses as a user would run it.
 PLACEHOLDERS = {"<CAPTURE>": "capture", "<BEFORE>": "before", "<AFTER>": "after",
                 "<SESSION>": "session", "<OUT_DIR>": "out", "<PDB_DIR>": "pdbs",
@@ -47,14 +50,27 @@ def scenarios() -> dict[str, dict]:
         if not match:
             continue
         fields: dict[str, str] = {}
+        parts: dict[str, str] = {}
         calls: list[str] = []
+        current = None
         for line in body.splitlines():
             if field := FIELD.match(line):
-                fields[field.group(1)] = field.group(2)
+                current = field.group(1)
+                fields[current] = field.group(2)
+            elif current == "Answer" and (part := PART.match(line)):
+                parts[part.group(1)] = part.group(2)
             elif call := CALL.match(line):
                 calls.append(call.group(1))
-        result[match.group(1)] = {"fields": fields, "calls": calls}
+        result[match.group(1)] = {"fields": fields, "parts": parts, "calls": calls}
     return result
+
+
+def retired_ids() -> set[str]:
+    text = (TRIALS / "scenarios.md").read_text(encoding="utf-8")
+    match = re.search(r"Retired IDs: ([^.\n]*)\.", text)
+    if not match or match.group(1).strip() == "none":
+        return set()
+    return {item.strip() for item in match.group(1).split(",")}
 
 
 def argv(call: str) -> list[str]:
@@ -72,14 +88,39 @@ class CatalogueTest(unittest.TestCase):
         self.assertGreater(len(ids), 0)
         self.assertEqual(ids, sorted(set(ids)))
 
+    def test_every_id_is_in_use_or_retired_never_both(self):
+        # A retired ID is never reused, so every number up to the highest is accounted for.
+        ids, retired = set(self.scenarios), retired_ids()
+        self.assertFalse(ids & retired, "a retired ID was reused")
+        highest = max(int(scn[4:]) for scn in ids | retired)
+        self.assertEqual(ids | retired, {f"SCN-{n:02d}" for n in range(1, highest + 1)})
+
     def test_every_scenario_has_its_fields(self):
         for scn, entry in self.scenarios.items():
             with self.subTest(scenario=scn):
                 for name in REQUIRED:
                     self.assertIn(name, entry["fields"], f"{scn} lacks {name}")
-                    # The calls follow as a list, so only that field may be empty.
-                    if name != "Minimal calls":
-                        self.assertTrue(entry["fields"][name], f"{scn}: {name} is empty")
+                for name in ("Session", "Question"):
+                    self.assertTrue(entry["fields"][name], f"{scn}: {name} is empty")
+                self.assertTrue(entry["fields"]["Answer"] or entry["parts"],
+                                f"{scn}: Answer is empty")
+
+    def test_answers_on_a_session_have_every_contract_part(self):
+        for scn, entry in self.scenarios.items():
+            fields = entry["fields"]
+            if fields["Session"].startswith("none") or "examples/" in fields["Answer"]:
+                continue
+            with self.subTest(scenario=scn):
+                for part in ANSWER_PARTS:
+                    self.assertTrue(entry["parts"].get(part), f"{scn}: Answer lacks {part}")
+
+    def test_none_always_names_its_reason(self):
+        for scn, entry in self.scenarios.items():
+            for name in ("Session", "Minimal calls"):
+                value = entry["fields"][name]
+                with self.subTest(scenario=scn, field=name):
+                    if value.startswith("none"):
+                        self.assertRegex(value, NONE_WITH_REASON)
 
     def test_sessions_are_ones_the_builder_writes(self):
         for scn, entry in self.scenarios.items():
@@ -166,6 +207,24 @@ class BuilderTest(unittest.TestCase):
             with self.subTest(session=name, module=path):
                 self.assertEqual((checksum, size), build_captures.pe_identity(image))
                 self.assertNotEqual(checksum, 0, "a zero CheckSum would skip the check")
+
+    def shares(self, session: str, by: str, key: str, *extra: str) -> dict[str, float]:
+        document = F.profile(self.sessions[session], by, extra)
+        return {Path(str(row[key])).name: row["sample_share"] for row in document["rows"]}
+
+    def assert_quoted(self, scn: str, shares: dict[str, float]):
+        answer = " ".join(scenarios()[scn]["parts"].values())
+        for name, share in shares.items():
+            with self.subTest(scenario=scn, row=name):
+                self.assertIn(f"{share:.3f}", answer, f"{scn} does not quote {name}'s share")
+
+    def test_scn02_quotes_the_module_shares_the_tools_print(self):
+        self.assert_quoted("SCN-02", self.shares("attached", "module", "module"))
+
+    def test_scn09_quotes_the_process_and_scoped_module_shares(self):
+        self.assert_quoted("SCN-09", self.shares("systemwide", "process", "process"))
+        self.assert_quoted("SCN-09", self.shares("systemwide", "module", "module",
+                                                 "--pid", "3112"))
 
     @unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
     def test_images_pass_the_tools_build_identity_checks(self):

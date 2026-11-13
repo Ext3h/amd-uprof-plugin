@@ -352,6 +352,12 @@ class BuilderTest(unittest.TestCase):
 
 
 OWN_IMAGE_NAME = "fixture_full.exe"
+
+
+def base_name(path: object) -> str:
+    return str(path).replace("\\", "/").rsplit("/", 1)[-1]
+
+
 # What the minimal calls of one scenario may print together (stdout and stderr), in characters.
 # A run must end below 50,000 tokens of context: 21,500 go to the harness and prompt, about
 # 1,200 to SKILL.md after #118's cut, 300 per call, and 5,000 stay as margin; at 2.0 characters
@@ -472,14 +478,14 @@ class LoadedSessionTest(unittest.TestCase):
         rows = self.rows("systemwide_loaded", "process", "--top", "all")
         processes = [row for row in rows if not str(row["process"]).startswith("<")]
         self.assertGreater(len(processes), 20)
-        target = [row for row in processes if row["process"] == build_captures.PROCESS]
+        target = [row for row in processes if base_name(row["process"]) == build_captures.PROCESS]
         self.assertEqual(
             sorted(row["pid"] for row in target), [build_captures.PID, build_captures.SECOND_PID]
         )
         own = next(row for row in target if row["pid"] == build_captures.PID)
         self.assertGreaterEqual(own["sample_share"], 0.02)
         self.assertLessEqual(own["sample_share"], 0.10)
-        self.assertNotEqual(processes[0]["process"], build_captures.PROCESS)
+        self.assertNotEqual(base_name(processes[0]["process"]), build_captures.PROCESS)
         modules = [
             row
             for row in self.rows("systemwide_loaded", "module", "--top", "all")
@@ -506,7 +512,18 @@ class LoadedSessionTest(unittest.TestCase):
         by_pid = total("--pid", str(build_captures.PID))
         second = total("--pid", str(build_captures.SECOND_PID))
         self.assertGreater(second, 0)
-        self.assertEqual(total("--image", build_captures.PROCESS), by_pid + second)
+        self.assertEqual(total("--image", "%" + build_captures.PROCESS), by_pid + second)
+
+    def test_process_names_are_full_paths_as_uprof_records_them(self):
+        # A bare image name then selects nothing, as on a real capture.
+        for row in self.rows("systemwide_loaded", "process", "--top", "all"):
+            if not str(row["process"]).startswith("<"):
+                with self.subTest(process=row["process"]):
+                    self.assertRegex(str(row["process"]), r"^[a-z]:\\")
+        _document, stderr = F.profile_with_stderr(
+            self.sessions["systemwide_loaded"], "module", ("--image", build_captures.PROCESS)
+        )
+        self.assertIn("no samples in the selected scope", stderr)
 
     @unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
     def test_inproc_load_hides_the_own_functions_even_under_the_process_filter(self):

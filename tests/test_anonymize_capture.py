@@ -165,6 +165,21 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertEqual(len(lines), 1, stderr)
         self.assertIn("Odd", lines[0])
         self.assertIn("DuckDB", lines[0])
+        # A failed run leaves nothing that looks like a finished capture.
+        self.assertEqual([path.name for path in self.out.iterdir()] if self.out.exists()
+                         else [], [])
+
+    def test_the_recording_script_fails_when_an_anonymization_fails(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        failed = mock.Mock(returncode=1)
+        with mock.patch.object(record, "record", return_value=self.session), \
+                mock.patch.object(record.subprocess, "run", return_value=failed), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = record.main([str(self.out), str(self.out / "raw"), "--modes", "timer",
+                                "--classes", "lock", "--anonymize", str(self.out / "anon")])
+        self.assertEqual(code, 1)
 
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()

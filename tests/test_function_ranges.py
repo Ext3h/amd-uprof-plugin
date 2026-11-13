@@ -6,7 +6,7 @@ the boundary rule without a toolchain.
 
 Run from the repository root: python tests/run_tests.py test_function_ranges
 """
-# Spec: SPEC-34, SPEC-35
+# Spec: SPEC-56, SPEC-57
 
 import io
 import os

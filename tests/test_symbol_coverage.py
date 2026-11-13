@@ -7,7 +7,7 @@ reconstructs PE function boundaries by hand, which is the detour issue #27 recor
 
 Run from the repository root: python tests/run_tests.py test_symbol_coverage
 """
-# Spec: SPEC-38, SPEC-40
+# Spec: SPEC-63, SPEC-67
 
 import json
 import subprocess

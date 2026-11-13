@@ -1,5 +1,5 @@
 """The per-session cache keys on identity, rejects stale/transient runs and degrades safely."""
-# Spec: SPEC-68, SPEC-69, SPEC-70
+# Spec: SPEC-109, SPEC-110, SPEC-111
 
 import io
 import os

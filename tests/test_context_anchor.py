@@ -2,7 +2,7 @@
 
 Run from the repository root: python tests/run_tests.py test_context_anchor
 """
-# Spec: SPEC-55
+# Spec: SPEC-89
 
 import unittest
 

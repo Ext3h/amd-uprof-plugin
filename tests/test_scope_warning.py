@@ -6,7 +6,7 @@ the module or function scope rather than another empty rerun.
 
 Run from the repository root: python tests/run_tests.py test_scope_warning
 """
-# Spec: SPEC-51, SPEC-52
+# Spec: SPEC-82, SPEC-83, SPEC-84
 
 import json
 import subprocess

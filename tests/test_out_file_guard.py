@@ -1,5 +1,5 @@
 """--out-file must never name a file the command reads or derives from its inputs."""
-# Spec: SPEC-67
+# Spec: SPEC-107
 
 import contextlib
 import os

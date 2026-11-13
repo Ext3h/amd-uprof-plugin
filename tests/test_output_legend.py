@@ -7,7 +7,7 @@ order, the remainder row and the runnable NEXT calls. No capture or external too
 
 Run from the repository root: python tests/run_tests.py test_output_legend
 """
-# Spec: SPEC-31, SPEC-45, SPEC-46, SPEC-59, SPEC-65
+# Spec: SPEC-51, SPEC-52, SPEC-75, SPEC-76, SPEC-95, SPEC-96, SPEC-97, SPEC-104
 
 import json
 import os

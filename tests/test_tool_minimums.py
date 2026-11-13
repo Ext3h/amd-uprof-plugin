@@ -6,7 +6,7 @@ disassembles (LLVM) stop before any work with one cause line and runnable altern
 The versions CI pins must meet the same minimums.
 Run from the repository root: python tests/run_tests.py test_tool_minimums
 """
-# Spec: SPEC-67
+# Spec: SPEC-107
 
 import argparse
 import contextlib

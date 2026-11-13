@@ -36,7 +36,7 @@ from uprof_native import (
     parse_nt_symbol_path,
     symbol_cache_dir,
 )
-from uprof_util import contains, one_line, same_path
+from uprof_util import contains, is_remote_path, one_line, same_path
 
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 
@@ -239,7 +239,11 @@ def search_identity(
     names = {Path(name).name.lower() for name in module_names if name}
     names |= {Path(name).stem.lower() + ".pdb" for name in module_names if name}
     module_dirs = sorted(
-        {str(Path(name).parent) for name in module_names if name and Path(name).is_absolute()}
+        {
+            str(Path(name).parent)
+            for name in module_names
+            if name and Path(name).is_absolute() and not is_remote_path(name)
+        }
     )
     return {
         "symbol_files": [_file_identity(path) for path in paths.symbol_files],
@@ -403,7 +407,7 @@ def build_symbols_key(connection: object, args: Any) -> tuple[str, list[tuple[st
             getattr(args, "symbol_path", None),
             getattr(args, "image_path", None),
             names,
-            uprof_symbols.symbol_stores(getattr(args, "session", None)),
+            uprof_symbols.symbol_stores(),
         ),
     )
     return key, rvas

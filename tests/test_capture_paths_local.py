@@ -101,7 +101,7 @@ class NoRemoteTouchTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            stores = uprof_symbols.symbol_stores(tmp)
+            stores = uprof_symbols.symbol_stores()
         self.assertNotIn(store, stores)
 
 

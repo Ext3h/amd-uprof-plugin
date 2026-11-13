@@ -173,6 +173,30 @@ def canonical(path: os.PathLike[str] | str) -> Path:
     return Path(os.path.normcase(os.fspath(full)))
 
 
+# GetDriveTypeW's value for a mapped network drive.
+_DRIVE_REMOTE: Final = 4
+
+
+def is_remote_path(path: os.PathLike[str] | str) -> bool:
+    """Whether path is a UNC, device or mapped network path.
+
+    Paths from capture data are never opened when this holds: opening a UNC path makes Windows
+    authenticate to that host with the user's credentials. The user's own --image-path and
+    --symbol-path arguments are not checked.
+    """
+    text = os.fspath(path)
+    if text.startswith(("\\\\", "//")):
+        return True
+    if os.name == "nt" and len(text) >= 2 and text[1] == ":":
+        import ctypes
+
+        try:
+            return ctypes.windll.kernel32.GetDriveTypeW(text[:2] + "\\") == _DRIVE_REMOTE
+        except (AttributeError, OSError):
+            return False
+    return False
+
+
 def same_path(first: os.PathLike[str] | str, second: os.PathLike[str] | str) -> bool:
     """Whether both paths name the same file or directory, however each is spelled.
 

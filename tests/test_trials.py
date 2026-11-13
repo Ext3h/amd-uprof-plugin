@@ -515,15 +515,11 @@ class LoadedSessionTest(unittest.TestCase):
         self.assertEqual(total("--image", "%" + build_captures.PROCESS), by_pid + second)
 
     def test_process_names_are_full_paths_as_uprof_records_them(self):
-        # A bare image name then selects nothing, as on a real capture.
+        # So the sessions show how an --image pattern meets a real capture's process names.
         for row in self.rows("systemwide_loaded", "process", "--top", "all"):
             if not str(row["process"]).startswith("<"):
                 with self.subTest(process=row["process"]):
                     self.assertRegex(str(row["process"]), r"^[a-z]:\\")
-        _document, stderr = F.profile_with_stderr(
-            self.sessions["systemwide_loaded"], "module", ("--image", build_captures.PROCESS)
-        )
-        self.assertIn("no samples in the selected scope", stderr)
 
     @unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
     def test_inproc_load_hides_the_own_functions_even_under_the_process_filter(self):

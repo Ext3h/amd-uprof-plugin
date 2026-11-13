@@ -31,12 +31,14 @@ captures.
   `--pid` or `--image` before the function view; an unfiltered function call before that
   filter is a wasted turn. `--pid` and `--image` select processes: `--pid` one instance,
   `--image` every instance of that image.
-- **Open steps** wait for an owner decision and say `open (D-nnn)`:
-  - open (D-019): how a question that names only the user's module or app finds its process.
-    The calls take the process as `<PID>`.
-  - open (D-020): whether a loaded attached capture holds foreign processes. Until then
-    SCN-02..08, 11, 17 and 19 run on their unloaded sessions, and SCN-13 and 15 have none.
-  - open (D-021): whether an answer on a timer capture may name the instructions it sees.
+- A question about the user's own code names the process (exe name, and PID where the
+  capture holds more than one instance) as well as the module (D-019).
+- **Open steps** say `open (D-nnn)`:
+  - open (D-020): loaded attached captures are to be real captures recorded in CI, with a
+    stressor process for the load. Until they exist, SCN-02..08, 11, 17 and 19 run on their
+    unloaded sessions, and SCN-13 and 15 have none.
+- On a timer capture an answer may name the instructions in the hot window as facts about the
+  code, while saying that a timer capture cannot show they are the cause (D-021).
 - `cpu_seconds` is samples × the sampling interval / the analysing host's core frequency, so its
   value differs between hosts; shares and sample counts do not. The IBS sessions sample every
   4,700,000 cycles.
@@ -86,18 +88,17 @@ A trial run passes when both hold:
 ## SCN-01: where did my app's CPU time go
 
 - **Session:** `systemwide_loaded`
-- **Question:** "Where did my app's CPU time go? What are the hottest functions? The capture is in `<CAPTURE>`."
+- **Question:** "Where did the CPU time of my app storage_test.exe (PID 3112) go? What are the hottest functions? The capture is in `<CAPTURE>`."
 - **Answer:**
   - **Location:** in the app's process (PID 3112): `amdvlk64.dll` `fixture_entry` at 0x101B, `ntdll.dll` `RtlQueryPerformanceCounter` at 0x1000, `amdvlk64.dll` `fixture_second` at 0x1030, then own `fixture_entry` in `fixture_full.exe` at 0x1018.
   - **Proof:** under `--pid 3112`, 80, 28, 24 and 18 samples, `attribution` unique; `amdvlk64.dll` has no PDB, its names are exports.
   - **Cost:** shares of PID 3112's 194 samples: modules `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052; functions 0.412, 0.144, 0.124, 0.093. The PID's share of the whole capture is not printed under `--pid`.
   - **Confidence:** PID ±7% (194 samples), own `fixture_entry` ±24% (18).
   - **Saving:** at most own `fixture_entry`'s `cpu_seconds`; the driver's cost is outside the app's code.
-- **Open:** finding the app's process (`<PID>`, here 3112): open (D-019).
 - **Known gaps:** #286 (a `--pid` scope does not state its share of the capture).
 - **Minimal calls:**
-  1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid <PID>`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid <PID>`
+  1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid 3112`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid 3112`
 
 ## SCN-02: mine versus the driver and ntdll
 
@@ -215,20 +216,19 @@ A trial run passes when both hold:
 ## SCN-10: only the loading phase is slow
 
 - **Session:** `systemwide_loaded`
-- **Question:** "Only the loading phase is slow. My app printed QueryPerformanceCounter 12000000 at its start and 15000000 at its end; the capture is in `<CAPTURE>`."
+- **Question:** "Only the loading phase is slow. My app storage_test.exe (PID 3112) printed QueryPerformanceCounter 12000000 at its start and 15000000 at its end; the capture is in `<CAPTURE>`."
 - **Answer:**
   - **Location:** in the window, in the app's process: `amdvlk64.dll` `fixture_entry` at 0x101B, `ntdll.dll` `RtlAllocateHeap` at 0x1050, own `fixture_helper` in `fixture_full.exe` at 0x1000.
   - **Proof:** `anchor` maps the readings to 0.2 s and 0.5 s from capture start at its default 10 MHz, because the session records no QPC frequency; `--time-filter 0.2:0.5` with `--pid 3112` keeps 55 samples: 33, 12 and 6, `attribution` unique.
   - **Cost:** shares of the window's samples in PID 3112: modules `amdvlk64.dll` 0.673, `ntdll.dll` 0.218, `fixture_full.exe` 0.109; functions 0.600, 0.218, 0.109.
   - **Confidence:** window ±13% (55 samples), own `fixture_helper` ±41% (6).
   - **Saving:** at most own `fixture_helper`'s `cpu_seconds` in the window.
-- **Open:** finding the app's process (`<PID>`, here 3112): open (D-019).
 - **Known gaps:** #286 (a scope does not state its share of the capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py anchor --session <CAPTURE> --qpc 12000000`
   2. `python <SKILL_DIR>/tools/uprof.py anchor --session <CAPTURE> --qpc 15000000`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid <PID> --time-filter 0.2:0.5`
-  4. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid <PID> --time-filter 0.2:0.5`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid 3112 --time-filter 0.2:0.5`
+  4. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid 3112 --time-filter 0.2:0.5`
 
 ## SCN-11: spinning or computing
 
@@ -336,15 +336,14 @@ A trial run passes when both hold:
 ## SCN-20: only my exe is mine
 
 - **Session:** `attached_inproc_loaded`
-- **Question:** "AMD uProf capture of my app: `<CAPTURE>`. Only fixture_full.exe is my code; vendorlib.dll is a vendor DLL, not mine. How much time is mine versus everything else, and what is hot in my code?"
+- **Question:** "AMD uProf capture of my app storage_test.exe: `<CAPTURE>`. Only fixture_full.exe is my code; vendorlib.dll is a vendor DLL, not mine. How much time is mine versus everything else, and what is hot in my code?"
 - **Answer:**
   - **Location:** not reached in the default rows. With D-017's process filter, outside code inside the same process can push the own functions below the default rows; no scope narrows below the process, and only a larger `--top` lists them. The filtered function view's 20 rows are all outside functions, each hotter than any own function.
   - **Proof:** `fixture_full.exe` has 12 of the process's 746 samples, rank 25 of 26 modules, so the module view needs `--top all`; everything outside the own exe is one total, including the third-party `vendorlib.dll`.
   - **Cost:** own 0.016 (12 samples), everything else 0.984 (734); `cpu_seconds` = samples × 4.7 M cycles / core frequency.
   - **Confidence:** own ±29% (12 samples).
   - **Saving:** n/a: the own hot function is not located.
-- **Open:** finding the app's process (`<PID>`, here 3112): open (D-019).
-- **Known gaps:** #345 (outside code inside the process pushes the own functions out of the default rows); #320 (the filtered function view repeats each module's symbol cause on stderr: 25,853 characters here).
+- **Known gaps:** #345 (outside code inside the process pushes the own functions out of the default rows).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --top all`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --pid <PID>`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image storage_test.exe`

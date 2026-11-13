@@ -359,7 +359,7 @@ OWN_IMAGE_NAME = "fixture_full.exe"
 CALL_OUTPUT_CEILING = 44_000
 # Scenarios whose minimal calls exceed the ceiling today, with the issue that brings them
 # below it. Their Known gaps must name that issue; drop an entry once it is fixed.
-CEILING_GAPS = {"SCN-03": "#339", "SCN-20": "#320"}
+CEILING_GAPS: dict[str, str] = {}
 
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
@@ -385,7 +385,22 @@ class ContextCeilingTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, f"{call}\n{result.stderr}")
-        return result.stdout + result.stderr
+        text = result.stdout + result.stderr
+        # The temporary capture root repeats in every path; count it as a short user path, so
+        # the result does not depend on where the test runs.
+        for spelling in sorted(
+            {
+                str(self.root),
+                self.root.as_posix(),
+                str(self.root).lower(),
+                self.root.as_posix().lower(),
+                str(self.root).replace("\\", "\\\\"),
+            },
+            key=len,
+            reverse=True,
+        ):
+            text = text.replace(spelling, "C:/captures")
+        return text
 
     def own_module(self, session: Path) -> str:
         document = F.profile(session, "function", ("--top", "all"))

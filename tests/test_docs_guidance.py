@@ -19,7 +19,7 @@ REFERENCE = (TOOLS_DIR.parent / "references" / "reference.md").read_text(encodin
 SPEC = (TOOLS_DIR.parent / "references" / "spec.md").read_text(encoding="utf-8")
 
 FIRST_CALL = ("**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py "
-              "profile --session <capture dir> --by module|function|process`; its `NEXT` line "
+              "profile --session <capture dir> --by function|module|process`; its `NEXT` line "
               "names the next.**")
 REGION_MEANING = ("region = 4 KiB address page; samples are grouped by address, not by control "
                   "flow; a page may span unrelated code; the hot RVA is the precise attribution "

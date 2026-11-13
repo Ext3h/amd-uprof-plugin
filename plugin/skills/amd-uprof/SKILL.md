@@ -5,7 +5,7 @@ description: Profile CPU time on AMD Zen with AMD uProf cycle sampling (PMCx076 
 
 # AMD uProf profile
 
-**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py profile --session <capture dir> --by module|function|process`; its `NEXT` line names the next.**
+**First call, `--by` from the question: `python <SKILL_DIR>/tools/uprof.py profile --session <capture dir> --by function|module|process`; its `NEXT` line names the next.**
 
 One entry point, run from any directory:
 
@@ -17,7 +17,7 @@ python <SKILL_DIR>/tools/uprof.py <command> ...
 
 ## Quickstart
 
-Every `profile` call prints `METRIC`, `SANITY`, `SYMBOL_COVERAGE` and `KERNEL_COVERAGE`, so no discovery pass is needed; run `tools` only if a command reports `MISSING`. First call by question: where CPU time went, or mine versus the rest: `--by module`; hottest functions, a drill-down, missing symbols, memory-bound or spinning: `--by function`; which process, or a system-wide capture with no process named: `--by process`. An unscoped module, function or region view of a system-wide capture names `--by process` first in `NEXT`. Then follow `NEXT`: the CPU-time path is module, then function, and stops at the derived function and its hot RVA. `profile --by region` is the fallback only when the function rows are in the `unresolved` attribution and `function_source` is `none`; a diffuse page view is a separate request. Use `--by instruction` only when disassembly or instruction context is asked for.
+Every `profile` call prints `METRIC`, `SANITY`, `SYMBOL_COVERAGE` and `KERNEL_COVERAGE`, so no discovery pass is needed; run `tools` only if a command reports `MISSING`. First call by question: hottest functions, a drill-down, missing symbols, memory-bound or spinning: `--by function`; where CPU time went, or mine versus the rest: `--by module`; which process, or a system-wide capture with no process named: `--by process`. An unscoped module, function or region view of a system-wide capture names `--by process` first in `NEXT`. Then follow `NEXT`: a module view leads to function, and the path stops at the derived function and its hot RVA. `profile --by region` is the fallback only when the function rows are in the `unresolved` attribution and `function_source` is `none`; a diffuse page view is a separate request. Use `--by instruction` only when disassembly or instruction context is asked for.
 
 `--by module` is the rollup: one text call carries `Module.isSystemModule`, `tag_to_retire_share` and `cpu_seconds` directly, so sum the third-party total from it and do not re-run `--by module --json` to sum. Parse a `--json` document once; it carries every row field and its legend, so do not re-query a row or legend, and do not open `callstack.db` or `views.sql`. The worked example below turns that into the module answer, the derived function and the stop point.
 

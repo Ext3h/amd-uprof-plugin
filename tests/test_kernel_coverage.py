@@ -421,6 +421,39 @@ class CollectOsModeTest(unittest.TestCase):
         self.assertNotIn(uprof_collect._KERNEL_COVERAGE_NOTE, stderr)
         self.assertNotIn(uprof_collect._FALLBACK_KERNEL_WARNING, stderr)
 
+    def test_collect_prints_next_translate_command(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = Path(tmp.name) / "collect_out"
+        out.mkdir()
+
+        def fake_run_cli(uprof, spec, target, options):
+            (out / "session.uprof").write_text(json.dumps({
+                "collection": {
+                    "events": {"pmcEvents": {"pmcEventList": [{
+                        "hwId": 118, "interval": 4_700_000, "isSampling": True}]}},
+                    "target": {"systemWide": True}},
+                "auxiliary": {},
+            }), encoding="utf-8")
+            return subprocess.CompletedProcess(spec, 0, "", "")
+
+        options = uprof_collect.CollectOptions(out_dir=str(out), seconds=1, event="cycles")
+        stdout = io.StringIO()
+        with mock.patch.object(uprof_collect, "is_admin", return_value=True), \
+                mock.patch.object(uprof_collect, "find_uprof", return_value="AMDuProfCLI"), \
+                mock.patch.object(uprof_collect, "require_uprof", return_value="AMDuProfCLI"), \
+                mock.patch.object(uprof_collect, "_run_cli", side_effect=fake_run_cli), \
+                mock.patch.object(uprof_collect, "_core_frequency",
+                                  return_value=(4_700_000_000, "4700 MHz", "test")), \
+                contextlib.redirect_stdout(stdout):
+            uprof_collect.collect(options)
+
+        text = stdout.getvalue()
+        self.assertIn("NEXT: python ", text)
+        self.assertIn("translate --session ", text)
+        self.assertIn("--out-dir ", text)
+        self.assertIn(f"{out}-translated", text)
+
 
 class WindowedDumpTest(unittest.TestCase):
     """A dump resolved through a recorded translate window cannot testify about the capture."""

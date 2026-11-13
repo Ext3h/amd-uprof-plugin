@@ -19,11 +19,21 @@ DUMP_FILENAMES: Final = MappingProxyType({
 })
 
 COPY_DIRS: Final = ("cpu", "metadata", ".config", ".log", "sources", "binaries")
+TOOLS_DIR: Final = Path(__file__).resolve().parent
 
 # Used when the skill is copied loose and no .claude-plugin/plugin.json sits above it. Keep it in
 # step with the released plugin version.
 _BUILTIN_VERSION: Final = "2.1.0"
 _PLUGIN_MANIFEST: Final = Path(".claude-plugin") / "plugin.json"
+
+
+def quote(text: str) -> str:
+    """Quote one shell argument; on Windows also protect %NAME% from cmd.exe expansion."""
+    if os.name == "nt":
+        text = text.replace("%", "%%")
+    if text and all(char.isalnum() or char in "._-/:\\%+," for char in text):
+        return text
+    return '"' + text.replace('"', '\\"') + '"'
 
 
 class UprofError(RuntimeError):

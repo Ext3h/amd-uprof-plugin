@@ -665,13 +665,7 @@ def _cpu_seconds_interval(sampler: uprof_session.Sampler) -> float | None:
     return interval_s
 
 
-def _quote(text: str) -> str:
-    """Quote one shell argument; on Windows also protect %NAME% from cmd.exe expansion."""
-    if os.name == "nt":
-        text = text.replace("%", "%%")
-    if text and all(char.isalnum() or char in "._-/:\\%+," for char in text):
-        return text
-    return '"' + text.replace('"', '\\"') + '"'
+_quote = util.quote
 
 
 def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:

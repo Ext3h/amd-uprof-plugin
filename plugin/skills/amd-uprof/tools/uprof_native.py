@@ -22,8 +22,8 @@ from typing import Final
 
 from uprof_session import (ContextCadence, achieved_summary, derive_sampler, read_meta,
                            run_gap_limit_ns, system_wide)
-from uprof_util import (COPY_DIRS, DUMP_FILENAMES, UprofError, absolute, contains,
-                        copy_session, parse_time_filter, skill_identity, tail_lines)
+from uprof_util import (COPY_DIRS, DUMP_FILENAMES, TOOLS_DIR, UprofError, absolute, contains,
+                        copy_session, parse_time_filter, quote, skill_identity, tail_lines)
 
 IS_WINDOWS = os.name == "nt"
 TRANSLATE_TIMEOUT: Final = 4 * 60 * 60
@@ -740,3 +740,5 @@ def translate(session_dir: Path | str, out_dir: Path | str,
         print(f"ACHIEVED: {achieved_summary(samples, window_s, cpus, sampler, contexts, label)}")
     else:
         print("ACHIEVED: reported at profile time (translate wrote no dump without --ascii)")
+    print(f"NEXT: python {quote(str(TOOLS_DIR / 'uprof.py'))} profile "
+          f"--session {quote(str(absolute(out)))} --by process")

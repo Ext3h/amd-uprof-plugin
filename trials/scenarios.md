@@ -53,9 +53,10 @@ A trial run passes when both hold:
 
 - **Answer:** the final answer gives the scenario's answer, with every part of the contract.
 - **Context:** the run ends with fewer than 50,000 tokens of total context: the model's input at
-  its final turn, the harness system prompt included. Where the harness reports usage, that is
-  the final turn's input tokens plus cache-read and cache-creation tokens. A harness that reports
-  no usage records the context as "not measured", and the run cannot pass this criterion.
+  its final turn, the harness system prompt included, as the harness's usage report gives it.
+  The limit is a defect ceiling, not a target: a run that reaches it is defective, and a run
+  below it should still use only the context its minimal calls need. A harness that reports no
+  usage records the context as "not measured", and the run cannot pass this criterion.
 
 ## Sessions
 

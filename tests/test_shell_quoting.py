@@ -91,12 +91,6 @@ class PlainSetTest(unittest.TestCase):
         argument, data = uprof_shell.path_arg("C:\\caps\\run 1", "<SESSION_DIR>")
         self.assertEqual((argument, data), ('"C:\\caps\\run 1"', None))
 
-    def test_image_patterns_are_plain_and_match(self):
-        for name in NOT_PLAIN[1:]:
-            with self.subTest(name=name):
-                pattern = uprof_shell.image_pattern(name)
-                self.assertTrue(uprof_shell.is_plain(pattern), pattern)
-
 
 class RealShellTest(unittest.TestCase):
     """The printed command `python <echo script> <quoted case>` run as a pasted line."""

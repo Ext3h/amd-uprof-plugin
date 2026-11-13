@@ -1,0 +1,6 @@
+[tool.ruff]
+# CI installs this exact version; another ruff refuses to run on this repository.
+required-version = "==0.17.5"
+line-length = 100
+
+[tool.ruff.format]

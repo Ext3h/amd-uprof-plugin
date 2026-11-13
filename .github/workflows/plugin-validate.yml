@@ -27,6 +27,16 @@ jobs:
       - name: Validate marketplace
         run: claude plugin validate .
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The version pyproject.toml requires; the code style is whatever it produces.
+      - name: Check Python formatting
+        run: |
+          python -m pip install --disable-pip-version-check ruff==0.17.5
+          ruff format --check
+
   tests:
     runs-on: windows-latest
     env:

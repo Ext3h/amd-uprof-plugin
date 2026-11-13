@@ -808,6 +808,11 @@ def _publics(pdb: Path, out_file: Path, symbolizer: Path, stream: TextIO) -> Pat
 
 # ---------------------------------------------------------------- symbolization
 
+def _names_module_pdb(path: Path, pdb_name: str, exe_path: Path) -> bool:
+    """Whether a PDB file carries this module's PDB name (recorded, or <module stem>.pdb)."""
+    return path.name.lower() in (pdb_name.lower(), exe_path.stem.lower() + ".pdb")
+
+
 def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
                      stream: TextIO = sys.stdout, module_name: str | None = None,
                      found_debug_info: bool | None = None,
@@ -844,7 +849,6 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
         readobj = find_sibling(symbolizer_path, "llvm-readobj")
         pdbutil = find_sibling(symbolizer_path, "llvm-pdbutil")
         readobj_error = None
-        explicit = next((path for path in pdb_files if path.is_file()), None)
         try:
             pdb_name, module_guid, module_age = _readobj_info(exe_input, readobj)
         except (UprofError, OSError) as exc:
@@ -852,6 +856,24 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             module_guid = module_age = None
             readobj_error = str(exc)
         evidence.image_guid, evidence.image_age = module_guid, module_age
+        # A PDB that cannot be GUID-verified is used only for the module whose PDB name it
+        # carries; another module's PDB would give this one foreign names.
+        own_pdbs = [path for path in pdb_files if _names_module_pdb(path, pdb_name, exe_path)]
+        foreign_pdbs = [path for path in pdb_files if path not in own_pdbs]
+        explicit = next((path for path in own_pdbs if path.is_file()), None)
+        if module_guid is None and explicit is None and foreign_pdbs:
+            shown = ", ".join(os.fspath(path) for path in foreign_pdbs)
+            evidence.outcome = "pdb_unmatched"
+            evidence.note = (f"the image records no PDB identity, so --symbol-path {shown} "
+                             f"cannot be verified and is used only for a module whose PDB is "
+                             f"named {pdb_name}")
+            evidence.symbolizer = _run_symbolizer(
+                symbolizer_path, exe_input, None, rva_path, jsonl_file, warn_failure=False,
+                debug_dirs=debug_dirs, fallback_paths=fallback_paths, stream=stream)
+            print("PDB=none", file=stream)
+            parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
+            print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
+            return SymbolizedModule(parquet, None, None, evidence)
         if module_guid is None and explicit is None:
             if readobj is None:
                 evidence.note = "llvm-readobj not found beside llvm-symbolizer or on PATH"
@@ -886,12 +908,17 @@ def symbolize_module(exe: str, rva_file: str | Path, out_dir: str | Path,
             pdb = evidence.search.pdb
         else:
             probes = [
+                PdbProbe(path, "mismatch",
+                         detail=f"caller-supplied --symbol-path PDB not named {pdb_name}; "
+                                "not used without GUID verification")
+                for path in foreign_pdbs]
+            probes += [
                 PdbProbe(path, "accepted" if path.is_file() else "not_found",
                          detail=("caller-supplied --symbol-path file, used without GUID "
                                  "verification"
-                                 if path in pdb_files else "used without GUID verification"))
+                                 if path in own_pdbs else "used without GUID verification"))
                 for path in dict.fromkeys(_candidate_pdbs(
-                    exe_path, pdb_name, module_guid, module_age, search_dirs, pdb_files,
+                    exe_path, pdb_name, module_guid, module_age, search_dirs, own_pdbs,
                     symbol_stores))]
             pdb = next((probe.path for probe in probes if probe.status == "accepted"), None)
             evidence.search = PdbSearch(pdb=pdb, probes=probes)
@@ -1039,6 +1066,10 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
                   "blocker")
     if evidence.toolchain:
         remedy = None
+    if evidence.outcome == "pdb_unmatched":
+        facts = [evidence.note or "the --symbol-path PDB names another module"]
+        remedy = ("add this module's own PDB with another --symbol-path, then re-run profile; a "
+                  "third-party module with no symbols is a finding, not a blocker")
     if evidence.outcome == "wrong_build":
         # The debug directory of another build is not evidence for the captured one.
         facts = [evidence.note or "the image is a different build than the capture recorded"]

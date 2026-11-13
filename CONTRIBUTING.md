@@ -77,7 +77,7 @@ Maintainers are the people with write access to this repository.
 
 ## Authoritative documents
 
-- `plugin/skills/amd-uprof/references/spec.md` defines what the tools do. Every change conforms to it.
+- `docs/spec.md` defines what the tools do. Every change conforms to it.
   Changing the spec itself needs an accepted issue first.
 - The product goals and design constraints above define what the plugin is for and how it may be built.
 - `SKILL.md`, the other references and the tool output follow the spec and never extend it. Where they

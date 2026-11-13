@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 import uprof_native
+import uprof_shell
 from uprof_util import UprofError
 
 
@@ -55,9 +56,9 @@ class TranslateBoundTest(unittest.TestCase):
         alternative = next(
             line for line in message.splitlines() if line.startswith("ALTERNATIVE: ")
         )
-        self.assertIn(
-            f"translate --session {self.session} --out-dir {self.out} --force", alternative
-        )
+        session, _ = uprof_shell.path_arg(self.session, "<SESSION_DIR>")
+        out, _ = uprof_shell.path_arg(self.out, "<OUT_DIR>")
+        self.assertIn(f"translate --session {session} --out-dir {out} --force", alternative)
         self.assertTrue(alternative.split(": ", 2)[2].startswith("python "), alternative)
         self.assertIn("run it with _NT_SYMBOL_PATH unset or set to a local folder only", message)
 

@@ -135,18 +135,22 @@ class UnverifiablePdbTest(unittest.TestCase):
         # llvm-symbolizer without --pdb loads the PDB the image's CodeView entry names, with no
         # GUID check, so the pass would read the very PDB that was refused.
         self.pdb("plugin.pdb", self.module.parent)
-        _, _, passed = self.symbolize(None, ("plugin.pdb", "ABCD", 1), tools=("llvm-readobj",))
+        _, _, passed = self.symbolize(
+            None, ("plugin.pdb", "ABCD", 1, None), tools=("llvm-readobj",)
+        )
 
         self.assertEqual(passed, [])
 
     def test_no_symbolizer_pass_runs_without_readobj(self):
-        _, _, passed = self.symbolize(None, ("plugin.pdb", None, None), tools=("llvm-pdbutil",))
+        _, _, passed = self.symbolize(
+            None, ("plugin.pdb", None, None, None), tools=("llvm-pdbutil",)
+        )
 
         self.assertEqual(passed, [])
 
     def test_without_pdbutil_and_without_any_candidate_the_line_names_pdbutil(self):
         result, output, passed = self.symbolize(
-            None, ("plugin.pdb", "ABCD", 1), tools=("llvm-readobj",)
+            None, ("plugin.pdb", "ABCD", 1, None), tools=("llvm-readobj",)
         )
         text = self.evidence_line(result)
 
@@ -157,7 +161,9 @@ class UnverifiablePdbTest(unittest.TestCase):
         self.assertNotIn("copy the PDB", text)
 
     def test_without_readobj_the_line_names_readobj_to_install(self):
-        result, _, _ = self.symbolize(None, ("plugin.pdb", None, None), tools=("llvm-pdbutil",))
+        result, _, _ = self.symbolize(
+            None, ("plugin.pdb", None, None, None), tools=("llvm-pdbutil",)
+        )
         text = self.evidence_line(result)
 
         self.assertEqual(len(text.splitlines()), 1)
@@ -177,7 +183,7 @@ class UnverifiablePdbTest(unittest.TestCase):
 
     def test_an_image_recording_no_pdb_keeps_its_symbolizer_pass(self):
         # DWARF and the COFF symbol table are the only sources then; no PDB can be loaded.
-        _, _, passed = self.symbolize(None, ("plugin.pdb", None, None))
+        _, _, passed = self.symbolize(None, ("plugin.pdb", None, None, None))
 
         self.assertEqual(passed, [None])
 

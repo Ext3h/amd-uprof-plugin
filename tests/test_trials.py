@@ -28,6 +28,7 @@ UPROF = REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"
 TRIALS = REPO / "trials"
 sys.path.insert(0, str(TRIALS))
 import build_captures
+import run_trials
 
 CALL = re.compile(r"^\s+\d+\. `python <SKILL_DIR>/tools/uprof\.py (.+)`$")
 FIELD = re.compile(r"^- \*\*(\w[\w ]*):\*\*\s*(.*)$")
@@ -172,7 +173,11 @@ class CatalogueTest(unittest.TestCase):
                     continue
                 names = re.findall(r"`([^`]+)`", session)
                 self.assertTrue(names, f"{scn}: Session names no builder session")
-                self.assertLessEqual(set(names), set(build_captures.SESSIONS))
+                committed = {n for n in names if n.startswith(run_trials.COMMITTED)}
+                self.assertLessEqual(set(names) - committed, set(build_captures.SESSIONS))
+                for name in committed:
+                    # Raises when the committed tree has no such capture.
+                    run_trials.committed_folder(name, "HEAD")
                 question = entry["fields"]["Question"]
                 self.assertTrue(
                     "<CAPTURE>" in question or "<BEFORE>" in question,
@@ -399,8 +404,8 @@ DRILL_VIEWS = {
 class LabScenarioTest(unittest.TestCase):
     """SCN-21..28 ask the open-ended question once per defect_lab class.
 
-    Their captures come from the owner's reference machine (D-028); until they are reviewed and
-    committed, each scenario names no session and gives the parts' shape.
+    Each runs on its class's timer capture, recorded on the owner's reference machine and
+    committed under trials/defect_lab/captures; the other captures a class has are notes.
     """
 
     def test_one_scenario_per_class_names_the_module_and_the_process(self):
@@ -411,7 +416,6 @@ class LabScenarioTest(unittest.TestCase):
                 entry = catalogue[scn]
                 for word in ("lab_core.dll", "defect_lab.exe"):
                     self.assertIn(word, entry["fields"]["Question"])
-                self.assertIn("open (D-028)", entry["fields"]["Session"])
                 self.assertIn("<IMAGE_DIR>", entry["fields"]["Question"])
                 calls = entry["calls"]
                 for call in calls:
@@ -428,25 +432,28 @@ class LabScenarioTest(unittest.TestCase):
                     self.assertIn("--module c:/capture/lab_core.dll", call)
                     self.assertIn("--image-path <IMAGE_DIR>", call)
 
-    def test_each_scenario_names_its_capture_and_gives_the_re_run_values(self):
-        # The numbers come from the owner's re-run with the rebuilt images, and from no other set.
+    def test_each_scenario_runs_on_its_committed_timer_capture(self):
+        # One session per scenario, the class's timer capture; the other captures are notes, so
+        # they are not backticked and the runner does not load them.
         catalogue = scenarios()
         modes = {"os": "timer-cg", "vendor": "timer-cg"}
+        self.assertNotIn("D-028", (TRIALS / "scenarios.md").read_text(encoding="utf-8"))
         for number, name in enumerate(LAB_CLASSES, start=21):
             entry = catalogue[f"SCN-{number}"]
             with self.subTest(defect_class=name):
                 session = entry["fields"]["Session"]
-                self.assertIn(f"`{name}.timer`", session)
+                self.assertEqual(
+                    re.findall(r"`([^`]+)`", session), [f"{run_trials.COMMITTED}{name}.timer"]
+                )
                 if name in ("memory", "lock", "branch", "chain"):
                     # The cause needs the system-wide IBS capture.
-                    self.assertIn(f"`{name}.ibs`", session)
+                    self.assertIn(f"{name}.ibs", session)
                 # SANITY refuses these two IBS captures of the re-run.
                 self.assertEqual("#358" in session, name in ("memory", "lock"))
                 if name in modes:
-                    self.assertIn(f"`{name}.{modes[name]}`", session)
-                answer = entry["fields"]["Answer"]
-                self.assertNotIn("TODO", answer)
-                self.assertIn(f"On `{name}.timer`:", answer)
+                    self.assertIn(f"{name}.{modes[name]}", session)
+                self.assertNotIn("TODO", entry["body"])
+                self.assertEqual(set(entry["parts"]), set(ANSWER_PARTS))
 
     def test_the_timer_and_efficient_rules_are_in_the_answers(self):
         catalogue = scenarios()
@@ -478,6 +485,14 @@ CALL_OUTPUT_CEILING = 44_000
 # Scenarios whose minimal calls exceed the ceiling today, with the issue that brings them
 # below it. Their Known gaps must name that issue; drop an entry once it is fixed.
 CEILING_GAPS: dict[str, str] = {}
+# The function row each lab scenario drills into, as the committed capture names it.
+LAB_FUNCTIONS = {
+    "SCN-21": "lab_memory",
+    "SCN-22": "static unsigned int lock_thread(void *)",
+    "SCN-23": "lab_branch",
+    "SCN-27": "lab_chain",
+    "SCN-28": "lab_efficient",
+}
 
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
@@ -491,11 +506,25 @@ class ContextCeilingTest(unittest.TestCase):
         cls.root = Path(cls.directory.name) / "captures"
         cls.sessions = build_captures.build(cls.root)
 
+        cls.outputs: dict[str, str] = {}
+
     @classmethod
     def tearDownClass(cls):
         cls.directory.cleanup()
 
+    def committed(self, name: str) -> Path:
+        """A copy of a committed capture from HEAD, with its images/ beside it."""
+        target = self.root / "committed" / name.replace("/", "_")
+        if not target.is_dir():
+            folder = run_trials.committed_folder(name, "HEAD")
+            run_trials.extract("HEAD", folder, target / "capture")
+            images = f"{folder.rsplit('/', 1)[0]}/{run_trials.IMAGES}"
+            run_trials.extract("HEAD", images, target / run_trials.IMAGES)
+        return target
+
     def run_call(self, call: str) -> str:
+        if call in self.outputs:
+            return self.outputs[call]
         result = subprocess.run(
             [sys.executable, str(UPROF), *shlex.split(call)],
             check=False,
@@ -519,6 +548,7 @@ class ContextCeilingTest(unittest.TestCase):
             reverse=True,
         ):
             text = text.replace(spelling, "C:/captures")
+        self.outputs[call] = text
         return text
 
     def own_module(self, session: Path) -> str:
@@ -527,15 +557,19 @@ class ContextCeilingTest(unittest.TestCase):
             row["module"] for row in document["rows"] if str(row["module"]).endswith(OWN_IMAGE_NAME)
         )
 
-    def concrete(self, call: str, names: list[str]) -> str:
+    def concrete(self, call: str, names: list[str], scn: str = "") -> str:
         # Forward slashes: the calls are split the way a POSIX shell splits them.
-        capture = self.sessions[names[0]]
+        if names[0].startswith(run_trials.COMMITTED):
+            copy = self.committed(names[0])
+            capture, images = copy / "capture", copy / run_trials.IMAGES
+        else:
+            capture, images = self.sessions[names[0]], self.root / "bins" / "timer"
         values = {
             "<CAPTURE>": capture.as_posix(),
             "<PDB_DIR>": (self.root / "bins" / "pdbs").as_posix(),
-            "<IMAGE_DIR>": (self.root / "bins" / "timer").as_posix(),
+            "<IMAGE_DIR>": images.as_posix(),
             "<PID>": "3112",
-            "<FUNCTION>": "fixture_entry",
+            "<FUNCTION>": LAB_FUNCTIONS.get(scn, "fixture_entry"),
             "<QPC1>": "12000000",
             "<QPC2>": "15000000",
             "<T1>": "0.2",
@@ -561,12 +595,34 @@ class ContextCeilingTest(unittest.TestCase):
                 continue
             with self.subTest(scenario=scn):
                 printed = sum(
-                    len(self.run_call(self.concrete(call, names))) for call in entry["calls"]
+                    len(self.run_call(self.concrete(call, names, scn))) for call in entry["calls"]
                 )
                 if scn in CEILING_GAPS:
                     self.assertIn(CEILING_GAPS[scn], entry["fields"].get("Known gaps", ""))
                 else:
                     self.assertLess(printed, CALL_OUTPUT_CEILING)
+
+    def test_the_lab_answers_hold_on_the_committed_captures(self):
+        # Exit 0 proves too little: every hot RVA, source line and sample count an answer names
+        # must appear in its minimal calls' output on the committed capture.
+        catalogue = scenarios()
+        for number in range(21, 29):
+            scn = f"SCN-{number}"
+            entry = catalogue[scn]
+            names = re.findall(r"`([^`]+)`", entry["fields"]["Session"])
+            with self.subTest(scenario=scn):
+                printed = "".join(
+                    self.run_call(self.concrete(call, names, scn)) for call in entry["calls"]
+                )
+                parts = " ".join(entry["parts"].values())
+                for rva in re.findall(r"RVA (0x[0-9A-F]+)", parts):
+                    self.assertIn(rva, printed)
+                for source, line in re.findall(r"`(\w+\.c):(\d+)`", parts):
+                    self.assertRegex(printed, rf"{re.escape(source)} \| {line} \|")
+                for count in re.findall(r"\((\d+) samples\)", entry["parts"]["Confidence"]):
+                    self.assertRegex(printed, rf"\| {count} \|")
+                if scn in LAB_FUNCTIONS:
+                    self.assertIn(LAB_FUNCTIONS[scn], printed)
 
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")

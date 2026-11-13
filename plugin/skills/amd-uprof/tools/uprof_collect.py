@@ -17,7 +17,7 @@ from pathlib import Path
 from uprof_native import (IS_WINDOWS, failure_detail, find_uprof, ibs_unavailable_reason,
                           is_admin, print_output, require_uprof, run)
 from uprof_session import collect_summary, verify_collect
-from uprof_util import UprofError, absolute, skill_identity
+from uprof_util import TOOLS_DIR, UprofError, absolute, quote, skill_identity
 
 _IBS_UNAVAILABLE = "ibs counters are not available"
 _CYCLE_DEFAULT = "1ms"
@@ -292,3 +292,6 @@ def collect(options: CollectOptions) -> None:
                           options.ibs_count_control, not options.pids, options.pids)
     print(f"collectCommand={meta.get('collectCommand')}")
     print(collect_summary(meta, effective_event))
+    translated_out = f"{absolute(session)}-translated"
+    print(f"NEXT: python {quote(str(TOOLS_DIR / 'uprof.py'))} translate "
+          f"--session {quote(str(absolute(session)))} --out-dir {quote(str(translated_out))}")

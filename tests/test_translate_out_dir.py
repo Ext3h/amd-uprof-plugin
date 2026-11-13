@@ -266,5 +266,33 @@ class TranslateSymbolizationWarningTest(unittest.TestCase):
         self.assertIn("not symbolization success", text)
 
 
+class TranslateNextTest(unittest.TestCase):
+    def test_translate_prints_next_profile_command(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        session = root / "session"
+        session.mkdir()
+        out = root / "translated"
+        (session / "session.uprof").write_text("{}", encoding="utf-8")
+
+        def fake_run(command, **_kwargs):
+            (out / "cpu.db").write_text("x", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "Translation finished\n", "")
+
+        stream = io.StringIO()
+        with mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")), \
+                mock.patch.object(uprof_native, "run", side_effect=fake_run), \
+                mock.patch.object(uprof_native, "symbolization_counts", return_value=(1, 1, 1)), \
+                redirect_stdout(stream):
+            uprof_native.translate(session, out)
+
+        text = stream.getvalue()
+        self.assertIn("NEXT: python ", text)
+        self.assertIn("profile --session ", text)
+        self.assertIn("--by process", text)
+        self.assertIn(str(out), text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,7 @@ Run from the repository root: python tests/run_tests.py test_anonymize_capture
 import contextlib
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -384,6 +385,230 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         self.assertFalse((self.out / "callstack.db").exists())
         self.assertIn("callstack.db: absent", (self.out / "review.txt").read_text(encoding="utf-8"))
+
+    def test_commands_lose_symbol_servers_and_every_embedded_drive_path(self):
+        command = (
+            "AMDuProfCLI.exe translate -i C:\\cap --symbol-cache-dir D:\\Sym "
+            "--symbol-server srv*C:\\SymCache\\Ms*https://symbols.example.invalid/ms "
+            "--symbol-server=SRV*C:\\SymCache\\Game*http://symbols.example.invalid/game "
+            "--symbol-path=E:\\pdbs;F:\\more --ascii ibsop-event-dump"
+        )
+        cleaned = anonymize_capture.sanitize_command(command)
+        for leaked in (
+            "SymCache",
+            "example.invalid",
+            "C:\\",
+            "D:\\",
+            "E:\\",
+            "F:\\",
+            "srv*",
+            "SRV*",
+        ):
+            self.assertNotIn(leaked, cleaned)
+        self.assertEqual(cleaned.count("--symbol-server"), 2)
+        self.assertIn("--ascii ibsop-event-dump", cleaned)
+        self.assertIn("translate", cleaned)
+
+        meta = json.loads((self.session / "session.uprof").read_text(encoding="utf-8"))
+        meta["translateCommand"] = command
+        meta["collectCommand"] = "AMDuProfCLI.exe collect -o out --symbol-server srv*C:\\S*x"
+        (self.session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+        code, stderr = self.run_main()
+        self.assertEqual(code, 0, stderr)
+        text = (self.out / "session.uprof").read_text(encoding="utf-8")
+        self.assertNotIn("SymCache", text)
+        self.assertNotIn("example.invalid", text)
+        self.assertNotIn("C:\\\\", text)
+
+    def test_call_graph_captures_pass_the_call_graph_option(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        settings = record.Settings()
+        timer = record.callgraph_command("timer-cg", self.out / "t", settings, self.out, "lock")
+        ibs = record.callgraph_command("ibs-cg", self.out / "i", settings, self.out, "lock")
+        for command in (timer, ibs):
+            # Call stacks are not recorded system-wide on Windows: the collection launches
+            # defect_lab and ends it with the capture.
+            self.assertNotIn("-a", command)
+            self.assertNotIn("--call-graph", command)
+            self.assertEqual(command[command.index("--call-graph-mode") + 1], "fpo")
+            self.assertEqual(command[command.index("--call-graph-type") + 1], "user")
+            self.assertIn("-b", command)
+            launched = command[command.index(str(self.out / "defect_lab.exe")) :]
+            self.assertEqual(launched[1:3], ["--class", "lock"])
+        self.assertEqual(settings.keep("timer-cg"), ["defect_lab.exe"])
+        self.assertIn("event=timer,interval=4", timer)
+        self.assertIn("event=ibs-op,ibsop-count-control=1,interval=16000000", ibs)
+        self.assertIn("timer-cg", record.MODES)
+        self.assertIn("ibs-cg", record.MODES)
+
+    def test_the_overhead_notes_compare_the_iteration_rates(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        self.assertEqual(record.ns_per_iteration("class ns/iteration: 34\n"), 34)
+        self.assertIsNone(record.ns_per_iteration("nothing printed"))
+        notes = record.overhead_notes("lock", "timer-cg", 34, 51)
+        self.assertIn("without call graph: 34 ns", notes)
+        self.assertIn("with call graph: 51 ns", notes)
+        self.assertIn("1.50", notes)
+        self.assertIn("not measured", record.overhead_notes("lock", "ibs-cg", 34, None))
+
+    def test_call_graph_modes_need_an_elevated_shell(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(record, "is_elevated", return_value=False),
+            mock.patch.object(record, "record") as recorded,
+            mock.patch.object(record, "record_callgraph") as callgraph,
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = record.main([str(self.out), str(self.out / "raw"), "--modes", "timer,timer-cg"])
+        self.assertEqual(code, 2)
+        recorded.assert_not_called()
+        callgraph.assert_not_called()
+        self.assertIn("elevated", stderr.getvalue())
+        self.assertIn("driver", stderr.getvalue())
+
+    def bundle_files(self):
+        """Copies of the timer fixture's image and PDB, and module 1 made to match the image."""
+        import duckdb
+
+        timer = REPO / "tests" / "fixtures" / "timer"
+        files = Path(self.tmp.name) / "bin"
+        files.mkdir()
+        for name in ("heap_churn.exe", "heap_churn.pdb"):
+            (files / name).write_bytes((timer / name).read_bytes())
+        checksum, size = build_captures.pe_identity(files / "heap_churn.exe")
+        connection = duckdb.connect(str(self.session / "cpu.db"))
+        try:
+            connection.execute(
+                "UPDATE Module SET path = ?, size = ?, checksum = ? WHERE id = 1",
+                [f"{PROFILE}\\heap_churn.exe", size, checksum],
+            )
+        finally:
+            connection.close()
+        return files / "heap_churn.exe", files / "heap_churn.pdb"
+
+    def test_bundled_images_and_pdbs_go_into_the_handover_and_into_review(self):
+        exe, pdb = self.bundle_files()
+        code, stderr = self.run_main("--bundle", str(exe), str(pdb))
+        self.assertEqual(code, 0, stderr)
+        images = self.out / "images"
+        self.assertEqual(
+            sorted(path.name for path in images.iterdir()), ["heap_churn.exe", "heap_churn.pdb"]
+        )
+        self.assertEqual((images / "heap_churn.exe").read_bytes(), exe.read_bytes())
+        review = (self.out / "review.txt").read_text(encoding="utf-8")
+        self.assertIn("== bundled images/heap_churn.exe", review)
+        self.assertIn("debug directory PDB: heap_churn.pdb", review)
+        self.assertIn("== bundled images/heap_churn.pdb", review)
+        self.assertIn("matches the image's GUID and age", review)
+        self.assertIn("heap_churn.c", review)
+
+    def test_a_bundled_image_of_another_build_is_refused(self):
+        exe, pdb = self.bundle_files()
+        data = bytearray(exe.read_bytes())
+        optional = int.from_bytes(data[0x3C:0x40], "little") + 24
+        data[optional + 64] ^= 0xFF
+        exe.write_bytes(bytes(data))
+        code, stderr = self.run_main("--bundle", str(exe), str(pdb))
+        self.assertEqual(code, 2)
+        self.assertIn("heap_churn.exe", stderr)
+        self.assertIn("checksum", stderr)
+        self.assertFalse((self.out / "images").exists())
+
+    def test_a_pdb_of_another_build_is_refused(self):
+        exe, pdb = self.bundle_files()
+        data = bytearray(exe.read_bytes())
+        guid = data.index(b"RSDS") + 4
+        data[guid] ^= 0xFF
+        exe.write_bytes(bytes(data))
+        code, stderr = self.run_main("--bundle", str(exe), str(pdb))
+        self.assertEqual(code, 2)
+        self.assertIn("heap_churn.pdb", stderr)
+        self.assertIn("GUID", stderr)
+
+    def test_a_host_path_in_a_bundled_file_fails_the_run(self):
+        exe, pdb = self.bundle_files()
+        for planted in (f"{PROFILE}\\lab_core.c".encode(), b"D:\\build\\lab_core.obj"):
+            with self.subTest(planted=planted):
+                pdb.write_bytes(pdb.read_bytes() + b"\0" + planted + b"\0")
+                if self.out.exists():
+                    shutil.rmtree(self.out)
+                code, stderr = self.run_main("--bundle", str(exe), str(pdb))
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("heap_churn.pdb", stderr)
+
+    def test_a_full_pdb_path_in_the_debug_directory_fails_the_run(self):
+        image = REPO / "tests" / "fixtures" / "debug" / "pe" / "fixture_full.exe"
+        pdb = image.with_suffix(".pdb")
+        code, stderr = self.run_main("--bundle", str(image), str(pdb))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("fixture_full.exe", stderr)
+
+    def test_an_image_the_capture_does_not_name_is_not_bundled(self):
+        exe, pdb = self.bundle_files()
+        other = REPO / "tests" / "fixtures" / "debug" / "pe" / "fixture_coff.exe"
+        code, stderr = self.run_main("--bundle", str(exe), str(pdb), str(other))
+        self.assertEqual(code, 0, stderr)
+        self.assertFalse((self.out / "images" / other.name).exists())
+        review = (self.out / "review.txt").read_text(encoding="utf-8")
+        self.assertIn(f"not bundled: {other.name} is not a module of the capture", review)
+
+    def test_the_recording_script_bundles_the_lab_images_and_pdbs(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        done = mock.Mock(returncode=0)
+        with (
+            mock.patch.object(record, "record", return_value=self.session),
+            mock.patch.object(record.subprocess, "run", return_value=done) as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            record.main(
+                [
+                    str(self.out),
+                    str(self.out / "raw"),
+                    "--modes",
+                    "timer",
+                    "--classes",
+                    "lock",
+                    "--anonymize",
+                    str(self.out / "anon"),
+                ]
+            )
+        command = run.call_args.args[0]
+        bundled = command[command.index("--bundle") + 1 :]
+        names = [Path(path).name for path in bundled]
+        self.assertEqual(
+            sorted(names),
+            sorted(
+                f"{stem}.{ext}"
+                for stem in ("defect_lab", "lab_core", "lab_vendor")
+                for ext in ("exe" if stem == "defect_lab" else "dll", "pdb")
+            ),
+        )
+        self.assertTrue(all(Path(path).parent == self.out.resolve() for path in bundled))
+
+    @unittest.skipIf(sys.platform != "win32", "builds Windows images")
+    def test_the_lab_build_leaves_no_host_path_in_images_or_pdbs(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import build
+
+        reason = build.missing_tools()
+        if reason:
+            self.skipTest(reason)
+        out = Path(self.tmp.name) / "lab-build"
+        build.build(out)
+        for path in (
+            sorted(out.glob("*.exe")) + sorted(out.glob("*.dll")) + sorted(out.glob("*.pdb"))
+        ):
+            found = anonymize_capture.file_disclosures(path, [])
+            self.assertEqual(found, [], path.name)
 
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()

@@ -59,6 +59,20 @@ each. Only defect_lab and the stressors remain in `cpu.db`, `callstack.db` and t
 paths are rewritten, HostInfo is emptied, and `review.txt` dumps every table for a person to
 read. Nothing is committed before that review.
 
+The recorded commands in `session.uprof` lose every `--symbol-server` value and every token that
+holds a path. `--anonymize` also bundles the `defect_lab.exe`, `lab_core.dll` and `lab_vendor.dll`
+the capture was recorded with, and their PDBs, into `images/`. It bundles an image only if its
+size and checksum match the capture's module, and a PDB only if its GUID and age match the
+image. Their strings go into `review.txt`, so line and instruction views work from the handover
+with `--image-path <images>`. `build.py` compiles relative names (no host path in the PDBs), with
+frame pointers and unwind tables, so uProf can walk call stacks through the lab's frames.
+
+`timer-cg` and `ibs-cg` add call stacks: AMDuProfCLI launches `defect_lab` itself with
+`--call-graph-mode fpo --call-graph-type user --call-graph-depth 64`, because it records no call
+stacks system-wide on Windows. These modes need an elevated shell and uProf's capture driver, and
+write `notes.txt` with defect_lab's ns per iteration without and with the call graph.
+AMDuProfCLI's console output reaches `record.py`'s own output in every mode.
+
 ```console
 python trials/defect_lab/build.py <BIN_DIR>
 python trials/defect_lab/record.py <BIN_DIR> <RAW_DIR> --anonymize <OUT_DIR>

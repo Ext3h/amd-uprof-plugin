@@ -23,12 +23,18 @@ CFLAGS = [
     "-g",
     "-gcodeview",
     "-fdebug-compilation-dir=.",
+    "-fcoverage-compilation-dir=.",
     "-nostdinc",
     "-ffreestanding",
     "-fno-builtin",
     "-fno-stack-protector",
+    # uProf walks call stacks by frame pointer or by unwind information (.pdata); without both
+    # the -cg captures held only the sampled frame.
+    "-fno-omit-frame-pointer",
+    "-fasynchronous-unwind-tables",
 ]
 LFLAGS = ["/nodefaultlib", "/debug", "/pdbaltpath:%_PDB%", "/pdbsourcepath:.", "/release"]
+SOURCES = ("lab_vendor", "lab_core", "lab_busy", "defect_lab")
 # (image, linker kind, entry point, objects, import libraries)
 IMAGES = (
     ("lab_vendor.dll", "/dll", "lab_vendor_entry", ["lab_vendor.obj"], []),
@@ -72,22 +78,13 @@ def build(out_dir: Path) -> list[Path]:
     """Compile and link every image into out_dir; return the image paths."""
     out_dir.mkdir(parents=True, exist_ok=True)
     clang, lld_link, dlltool = tool("clang"), tool("lld-link"), tool("llvm-dlltool")
-    for source in ("lab_vendor", "lab_core", "lab_busy", "defect_lab"):
-        run(
-            [clang, *CFLAGS, "-c", SOURCE / f"{source}.c", "-o", out_dir / f"{source}.obj"], out_dir
-        )
-    run(
-        [
-            dlltool,
-            "-m",
-            "i386:x86-64",
-            "-d",
-            SOURCE / "kernel32.def",
-            "-l",
-            out_dir / "kernel32.lib",
-        ],
-        out_dir,
-    )
+    # The sources are compiled under relative names inside out_dir, so that neither the source
+    # folder nor out_dir ends up in a PDB or debug directory.
+    for name in ("lab.h", "kernel32.def", *(f"{source}.c" for source in SOURCES)):
+        shutil.copyfile(SOURCE / name, out_dir / name)
+    for source in SOURCES:
+        run([clang, *CFLAGS, "-c", f"{source}.c", "-o", f"{source}.obj"], out_dir)
+    run([dlltool, "-m", "i386:x86-64", "-d", "kernel32.def", "-l", "kernel32.lib"], out_dir)
     images = []
     for image, kind, entry, objects, libraries in IMAGES:
         run(

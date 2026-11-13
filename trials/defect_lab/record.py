@@ -11,6 +11,12 @@ the capture with uprof.py (an IBS capture with its ASCII dump). Modes:
   timer  AMDuProfCLI collect -e event=timer,interval=<ms> -a -d <S> (any x86 CPU)
   ibs    uprof.py collect --event ibs-op --sample-interval <ops> --seconds <S> (AMD with IBS)
   pmc    uprof.py collect --event cycles --sample-interval <time> --seconds <S>
+  timer-cg, ibs-cg  the timer or IBS event with --call-graph-mode fpo --call-graph-type user
+         --call-graph-depth 64 on a defect_lab that AMDuProfCLI launches (call stacks are not
+         recorded system-wide on Windows), plus <name>.notes.txt: defect_lab's ns per
+         iteration without and with the call graph.
+         They need an elevated shell and uProf's capture driver; without elevation record.py
+         stops before the first capture. Not verified on a machine with both.
 A mode the CPU or driver cannot record is reported and skipped. Two plain captures (ibs and pmc,
 no workload) show the session.uprof key names. Each capture also gets <name>.keys.txt: the
 session.uprof key paths with value types and no values, safe to hand over as they are.
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -41,7 +48,10 @@ REPO = Path(__file__).resolve().parents[2]
 UPROF = REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"
 ANONYMIZE = REPO / "trials" / "anonymize_capture.py"
 CLASSES = ("memory", "lock", "branch", "os", "vendor", "wait", "chain", "efficient")
-MODES = ("timer", "ibs", "pmc")
+MODES = ("timer", "ibs", "pmc", "timer-cg", "ibs-cg")
+CALL_GRAPH_MODES = ("timer-cg", "ibs-cg")
+# The lab's own images; their PDBs share the stem. System DLLs are not bundled.
+LAB_IMAGES = ("defect_lab.exe", "lab_core.dll", "lab_vendor.dll")
 
 
 @dataclass(frozen=True)
@@ -51,9 +61,32 @@ class Settings:
     timer_ms: int = 4
     pmc_interval: str = "4ms"
     stressors: int = 15
+    # AMDuProfCLI's --call-graph-mode/-type/-interval/-depth; its --call-graph I:D:S:F form
+    # prints "will be deprecated".
+    call_graph_mode: str = "fpo"
+    call_graph_depth: int = 64
 
-    def keep(self) -> list[str]:
+    def keep(self, mode: str = "timer") -> list[str]:
+        """The processes a capture keeps; a call-graph capture samples defect_lab alone."""
+        if mode in CALL_GRAPH_MODES:
+            return ["defect_lab.exe"]
         return ["defect_lab.exe"] + [f"busy_{n:02d}.exe" for n in range(1, self.stressors + 1)]
+
+
+def is_elevated() -> bool:
+    """Whether this process runs with administrator rights (on Windows; elsewhere as root)."""
+    if sys.platform == "win32":
+        import ctypes
+
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    return os.geteuid() == 0
+
+
+def bundle_files(bin_dir: Path) -> list[str]:
+    """The images and PDBs every capture was recorded with, for the handover's images/."""
+    return [
+        str(bin_dir / name) for image in LAB_IMAGES for name in (image, f"{Path(image).stem}.pdb")
+    ]
 
 
 def stressor_images(bin_dir: Path, count: int) -> list[Path]:
@@ -66,8 +99,17 @@ def stressor_images(bin_dir: Path, count: int) -> list[Path]:
     return images
 
 
-def collect(mode: str, raw: Path, settings: Settings) -> Path:
-    """Record one capture; return the session directory."""
+def collect(
+    mode: str, raw: Path, settings: Settings, bin_dir: Path | None = None, name: str = ""
+) -> Path:
+    """Record one capture; return the session directory.
+
+    AMDuProfCLI's console output goes to this script's own output, so its warnings show in the
+    log. A call-graph mode launches defect_lab --class <name> from bin_dir itself.
+    """
+    if mode in CALL_GRAPH_MODES:
+        subprocess.run(callgraph_command(mode, raw, settings, bin_dir, name), check=True)
+        return raw
     if mode == "timer":
         subprocess.run(
             [
@@ -82,7 +124,6 @@ def collect(mode: str, raw: Path, settings: Settings) -> Path:
                 str(raw),
             ],
             check=True,
-            stdout=subprocess.DEVNULL,
         )
         return raw
     event, interval = {
@@ -107,6 +148,7 @@ def collect(mode: str, raw: Path, settings: Settings) -> Path:
         text=True,
     )
     sys.stdout.write(done.stdout[-2000:])
+    sys.stderr.write(done.stderr[-2000:])
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip()[-2000:] or f"collect exited {done.returncode}")
     match = re.search(r"^SESSION=(.+)$", done.stdout, re.M)
@@ -144,7 +186,7 @@ def translate(session: Path, translated: Path, mode: str) -> None:
         "--out-dir",
         str(translated),
     ]
-    if mode == "ibs":
+    if mode in ("ibs", "ibs-cg"):
         command += ["--ascii", "ibsop-event-dump"]
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 
@@ -155,18 +197,19 @@ def record(bin_dir: Path, raw_dir: Path, name: str, mode: str, settings: Setting
         for image in stressor_images(bin_dir, settings.stressors)
     ]
     # AMDuProfCLI takes several seconds to start sampling, so the workload runs well past the
-    # capture and is stopped afterwards.
-    started.append(
-        subprocess.Popen(
-            [str(bin_dir / "defect_lab.exe"), "--class", name, "--seconds", "40"],
-            cwd=bin_dir,
-            stdout=subprocess.DEVNULL,
+    # capture and is stopped afterwards. A call-graph collection launches defect_lab itself.
+    if mode not in CALL_GRAPH_MODES:
+        started.append(
+            subprocess.Popen(
+                [str(bin_dir / "defect_lab.exe"), "--class", name, "--seconds", "40"],
+                cwd=bin_dir,
+                stdout=subprocess.DEVNULL,
+            )
         )
-    )
     raw = raw_dir / f"{name}.{mode}.raw"
     try:
         time.sleep(1)
-        session = collect(mode, raw, settings)
+        session = collect(mode, raw, settings, bin_dir, name)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
         print(f"skipped {name} {mode}: {exc}", file=sys.stderr)
         return None
@@ -178,6 +221,126 @@ def record(bin_dir: Path, raw_dir: Path, name: str, mode: str, settings: Setting
     translated = raw_dir / f"{name}.{mode}.translated"
     translate(session, translated, mode)
     return translated
+
+
+def callgraph_command(
+    mode: str,
+    raw: Path,
+    settings: Settings,
+    bin_dir: Path | None,
+    name: str,
+    lab_seconds: int | None = None,
+) -> list[str]:
+    """AMDuProfCLI collect with user-mode call stacks of a defect_lab it launches.
+
+    AMDuProfCLI on Windows prints "Callstack sampling in System-wide profiling is not supported"
+    for -a, so this profiles the launched process only; -b stops it when the capture ends.
+    lab_seconds is defect_lab's own run time, by default well past the capture.
+    """
+    event = (
+        f"event=timer,interval={settings.timer_ms}"
+        if mode == "timer-cg"
+        else f"event=ibs-op,ibsop-count-control=1,interval={settings.ibs_interval}"
+    )
+    return [
+        "AMDuProfCLI",
+        "collect",
+        "-e",
+        event,
+        "--call-graph-mode",
+        settings.call_graph_mode,
+        "--call-graph-type",
+        "user",
+        "--call-graph-depth",
+        str(settings.call_graph_depth),
+        "-d",
+        str(settings.seconds),
+        "-b",
+        "-o",
+        str(raw),
+        str(Path(bin_dir or ".") / "defect_lab.exe"),
+        "--class",
+        name,
+        "--seconds",
+        str(lab_seconds or settings.seconds + 30),
+    ]
+
+
+def ns_per_iteration(output: str) -> int | None:
+    match = re.search(r"class ns/iteration: (\d+)", output)
+    return int(match.group(1)) if match else None
+
+
+def overhead_notes(name: str, mode: str, without: int | None, with_graph: int | None) -> str:
+    """The call graph's cost to the workload: defect_lab's ns per iteration without and with."""
+    lines = [f"defect_lab --class {name}, {mode}, under the stressors"]
+    lines.append(
+        f"without call graph: {without} ns per iteration"
+        if without is not None
+        else "without call graph: not measured"
+    )
+    lines.append(
+        f"with call graph: {with_graph} ns per iteration"
+        if with_graph is not None
+        else "with call graph: not measured"
+    )
+    if without and with_graph:
+        lines.append(f"slowdown: {with_graph / without:.2f}x")
+    return "\n".join(lines) + "\n"
+
+
+def run_lab(bin_dir: Path, name: str, seconds: int) -> int | None:
+    done = subprocess.run(
+        [str(bin_dir / "defect_lab.exe"), "--class", name, "--seconds", str(seconds)],
+        cwd=bin_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return ns_per_iteration(done.stdout)
+
+
+def measure_overhead(
+    bin_dir: Path, raw_dir: Path, name: str, mode: str, settings: Settings
+) -> None:
+    """Write <name>.<mode>.notes.txt: the call graph's cost to defect_lab under the stressors.
+
+    defect_lab runs once without profiling, then once launched by a call-graph collection that
+    is discarded; it prints its rate on the console, which AMDuProfCLI passes on. The stressors
+    are stopped afterwards, so that the kept capture gets fresh ones.
+    """
+    started = [
+        subprocess.Popen([str(image)], cwd=bin_dir)
+        for image in stressor_images(bin_dir, settings.stressors)
+    ]
+    measure = raw_dir / f"{name}.{mode}.measure"
+    with_graph = None
+    try:
+        without = run_lab(bin_dir, name, settings.seconds)
+        done = subprocess.run(
+            callgraph_command(mode, measure, settings, bin_dir, name, settings.seconds),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        sys.stdout.write(done.stdout[-2000:])
+        sys.stderr.write(done.stderr[-2000:])
+        with_graph = ns_per_iteration(done.stdout)
+    finally:
+        for process in started:
+            process.kill()
+            process.wait()
+        shutil.rmtree(measure, ignore_errors=True)
+    notes = overhead_notes(name, mode, without, with_graph)
+    (raw_dir / f"{name}.{mode}.notes.txt").write_text(notes, encoding="utf-8")
+
+
+def record_callgraph(
+    bin_dir: Path, raw_dir: Path, name: str, mode: str, settings: Settings
+) -> Path | None:
+    """A call-graph capture of one class, recorded like the others, and its overhead notes."""
+    measure_overhead(bin_dir, raw_dir, name, mode, settings)
+    return record(bin_dir, raw_dir, name, mode, settings)
 
 
 def plain(raw_dir: Path, mode: str, settings: Settings) -> None:
@@ -228,12 +391,22 @@ def main(argv: list[str] | None = None) -> int:
     bin_dir, raw_dir = args.bin_dir.resolve(), args.raw_dir.resolve()
     raw_dir.mkdir(parents=True, exist_ok=True)
     modes = [mode for mode in args.modes.split(",") if mode]
+    graph_modes = [mode for mode in modes if mode in CALL_GRAPH_MODES]
+    if graph_modes and not is_elevated():
+        print(
+            f"error: {', '.join(graph_modes)} record call stacks, which need an elevated shell "
+            "and uProf's capture driver installed; run from an elevated prompt, or leave "
+            f"{', '.join(graph_modes)} out of --modes",
+            file=sys.stderr,
+        )
+        return 2
     translated = []
     for mode in modes:
         if mode in ("ibs", "pmc"):
             plain(raw_dir, mode, settings)
         for name in args.classes.split(","):
-            result = record(bin_dir, raw_dir, name, mode, settings)
+            capture = record_callgraph if mode in CALL_GRAPH_MODES else record
+            result = capture(bin_dir, raw_dir, name, mode, settings)
             if result:
                 print(result)
                 translated.append((f"{name}.{mode}", result))
@@ -246,14 +419,21 @@ def main(argv: list[str] | None = None) -> int:
                     str(ANONYMIZE),
                     str(session),
                     "--keep-process",
-                    *settings.keep(),
+                    *settings.keep(label.split(".", 1)[1]),
                     "--out",
                     str(args.anonymize / label),
+                    "--bundle",
+                    *bundle_files(bin_dir),
                 ]
             ).returncode
             print(f"anonymize {label}: exit {code}")
             if code != 0:
                 failed.append(label)
+            elif (raw_dir / f"{label}.notes.txt").is_file():
+                # The overhead notes hold only iteration rates; they go with the capture.
+                shutil.copyfile(
+                    raw_dir / f"{label}.notes.txt", args.anonymize / label / "notes.txt"
+                )
         if failed:
             print(
                 f"error: anonymization failed for {', '.join(failed)}; do not hand those "

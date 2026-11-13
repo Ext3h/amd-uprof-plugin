@@ -16,11 +16,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import debug_fixtures as F
+import duckdb
 import uprof_db
 import uprof_native
 from uprof_util import UprofError
-
-import debug_fixtures as F
 
 TOOLS = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 SECRET = "LOCAL-FILE-CONTENT-7f3a"
@@ -57,9 +57,11 @@ class HostileCaptureDbTest(unittest.TestCase):
 
     def refused(self, *statements):
         self.capture(*statements)
-        with self.assertRaises(UprofError) as caught:
-            with uprof_db.connect(self.cpu_db) as connection:
-                connection.execute("SELECT lower('X')").fetchall()
+        with (
+            self.assertRaises(UprofError) as caught,
+            uprof_db.connect(self.cpu_db) as connection,
+        ):
+            connection.execute("SELECT lower('X')").fetchall()
         message = str(caught.exception)
         self.assertNotIn(SECRET, message)
         self.assertIn(str(self.cpu_db), message)
@@ -99,9 +101,8 @@ class HostileCaptureDbTest(unittest.TestCase):
 
     def test_the_capture_cannot_be_written(self):
         self.capture()
-        with uprof_db.connect(self.cpu_db) as connection:
-            with self.assertRaises(Exception):
-                connection.execute("INSERT INTO Module VALUES (2, 'x')")
+        with uprof_db.connect(self.cpu_db) as connection, self.assertRaises(duckdb.Error):
+            connection.execute("INSERT INTO Module VALUES (2, 'x')")
 
     def test_extensions_are_neither_installed_nor_loaded_on_their_own(self):
         self.capture()
@@ -126,6 +127,7 @@ class HostileCaptureDbTest(unittest.TestCase):
         self.capture("CREATE MACRO lower(x) AS (SELECT content FROM read_text('SECRET_PATH'))")
         completed = subprocess.run(
             [sys.executable, str(TOOLS / "uprof.py"), "schema", "--session", str(self.session)],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

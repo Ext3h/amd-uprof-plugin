@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_util
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -114,6 +113,7 @@ class VersionHeaderTest(unittest.TestCase):
                 "process",
                 *extra,
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

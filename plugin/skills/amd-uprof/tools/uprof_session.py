@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -475,7 +476,7 @@ def requested_interval(
             interval_s = sampler.interval / hertz
             requested = f"{sampler.interval} cycles at {display} = {_format_duration(interval_s)}"
             return interval_s, requested, f"; ideal {1.0 / interval_s:,.0f}/s per CPU"
-        except Exception:
+        except Exception:  # noqa: BLE001 - any failure reads as an unknown frequency
             return None, f"{sampler.interval} cycles (core frequency unavailable)", ""
     if sampler.interval_units == "ops":
         return (
@@ -499,7 +500,7 @@ def cycle_frequency_hz(sampler: Sampler) -> float | None:
         from uprof_collect import _core_frequency
 
         return float(_core_frequency()[0])
-    except Exception:
+    except Exception:  # noqa: BLE001 - any failure reads as an unknown frequency
         return None
 
 
@@ -633,7 +634,6 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
     start = schedule.get("start")
     if start is None:
         raise UprofError("session.uprof records no collection.schedule.start; cannot anchor")
-    from datetime import timezone
 
     hertz = freq or 10_000_000
     source = "argument" if freq else "default (10 MHz; the session records no QPC frequency)"
@@ -647,7 +647,7 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
     if stamp:
         parsed = _parse_start_ts(str(stamp))
         if parsed is not None:
-            utc = parsed.astimezone(timezone.utc)
+            utc = parsed.astimezone(UTC)
             lines.append(f"START_LOCAL={parsed.isoformat()}")
             lines.append(f"START_UTC={utc:%Y-%m-%dT%H:%M:%S}Z (precision: one second)")
         else:

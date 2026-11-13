@@ -168,7 +168,7 @@ class RealShellNextTest(unittest.TestCase):
             self.skipTest(HOST_SKIP + "no bash on this host")
         self.check(
             lambda line: subprocess.run(
-                [bash, "-c", line], capture_output=True, text=True, encoding="utf-8"
+                [bash, "-c", line], check=False, capture_output=True, text=True, encoding="utf-8"
             )
         )
 
@@ -183,6 +183,7 @@ class RealShellNextTest(unittest.TestCase):
             encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
             return subprocess.run(
                 [str(powershell), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                check=False,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -196,6 +197,7 @@ class RealShellNextTest(unittest.TestCase):
         self.check(
             lambda line: subprocess.run(
                 f'"{cmd}" /d /s /c "{line}"',
+                check=False,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

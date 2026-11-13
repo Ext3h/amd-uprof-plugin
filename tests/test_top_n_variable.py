@@ -2,10 +2,8 @@
 # Spec: SPEC-41
 
 import unittest
-from pathlib import Path
 
 import duckdb
-
 import uprof_query
 
 

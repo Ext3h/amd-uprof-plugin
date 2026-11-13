@@ -43,7 +43,7 @@ class CaptureRequireToolsTest(unittest.TestCase):
             tempfile.TemporaryDirectory(prefix="uprof-require-tools-") as root,
             mock.patch.dict(os.environ, {"UPROF_REQUIRE_TOOLS": "1"}),
             mock.patch.object(capture_debug_traces.F, "tool_skip", return_value=MISSING_TOOL),
+            self.assertRaises(SystemExit) as raised,
         ):
-            with self.assertRaises(SystemExit) as raised:
-                capture_debug_traces.main(["--out-dir", root])
+            capture_debug_traces.main(["--out-dir", root])
         self.assertIn(MISSING_TOOL, str(raised.exception.code))

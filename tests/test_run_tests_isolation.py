@@ -53,6 +53,7 @@ class RunnerIsolationTest(unittest.TestCase):
             env = dict(os.environ, PYTHONPATH=str(probe_dir), PROBE_REPORT=str(report), **sentinels)
             run = subprocess.run(
                 [sys.executable, str(RUNNER), "probe_symbols"],
+                check=False,
                 env=env,
                 capture_output=True,
                 text=True,
@@ -83,6 +84,7 @@ class RunnerIsolationTest(unittest.TestCase):
             )
             run = subprocess.run(
                 [sys.executable, str(RUNNER), "probe_isolation"],
+                check=False,
                 env=env,
                 capture_output=True,
                 text=True,

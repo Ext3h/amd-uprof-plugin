@@ -9,13 +9,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import debug_fixtures as F
 import uprof
 import uprof_dump
 import uprof_query
 import uprof_session
 import uprof_util
-
-import debug_fixtures as F
 from test_translate_out_dir import _short_path
 
 _OVERWRITE = "--out-file would overwrite"
@@ -223,7 +222,9 @@ class OutFileGuardTest(unittest.TestCase):
             drive = f"{letter}:"
             if os.path.exists(drive + "\\"):
                 continue
-            completed = subprocess.run(["subst", drive, str(directory)], capture_output=True)
+            completed = subprocess.run(
+                ["subst", drive, str(directory)], check=False, capture_output=True
+            )
             if completed.returncode == 0:
                 self.addCleanup(subprocess.run, ["subst", drive, "/d"], capture_output=True)
                 return Path(drive + "\\")

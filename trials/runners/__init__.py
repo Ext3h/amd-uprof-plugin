@@ -102,7 +102,9 @@ def run_process(
         except subprocess.TimeoutExpired:
             if os.name == "nt":
                 subprocess.run(
-                    ["taskkill", "/T", "/F", "/PID", str(process.pid)], capture_output=True
+                    ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                    check=False,
+                    capture_output=True,
                 )
             else:
                 os.killpg(process.pid, signal.SIGKILL)

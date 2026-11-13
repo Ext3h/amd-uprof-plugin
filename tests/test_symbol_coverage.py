@@ -19,7 +19,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_native
 import uprof_query
 import uprof_symbols
@@ -151,6 +150,7 @@ class SymbolCoverageTest(unittest.TestCase):
                 "function",
                 *extra,
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -206,6 +206,7 @@ class SymbolCoverageTest(unittest.TestCase):
                 "--by",
                 "process",
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -514,6 +515,7 @@ class FailingSymbolizerTest(unittest.TestCase):
                         "--symbol-path",
                         str(self.symbols),
                     ],
+                    check=False,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",

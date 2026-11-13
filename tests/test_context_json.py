@@ -8,6 +8,7 @@ import argparse
 import json
 import subprocess
 import unittest
+from typing import ClassVar
 from unittest import mock
 
 import uprof_context
@@ -17,7 +18,6 @@ import uprof_query
 from debug_fixtures import context_frame as frame
 from debug_fixtures import context_instructions as flat
 from uprof_util import UprofError
-
 
 FILE_HEADERS = """\
 File: fixture.exe
@@ -354,20 +354,20 @@ class InstructionProfileTest(unittest.TestCase):
             "impact": {"order_by": ["samples"]},
         }
         args = argparse.Namespace(json=True, by="instruction")
-        with mock.patch.object(
-            uprof_query.uprof_db, "fetch_typed", return_value=(columns, types, rows)
-        ) as fetched:
-            with mock.patch.object(
+        with (
+            mock.patch.object(
+                uprof_query.uprof_db, "fetch_typed", return_value=(columns, types, rows)
+            ) as fetched,
+            mock.patch.object(
                 uprof_query.uprof_context, "instruction_contexts", return_value=contexts
-            ) as built:
-                with mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered:
-                    with (
-                        mock.patch.object(uprof_query.uprof_db, "output") as legacy,
-                        mock.patch.object(
-                            uprof_query.uprof_cache, "ambiguous_modules", return_value=["b"]
-                        ) as ambiguous,
-                    ):
-                        uprof_query._write_profile(None, args, [("METRIC", "x")], None, legend)
+            ) as built,
+            mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered,
+            mock.patch.object(uprof_query.uprof_db, "output") as legacy,
+            mock.patch.object(
+                uprof_query.uprof_cache, "ambiguous_modules", return_value=["b"]
+            ) as ambiguous,
+        ):
+            uprof_query._write_profile(None, args, [("METRIC", "x")], None, legend)
 
         fetched.assert_called_once()
         ambiguous.assert_called_once_with(None, ["a"])
@@ -401,7 +401,7 @@ class InstructionProfileTest(unittest.TestCase):
 
 
 class ContextHelpTest(unittest.TestCase):
-    LEGEND = {
+    LEGEND: ClassVar[dict] = {
         "share_unit": "fraction",
         "share_scale": 1,
         "denominators": {
@@ -615,11 +615,13 @@ class JsonDocumentTest(unittest.TestCase):
 class OutputTest(unittest.TestCase):
     def test_output_rows_renders_the_given_rows_without_fetching(self):
         columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
-        with mock.patch.object(uprof_db, "fetch_typed") as fetched:
-            with mock.patch.object(uprof_db, "write_payload") as written:
-                uprof_db.output_rows(
-                    columns, types, rows, [("METRIC", "x")], True, None, contexts=[{"anchor": {}}]
-                )
+        with (
+            mock.patch.object(uprof_db, "fetch_typed") as fetched,
+            mock.patch.object(uprof_db, "write_payload") as written,
+        ):
+            uprof_db.output_rows(
+                columns, types, rows, [("METRIC", "x")], True, None, contexts=[{"anchor": {}}]
+            )
 
         fetched.assert_not_called()
         self.assertIn('"context"', written.call_args[0][0])
@@ -705,15 +707,13 @@ class InstructionContextsTest(unittest.TestCase):
         connection = FakeConnection(
             module_path=__file__, total=60, publics=[(0x1000, "fixture_entry")]
         )
-        with mock.patch.object(uprof_context, "run", side_effect=fake_run):
-            with mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"):
-                with mock.patch.object(
-                    uprof_context, "find_objdump", return_value="llvm-objdump.exe"
-                ):
-                    with mock.patch.object(
-                        uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"
-                    ):
-                        contexts = uprof_context.instruction_contexts(connection, COLUMNS, [ROW])
+        with (
+            mock.patch.object(uprof_context, "run", side_effect=fake_run),
+            mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"),
+            mock.patch.object(uprof_context, "find_objdump", return_value="llvm-objdump.exe"),
+            mock.patch.object(uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"),
+        ):
+            contexts = uprof_context.instruction_contexts(connection, COLUMNS, [ROW])
 
         context = contexts[0]
         self.assertEqual(context["anchor"]["kind"], "export")
@@ -723,17 +723,15 @@ class InstructionContextsTest(unittest.TestCase):
         self.assertEqual(frame(context, run)[0], "main")
 
     def contexts_with(self, connection, run_side_effect, rows=None):
-        with mock.patch.object(uprof_context, "run", side_effect=run_side_effect):
-            with mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"):
-                with mock.patch.object(
-                    uprof_context, "find_objdump", return_value="llvm-objdump.exe"
-                ):
-                    with mock.patch.object(
-                        uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"
-                    ):
-                        return uprof_context.instruction_contexts(
-                            connection, COLUMNS, [ROW] if rows is None else rows
-                        )
+        with (
+            mock.patch.object(uprof_context, "run", side_effect=run_side_effect),
+            mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"),
+            mock.patch.object(uprof_context, "find_objdump", return_value="llvm-objdump.exe"),
+            mock.patch.object(uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"),
+        ):
+            return uprof_context.instruction_contexts(
+                connection, COLUMNS, [ROW] if rows is None else rows
+            )
 
     def two_rows(self):
         other = ("fixture.exe", "0x1015", "main", "src\\main.cpp", 12, "unique", 2, 3.0, 1.0, 0.5)
@@ -774,18 +772,14 @@ class InstructionContextsTest(unittest.TestCase):
 
     def test_the_context_reuses_the_pdb_symbolization_chose(self):
         connection = FakeConnection(module_path=__file__, pdb="C:/cache/fixture.pdb")
-        with mock.patch.object(uprof_context, "run", side_effect=fake_run):
-            with mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"):
-                with mock.patch.object(
-                    uprof_context, "find_objdump", return_value="llvm-objdump.exe"
-                ):
-                    with mock.patch.object(
-                        uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"
-                    ):
-                        with mock.patch.object(
-                            uprof_context, "symbolize_rvas", return_value={}
-                        ) as symbolized:
-                            uprof_context.instruction_contexts(connection, COLUMNS, [ROW])
+        with (
+            mock.patch.object(uprof_context, "run", side_effect=fake_run),
+            mock.patch.object(uprof_context, "find_readobj", return_value="llvm-readobj.exe"),
+            mock.patch.object(uprof_context, "find_objdump", return_value="llvm-objdump.exe"),
+            mock.patch.object(uprof_context, "find_symbolizer", return_value="llvm-symbolizer.exe"),
+            mock.patch.object(uprof_context, "symbolize_rvas", return_value={}) as symbolized,
+        ):
+            uprof_context.instruction_contexts(connection, COLUMNS, [ROW])
 
         self.assertEqual(symbolized.call_args.kwargs["pdb"], "C:/cache/fixture.pdb")
 

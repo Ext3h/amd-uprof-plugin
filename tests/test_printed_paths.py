@@ -43,7 +43,7 @@ class RecaptureTest(unittest.TestCase):
         self.assertEqual(data, "NEW_OUT_DIR=" + repr(HOSTILE + "-recapture"))
 
     def test_a_plain_session_with_a_quote_stays_runnable(self):
-        cycles, ibs, data = uprof_native.recapture_commands(Path(QUOTED))
+        cycles, _ibs, data = uprof_native.recapture_commands(Path(QUOTED))
         self.assertIn(f'--out-dir "{QUOTED}-recapture"', cycles)
         self.assertIsNone(data)
 

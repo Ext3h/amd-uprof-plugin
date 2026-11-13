@@ -60,9 +60,9 @@ class ElevatedLookupTest(unittest.TestCase):
         with (
             mock.patch.object(uprof_native, "is_admin", return_value=True),
             mock.patch.object(uprof_native, "_admin_install_candidates", return_value=[]),
+            self.assertRaisesRegex(uprof_util.UprofError, "AMDUPROF_CLI") as raised,
         ):
-            with self.assertRaisesRegex(uprof_util.UprofError, "AMDUPROF_CLI") as raised:
-                uprof_native.require_uprof()
+            uprof_native.require_uprof()
         message = str(raised.exception)
         self.assertIn("default location", message)
         self.assertIn("unelevated", message)
@@ -72,9 +72,9 @@ class ElevatedLookupTest(unittest.TestCase):
         with (
             mock.patch.object(uprof_native, "is_admin", return_value=True),
             mock.patch.object(uprof_native, "_admin_install_candidates", return_value=[]),
+            self.assertRaises(uprof_util.UprofError) as raised,
         ):
-            with self.assertRaises(uprof_util.UprofError) as raised:
-                uprof_native.require_uprof()
+            uprof_native.require_uprof()
         return raised.exception
 
     def test_the_refusal_offers_a_runnable_unelevated_call(self):

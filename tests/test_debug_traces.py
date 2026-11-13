@@ -36,6 +36,7 @@ class DebugTraceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="uprof-trace-compare-") as root:
             completed = subprocess.run(
                 [sys.executable, str(CAPTURE), "--out-dir", root],
+                check=False,
                 cwd=str(REPO),
                 capture_output=True,
                 text=True,

@@ -10,7 +10,6 @@ from unittest import mock
 
 import uprof_context
 
-
 OBJDUMP = """\
 
 fixture.exe:\tfile format coff-x86-64
@@ -148,17 +147,19 @@ class DecodeWindowTest(unittest.TestCase):
         build = uprof_context.BuildIdentity(0x140000000, 0, 0x100, 0x20B)
         anchor = uprof_context.Anchor("section", 0x1000)
 
-        with self.run_objdump(OBJDUMP):
-            with self.assertRaises(uprof_context.ContextOmission) as caught:
-                stream = uprof_context.decode_stream(
-                    "fixture.exe",
-                    build,
-                    anchor,
-                    0x1003,
-                    self.SECTION_END,
-                    objdump="llvm-objdump.exe",
-                )
-                uprof_context.select_window(stream, 0x1003)
+        with (
+            self.run_objdump(OBJDUMP),
+            self.assertRaises(uprof_context.ContextOmission) as caught,
+        ):
+            stream = uprof_context.decode_stream(
+                "fixture.exe",
+                build,
+                anchor,
+                0x1003,
+                self.SECTION_END,
+                objdump="llvm-objdump.exe",
+            )
+            uprof_context.select_window(stream, 0x1003)
 
         self.assertEqual(caught.exception.reason, "hot_rva_not_instruction_start")
 
@@ -190,16 +191,18 @@ class DecodeWindowTest(unittest.TestCase):
         build = uprof_context.BuildIdentity(0x140000000, 0, 0x100, 0x20B)
         anchor = uprof_context.Anchor("section", 0x1000)
 
-        with self.run_objdump("", returncode=1):
-            with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.decode_stream(
-                    "fixture.exe",
-                    build,
-                    anchor,
-                    0x1015,
-                    self.SECTION_END,
-                    objdump="llvm-objdump.exe",
-                )
+        with (
+            self.run_objdump("", returncode=1),
+            self.assertRaises(uprof_context.ContextOmission) as caught,
+        ):
+            uprof_context.decode_stream(
+                "fixture.exe",
+                build,
+                anchor,
+                0x1015,
+                self.SECTION_END,
+                objdump="llvm-objdump.exe",
+            )
 
         self.assertEqual(caught.exception.reason, "objdump_failed")
 

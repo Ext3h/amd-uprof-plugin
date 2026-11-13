@@ -92,6 +92,7 @@ class ElevatedCollectTest(unittest.TestCase):
         (cls.out_dir / "earlier.txt").write_text("keep", encoding="utf-8")
         cls.result = subprocess.run(
             [sys.executable, "-I", str(probe), str(TOOLS_DIR), str(cls.out_dir), str(report)],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -129,10 +130,14 @@ class ElevatedCollectTest(unittest.TestCase):
         self.assertEqual(
             text.splitlines(),
             [
-                "WARNING: <OUT_DIR> exists; uProf will create an AMDuProf-* subdirectory to avoid "
-                "the collision",
-                "NOTE: the failed IBS attempt is left in <OUT_DIR>; the cycle capture goes to "
-                "<CYCLES_DIR>",
+                (
+                    "WARNING: <OUT_DIR> exists; uProf will create an AMDuProf-* subdirectory to "
+                    "avoid the collision"
+                ),
+                (
+                    "NOTE: the failed IBS attempt is left in <OUT_DIR>; the cycle capture goes to "
+                    "<CYCLES_DIR>"
+                ),
             ],
         )
 

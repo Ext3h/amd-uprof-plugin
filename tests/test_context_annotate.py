@@ -13,7 +13,6 @@ from unittest import mock
 
 import uprof_context
 
-
 SYMBOLS = """\
 {"Address":"0x1010","ModuleName":"fixture.exe","Symbol":[{"Column":5,"FileName":"src\\\\main.cpp","FunctionName":"main","Line":12,"StartAddress":"0x140001000","StartFileName":"","StartLine":12}]}
 {"Address":"0x1014","ModuleName":"fixture.exe","Symbol":[]}
@@ -71,11 +70,11 @@ class SymbolizerTest(unittest.TestCase):
 
     def test_symbolizer_failure_is_an_omission(self):
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 1, "", "boom")
-        with mock.patch.object(uprof_context, "run", return_value=completed):
-            with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.symbolize_rvas(
-                    "fixture.exe", [0x1010], symbolizer="llvm-symbolizer.exe"
-                )
+        with (
+            mock.patch.object(uprof_context, "run", return_value=completed),
+            self.assertRaises(uprof_context.ContextOmission) as caught,
+        ):
+            uprof_context.symbolize_rvas("fixture.exe", [0x1010], symbolizer="llvm-symbolizer.exe")
 
         self.assertEqual(caught.exception.reason, "symbolizer_failed")
         self.assertIn("exited 1", caught.exception.detail)
@@ -88,11 +87,11 @@ class SymbolizerTest(unittest.TestCase):
             }
         )
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 1, text, "")
-        with mock.patch.object(uprof_context, "run", return_value=completed):
-            with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.symbolize_rvas(
-                    "fixture.exe", [0x1010], symbolizer="llvm-symbolizer.exe"
-                )
+        with (
+            mock.patch.object(uprof_context, "run", return_value=completed),
+            self.assertRaises(uprof_context.ContextOmission) as caught,
+        ):
+            uprof_context.symbolize_rvas("fixture.exe", [0x1010], symbolizer="llvm-symbolizer.exe")
 
         self.assertEqual(caught.exception.reason, "symbolizer_failed")
         self.assertIn("exited 1", caught.exception.detail)
@@ -136,14 +135,16 @@ class SymbolizerTest(unittest.TestCase):
             + "\n"
         )
         completed = subprocess.CompletedProcess(["llvm-symbolizer"], 0, text, "")
-        with mock.patch.object(uprof_context, "run", return_value=completed):
-            with self.assertRaises(uprof_context.ContextOmission) as caught:
-                uprof_context.symbolize_rvas(
-                    "fixture.exe",
-                    [0x1010, 0x1011],
-                    pdb="C:/cache/fixture.pdb",
-                    symbolizer="llvm-symbolizer.exe",
-                )
+        with (
+            mock.patch.object(uprof_context, "run", return_value=completed),
+            self.assertRaises(uprof_context.ContextOmission) as caught,
+        ):
+            uprof_context.symbolize_rvas(
+                "fixture.exe",
+                [0x1010, 0x1011],
+                pdb="C:/cache/fixture.pdb",
+                symbolizer="llvm-symbolizer.exe",
+            )
 
         self.assertEqual(caught.exception.reason, "symbolizer_failed")
         self.assertIn("fixture.pdb", caught.exception.detail)

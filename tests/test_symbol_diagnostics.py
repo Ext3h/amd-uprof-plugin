@@ -66,8 +66,10 @@ class SymbolDiagnosticsTest(unittest.TestCase):
         self.assertEqual(
             text.splitlines(),
             [
-                "WARNING: no symbols resolved for 7 modules (m0.dll, m1.dll, m2.dll, m3.dll, "
-                f"m4.dll and 2 more): {CAUSE}"
+                (
+                    "WARNING: no symbols resolved for 7 modules (m0.dll, m1.dll, m2.dll, m3.dll, "
+                    f"m4.dll and 2 more): {CAUSE}"
+                )
             ],
         )
 
@@ -205,7 +207,7 @@ class ProfileStderrTest(unittest.TestCase):
         _document, first = self.stderr("function", "--pid", "4242")
         _document, second = self.stderr("function", "--pid", "4242")
         # Only a cold run creates and cleans an artifact folder; FOLDS names a file inside it.
-        strip = re.compile(r"^(FOLDS:|ARTIFACTS=|ARTIFACTS_CLEANED=).*\n", re.M)
+        strip = re.compile(r"^(FOLDS:|ARTIFACTS=|ARTIFACTS_CLEANED=).*\n", re.MULTILINE)
         self.assertEqual(strip.sub("", first), strip.sub("", second))
 
 

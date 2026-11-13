@@ -14,7 +14,6 @@ from pathlib import Path
 from unittest import mock
 
 import duckdb
-
 import uprof_collect
 import uprof_db
 import uprof_dump

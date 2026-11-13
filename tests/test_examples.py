@@ -26,8 +26,8 @@ REPO = Path(__file__).resolve().parents[1]
 EXAMPLES = REPO / "examples"
 SCENARIO = EXAMPLES / "timer-heap-churn"
 SKILL_DIR = REPO / "plugin" / "skills" / "amd-uprof"
-COMMAND = re.compile(r"^\d+\. `python <SKILL_DIR>/tools/uprof\.py (profile [^`]+)`$", re.M)
-STEP = re.compile(r"^\d+\. (.*)$", re.M)
+COMMAND = re.compile(r"^\d+\. `python <SKILL_DIR>/tools/uprof\.py (profile [^`]+)`$", re.MULTILINE)
+STEP = re.compile(r"^\d+\. (.*)$", re.MULTILINE)
 
 
 def _skip_reason():
@@ -160,6 +160,7 @@ class TimerScenarioTest(unittest.TestCase):
     def run_documented(cls, command):
         result = subprocess.run(
             [sys.executable, str(SKILL_DIR / "tools" / "uprof.py"), *cls.args(command)],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -182,7 +183,7 @@ class TimerScenarioTest(unittest.TestCase):
         return self.outputs[index]
 
     def test_the_second_call_is_the_first_calls_next_line(self):
-        next_line = re.search(r"^NEXT: (.*)$", self.output("module"), re.M).group(1)
+        next_line = re.search(r"^NEXT: (.*)$", self.output("module"), re.MULTILINE).group(1)
         printed = shlex.split(next_line, posix=False)
         tail = printed[printed.index("profile") :]
         documented = self.args(self.commands[1])

@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 from test_function_region_profile import FIXTURE, READOBJ, SKIP, Session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -63,6 +62,7 @@ class AmbiguousModuleAttributionTest(unittest.TestCase):
                 by,
                 "--json",
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

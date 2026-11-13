@@ -8,7 +8,6 @@ Run from the repository root: python tests/run_tests.py test_sanity_scope
 # Spec: SPEC-33, SPEC-34
 
 import json
-import re
 import subprocess
 import sys
 import tempfile
@@ -16,7 +15,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_db
 import uprof_query
 
@@ -100,6 +98,7 @@ class SanityScopeTest(unittest.TestCase):
                 "process",
                 *extra,
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

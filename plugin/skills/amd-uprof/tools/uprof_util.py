@@ -9,10 +9,10 @@ import re
 import shutil
 import stat
 import sys
+from collections.abc import Iterable
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from collections.abc import Iterable
 from typing import Any, Final
 
 DUMP_FILENAMES: Final = MappingProxyType(

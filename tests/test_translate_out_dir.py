@@ -132,9 +132,9 @@ class AliasedOutDirTest(unittest.TestCase):
             mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
             mock.patch.object(uprof_native, "run_watched", side_effect=fake_run),
             redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(UprofError, "--out-dir"),
         ):
-            with self.assertRaisesRegex(UprofError, "--out-dir"):
-                uprof_native.translate(self.session, out, force=force)
+            uprof_native.translate(self.session, out, force=force)
         self.assertEqual((self.session / "session.uprof").read_bytes(), b"session")
         self.assertEqual((self.session / "cpu" / "raw.prd").read_bytes(), b"raw")
 

@@ -10,12 +10,10 @@ from pathlib import Path
 from unittest import mock
 
 import duckdb
-
 import uprof
 import uprof_cache
 import uprof_db
 import uprof_query
-
 
 RVAS = [("a.dll", "c:/a.dll", "0x10")]
 DISK = [["c:/a.dll", True, 10, 20]]
@@ -745,6 +743,7 @@ class EndToEndHitTest(unittest.TestCase):
     def run_cli(self):
         import contextlib
         import io
+
         import uprof
         import uprof_query
 
@@ -770,7 +769,7 @@ class EndToEndHitTest(unittest.TestCase):
         self.assertNotIn("ARTIFACTS=", second_err)
         self.assertEqual(self.calls, 1)
         self.pdb.write_bytes(b"replaced pdb content")
-        third_out, third_err = self.run_cli()
+        _third_out, third_err = self.run_cli()
         self.assertIn("ARTIFACTS=", third_err)
         self.assertEqual(self.calls, 2)
 

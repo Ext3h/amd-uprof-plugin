@@ -110,10 +110,14 @@ def _stored_sql_error(cpu_db: Path | str, objects: list[tuple[str, str]]) -> Upr
         Path(__file__).resolve().parent / "uprof.py", "<UPROF_PY>"
     )
     lines = [
-        f"{cpu_db} defines SQL objects that a uProf translation never writes ({shown}); the "
-        "skill does not run SQL stored in a capture, so it is not queried",
-        f"ALTERNATIVE: translate the raw capture again: python {script} translate --session "
-        "<RAW_SESSION_DIR> --out-dir <NEW_TR_DIR>",
+        (
+            f"{cpu_db} defines SQL objects that a uProf translation never writes ({shown}); the "
+            "skill does not run SQL stored in a capture, so it is not queried"
+        ),
+        (
+            f"ALTERNATIVE: translate the raw capture again: python {script} translate --session "
+            "<RAW_SESSION_DIR> --out-dir <NEW_TR_DIR>"
+        ),
     ]
     # A path that is not plain is a placeholder in the command and named here as data only.
     if script_data:

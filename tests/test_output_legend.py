@@ -20,7 +20,6 @@ from pathlib import Path
 from unittest import mock
 
 import duckdb
-
 import uprof_db
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -438,6 +437,7 @@ class OutputLegendTest(unittest.TestCase):
                 by,
                 *extra,
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -456,6 +456,7 @@ class OutputLegendTest(unittest.TestCase):
         interpreter = f'"{sys.executable}"' if os.name == "nt" else shlex.quote(sys.executable)
         return subprocess.run(
             interpreter + " " + command[len(prefix) :],
+            check=False,
             shell=True,
             capture_output=True,
             text=True,

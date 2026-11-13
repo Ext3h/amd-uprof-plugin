@@ -8,8 +8,8 @@ Run from repository root: python tests/run_tests.py test_hot_rva_attribution
 """
 
 import argparse
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 import uprof_query
 import uprof_session

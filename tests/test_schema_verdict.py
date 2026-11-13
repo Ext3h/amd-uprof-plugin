@@ -73,6 +73,7 @@ class SchemaVerdictTest(unittest.TestCase):
     def schema(self, session):
         return subprocess.run(
             [sys.executable, str(TOOLS_DIR / "uprof.py"), "schema", "--session", str(session)],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

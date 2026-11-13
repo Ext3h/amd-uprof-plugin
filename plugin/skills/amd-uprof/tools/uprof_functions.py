@@ -10,9 +10,10 @@ the boundaries carry; the SQL adds a visibly synthetic name when no source symbo
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Iterable, Sequence
+from typing import Final
 
 import uprof_context
 from uprof_context import ContextOmission, PeSection

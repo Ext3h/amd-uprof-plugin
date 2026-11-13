@@ -11,7 +11,6 @@ import uprof
 import uprof_dump
 import uprof_query
 import uprof_session
-import uprof_util
 
 
 class _Abort(Exception):
@@ -74,9 +73,9 @@ class ParquetWiringTest(unittest.TestCase):
                     uprof_query, "_primary_measure", return_value=("sample_share", None)
                 ),
                 mock.patch.object(uprof_query.uprof_db, "open_query", fake_open_query),
+                self.assertRaises(_Abort),
             ):
-                with self.assertRaises(_Abort):
-                    uprof_query.run_query_command(args)
+                uprof_query.run_query_command(args)
 
         self.assertEqual(captured["variables"]["uprof_ibs_parquet"], str(sidecar))
 

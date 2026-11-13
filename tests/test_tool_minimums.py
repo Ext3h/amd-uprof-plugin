@@ -66,9 +66,11 @@ class UprofMinimumTest(unittest.TestCase):
             self.assertEqual(uprof_native.require_uprof(), UPROF)
 
     def test_uprof_below_5_3_stops_with_the_cause_and_alternatives(self):
-        with toolchain({}, uprof="AMDuProfCLI.exe Version 5.2.606.0"):
-            with self.assertRaises(UprofError) as caught:
-                uprof_native.require_uprof()
+        with (
+            toolchain({}, uprof="AMDuProfCLI.exe Version 5.2.606.0"),
+            self.assertRaises(UprofError) as caught,
+        ):
+            uprof_native.require_uprof()
         message = str(caught.exception)
         self.assertNotIn("\n", message)
         for part in ("5.2.606.0", "minimum 5.3", "AMDUPROF_CLI", "re-run"):
@@ -79,9 +81,9 @@ class UprofMinimumTest(unittest.TestCase):
         with (
             mock.patch.object(uprof_native, "find_uprof", return_value=path),
             mock.patch.object(uprof_native, "_first_version_line", return_value=None),
+            self.assertRaises(UprofError) as caught,
         ):
-            with self.assertRaises(UprofError) as caught:
-                uprof_native.require_uprof()
+            uprof_native.require_uprof()
         self.assertIn("cannot read the version", str(caught.exception))
 
     def test_version_lines_in_other_shapes_parse(self):
@@ -104,9 +106,11 @@ class LlvmMinimumTest(unittest.TestCase):
             self.assertEqual(uprof_native.require_symbolizer(), LLVM_BIN / "llvm-symbolizer")
 
     def test_a_symbolizer_below_23_stops_with_the_cause_and_alternatives(self):
-        with toolchain(dict(ALL23, **{"llvm-symbolizer": LLVM22})):
-            with self.assertRaises(UprofError) as caught:
-                uprof_native.require_symbolizer()
+        with (
+            toolchain(dict(ALL23, **{"llvm-symbolizer": LLVM22})),
+            self.assertRaises(UprofError) as caught,
+        ):
+            uprof_native.require_symbolizer()
         message = str(caught.exception)
         self.assertNotIn("\n", message)
         for part in ("22.1.8", "minimum 23", "LLVM_SYMBOLIZER", "re-run"):
@@ -114,15 +118,19 @@ class LlvmMinimumTest(unittest.TestCase):
 
     def test_an_old_readobj_stops_symbolization_on_every_os(self):
         # Function-range derivation runs llvm-readobj on every OS.
-        with toolchain(dict(ALL23, **{"llvm-readobj": LLVM22})):
-            with self.assertRaises(UprofError) as caught:
-                uprof_native.require_symbolizer()
+        with (
+            toolchain(dict(ALL23, **{"llvm-readobj": LLVM22})),
+            self.assertRaises(UprofError) as caught,
+        ):
+            uprof_native.require_symbolizer()
         self.assertIn("llvm-readobj", str(caught.exception))
 
     def test_a_too_old_tool_raises_the_toolchain_error(self):
-        with toolchain(dict(ALL23, **{"llvm-symbolizer": LLVM22})):
-            with self.assertRaises(uprof_native.SymbolizerUnsupported):
-                uprof_native.require_symbolizer()
+        with (
+            toolchain(dict(ALL23, **{"llvm-symbolizer": LLVM22})),
+            self.assertRaises(uprof_native.SymbolizerUnsupported),
+        ):
+            uprof_native.require_symbolizer()
 
     def test_each_tool_version_is_read_once_per_process(self):
         with toolchain(ALL23):
@@ -135,9 +143,11 @@ class LlvmMinimumTest(unittest.TestCase):
         self.assertEqual(sorted(calls), sorted(set(calls)))
 
     def test_an_unreadable_llvm_version_stops(self):
-        with toolchain(dict(ALL23, **{"llvm-symbolizer": None})):
-            with self.assertRaises(UprofError) as caught:
-                uprof_native.require_symbolizer()
+        with (
+            toolchain(dict(ALL23, **{"llvm-symbolizer": None})),
+            self.assertRaises(UprofError) as caught,
+        ):
+            uprof_native.require_symbolizer()
         self.assertIn("cannot read the version", str(caught.exception))
 
 
@@ -153,9 +163,11 @@ class ProfileGateTest(unittest.TestCase):
         self.query._require_llvm(argparse.Namespace(by=by, json=json, function=function))
 
     def test_instruction_context_stops_on_an_old_objdump_instead_of_omitting_every_row(self):
-        with toolchain(dict(ALL23, **{"llvm-objdump": LLVM22})):
-            with self.assertRaises(UprofError) as caught:
-                self.gate("instruction", json=True)
+        with (
+            toolchain(dict(ALL23, **{"llvm-objdump": LLVM22})),
+            self.assertRaises(UprofError) as caught,
+        ):
+            self.gate("instruction", json=True)
         self.assertIn("llvm-objdump", str(caught.exception))
 
     def test_a_symbolizing_profile_stops_on_an_old_symbolizer(self):

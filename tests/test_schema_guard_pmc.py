@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_db
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"

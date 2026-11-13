@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_symbols
 
 

@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 import duckdb
-
 import uprof_db
 import uprof_dump
 
@@ -145,9 +144,11 @@ class SamplesParquetTest(unittest.TestCase):
                 encoding="utf-8",
                 newline="\n",
             )
-            with mock.patch.object(uprof_dump, "_sha256_file", side_effect=counting):
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertIsNone(uprof_dump.samples_parquet(info, directory))
+            with (
+                mock.patch.object(uprof_dump, "_sha256_file", side_effect=counting),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertIsNone(uprof_dump.samples_parquet(info, directory))
             self.assertGreater(calls, first)
 
     def test_a_build_interrupted_leaves_no_staging_file(self):
@@ -173,11 +174,11 @@ class SamplesParquetTest(unittest.TestCase):
                 def connect(*_args, **_kwargs):
                     return FakeConnection()
 
-            with mock.patch.dict(sys.modules, {"duckdb": FakeDuckDB}):
-                with self.assertRaises(KeyboardInterrupt):
-                    uprof_dump._build_samples(
-                        dump, target, meta, unsupported, directory, "sha", key
-                    )
+            with (
+                mock.patch.dict(sys.modules, {"duckdb": FakeDuckDB}),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                uprof_dump._build_samples(dump, target, meta, unsupported, directory, "sha", key)
 
             self.assertEqual(list(directory.glob("*.parquet.tmp")), [])
 

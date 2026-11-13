@@ -101,6 +101,18 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
                  if line.startswith("WARNING: no function range derived")]
         self.assertEqual(len(lines), 1, stderr)
         self.assertIn("wrong_build: ", lines[0])
+        self.assertIn("--by module", lines[0])
+
+    def test_a_different_size_of_image_derives_no_function_ranges(self):
+        _, size = _pe_identity(IMAGE)
+        document, _ = self.profile(0, size + 0x1000, by="function")
+        absent = document["legend"]["function_ranges"]["absent_by_module"]
+        self.assertTrue(next(iter(absent.values()), "").startswith("wrong_build: "), absent)
+
+    def test_missing_identity_evidence_keeps_the_function_ranges(self):
+        document, _ = self.profile(0, 0, by="function")
+        self.assertIn("fixture_entry", _names(document))
+        self.assertEqual(document["legend"]["function_ranges"]["absent_by_module"], {})
 
 
 if __name__ == "__main__":

@@ -1,0 +1,91 @@
+{
+ "collection": {
+  "events": {
+   "configName": "Custom Profile",
+   "configType": 4,
+   "cpuTraceSourceMask": 0,
+   "ibsEvents": {
+    "cacheAnalysis": false,
+    "fetch": false,
+    "fetchCallstack": true,
+    "fetchInterval": 0,
+    "fetchL3Miss": false,
+    "fetchLoadLatency": 0,
+    "fetchOs": true,
+    "fetchUser": true,
+    "loadStoreOnly": false,
+    "op": false,
+    "opCallstack": true,
+    "opCycleCount": false,
+    "opInterval": 0,
+    "opL3Miss": false,
+    "opLoadLatency": 0,
+    "opOs": true,
+    "opStreamStore": false,
+    "opUser": true,
+    "randomize": true
+   },
+   "pmcEvents": null,
+   "predefinedProfileType": 5,
+   "samplingModeMask": 1,
+   "timerCallstack": false,
+   "timerInterval": 4.0,
+   "timerSamplingMode": 1
+  },
+  "schedule": {
+   "elapsed": 2050,
+   "start": 4032821018800,
+   "end": 4034871188500,
+   "startTs": "Fri Nov 13 22:41:52 2026",
+   "endTs": "Fri Nov 13 22:41:54 2026",
+   "profileDuration": 2
+  },
+  "target": {
+   "systemWide": true
+  }
+ },
+ "auxiliary": {
+  "eventColumnIds": [
+   {
+    "category": 1,
+    "categoryName": "CPU PROFILE",
+    "events": [
+     {
+      "callstack": false,
+      "category": 1,
+      "cmask": 0,
+      "description": "CPU Time is the time in which the CPU core is executing the code.",
+      "encodedId": 562949953478656,
+      "eventCategory": 2,
+      "expression": "",
+      "fetchL3MissOnly": false,
+      "fetchLoadLatency": false,
+      "frequency": 0,
+      "hwEventId": 57344,
+      "interval": 4,
+      "invCmask": false,
+      "isFrequencyMode": false,
+      "isRawEvent": true,
+      "isTimeSeriesData": true,
+      "name": "CPU_TIME",
+      "opDispatchedCount": false,
+      "opL3MissOnly": false,
+      "opLoadLatency": false,
+      "opStreamStore": false,
+      "osMode": false,
+      "samples": 0,
+      "smcSource": 0,
+      "threshold": 0,
+      "traceMode": 0,
+      "unit": "",
+      "unitMask": 0,
+      "usrMode": false
+     }
+    ]
+   }
+  ],
+  "ibsOpSampling": false
+ },
+ "collectCommand": "AMDuProfCLI.exe collect -e event=timer,interval=4 -a -d 2 -o <PATH>",
+ "translateCommand": "AMDuProfCLI.exe translate -i <PATH> --symbol-cache-dir <PATH> --symbol-server <VALUE> --symbol-server <VALUE>"
+}

@@ -2043,11 +2043,54 @@ def _write_profile(connection: object, args: argparse.Namespace,
                     out_path, legend)
 
 
+# How deep and how many translated captures a --session without cpu.db is searched for and
+# names; uProf nests each run one level below the --out-dir it was given.
+_CANDIDATE_DEPTH: Final = 3
+_CANDIDATE_LIMIT: Final = 5
+
+
+def _session_candidates(root: Path) -> list[Path]:
+    """Translated captures (a cpu.db beside session.uprof) below root, nearest first."""
+    found: list[Path] = []
+    level = [root]
+    for _ in range(_CANDIDATE_DEPTH):
+        below: list[Path] = []
+        for directory in level:
+            try:
+                children = sorted(path for path in directory.iterdir() if path.is_dir())
+            except OSError:
+                continue
+            for child in children:
+                if (child / "cpu.db").is_file() and (child / "session.uprof").is_file():
+                    found.append(child)
+                else:
+                    below.append(child)
+        level = below
+    return found
+
+
+def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
+    """The same command on each candidate capture, keeping --by and the scope."""
+    calls = []
+    for candidate in candidates[:_CANDIDATE_LIMIT]:
+        scoped = argparse.Namespace(**vars(args))
+        scoped.session = str(candidate)
+        calls.append(_profile_command(scoped, args.by) if args.command == "profile"
+                     else f"python {_quote(str(TOOLS_DIR / 'uprof.py'))} schema --session "
+                          f"{_quote(str(candidate))}")
+    shown = "" if len(candidates) <= _CANDIDATE_LIMIT else f" (first {_CANDIDATE_LIMIT})"
+    return f"{len(candidates)} captures below it{shown}; run one of: " + " ; ".join(calls)
+
+
 def run_query_command(args: argparse.Namespace) -> None:
     _check_args(args)
     session = util.require_dir(args.session, "capture directory")
     cpu_db = session / "cpu.db"
     if not cpu_db.is_file():
+        candidates = _session_candidates(session)
+        if candidates:
+            raise util.UprofError(f"cpu.db not found: {cpu_db}; --session must be one translated "
+                                  f"capture, and {_candidate_calls(args, candidates)}")
         raise util.UprofError(f"cpu.db not found: {cpu_db} (run translate --session "
                               f"'{session}' --out-dir <COPY_DIR> first, then query the original "
                               "session)")

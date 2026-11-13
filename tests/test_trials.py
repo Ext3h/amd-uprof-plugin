@@ -271,5 +271,55 @@ class BuilderTest(unittest.TestCase):
                 self.assertEqual(verified.identity, "checksum")
 
 
+OWN_IMAGE_NAME = "fixture_full.exe"
+
+
+@unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
+class LoadedSessionTest(unittest.TestCase):
+    """Loaded sessions put the user's rows where a real system puts them: below the top rows."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory(prefix="uprof-trials-loaded-")
+        cls.sessions = build_captures.build(
+            Path(cls.directory.name) / "captures", ["systemwide_loaded"]
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def rows(self, session: str, by: str, *extra: str) -> list[dict]:
+        return F.profile(self.sessions[session], by, extra)["rows"]
+
+    def test_systemwide_loaded_hides_the_target_below_busier_processes(self):
+        rows = self.rows("systemwide_loaded", "process", "--top", "all")
+        processes = [row for row in rows if not str(row["process"]).startswith("<")]
+        self.assertGreater(len(processes), 20)
+        target = [row for row in processes if row["process"] == build_captures.PROCESS]
+        self.assertEqual(
+            sorted(row["pid"] for row in target), [build_captures.PID, build_captures.SECOND_PID]
+        )
+        own = next(row for row in target if row["pid"] == build_captures.PID)
+        self.assertGreaterEqual(own["sample_share"], 0.02)
+        self.assertLessEqual(own["sample_share"], 0.10)
+        self.assertNotEqual(processes[0]["process"], build_captures.PROCESS)
+        modules = [
+            row
+            for row in self.rows("systemwide_loaded", "module", "--top", "all")
+            if not str(row["module"]).startswith("<")
+        ]
+        self.assertGreater(len(modules), 20)
+
+    @unittest.skipIf(F.READOBJ is None, "llvm-readobj is required; install LLVM")
+    def test_only_the_process_filter_brings_the_own_function_into_the_top_rows(self):
+        def own(rows):
+            return [row for row in rows if str(row["module"]).endswith(OWN_IMAGE_NAME)]
+
+        self.assertEqual(own(self.rows("systemwide_loaded", "function")), [])
+        filtered = self.rows("systemwide_loaded", "function", "--pid", str(build_captures.PID))
+        self.assertIn("fixture_entry", [row["function"] for row in own(filtered)])
+
+
 if __name__ == "__main__":
     unittest.main()

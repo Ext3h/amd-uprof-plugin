@@ -40,7 +40,8 @@ SKILL_FRAGMENTS = (
     "First call by question",
     "where CPU time went, or mine versus the rest: `--by module`",
     "a system-wide capture with no process named: `--by process`",
-    "An unscoped view of a system-wide capture names `--by process` first in `NEXT`",
+    "An unscoped module, function or region view of a system-wide capture names `--by process` "
+    "first in `NEXT`",
     "do not re-run `--by module --json` to sum",
     "Parse a `--json` document once",
     "do not re-query a row or legend",

@@ -1,9 +1,10 @@
-"""NEXT steers an unscoped system-wide view to the process ranking, and nothing else to it.
+"""NEXT steers an unscoped system-wide rollup to the process ranking, and nothing else to it.
 
 The first profile call depends on the question: an attached capture goes straight to the
-module or function lens. Only an unscoped view of a system-wide capture mixes every process,
-so its NEXT names `--by process` first; a --pid/--image or --function scope, an attached
-capture and the process view itself keep their drill-down calls.
+module or function lens. Only an unscoped module, function or region rollup of a system-wide
+capture mixes every process, so its NEXT names `--by process` first; a --pid/--image or
+--function scope, line and instruction drill-downs, an attached capture and the process view
+itself keep their calls.
 Run from the repository root: python tests/run_tests.py test_next_steering
 """
 
@@ -25,12 +26,15 @@ def bys(calls):
 
 
 class NextSteeringTest(unittest.TestCase):
-    def test_an_unscoped_system_wide_view_names_the_process_ranking_first(self):
-        for by, rest in (("module", ["function"]), ("function", []), ("region", []),
-                         ("line", ["instruction"])):
+    def test_an_unscoped_system_wide_rollup_names_the_process_ranking_first(self):
+        for by, rest in (("module", ["function"]), ("function", []), ("region", [])):
             with self.subTest(by=by):
                 self.assertEqual(bys(next_calls("--by", by, system_wide=True)),
                                  ["process", *rest])
+
+    def test_line_and_instruction_drill_downs_keep_their_calls(self):
+        self.assertEqual(bys(next_calls("--by", "line", system_wide=True)), ["instruction"])
+        self.assertEqual(bys(next_calls("--by", "instruction", system_wide=True)), [])
 
     def test_a_scoped_system_wide_view_keeps_its_drill_down(self):
         for scope in (["--pid", "100"], ["--image", "app.exe"]):

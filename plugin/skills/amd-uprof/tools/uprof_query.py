@@ -638,6 +638,8 @@ _NEXT_BY: Final = {
     "line": (),
     "instruction": (),
 }
+# Rollups whose unscoped system-wide rows mix every process, so NEXT names --by process first.
+_PROCESS_STEERED: Final = ("module", "function", "region")
 _REGION_MEANING: Final = (
     "4 KiB address page; samples are grouped by address, not by control flow; a page may span "
     "unrelated code; the hot RVA is the precise attribution and the page is the coarse bucket")
@@ -746,13 +748,14 @@ def _next_calls(args: argparse.Namespace,
     when function rows still carry unresolved samples; instruction context is a separate request,
     not a default drill-down. A function-scoped instruction or line view was asked for, so it
     offers the sibling view with the same --function/--module scope; the unscoped views keep
-    their old stops. An unscoped view of a system-wide capture mixes every process, so it names
-    the process ranking first; the first call itself is chosen by the question.
+    their old stops. An unscoped module, function or region rollup of a system-wide capture mixes
+    every process, so it names the process ranking first; line and instruction views are asked-for
+    drill-downs and keep their calls. The first call itself is chosen by the question.
     """
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
     unscoped = (args.pid is None and args.image in (None, "%")
                 and not getattr(args, "function", None))
-    if system_wide and unscoped and args.by != "process":
+    if system_wide and unscoped and args.by in _PROCESS_STEERED:
         calls.insert(0, _profile_command(args, "process"))
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))

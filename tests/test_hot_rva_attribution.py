@@ -55,7 +55,6 @@ class HotRvaAttributionTest(unittest.TestCase):
             None,
             {},
             None,
-            None,
         )
         fields = dict(uprof_query._legend_fields(legend, False, sampler.timer, sampler=sampler))
         return legend, fields

@@ -6,33 +6,23 @@ few conventional directories; nothing is installed here. The Linux branches are 
 
 from __future__ import annotations
 
-import csv
 import ctypes
 import functools
 import os
 import re
 import shutil
-import statistics
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 import uprof_shell
-from uprof_session import (
-    ContextCadence,
-    achieved_summary,
-    cycle_frequency_hz,
-    derive_sampler,
-    read_meta,
-    run_gap_limit_ns,
-    system_wide,
-)
+from uprof_session import derive_sampler
 from uprof_util import (
     COPY_DIRS,
     DUMP_FILENAMES,
@@ -1066,89 +1056,6 @@ def translate_command(
     return command
 
 
-def _dump_rows(reader: Iterable[list[str]], path: Path) -> Iterator[list[str]]:
-    """The dump's rows; a cell above csv's field limit is no uProf dump cell and fails with its
-    cause."""
-    try:
-        yield from reader
-    except csv.Error as exc:
-        raise UprofError(
-            f"{path} is not a uProf ASCII dump ({exc}); the capture is damaged "
-            "or not uProf output, so capture again: collect --out-dir "
-            "<NEW_OUT_DIR> --seconds <S>"
-        ) from exc
-
-
-def dump_cadence(
-    path: Path, context_key: str | tuple[str, ...] = "CPU_Number", gap_limit_ns: float | None = None
-) -> tuple[int, int, list[ContextCadence]]:
-    """Sample rows, distinct CPU_Number values and per-context cadence in an ASCII dump.
-
-    context_key is CPU_Number for a system-wide capture and (PID, TID) for an attached one, so
-    same-TID threads of different processes stay separate; if any named column is missing the
-    context falls back to CPU_Number. Per-context DeltaTicks are held to take an exact median, so
-    memory grows with the dump. gap_limit_ns drops gaps above it, which are time the context was
-    not sampling continuously; None keeps every gap.
-    """
-    samples = 0
-    cpus: set[str] = set()
-    ticks: dict[tuple[str, ...], list[int]] = {}
-    keys = (context_key,) if isinstance(context_key, str) else context_key
-    with open(path, "r", encoding="utf-8", errors="replace", newline="") as handle:
-        reader = _dump_rows(csv.reader(handle), path)
-        header = next(reader, None)
-        if header is None:
-            return 0, 0, []
-        try:
-            cpu_index = header.index("CPU_Number")
-            delta_index = header.index("DeltaTick")
-        except ValueError:
-            return 0, 0, []
-        key_indices = (
-            [header.index(key) for key in keys]
-            if all(key in header for key in keys)
-            else [cpu_index]
-        )
-        for row in reader:
-            if not row:
-                continue
-            samples += 1
-            if len(row) > cpu_index:
-                cpus.add(row[cpu_index])
-            try:
-                tick = int(row[delta_index])
-            except (IndexError, ValueError):
-                continue
-            key = tuple(row[index] if len(row) > index else "?" for index in key_indices)
-            ticks.setdefault(key, []).append(tick)
-    contexts: list[ContextCadence] = []
-    for values in ticks.values():
-        values.sort()
-        gaps = [later - earlier for earlier, later in zip(values, values[1:])]
-        if gap_limit_ns is not None:
-            gaps = [gap for gap in gaps if gap <= gap_limit_ns]
-        contexts.append(
-            ContextCadence(
-                samples=len(values), median_gap_ns=statistics.median(gaps) if gaps else None
-            )
-        )
-    return samples, len(cpus), contexts
-
-
-def _dump_window_s(session: Path, time_filter: str | None) -> float | None:
-    """The dump's window: the translate window when given, else the recorded capture elapsed."""
-    if time_filter:
-        bounds = parse_time_filter(time_filter)
-        if bounds is not None:
-            return float(bounds[1] - bounds[0])
-    meta = read_meta(session) or {}
-    elapsed_ms = ((meta.get("collection") or {}).get("schedule") or {}).get("elapsed")
-    try:
-        return int(elapsed_ms) / 1000.0
-    except (TypeError, ValueError):
-        return None
-
-
 def _shown(path: Path) -> str:
     """path, followed by where it resolves when that differs from how it was given."""
     try:
@@ -1361,15 +1268,9 @@ def translate(
                 f"{DUMP_FILENAMES[ascii_kind]} in {out}"
             )
         print(f"ASCII_DUMP={dump}")
-        sampler = derive_sampler(out)
-        wide = system_wide(out)
-        label = "CPU" if wide else "thread"
-        frequency_hz = cycle_frequency_hz(sampler)
-        samples, cpus, contexts = dump_cadence(
-            dump, "CPU_Number" if wide else ("PID", "TID"), run_gap_limit_ns(sampler, frequency_hz)
-        )
-        window_s = _dump_window_s(out, time_filter)
-        summary = achieved_summary(samples, window_s, cpus, sampler, contexts, label, frequency_hz)
-        print(f"ACHIEVED: {summary}")
+        # uprof_query imports this module, so it is imported here, when it is used.
+        import uprof_query
+
+        print(f"ACHIEVED: {uprof_query.dump_achieved(out, dump, time_filter)}")
     else:
         print("ACHIEVED: reported at profile time (translate wrote no dump without --ascii)")

@@ -46,22 +46,8 @@ class CadenceOneQueryTest(unittest.TestCase):
         self.source = root / "capture"
         (self.source / "cpu").mkdir(parents=True)
         (self.source / "cpu" / "raw.prd").write_bytes(b"raw")
-        meta = {
-            "translateCommand": "AMDuProfCLI.exe translate -i session --ascii ibsop-event-dump",
-            "collection": {
-                "schedule": {"elapsed": 5},
-                "events": {
-                    "ibsEvents": {
-                        "op": {"interval": 4_700},
-                        "opInterval": 4_700,
-                        "opCycleCount": False,
-                    }
-                },
-                "target": {"systemWide": True},
-            },
-            "auxiliary": {"ibsOpSampling": True},
-        }
-        (self.source / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+        self.dump = DUMP
+        self.write_meta({"systemWide": True})
         self.cpu_db = root / "made" / "cpu.db"
         self.cpu_db.parent.mkdir()
         connection = duckdb.connect(str(self.cpu_db))
@@ -85,9 +71,27 @@ class CadenceOneQueryTest(unittest.TestCase):
             connection.close()
         self.out = root / "translated"
 
+    def write_meta(self, target):
+        meta = {
+            "translateCommand": "AMDuProfCLI.exe translate -i session --ascii ibsop-event-dump",
+            "collection": {
+                "schedule": {"elapsed": 5},
+                "events": {
+                    "ibsEvents": {
+                        "op": {"interval": 4_700},
+                        "opInterval": 4_700,
+                        "opCycleCount": False,
+                    }
+                },
+                "target": target,
+            },
+            "auxiliary": {"ibsOpSampling": True},
+        }
+        (self.source / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+
     def fake_translate(self, command, **_kwargs):
         shutil.copy2(self.cpu_db, self.out / "cpu.db")
-        (self.out / "IbsOpDump.csv").write_text(DUMP, encoding="utf-8", newline="\n")
+        (self.out / "IbsOpDump.csv").write_text(self.dump, encoding="utf-8", newline="\n")
         return subprocess.CompletedProcess(command, 0, "Translation finished\n", "")
 
     @staticmethod
@@ -96,7 +100,7 @@ class CadenceOneQueryTest(unittest.TestCase):
             line for line in text.splitlines() if line.startswith("ACHIEVED: ")
         ).removeprefix("ACHIEVED: ")
 
-    def test_translate_and_profile_print_the_same_achieved_text(self):
+    def translate(self):
         stream = io.StringIO()
         with (
             mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
@@ -104,7 +108,10 @@ class CadenceOneQueryTest(unittest.TestCase):
             redirect_stdout(stream),
         ):
             uprof_native.translate(self.source, self.out, ascii_kind="ibsop-event-dump")
-        translated = self.achieved(stream.getvalue())
+        return self.achieved(stream.getvalue())
+
+    def test_translate_and_profile_print_the_same_achieved_text(self):
+        translated = self.translate()
 
         result = subprocess.run(
             [
@@ -122,6 +129,21 @@ class CadenceOneQueryTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(translated, self.achieved(result.stdout))
+
+    def test_the_same_tid_in_two_processes_is_two_threads(self):
+        # Both threads sit on CPU 0, so only the (PID, TID) key separates the two timelines.
+        self.write_meta(
+            {"systemWide": False, "attachedProcesses": [{"processId": 100}, {"processId": 200}]}
+        )
+        self.dump = (
+            "DeltaTick,CPU_Number,TID,PID,Offset,ModuleName\n"
+            "0,0,4242,100,4096,c:\\capture\\app.exe\n"
+            "1000000,0,4242,100,4096,c:\\capture\\app.exe\n"
+            "1500000,0,4242,200,4096,c:\\capture\\app.exe\n"
+            "2500000,0,4242,200,4096,c:\\capture\\app.exe\n"
+        )
+
+        self.assertIn("; 2 active threads", self.translate())
 
 
 if __name__ == "__main__":

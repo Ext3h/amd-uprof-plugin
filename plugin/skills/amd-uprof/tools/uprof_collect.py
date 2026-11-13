@@ -212,6 +212,15 @@ def _timer_interval(text: str) -> tuple[int, str]:
     return int(ms), f"SAMPLE_INTERVAL={text} -> {int(ms)} ms timer"
 
 
+def _split_by_unquoted_join(argument: str) -> bool:
+    """True when an app argument does not survive AMDuProfCLI's unquoted join.
+
+    The Windows argument parser splits on space and tab, drops an empty argument and reads a
+    double quote as quoting, so only those break; other whitespace passes through unchanged.
+    """
+    return not argument or any(char in ' \t"' for char in argument)
+
+
 def _validate(options: CollectOptions) -> None:
     if options.seconds <= 0:
         raise UprofError(f"--seconds must be positive (got {options.seconds})")
@@ -228,14 +237,19 @@ def _validate(options: CollectOptions) -> None:
     if options.launch and not Path(options.launch[0]).is_file():
         raise UprofError(f"--launch APP must be an existing executable file; got "
                          f"{options.launch[0]!r}; pass the app's path")
-    if options.launch and any(any(char.isspace() for char in argument)
+    if options.launch and any(_split_by_unquoted_join(argument)
                               for argument in options.launch[1:]):
-        # Measured with AMDuProfCLI 5.3.521: the app's arguments are passed on unquoted, so an
-        # argument with whitespace arrives split and the app runs with other arguments.
-        raise UprofError("--launch app arguments must not contain whitespace: AMDuProfCLI passes "
-                         "them to the app unquoted, so the app would receive them split; start "
-                         "the app with arguments without whitespace, or wrap the call in a "
-                         "script file and launch that")
+        # Measured with AMDuProfCLI 5.3.521: the app's arguments are joined unquoted, so an
+        # argument with a space arrived split and the app ran with other arguments.
+        tool, tool_data = uprof_shell.path_arg(str(_UPROF_PY), "<UPROF_PY>")
+        out, out_data = uprof_shell.path_arg(options.out_dir, "<OUT_DIR>")
+        data = "".join(f"\n{line}" for line in (tool_data, out_data) if line)
+        raise UprofError(
+            "--launch app arguments must not be empty or contain a space, tab or double quote: "
+            "AMDuProfCLI passes them to the app unquoted, so the app would receive other "
+            "arguments; start the app yourself and capture system-wide, then narrow with "
+            f"profile --pid: python {tool} collect --out-dir {out} --seconds {options.seconds} "
+            "--event timer" + data)
     if options.launch and options.pids:
         raise UprofError("--launch starts an app under the capture; it cannot also attach to "
                          "--process PIDs")

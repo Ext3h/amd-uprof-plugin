@@ -123,6 +123,47 @@ class UnverifiablePdbTest(unittest.TestCase):
         self.assert_refused(result, output, passed)
         self.assertIn(beside, [probe.path for probe in result.evidence.search.probes])
 
+    def test_no_symbolizer_pass_runs_when_the_image_records_an_unverified_pdb(self):
+        # llvm-symbolizer without --pdb loads the PDB the image's CodeView entry names, with no
+        # GUID check, so the pass would read the very PDB that was refused.
+        self.pdb("plugin.pdb", self.module.parent)
+        _, _, passed = self.symbolize(None, ("plugin.pdb", "ABCD", 1), tools=("llvm-readobj",))
+
+        self.assertEqual(passed, [])
+
+    def test_no_symbolizer_pass_runs_without_readobj(self):
+        _, _, passed = self.symbolize(None, ("plugin.pdb", None, None), tools=("llvm-pdbutil",))
+
+        self.assertEqual(passed, [])
+
+    def test_without_pdbutil_and_without_any_candidate_the_line_names_pdbutil(self):
+        result, output, passed = self.symbolize(
+            None, ("plugin.pdb", "ABCD", 1), tools=("llvm-readobj",)
+        )
+        text = self.evidence_line(result)
+
+        self.assert_refused(result, output, passed)
+        self.assertEqual(len(text.splitlines()), 1)
+        self.assertIn("llvm-pdbutil not found", text)
+        self.assertIn("install llvm-pdbutil beside llvm-symbolizer.exe", text)
+        self.assertNotIn("copy the PDB", text)
+
+    def test_without_readobj_the_line_names_readobj_to_install(self):
+        result, _, _ = self.symbolize(None, ("plugin.pdb", None, None), tools=("llvm-pdbutil",))
+        text = self.evidence_line(result)
+
+        self.assertEqual(len(text.splitlines()), 1)
+        self.assertIn("install llvm-readobj beside llvm-symbolizer.exe", text)
+        self.assertNotIn("--symbol-path <file|dir>", text)
+
+    def test_an_image_without_a_pdb_identity_gets_the_image_alternative(self):
+        result, _, _ = self.symbolize(None, ("plugin.pdb", None, None))
+        text = self.evidence_line(result)
+
+        self.assertEqual(len(text.splitlines()), 1)
+        self.assertIn("--image-path", text)
+        self.assertNotIn("--symbol-path <file|dir> for a symbol or debug file", text)
+
     def test_without_pdbutil_the_line_names_the_tool_to_install_where(self):
         result, _, _ = self.symbolize(
             self.pdb("plugin.pdb"), ("plugin.pdb", "ABCD", 1, None), tools=("llvm-readobj",)

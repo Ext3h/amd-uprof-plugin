@@ -176,7 +176,7 @@ must still be alive when the fallback collect runs.
 
 ### Dump generation and the cache
 
-Cache key: `sha256(normcase(abspath(session)))[:16]` under `<OS temp>\uprof-dump-cache`.
+Cache key: `sha256(normcase(abspath(session)))[:16]` under `%TEMP%\uprof-dump-cache` (Linux `~/.cache/amd-uprof/uprof-dump-cache`).
 `profile` on a session with no dump beside it prints
 `DUMP: <cache>\IbsOpDump.csv, <size> MB; cache <cache> generated (no cached dump for this session)`
 and `GENERATING DUMP: <cache> ...` on stderr; the source session is untouched.

@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -53,10 +54,77 @@ class DumpInfo:
     time_filter: str | None = None
 
 
+def cache_root() -> Path:
+    """The per-user root of every dump cache.
+
+    The Windows temp directory belongs to one user. Elsewhere the temp directory is shared by all
+    users, so the root lives in the user's cache directory instead.
+    """
+    if os.name == "nt":
+        return Path(tempfile.gettempdir()) / "uprof-dump-cache"
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return Path(base) / "amd-uprof" / "uprof-dump-cache"
+
+
 def cache_dir(session_dir: Path | str) -> Path:
     full = os.path.normcase(os.path.abspath(os.fspath(session_dir))).rstrip("\\/")
     digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:16]
-    return Path(tempfile.gettempdir()) / "uprof-dump-cache" / digest
+    return cache_root() / digest
+
+
+def _require_private(path: Path) -> None:
+    """Refuse a cache directory another user could have planted or can write into.
+
+    It must be a real directory, not a link or junction. Outside Windows it must also be owned by
+    this user and grant no group or other permissions; on Windows the per-user temp directory's
+    ACL already keeps other users out.
+    """
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise UprofError(f"cannot inspect the dump cache {path}: {exc}; check its permissions "
+                         "and re-run") from exc
+    problem = ""
+    if (stat.S_ISLNK(info.st_mode)
+            or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+        problem = "it is a link or junction"
+    elif not stat.S_ISDIR(info.st_mode):
+        problem = "it is not a directory"
+    elif os.name != "nt" and info.st_uid != os.geteuid():
+        problem = f"it is owned by uid {info.st_uid}"
+    elif os.name != "nt" and info.st_mode & 0o077:
+        problem = f"its mode is {stat.S_IMODE(info.st_mode):o}, not 700"
+    if problem:
+        raise UprofError(f"the dump cache {path} is not private to this user ({problem}); "
+                         "remove it, or if you own it and it is a directory run chmod 700 on "
+                         "it, then re-run")
+
+
+def _private_cache(cache: Path) -> Path:
+    """cache, below a root created private to this user; both are checked before any use."""
+    root = cache.parent
+    try:
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as exc:
+        raise UprofError(f"cannot create the dump cache {root}: {exc}; free the path or fix its "
+                         "permissions and re-run") from exc
+    _require_private(root)
+    if os.path.lexists(cache):
+        _require_private(cache)
+    return cache
+
+
+def _replace_json(path: Path, data: object) -> None:
+    """Write a new file and rename it over path, so a link planted at path is replaced, never
+    followed."""
+    handle, partial = tempfile.mkstemp(prefix=f".{path.name}-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(data, stream, indent=2)
+        os.replace(partial, path)
+    except BaseException:
+        Path(partial).unlink(missing_ok=True)
+        raise
 
 
 def _samples_paths(dump_path: Path, directory: Path) -> tuple[Path, Path]:
@@ -114,8 +182,7 @@ def _samples_meta_matches(meta: dict[str, object] | None, source: Path,
 
 
 def _write_samples_meta(path: Path, meta: dict[str, object]) -> None:
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        json.dump(meta, handle, indent=2)
+    _replace_json(path, meta)
 
 
 def _read_unsupported(path: Path) -> dict[str, object] | None:
@@ -139,10 +206,9 @@ def _unsupported_marker_matches(marker: dict[str, object] | None, source: Path,
 
 def _write_unsupported(path: Path, source: Path, key: tuple[int, int],
                        missing: list[str]) -> None:
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        json.dump({"format": _SAMPLES_FORMAT, "columns": list(SAMPLE_COLUMNS),
-                   "source": _normalized_source(source), "bytes": key[0],
-                   "mtime_ns": key[1], "missing": missing}, handle, indent=2)
+    _replace_json(path, {"format": _SAMPLES_FORMAT, "columns": list(SAMPLE_COLUMNS),
+                         "source": _normalized_source(source), "bytes": key[0],
+                         "mtime_ns": key[1], "missing": missing})
 
 
 def samples_parquet_files(dump: DumpInfo, session_dir: Path | str) -> tuple[Path, ...]:
@@ -153,6 +219,14 @@ def samples_parquet_files(dump: DumpInfo, session_dir: Path | str) -> tuple[Path
 
 def _samples_dir(dump: DumpInfo, session_dir: Path | str) -> Path:
     return dump.cache_dir if dump.cache_dir is not None else cache_dir(session_dir)
+
+
+def _checked_samples_dir(dump: DumpInfo, session_dir: Path | str) -> Path:
+    """The samples directory; a session's own dump cache is checked first, while a dump's
+    cache_dir was checked when resolve_dump returned it."""
+    if dump.cache_dir is not None:
+        return dump.cache_dir
+    return _private_cache(cache_dir(session_dir))
 
 
 def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
@@ -169,7 +243,7 @@ def samples_parquet(dump: DumpInfo, session_dir: Path | str) -> Path | None:
     key = _file_key(source)
     if key is None:
         return None
-    directory = _samples_dir(dump, session_dir)
+    directory = _checked_samples_dir(dump, session_dir)
     target, meta_path, unsupported_path = samples_parquet_files(dump, session_dir)
     if _unsupported_marker_matches(_read_unsupported(unsupported_path), source, key):
         return None
@@ -208,7 +282,7 @@ def _build_samples(source: Path, target: Path, meta_path: Path, unsupported_path
     except ImportError:
         return None
     try:
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         handle, staging_name = tempfile.mkstemp(prefix=f".{target.stem}-",
                                                 suffix=".parquet.tmp", dir=directory)
         os.close(handle)
@@ -296,17 +370,10 @@ def _write_cache_meta(path: Path, session_dir: Path | str, kind: str, time_filte
                       dump: Path, capture: list[dict[str, object]] | None) -> None:
     meta = {"sessionPath": str(session_dir), "kind": kind, "timeFilter": time_filter or "",
             "dump": str(dump), "capture": capture}
-    # Written beside and renamed over it, so a concurrent reader never sees a partial file.
-    partial = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    # Renamed over path, so a concurrent reader never sees a partial file.
     try:
-        with open(partial, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(meta, handle, indent=2)
-        os.replace(partial, path)
+        _replace_json(path, meta)
     except OSError as exc:
-        try:
-            partial.unlink()
-        except OSError:
-            pass
         raise UprofError(f"cannot write {path}: {exc}; check free space and permissions on the "
                          "dump cache") from exc
 
@@ -391,7 +458,7 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
         return DumpInfo(absolute(path), "beside", reason="found beside the session")
 
     time_filter = recorded_time_filter(session_dir)
-    cache = cache_dir(session_dir)
+    cache = _private_cache(cache_dir(session_dir))
     cached_dump = cache / dump_name
     cache_meta = cache / "cache.json"
 

@@ -1,7 +1,8 @@
 """Every normative statement of the spec carries one stable ID.
 
 IDs have the form SPEC-nn and are written as a leading bold marker (`**SPEC-07**`), one per
-sentence of the requirement sections and one per requirement table row. An ID is assigned once: it
+sentence of the requirement sections and one per requirement table row; each further requirement
+joined by a semicolon gets its own marker after the semicolon. An ID is assigned once: it
 is unique, an amended statement keeps it, and a removed statement's ID is retired, listed under
 "Retired IDs" and never used for a statement again.
 
@@ -21,7 +22,7 @@ RETIRED_HEADING = "## Retired IDs"
 FIRST_SECTION = "## Naming rules"
 LAST_SECTION = "## 10. Evidence"
 # A sentence that only points to the implementation vocabulary is not a requirement.
-POINTER = re.compile(r"are in `reference\.md`\.$")
+POINTER = re.compile(r"are in `reference\.md`\.+$")
 SENTENCE_END = re.compile(r"(?<=\.)\s+")
 LIST_ITEM = re.compile(r"(?:-|\d+\.) ")
 
@@ -30,6 +31,21 @@ def _split(text):
     """The statements part and the retired-ID list of the spec."""
     head, found, tail = text.partition(RETIRED_HEADING)
     return head, tail if found else None
+
+
+def _parts(text):
+    """Split at semicolons outside code spans: each part is one requirement."""
+    parts, current, in_code = [], [], False
+    for char in text:
+        if char == "`":
+            in_code = not in_code
+        if char == ";" and not in_code:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    return [part.strip() for part in parts]
 
 
 def _number(spec_id):
@@ -101,6 +117,10 @@ class SpecIdTest(unittest.TestCase):
             if kind == "row":
                 with self.subTest(row=block):
                     self.assertTrue(block.startswith("| **SPEC-"))
+                for cell in block.strip("|").split(" | "):
+                    for part in _parts(cell)[1:]:
+                        with self.subTest(row=block, part=part):
+                            self.assertTrue(MARKER.match(part))
                 continue
             text = LIST_ITEM.sub("", block, count=1) if LIST_ITEM.match(block) else block
             for sentence in SENTENCE_END.split(text):
@@ -108,7 +128,12 @@ class SpecIdTest(unittest.TestCase):
                     continue
                 with self.subTest(sentence=sentence):
                     self.assertTrue(MARKER.match(sentence))
-                    self.assertEqual(len(MARKER.findall(sentence)), 1)
+                for part in _parts(sentence):
+                    if POINTER.search(part + "."):
+                        continue
+                    with self.subTest(sentence=sentence, part=part):
+                        self.assertTrue(MARKER.match(part))
+                        self.assertEqual(len(MARKER.findall(part)), 1)
 
 
 if __name__ == "__main__":

@@ -339,7 +339,7 @@ A trial run passes when both hold:
 - **Session:** `attached_inproc_loaded`
 - **Question:** "AMD uProf capture of my app storage_test.exe: `<CAPTURE>`. Only fixture_full.exe is my code; vendorlib.dll is a vendor DLL, not mine. How much time is mine versus everything else, and what is hot in my code?"
 - **Answer:**
-  - **Location:** not reached in the default rows. With D-017's process filter, outside code inside the same process can push the own functions below the default rows; no scope narrows below the process, and only a larger `--top` lists them. The filtered function view's 20 rows are all outside functions, each hotter than any own function.
+  - **Location:** not reached in the default rows. With the process filter (`--image` or `--pid` before the function view), outside code inside the same process can push the own functions below the default rows; no scope narrows below the process, and only a larger `--top` lists them. The filtered function view's 20 rows are all outside functions, each hotter than any own function.
   - **Proof:** `fixture_full.exe` has 12 of the process's 746 samples, rank 25 of 26 modules, so the module view needs `--top all`; everything outside the own exe is one total, including the third-party `vendorlib.dll`.
   - **Cost:** own 0.016 (12 samples), everything else 0.984 (734); `cpu_seconds` = samples × 4.7 M cycles / core frequency.
   - **Confidence:** own ±29% (12 samples).

@@ -39,6 +39,7 @@ from uprof_util import (
     UprofError,
     absolute,
     capture_identity,
+    check_session_meta_size,
     copy_session,
     read_text,
     same_capture,
@@ -435,6 +436,7 @@ def recorded_time_filter(session_dir: Path | str) -> str | None:
     samples rather than the whole capture.
     """
     try:
+        check_session_meta_size(Path(session_dir) / "session.uprof")
         meta = json.loads(read_text(Path(session_dir) / "session.uprof"))
     except (UprofError, json.JSONDecodeError):
         return None

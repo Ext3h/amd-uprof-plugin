@@ -232,6 +232,26 @@ def tail_lines(text: str, count: int = 6) -> str:
     return " | ".join(lines[-count:])
 
 
+# DuckDB's read_json refuses a larger object by default, and real session.uprof files are a few
+# KiB; a larger file is not capture metadata and is not read into memory.
+SESSION_META_LIMIT: Final = 16 * 1024 * 1024
+
+
+def check_session_meta_size(path: os.PathLike[str] | str) -> None:
+    """Refuse a session.uprof above SESSION_META_LIMIT before it is read; a missing or
+    unreadable file is left to the reader."""
+    try:
+        size = os.stat(path).st_size
+    except OSError:
+        return
+    if size > SESSION_META_LIMIT:
+        raise UprofError(
+            f"{path} is {size} bytes, above the {SESSION_META_LIMIT} a session.uprof "
+            "can hold; it is not uProf capture metadata: copy the session again "
+            "from the machine that captured it"
+        )
+
+
 def read_text(path: os.PathLike[str] | str) -> str:
     try:
         with open(path, "r", encoding="utf-8-sig") as handle:

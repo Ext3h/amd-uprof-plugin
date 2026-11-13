@@ -97,8 +97,8 @@ totals are a join of the capture's rows, not a second measurement and independen
 and the remainder carry the same parent shares, so they sum to the parent total.
 
 `--symbol-path` and `--image-path` affect the symbolized rows and the profile symbolizer share, not
-the share of samples the capture itself named; a source is accepted only when its identity is
-verified, and another build's source is a resolution failure, not success.
+the share of samples the capture itself named; a source needs verified identity or, if
+unverifiable, the module's PDB name and a warning; another build's source fails.
 
 ### 3.4 Time filter
 

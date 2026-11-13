@@ -214,6 +214,14 @@ class CatalogueTest(unittest.TestCase):
                 with self.subTest(scenario=scn, step=step):
                     self.assertRegex(call, r"--pid |--image ")
 
+    def test_the_loaded_attached_captures_await_the_reference_machine(self):
+        # The loaded attached captures are recorded on the owner's reference machine, not in CI;
+        # until they exist the scenarios are not run on them, and the issue tracks the capture.
+        text = conventions()
+        note = next(line for line in text.splitlines() if "open (D-031)" in line)
+        self.assertIn("not run: awaiting reference capture (#390)", note)
+        self.assertNotIn("D-020", text)
+
     def test_open_steps_name_a_decision_the_conventions_list(self):
         listed = set(OPEN_MARK.findall(conventions()))
         for scn, entry in self.scenarios.items():

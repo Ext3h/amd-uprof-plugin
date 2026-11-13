@@ -277,7 +277,7 @@ class NoPdbEvidenceTest(unittest.TestCase):
                     side_effect=lambda _tool, name: Path(name + ".exe"),
                 ),
                 mock.patch.object(
-                    uprof_symbols, "_readobj_info", return_value=("fixture.pdb", "ABCD", 1)
+                    uprof_symbols, "_readobj_info", return_value=("fixture.pdb", "ABCD", 1, None)
                 ),
                 mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search),
                 mock.patch.object(
@@ -500,7 +500,7 @@ class LlvmVersionGateTest(unittest.TestCase):
                 uprof_symbols, "find_sibling", side_effect=lambda _tool, name: Path(name + ".exe")
             ),
             mock.patch.object(
-                uprof_symbols, "_readobj_info", return_value=("fixture.pdb", "ABCD", 1)
+                uprof_symbols, "_readobj_info", return_value=("fixture.pdb", "ABCD", 1, None)
             ),
             mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search),
             mock.patch.object(uprof_symbols, "_run_symbolizer") as symbolizer,

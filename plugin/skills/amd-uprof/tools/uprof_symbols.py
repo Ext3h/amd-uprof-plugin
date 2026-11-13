@@ -276,11 +276,12 @@ def image_build_mismatch(
     return None
 
 
-def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int | None]:
+def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int | None, str | None]:
+    """(PDB file name, GUID, age, PDB path as recorded) from the image's CodeView entry."""
     pdb_name = Path(exe).stem + ".pdb"
-    guid = age = None
+    guid = age = recorded = None
     if not readobj:
-        return pdb_name, guid, age
+        return pdb_name, guid, age, recorded
     completed = run(
         [str(readobj), "--coff-debug-directory", tool_operand(exe)], timeout=PDB_PROBE_TIMEOUT
     )
@@ -296,11 +297,12 @@ def _readobj_info(exe: str, readobj: Path | None) -> tuple[str, str | None, int 
             value = match.group(1).strip()
             if key == "name":
                 pdb_name = Path(value).name
+                recorded = value
             elif key == "guid":
                 guid = _normalize_guid(value)
             else:
                 age = _as_int(value)
-    return pdb_name, guid, age
+    return pdb_name, guid, age, recorded
 
 
 def _pdb_signature(pdbutil: Path | None, path: Path) -> tuple[str | None, str | None, str | None]:
@@ -403,6 +405,7 @@ def _candidate_pdbs(
     symbol_dirs: Iterable[str | Path] = (),
     symbol_files: Iterable[str | Path] = (),
     symbol_stores: Iterable[str | Path] = (),
+    recorded_pdb: Path | None = None,
 ) -> list[Path]:
     module_name = exe.stem
     names = list(dict.fromkeys([pdb_name, module_name + ".pdb"]))
@@ -416,6 +419,9 @@ def _candidate_pdbs(
         if module_guid and age is not None:
             candidates.extend(root / f"{module_guid}{age:X}" / name for name in names)
     candidates.extend(exe.parent / name for name in names)
+    # The PDB path the image's CodeView entry records, as llvm-symbolizer would try it next.
+    if recorded_pdb is not None and recorded_pdb.is_absolute():
+        candidates.append(recorded_pdb)
     nt_symbol_path = _nt_symbol_path()
     for directory in nt_symbol_path.dirs:
         candidates.extend(Path(directory) / name for name in names)
@@ -452,12 +458,20 @@ def _choose_pdb(
     symbol_dirs: Iterable[str | Path] = (),
     symbol_files: Iterable[str | Path] = (),
     symbol_stores: Iterable[str | Path] = (),
+    recorded_pdb: Path | None = None,
 ) -> PdbSearch:
     """Probe every candidate once; the search carries each rejection as evidence."""
     search = PdbSearch(urls=list(_nt_symbol_path().upstreams))
     for path in dict.fromkeys(
         _candidate_pdbs(
-            exe_path, pdb_name, module_guid, module_age, symbol_dirs, symbol_files, symbol_stores
+            exe_path,
+            pdb_name,
+            module_guid,
+            module_age,
+            symbol_dirs,
+            symbol_files,
+            symbol_stores,
+            recorded_pdb,
         )
     ):
         probe = _probe_pdb(pdbutil, path, module_guid, module_age)
@@ -939,12 +953,13 @@ def symbolize_module(
         pdbutil = find_sibling(symbolizer_path, "llvm-pdbutil")
         readobj_error = None
         try:
-            pdb_name, module_guid, module_age = _readobj_info(exe_input, readobj)
+            pdb_name, module_guid, module_age, recorded = _readobj_info(exe_input, readobj)
         except (UprofError, OSError) as exc:
             pdb_name = Path(exe_input).stem + ".pdb"
-            module_guid = module_age = None
+            module_guid = module_age = recorded = None
             readobj_error = str(exc)
         evidence.image_guid, evidence.image_age = module_guid, module_age
+        recorded_pdb = Path(recorded) if recorded else None
         # A PDB that cannot be GUID-verified is used only for the module whose PDB name it
         # carries; another module's PDB would give this one foreign names.
         own_pdbs = [path for path in pdb_files if _names_module_pdb(path, pdb_name, exe_path)]
@@ -1019,6 +1034,7 @@ def symbolize_module(
                 search_dirs,
                 pdb_files,
                 symbol_stores,
+                recorded_pdb=recorded_pdb,
             )
             pdb = evidence.search.pdb
         else:
@@ -1050,6 +1066,7 @@ def symbolize_module(
                         search_dirs,
                         own_pdbs,
                         symbol_stores,
+                        recorded_pdb,
                     )
                 )
             ]

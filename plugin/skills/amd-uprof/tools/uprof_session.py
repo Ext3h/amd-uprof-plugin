@@ -552,6 +552,9 @@ def achieved_summary(
             "per-CPU rate is not derivable)"
         )
 
+    lead = _attached_lead(samples, window_s, cpus, requested, ideal_note, contexts, context_label)
+    if lead is not None:
+        return lead
     below = False
     if contexts:
         busiest = max(contexts, key=lambda context: context.samples)
@@ -580,6 +583,39 @@ def achieved_summary(
     if below:
         text += "; WARN: achieved sample rate is below 10% of the requested interval"
     return text
+
+
+def _attached_lead(
+    samples: int,
+    window_s: float | None,
+    cpus: int,
+    requested: str,
+    ideal_note: str,
+    contexts: list[ContextCadence] | None,
+    context_label: str,
+) -> str | None:
+    """ACHIEVED for an attached capture whose busiest thread has a measured cadence.
+
+    The per-CPU rate divides the attached threads' samples over every CPU, so no thread can
+    reach it; read next to the per-thread ideal it looks like a shortfall. The line leads with the
+    busiest thread's cadence against the request and labels the per-CPU figure. None leaves the
+    other cases to the caller.
+    """
+    if context_label != "thread" or not contexts or not window_s or window_s <= 0 or not cpus:
+        return None
+    busiest = max(contexts, key=lambda context: context.samples)
+    if busiest.samples <= 0 or not busiest.median_gap_ns or busiest.median_gap_ns <= 0:
+        return None
+    delivered = 1e9 / busiest.median_gap_ns
+    gap_s = busiest.median_gap_ns / 1e9
+    active = sum(1 for context in contexts if context.samples >= 0.1 * busiest.samples)
+    rate = samples / window_s / cpus
+    return (
+        f"busiest thread {delivered:,.0f}/s (median gap {_format_duration(gap_s)}; requested "
+        f"{requested}{ideal_note}); {samples} samples, {window_s:.3f} s, {cpus} CPUs; "
+        f"{rate:,.2f}/s per CPU is diluted over every CPU, not the delivered cadence; "
+        f"{active} active {context_label if active == 1 else context_label + 's'}"
+    )
 
 
 def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[str]:

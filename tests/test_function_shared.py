@@ -13,7 +13,6 @@ import unittest
 from pathlib import Path
 
 import duckdb
-
 import uprof_db
 import uprof_functions
 import uprof_query

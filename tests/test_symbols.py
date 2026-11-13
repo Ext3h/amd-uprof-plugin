@@ -72,14 +72,14 @@ class PublicSymbolsTest(unittest.TestCase):
         self.assertEqual(
             out.read_bytes(),
             (
-                "rva,name_count,names\n"
-                "4096,2,alpha | beta\n"
-                "8192,1,zeta\n"
-                "12288,2,solo\n"
-                "16384,6,a | b | c | d | ... (+2 more)\n"
-                '20480,2,"op,comma | say ""hi"""\n'
-                "24576,2,\n"
-            ).encode("utf-8"),
+                b"rva,name_count,names\n"
+                b"4096,2,alpha | beta\n"
+                b"8192,1,zeta\n"
+                b"12288,2,solo\n"
+                b"16384,6,a | b | c | d | ... (+2 more)\n"
+                b'20480,2,"op,comma | say ""hi"""\n'
+                b"24576,2,\n"
+            ),
         )
 
 

@@ -873,7 +873,7 @@ def _aggregate_publics(pairs_path: Path, out_path: Path) -> tuple[int, int]:
             writer = csv.writer(handle, lineterminator="\n")
             writer.writerow(["rva", "name_count", "names"])
             writer.writerows(rows)
-    except Exception as exc:  # noqa: BLE001 - a file, CSV or DuckDB cast error names the cause
+    except Exception as exc:  # a file, CSV or DuckDB cast error names the cause
         raise UprofError(f"cannot aggregate public symbols: {exc}") from exc
     return len(rows), sum(1 for _rva, count, _names in rows if count > 1)
 

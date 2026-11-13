@@ -22,7 +22,6 @@ from pathlib import Path
 from unittest import mock
 
 import duckdb
-
 import uprof_native
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -123,6 +122,7 @@ class CadenceOneQueryTest(unittest.TestCase):
                 "--by",
                 "process",
             ],
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",

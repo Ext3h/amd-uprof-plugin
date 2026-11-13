@@ -116,9 +116,9 @@ class TranslateStallTest(unittest.TestCase):
             mock.patch.object(uprof_native, "run_watched", side_effect=error) as watched,
             mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": "srv*c:\\sym*\\\\slow\\share"}),
             redirect_stdout(io.StringIO()),
+            self.assertRaises(UprofError) as raised,
         ):
-            with self.assertRaises(UprofError) as raised:
-                uprof_native.translate(self.session, self.out)
+            uprof_native.translate(self.session, self.out)
         kwargs = watched.call_args.kwargs
         self.assertEqual(kwargs["stall_s"], uprof_native.TRANSLATE_STALL)
         self.assertEqual(kwargs["ceiling_s"], uprof_native.TRANSLATE_CEILING)

@@ -150,7 +150,7 @@ def fake_run(command, **_kwargs):
 
 class BuildContextTest(unittest.TestCase):
     def test_window_order_symbol_import_and_raw_share(self):
-        build = uprof_context.parse_file_headers(FILE_HEADERS)
+        build = uprof_context.parse_image(FILE_HEADERS).build
         verified = uprof_context.verify_build(build, 0x1234ABCD)
         anchor = uprof_context.Anchor("export", 0x1000, "fixture_entry")
         window = uprof_context.parse_objdump(OBJDUMP, build.image_base)
@@ -179,7 +179,7 @@ class BuildContextTest(unittest.TestCase):
         self.assertNotIn("ibs", hot)
 
     def test_absent_symbol_and_ibs_fields_are_omitted(self):
-        build = uprof_context.parse_file_headers(FILE_HEADERS)
+        build = uprof_context.parse_image(FILE_HEADERS).build
         verified = uprof_context.verify_build(build, 0x1234ABCD)
         instruction = uprof_context.DecodedInstruction(0x1000, "retq", None)
 
@@ -196,7 +196,7 @@ class BuildContextTest(unittest.TestCase):
 
 
     def test_ibs_samples_are_kept_when_no_other_field_is_present(self):
-        build = uprof_context.parse_file_headers(FILE_HEADERS)
+        build = uprof_context.parse_image(FILE_HEADERS).build
         verified = uprof_context.verify_build(build, 0x1234ABCD)
         instruction = uprof_context.DecodedInstruction(0x1000, "retq", None)
 

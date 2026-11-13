@@ -90,7 +90,7 @@ Sections [
 
 class FileHeaderTest(unittest.TestCase):
     def test_parses_image_base_stamp_checksum_and_magic(self):
-        build = uprof_context.parse_file_headers(FILE_HEADERS)
+        build = uprof_context.parse_image(FILE_HEADERS).build
 
         self.assertEqual(build.image_base, 0x140000000)
         self.assertEqual(build.time_date_stamp, 0x6AEF5E36)
@@ -101,47 +101,47 @@ class FileHeaderTest(unittest.TestCase):
     def test_pe32_slots_are_four_bytes(self):
         text = FILE_HEADERS.replace("Magic: 0x20B", "Magic: 0x10B")
 
-        self.assertEqual(uprof_context.parse_file_headers(text).slot_width, 4)
+        self.assertEqual(uprof_context.parse_image(text).build.slot_width, 4)
 
 
 class SectionsTest(unittest.TestCase):
     def test_code_section_is_selected_by_characteristics(self):
-        sections = uprof_context.parse_sections(SECTIONS)
+        sections = uprof_context.parse_image(FILE_HEADERS + "\n" + SECTIONS).sections
 
         code = uprof_context.find_code_section(sections, 0x1010)
         self.assertEqual((code.start, code.end), (0x1000, 0x1026))
         self.assertIsNone(uprof_context.find_code_section(sections, 0x3010))
 
     def test_a_section_without_a_virtual_size_uses_the_decimal_raw_size(self):
-        text = SECTIONS.replace("VirtualSize: 0x26", "VirtualSize: 0x0")
+        text = (FILE_HEADERS + "\n" + SECTIONS).replace("VirtualSize: 0x26", "VirtualSize: 0x0")
 
-        code = uprof_context.find_code_section(uprof_context.parse_sections(text), 0x1010)
+        code = uprof_context.find_code_section(uprof_context.parse_image(text).sections, 0x1010)
 
         self.assertEqual((code.start, code.end), (0x1000, 0x1200))
 
 
 class WindingAndExportParseTest(unittest.TestCase):
     def test_unwind_starts_are_module_relative_and_deduplicated(self):
-        starts = uprof_context.parse_unwind_starts(UNWIND, image_base=0x140000000)
+        starts = uprof_context.parse_image(FILE_HEADERS + "\n" + UNWIND).unwind_starts
 
         self.assertEqual([rva for rva, _ in starts], [0x1000, 0x1010, 0x2010])
 
     def test_unwind_without_runtime_functions_is_empty(self):
         self.assertEqual(
-            uprof_context.parse_unwind_starts("UnwindInformation [\n]\n", 0x140000000), [])
+            uprof_context.parse_image(FILE_HEADERS + "\nUnwindInformation [\n]\n").unwind_starts, [])
 
     def test_export_names_and_rvas_are_paired_per_block(self):
-        exports = uprof_context.parse_exports(EXPORTS)
+        exports = uprof_context.parse_image(FILE_HEADERS + "\n" + EXPORTS).exports
 
         self.assertEqual(exports, [(0x1000, "fixture_entry"), (0x2010, None)])
 
     def test_export_without_a_name_keeps_its_rva(self):
-        self.assertEqual(uprof_context.parse_exports(EXPORTS)[1], (0x2010, None))
+        self.assertEqual(uprof_context.parse_image(FILE_HEADERS + "\n" + EXPORTS).exports[1], (0x2010, None))
 
 
 class AnchorSelectionTest(unittest.TestCase):
     def setUp(self):
-        self.sections = uprof_context.parse_sections(SECTIONS)
+        self.sections = uprof_context.parse_image(FILE_HEADERS + "\n" + SECTIONS).sections
 
     def test_nearest_pdb_public_start_at_or_below_wins(self):
         anchor = uprof_context.select_anchor(
@@ -230,13 +230,21 @@ class AnchorSelectionTest(unittest.TestCase):
         self.assertEqual(caught.exception.reason, "no_code_section")
 
     def test_boundary_validation_rejects_a_mid_instruction_rva(self):
-        self.assertTrue(uprof_context.is_instruction_start([0x1000, 0x1004, 0x1008], 0x1004))
-        self.assertFalse(uprof_context.is_instruction_start([0x1000, 0x1004, 0x1008], 0x1002))
+        instructions = [
+            uprof_context.DecodedInstruction(0x1000, "mov", 4),
+            uprof_context.DecodedInstruction(0x1004, "add", 4),
+            uprof_context.DecodedInstruction(0x1008, "retq", 1),
+        ]
+        self.assertEqual(
+            len(uprof_context.select_window(instructions, 0x1004)), 3)
+        with self.assertRaises(uprof_context.ContextOmission) as caught:
+            uprof_context.select_window(instructions, 0x1002)
+        self.assertEqual(caught.exception.reason, "hot_rva_not_instruction_start")
 
 
 class BuildIdentityTest(unittest.TestCase):
     def setUp(self):
-        self.build = uprof_context.parse_file_headers(FILE_HEADERS)
+        self.build = uprof_context.parse_image(FILE_HEADERS).build
 
     def test_size_of_image_is_read_from_the_headers(self):
         self.assertEqual(self.build.size_of_image, 8192)
@@ -272,7 +280,7 @@ class BuildIdentityTest(unittest.TestCase):
         self.assertEqual(identity.capture_size, 8193)
 
     def test_zero_module_checksum_with_capture_checksum_is_unverified(self):
-        build = uprof_context.parse_file_headers(FILE_HEADERS.replace("0x1234ABCD", "0x0"))
+        build = uprof_context.parse_image(FILE_HEADERS.replace("0x1234ABCD", "0x0")).build
 
         identity = uprof_context.verify_build(build, 0x1234ABCD, capture_size=None)
 

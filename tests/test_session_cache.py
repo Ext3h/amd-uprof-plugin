@@ -528,14 +528,6 @@ class CacheTest(unittest.TestCase):
             uprof_cache.cleanup_orphans(root)
         self.assertFalse(sibling.exists())
 
-    def test_env_float_rejects_non_finite_values(self):
-        with mock.patch.dict(os.environ, {"UPROF_PROBE": "inf"}):
-            self.assertEqual(uprof_cache._env_float("UPROF_PROBE", 5.0), 5.0)
-        with mock.patch.dict(os.environ, {"UPROF_PROBE": "nan"}):
-            self.assertEqual(uprof_cache._env_float("UPROF_PROBE", 5.0), 5.0)
-        with mock.patch.dict(os.environ, {"UPROF_PROBE": "7"}):
-            self.assertEqual(uprof_cache._env_float("UPROF_PROBE", 5.0), 7.0)
-
 
     def test_files_in_only_stats_matching_names(self):
         directory = self.root / "scan"

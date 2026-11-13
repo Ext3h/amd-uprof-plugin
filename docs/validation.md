@@ -1,32 +1,20 @@
 # Validation evidence
 
-Measured acceptance figures, their capture, filter and estimator. A regression baseline, not
-requirements. The estimator itself is defined in `reference.md`; the figures below are the ones
-the current `profile` surface can reproduce.
-
-## Estimator (defined in reference.md)
-
-The estimator, its window-before-lag rule and gap charging are in `reference.md`, "Estimator: exact
-DeltaTick gaps" (Hofer, JKU PhD thesis, section 3.2.4); `sample_share` is the raw dump sample share,
-never a `windowId` count.
+Measured acceptance figures for the current `profile` surface.
 
 ## Capture
 
-`D:\Projects\strata-res\ibs-roleplay-3-fresh\AMDuProf-SWP-IBS_Oct-24-2026_18-50-45`:
-60 s, 16 CPUs, system-wide, `--config ibs`, op interval 1,000,000 ops. The full ASCII dump has
+Capture: 60 s, 16 CPUs, system-wide, `--config ibs`, op interval 1,000,000 ops. The full ASCII dump has
 1,595,914 rows, 16 first-per-CPU; total weight 959.195 s of core time against 961.056 s implied by
 `session.uprof`. The 1.861 s deficit is the per-CPU boundary gaps, so the current check reports
 OK without a tolerance. The 0:10 window has 296,917 rows, 16 first-in-window.
 Environment: Windows 11, Ryzen 7 9800X3D, Python 3.14.6, DuckDB 2.0.0, uProf CLI 5.3.521.0,
-LLVM (llvm-symbolizer/llvm-pdbutil/llvm-readobj) from `C:\Program Files\LLVM\bin`.
+LLVM 23.1.4 (llvm-symbolizer/llvm-pdbutil/llvm-readobj).
 
 ## Archive acceptance figures
 
-Reproduced 2026-11-07 with the cached 60 s dump reused (`DUMP: ... reused`), so the capture was
-not re-translated. Command prefix for every row:
-`python tools/uprof.py profile --session D:\Projects\strata-res\ibs-roleplay-3-fresh\AMDuProf-SWP-IBS_Oct-24-2026_18-50-45`.
-The denominator is stated with each row: the process-image scope includes **every module of every
-matching process** (system DLLs, drivers, JIT code), not only the process's base image.
+Cached dump reused. Command prefix for every row:
+`python tools/uprof.py profile --session <capture>`.
 
 | Command scope | Quantity | Value | Denominator |
 |---|---|---:|---|
@@ -54,11 +42,7 @@ its denominator includes the process's samples in every module, not only `strata
 Exact command: `... --by line --top 20` or `... --by instruction --top 20` (whole capture, no
 image filter). Both print:
 
-`mismatch_rate=33.749068171404346% (531048/1573519); name_mismatches=40211 addresses of 47752 compared; unresolved=10284 addresses, 22281 samples (1.396127861526373% of 1595914 scoped)`.
-
-Line and instruction coordinates use the innermost executed frame (`Symbol[0]`); the symbolizer
-name is the containing function (`Symbol[last]`), the name uProf `Function.id` carries, so inline
-instances are not counted as mismatches.
+`mismatch_rate 33.749068171404346% (531048/1573519); name_mismatches 40211 of 47752 addresses; unresolved 10284 addresses, 22281 samples (1.396127861526373% of 1595914)`.
 
 ### Line baseline (innermost-frame attribution)
 
@@ -67,11 +51,11 @@ instances are not counted as mismatches.
 
 | # | file | line | function | module | attribution | samples | sample_share | time_share |
 |---:|---|---:|---|---|---|---:|---:|---:|
-| 1 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1000 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130376 | 0.08169362509508657 | 0.06570961379115599 |
-| 2 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1013 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130425 | 0.08172432850391688 | 0.065628702354611885 |
-| 3 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1001 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130746 | 0.08192546716176436 | 0.0655713460277707 |
+| 1 | `pool.cpp` | 1000 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130376 | 0.08169362509508657 | 0.06570961379115599 |
+| 2 | `pool.cpp` | 1013 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130425 | 0.08172432850391688 | 0.065628702354611885 |
+| 3 | `pool.cpp` | 1001 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 130746 | 0.08192546716176436 | 0.0655713460277707 |
 | 4 | `...\include\atomic` | 917 | `std::_Atomic_storage<unsigned int, 4>::load(enum std::memory_order) const` | strata.exe | unique | 52512 | 0.032904028663198646 | 0.026435205718686334 |
-| 5 | `D:\Projects\strata\src\kernels\cpu\pool.cpp` | 1014 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 52007 | 0.032587595572192485 | 0.026100453829488544 |
+| 5 | `pool.cpp` | 1014 | `strata::kernels::cpu::ExpertPool::worker(int)` | strata.exe | unique | 52007 | 0.032587595572192485 | 0.026100453829488544 |
 | 6 | `...\include\atomic` | 706 | `std::_Atomic_storage<bool, 1>::load(enum std::memory_order) const` | strata.exe | unique | 51935 | 0.03254248035921735 | 0.02599295713565436 |
 | 7 | `<no symbol>` | 0 | `<no symbol>` | claude.exe | unresolved | 2370 | 0.001485042427098202 | 0.0234032598989852 |
 | 8 | `<no symbol>` | 0 | `<no symbol>` | amdhip64_7.dll | unresolved | 8780 | 0.00550154958224566 | 0.014193052446381997 |
@@ -90,15 +74,14 @@ instances are not counted as mismatches.
 | 21 | `<other lines>` | NULL | NULL | NULL | NULL | 938337 | 0.5879621332979095 | 0.5737108703880413 |
 
 Module names are the short forms the output prints; `...\` abbreviates the MSVC 14.51 include path
-and the vcruntime amd64 asm path. The full paths are in the `file` column on the left.
+and the vcruntime amd64 asm path.
 
 The pre-fix `iq_avx512.cpp:174` row (111,806 samples, `time_share` 0.014741379847085119) is absent.
 Line 174 is the `Fmt<T>::decode` call site inside the `row_dot<T>` body: for hot
 `row_dot<21,2>` addresses, `Symbol[0]` is `Fmt<21>::decode` at `iq_avx512.cpp:135/148` and
 `Symbol[last]` is `row_dot<21,2>` at line 174, so those samples move to the inlinee's executed
 lines. The remainder arithmetic confirms it: 938,337 = 829,872 (pre-fix remainder) + 111,806
-(that row) - 3,341 (`memcpy_repmovs_amd` moved into rank 20). Do not use the old row as a
-regression number.
+(that row) - 3,341 (`memcpy_repmovs_amd` moved into rank 20).
 
 ## Capture-mode fixtures
 
@@ -115,14 +98,14 @@ Status by capture mode:
 Commands: `python tools/uprof.py profile --session <path> --by <granularity> --top all`. Row counts
 are the uncapped views.
 
-| Fixture | Path | Capture | Rows (process/function/line/instruction) | Shares | Column set |
-|---|---|---|---:|---|
-| `icf-session` | `%TEMP%\uprof-fixture\icf-session` | IBS OP, no tag column | 1/8/9/13 | `sample_share`, `time_share` 1.0 | samples, sample_share, time_share; `TAG_TO_RETIRE_SHARE` names the missing `IbsTagToRetCtr` |
-| `pmc-session` | `%TEMP%\uprof-fixture\pmc-session` | PMC `CYCLES_NOT_IN_HALT` | 1/6/12/27 | `sample_share` 1.0 | samples, sample_share only; TIME_SHARE/TAG_TO_RETIRE_SHARE "not applicable" |
-| `ibs-session` | `%TEMP%\uprof-fixture\ibs-session` | IBS OP, tagged | 57/4249/1606/6915 | all three shares 1.0 | adds `tag_to_retire_share` |
-| `fetch-session` | `%TEMP%\t1-round3\fetch-session` | IBS fetch | 1/8/9/13 | `sample_share`, `time_share` 1.0 | no `tag_to_retire_share`; `TAG_TO_RETIRE_SHARE` says this export has no tag-to-retire counter |
-| `t1-fold-session` | `%TEMP%\t1-fold-session` | IBS OP, no tag | 1/1/1/1 | `sample_share`, `time_share` 1.0 | line row `shared: fold_alpha \| fold_beta`, attribution `shared` |
-| `t1-nopdb-session` | `%TEMP%\t1-nopdb-session` | IBS OP, no tag, no PDB | 1/1/1/1 | `sample_share`, `time_share` 1.0 | `<no symbol>` rows, attribution `unresolved`; AGREEMENT `unresolved=1 addresses, 3 samples (100.0% of 3 scoped)` |
+| Fixture | Capture | Rows (process/function/line/instruction) | Shares | Column set |
+|---|---|---:|---|---|
+| `icf-session` | IBS OP, no tag column | 1/8/9/13 | `sample_share`, `time_share` 1.0 | samples, sample_share, time_share; `TAG_TO_RETIRE_SHARE` names the missing `IbsTagToRetCtr` |
+| `pmc-session` | PMC `CYCLES_NOT_IN_HALT` | 1/6/12/27 | `sample_share` 1.0 | samples, sample_share only; TIME_SHARE/TAG_TO_RETIRE_SHARE "not applicable" |
+| `ibs-session` | IBS OP, tagged | 57/4249/1606/6915 | all three shares 1.0 | adds `tag_to_retire_share` |
+| `fetch-session` | IBS fetch | 1/8/9/13 | `sample_share`, `time_share` 1.0 | no `tag_to_retire_share`; `TAG_TO_RETIRE_SHARE` says this export has no tag-to-retire counter |
+| `t1-fold-session` | IBS OP, no tag | 1/1/1/1 | `sample_share`, `time_share` 1.0 | line row `shared: fold_alpha \| fold_beta`, attribution `shared` |
+| `t1-nopdb-session` | IBS OP, no tag, no PDB | 1/1/1/1 | `sample_share`, `time_share` 1.0 | `<no symbol>` rows, attribution `unresolved`; AGREEMENT `unresolved 1 address, 3 samples` |
 
 `icf-session` line detail: `mixed.cpp:8` and `:9` are shared-fold rows
 (`shared: fold_alpha \| fold_beta`, 2 samples each); `mixed.cpp:20` is the standalone
@@ -130,33 +113,28 @@ are the uncapped views.
 `plain_volatile`, all `unique`. Instruction detail: `0x1140/0x1145/0x1155` are inline instances
 (`mix_inline`, line 20), `0x1070/0x1075` the standalone `mix_inline(int)` copy, `0x1150`
 `call_inline_b`, and `0x1160/0x1163` shared fold rows. AGREEMENT:
-`mismatch_rate=16.666666666666668% (4/24); name_mismatches=2 addresses of 13 compared; unresolved=0`.
+`mismatch_rate 16.666666666666668% (4/24), name_mismatches 2 of 13`.
 `edge.cpp:1` and `overload.cpp:5` line rows carry `<multiple>` for the overload set.
 
 ### Tagged IBS and `tag_to_retire_share`
 
 `ibs-session` has 59,243 samples on 16 CPUs. The default (top 20) run returns 20 rows plus one
 `<other processes|functions|lines|instructions>` remainder whose identifying columns are NULL;
-the three shares still sum to 1.0 at every granularity. `tag_to_retire_share` is the share of
-`min(IbsTagToRetCtr, 65535)`, the 16-bit field's maximum; only an unsigned decimal integer cell
-counts, so NULL, negative, fractional and exponent cells are excluded from its denominator.
+the three shares still sum to 1.0 at every granularity.
 
 - Clip: a two-row fixture with tags 200000 and 1000 gives `65535/66535 = 0.9849703163748403`
   and `1000/66535 = 0.01502968362515969`; a tag above 65535 is charged 65535. No real capture in
   the fixture set has a value above 65535, so the clip is exercised synthetically.
-- All-zero column: a column of zeros is non-null, so `tag_to_retire_share` is present but every
-  share is NULL; the column does not sum to 1.0 because no tag cycles were counted.
+- All-zero column: `tag_to_retire_share` is absent; `TAG_TO_RETIRE_SHARE` says `IbsTagToRetCtr has no nonzero values`.
 - NULL tag: appending an all-blank `IbsTagToRetCtr` to `icf-session` keeps exit 0, omits
-  `tag_to_retire_share`, and prints `IbsTagToRetCtr has no non-null values`. Appending mixed junk
+  `tag_to_retire_share`, and prints `IbsTagToRetCtr has no nonzero values`. Appending mixed junk
   and numeric cells emits `tag_to_retire_share`; instruction `0x1170` is
   `8/131130 = 0.0000610081598413787844`, whose denominator 131,130 = 5 + 7 + 65535 + 65535 +
   16 × 3, so `abc`, `1.5`, `-4` and `1e5` are excluded rather than charged the maximum.
 
 ### PMC behavior
 
-`pmc-session` has 15,323 samples: the four granularities above print `samples` and `sample_share`
-only, totals 1.0, `TIME_SHARE` / `TAG_TO_RETIRE_SHARE` say "not applicable", and `--time-filter`
-exits 2 with `--time-filter cannot be applied to a PMC capture`.
+`pmc-session` has 15,323 samples.
 
 Live unelevated path, reproduced 2026-11-07 on `fold_busy.exe`:
 
@@ -171,70 +149,13 @@ IBS fallback on this host: `collect --event ibs-op --seconds 1` printed
 `SAMPLER: falling back to cycle sampling (time-based); IBS unavailable: VBS is running
 (Win32_DeviceGuard VirtualizationBasedSecurityStatus 2), so IBS ...; remedy: ...`,
 then captured PMC at the 1 ms default (`interval=4700000`); after `translate`, `profile` showed
-the PMC column set and 1,143 samples. The fallback attaches to the target process, so the target
-must still be alive when the fallback collect runs.
+the PMC column set and 1,143 samples.
 
 ### Dump generation and the cache
 
-Cache key: `sha256(normcase(abspath(session)))[:16]` under `%TEMP%\uprof-dump-cache` (Linux `~/.cache/amd-uprof/uprof-dump-cache`).
-`profile` on a session with no dump beside it prints
-`DUMP: <cache>\IbsOpDump.csv, <size> MB; cache <cache> generated (no cached dump for this session)`
-and `GENERATING DUMP: <cache> ...` on stderr; the source session is untouched.
-
-`profile --time-filter` filters the dump in SQL and never re-translates: a generated cache for a
-raw copy recorded `timeFilter: ""` and held the full 1,595,914-row dump (294.6 MB) even though
-the table was computed for 0:2. The cache's `timeFilter` comes from the session's recorded
-`translateCommand`. To produce a genuinely windowed dump, translate explicitly:
+To produce a genuinely windowed dump, translate explicitly:
 `translate --session <copy> --out-dir <out> --time-filter 0:2 --ascii ibsop-event-dump`; on the
-archive copy this wrote 59,243 samples (11,381,666 bytes) in 67.7 s, and `profile` on it printed
-`SANITY ... matches window 2.000 s`.
-
-## Instruction context and `context_help` (2.1.0)
-
-Validated 2026-11-08 on Windows 11 with LLVM 23.1.4 on `PATH`, using the in-repo PE fixture and
-the unit suite. No live capture is needed: the block is built from PE headers plus the capture's
-own rows, and the fixture is a real linked image.
-
-`python tests/run_tests.py` runs the full suite.
-`python tests/run_tests.py test_context_fixture` runs `llvm-readobj`, `llvm-objdump` and
-`llvm-symbolizer` end to end against `tests/fixtures/fixture.exe` (2560 bytes, nonzero `CheckSum`,
-`.text` at 0x1000, `.pdata` at 0x3000, hot boundary 0x101B, IAT slot 0x20A0 for
-`KERNEL32.dll!ExitProcess`).
-
-- **Anchor.** The fixture's 0x101B row anchors on export `fixture_entry` at 0x1000 with
-  `distance` 27. A public start names the export when the export table supplies it; a hot RVA
-  under a `.pdata`-only start reports `kind: "pdata"`; no safe start within 1 MiB reports
-  `anchor_too_far`; a mid-instruction RVA (0x1001) reports
-  `hot_rva_not_instruction_start`.
-- **Build identity.** A matching `CheckSum` gives `verified: true`, `identity: "checksum"`; a
-  mismatch reports `build_mismatch`; a zero checksum without size evidence gives
-  `verified: false`, `identity: "unverified"` and a warning; a matching recorded `SizeOfImage`
-  gives `identity: "size"`.
-- **Omission build evidence.** An omission raised after the module was examined carries the same
-  `build` object as an emitted block. The fixture's off-boundary row shows `identity: "checksum"`;
-  a synthetic zero-checksum capture with a differing recorded `SizeOfImage` shows
-  `verified: false`, `identity: "unverified"` and the size-mismatch warning on the
-  `hot_rva_not_instruction_start` row. A `build_mismatch` omission carries the same shape and
-  names the checksum in `detail` and `warning`.
-- **Share.** `instruction_share(3, 60)` is `0.05`, and `instruction_share(3, 0)` is `null`; the
-  fixture's 0x101B instruction has 4 of 10 scoped samples and reports `sample_share` `0.4`. This
-  is the row's fraction and the row's mode-specific meaning, not a percent or a second scale.
-- **IBS tag policy.** The expression is
-  `LEAST(TRY_CAST("IbsTagToRetCtr" AS BIGINT), 65535)` and only a `\s*[0-9]+\s*` cell counts.
-  The clip and mixed-junk arithmetic above remains the evidence: 200000 and 1000 give
-  0.9849703163748403 and 0.01502968362515969; a mixed column excludes `abc`, `1.5`, `-4` and
-  `1e5` rather than charging 65535. IBS values are emitted as AMD-encoded counts or histograms.
-- **`context_help`.** Fixed key order `scope`, `share`, `fields`, `omission_reasons`, `read`,
-  `next`; repeated calls serialize identically; the text contains no `pct` name, no percent
-  scaling and no doubled 16-bit maximum; `row.attribution` and the tag-to-retire reading appear
-  only when the legend carries those columns; every omission reason the code can emit has a
-  meaning; `scope` says the cap counts row slots and an omitted row still consumes one;
-  `instructions` says the text may keep objdump's nearest-symbol decoration and directs readers
-  to `symbol`; `instructions[].ibs` says the values are AMD-encoded, not decoded. Markdown contains
-  no help text.
-- **Document shape.** Key order is `METRIC`, `legend`, `context_help`, `rows`; `context_help`
-  appears exactly once; a document without the feature is unchanged, and Markdown bytes carry no
-  context or help.
+archive copy this wrote 59,243 samples (11,381,666 bytes) in 67.7 s.
 
 ## Historical module scope (not reachable from the current surface)
 
@@ -243,8 +164,8 @@ the same estimator, but no `profile` argument expresses them:
 
 | Scope | Value | Denominator |
 |---|---:|---|
-| full 60 s, `module_name ILIKE '%strata.exe'` | 54.01229618952104 | 1,435,369 samples / 396,354,951,724 ns |
-| 0:10, `module_name ILIKE '%strata.exe'` | 54.88033451498129 | 268,754 samples / 72,566,135,203 ns |
+| full 60 s, `module_name ILIKE '%strata.exe'` | 0.5401229618952104 | 1,435,369 samples / 396,354,951,724 ns |
+| 0:10, `module_name ILIKE '%strata.exe'` | 0.5488033451498129 | 268,754 samples / 72,566,135,203 ns |
 
 Reproduce by running `views.sql` with the same variables and adding
 `AND w.module_name ILIKE '%strata.exe'` to `v_scoped`; reproduced 2026-11-06 with the figures
@@ -252,7 +173,7 @@ above. `--image` is a process-image filter, not a module filter.
 
 ## Window weighting (rejected)
 
-The `D * count / sum(count) over windowId` estimator was removed; do not reintroduce it. Against
+The `D * count / sum(count) over windowId` estimator was removed. Against
 exact DeltaTick gaps on the 60 s capture, the worst per-group share difference was 23.46 pp at
 4–8 ms windows; it reported per-process wall time rather than core time summed over CPUs; and it
 changed the ranking.
@@ -289,7 +210,7 @@ errors; and a recorded `--time-filter 10:12` on a 60 s capture is judged against
 the 2 s width, reporting `OK` with leading 0.300 s and trailing 1.200 s gaps.
 
 The `--by function --time-filter 1:39.5 --image '%storage_test%' --top 25` rows on
-`loop-2mib-swwide` are byte-identical to the pre-change baseline (`baseline-loop2-function.txt`);
+`loop-2mib-swwide` are byte-identical to the pre-change baseline;
 only the SANITY, ACHIEVED and KERNEL_COVERAGE header lines differ. That capture was taken
 unelevated, so its OS-mode request yielded no kernel-image sample.
 
@@ -297,9 +218,7 @@ Anchoring, verified with `uprof.py anchor`: attached BEGIN −0.700 s, system-wi
 system-wide END +40.182 s (the capture starts during the warm-up pass, so the loop's BEGIN precedes
 it by the attach latency).
 
-Achieved rate on the same captures, rerun with the busiest-context check. The per-CPU average
-divides by all 16 dump CPUs, so idle CPUs dilute it; the busiest context is a CPU for a
-system-wide capture and a TID for the attached one:
+Achieved rate on the same captures, rerun with the busiest-context check:
 
 | capture | per-CPU average | busiest context | active contexts |
 |---|---:|---:|---:|
@@ -318,44 +237,26 @@ cadence.
 
 ## Achieved-rate and command-surface evidence (2026-11-07)
 
-The five `profile --by process --top 1` runs above used the translated `-x` copies of the capture
-directories, which hold `cpu.db`; the raw directories hold none. Each printed an ACHIEVED line with
-the rates listed above.
-
 PMC, `knee-2mib-x`, `profile --by process --top 1`:
 
 `ACHIEVED: 181982 samples, 30.058 s, 16 CPUs, 378.40/s per CPU (requested 4700000 cycles at 4700 MHz = 1 ms; ideal 1,000/s per CPU); busiest core 536.16/s; 16 active cores`
 
 `UnifiedSampleSeries` holds 175,260 rows over 16 `coreId` values; the event column sums to 181,982
-samples. The same line appears with `--image '%fold_busy%'`, whose scope matches nothing (the
-separate `WARNING: no samples in the selected scope` remains), because the count is capture-level.
-PMC has no per-sample timestamps, so the busiest core's 536.16/s is the delivered cadence: the
-busiest context's samples divided by the capture window.
+samples.
 
 Translate, on `loop-2mib-ibs` to a new temporary copy:
 
 `translate --session <loop-2mib-ibs> --out-dir <new copy> --ascii ibsop-event-dump` ends with
 `ACHIEVED: 954 samples, 39.682 s, 16 CPUs, 1.50/s per CPU (requested 4700000 cycles at 4700 MHz = 1 ms; ideal 1,000/s per CPU); busiest thread 409/s (median gap 2.44 ms); 1 active thread`.
-Without `--ascii` it prints `ACHIEVED: reported at profile time (translate wrote no dump without
---ascii)`. The line is computed by the same `dump_cadence`/`achieved_summary` functions the
-`profile` run above used on the identical 954-sample dump.
 
 Command surface, recorded 2026-11-07:
 
-- `tools`: `UPROF=...AMDuProfCLI.EXE; version=AMDuProfCLI.exe Version 5.3.521.0`;
-  `DUCKDB=duckdb 2.0.0 (python); version=2.0.0`; symbolizer, pdbutil and readobj
-  `LLVM version 23.1.4`.
 - `collect --dry-run --out-dir <new path>`: `SAMPLE_INTERVAL=1ms -> 4700000 cycles at 4700 MHz
   (source: Windows registry HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\~MHz)`;
   `EVENT=event=CYCLES_NOT_IN_HALT,interval=4700000,user=1,os=1`; `COMMAND=...`; `Elevated=False`;
   `DRYRUN=1`. No capture ran.
 - `schema --session <loop-2mib-swwide-x>`: exit 0, a 151-row live table/column listing over the
   expected tables (`Function`, `Module`, `Process`, `UnifiedSampleSeries`, ...).
-
-Anchor exact values: `loop-2mib-ibs --qpc 42140285053 --freq 10000000` printed
-`RELATIVE_S=-0.699788599`; `loop-2mib-swwide --qpc 43099238262 --freq 10000000` printed
-`RELATIVE_S=-0.150568799`. Without `--freq`, `HZ_SOURCE=default (10 MHz; the session records no QPC
-frequency)`.
 
 ## Kernel-coverage evidence (2026-11-07)
 

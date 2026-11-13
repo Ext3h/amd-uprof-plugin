@@ -35,11 +35,12 @@ from uprof_util import (
     COPY_DIRS,
     DUMP_FILENAMES,
     LinesError,
-    one_line,
     UprofError,
     absolute,
     contains,
     copy_session,
+    inline,
+    one_line,
     parse_time_filter,
     skill_identity,
     tail_lines,
@@ -209,18 +210,44 @@ def find_sibling(symbolizer: Path | None, name: str) -> Path | None:
 LINUX_LLVM_INSTALL: Final = "wget https://apt.llvm.org/llvm.sh && sudo bash llvm.sh 23"
 
 
+_IGNORED_SHOWN: Final = 3
+
+
+def _elevated_lookup_error() -> LinesError:
+    """No admin-writable AMDuProfCLI for an elevated run: the cause, the ignored binaries
+    (bounded) and a runnable unelevated collect."""
+    ignored = [
+        inline(path) for path in (os.environ.get("AMDUPROF_CLI"), _which("AMDuProfCLI")) if path
+    ]
+    named = ""
+    if ignored:
+        more = len(ignored) - _IGNORED_SHOWN
+        named = (
+            f" (ignored: {', '.join(ignored[:_IGNORED_SHOWN])}"
+            + (f" and {more} more" if more > 0 else "")
+            + ")"
+        )
+    default = r"<Program Files>\AMD\AMDuProf\bin" if IS_WINDOWS else "/opt/AMDuProf_<version>/bin"
+    script, script_data = uprof_shell.path_arg(
+        Path(__file__).resolve().parent / "uprof.py", "<UPROF_PY>"
+    )
+    return LinesError(
+        [
+            "AMDuProfCLI not found in an admin-writable install location; an elevated run ignores "
+            f"AMDUPROF_CLI and PATH{named}. Install AMD uProf to its default location ({default}), "
+            "then re-run collect",
+            "ALTERNATIVE: unelevated capture (user-mode samples only; OS-mode and IBS captures need "
+            f"elevation): from an unelevated shell, python {script} collect --out-dir <NEW_OUT_DIR> "
+            "--seconds <S>",
+            script_data or "",
+        ]
+    )
+
+
 def require_uprof() -> Path:
     found = find_uprof()
     if not found and is_admin():
-        ignored = [
-            str(path) for path in (os.environ.get("AMDUPROF_CLI"), _which("AMDuProfCLI")) if path
-        ]
-        named = f" (ignored: {', '.join(ignored)})" if ignored else ""
-        raise UprofError(
-            "AMDuProfCLI not found in an admin-writable install location; an elevated run "
-            f"ignores AMDUPROF_CLI and PATH{named}. Install AMD uProf to its default location, "
-            "or run collect from an unelevated shell, which captures user-mode samples only"
-        )
+        raise _elevated_lookup_error()
     if not found:
         hint = (
             "install AMD uProf, or set AMDUPROF_CLI to AMDuProfCLI.exe"
@@ -350,7 +377,8 @@ def uprof_version_cause(path: Path, version: str | None) -> str | None:
         "AMD uProf",
         "older releases do not write cpu.db as DuckDB by default, which the analysis reads",
         f"install AMD uProf {floor} or later from https://www.amd.com/en/developer/uprof.html, "
-        f"or set AMDUPROF_CLI to an AMDuProfCLI of uProf {floor} or later",
+        f"or set AMDUPROF_CLI to an AMDuProfCLI of uProf {floor} or later (an elevated run "
+        "ignores AMDUPROF_CLI and needs the install in its default location)",
     )
 
 
@@ -836,7 +864,12 @@ def tool_report() -> None:
         )
     missing = []
     if not uprof:
-        missing.append("uProf CLI (install AMD uProf or set AMDUPROF_CLI)")
+        missing.append(
+            "uProf CLI (install AMD uProf to its default location; an elevated "
+            "run ignores AMDUPROF_CLI and PATH)"
+            if is_admin()
+            else "uProf CLI (install AMD uProf or set AMDUPROF_CLI)"
+        )
     if not duckdb_version:
         missing.append(duckdb_hint)
     if not symbolizer:

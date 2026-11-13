@@ -272,14 +272,10 @@ def failure(
     """An unsupported case: the cause, then one runnable ALTERNATIVE line per applicable option.
 
     The tool never switches capture or analysis mode on its own, so the caller chooses. Lines are
-    sorted by label without a default; each chain is complete, fills in only the resolved
-    AMDuProfCLI, this skill's uprof.py and the failing session, and keeps the rest as
-    <PLACEHOLDER>, so an option is the same text wherever it is offered.
+    sorted by label without a default; each chain is complete, fills in only this skill's uprof.py
+    and the failing session, and keeps the rest as <PLACEHOLDER>, so an option is the same text
+    wherever it is offered.
     """
-    found = find_uprof()
-    cli, cli_data = (
-        uprof_shell.path_arg(found, "<AMDUPROFCLI>") if found else ("<AMDUPROFCLI>", None)
-    )
     script, script_data = uprof_shell.path_arg(
         Path(__file__).resolve().parent / "uprof.py", "<UPROF_PY>"
     )
@@ -320,7 +316,7 @@ def failure(
         f"ALTERNATIVE: {label}: {chains[label]}" for label in sorted(set(labels), key=str.lower)
     ]
     # A path that is not plain is a placeholder in the commands and named here as data only.
-    lines += [data for data in (cli_data, script_data, known_data) if data]
+    lines += [data for data in (script_data, known_data) if data]
     return LinesError(lines)
 
 

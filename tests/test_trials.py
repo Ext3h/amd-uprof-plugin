@@ -152,6 +152,11 @@ class CatalogueTest(unittest.TestCase):
         self.assertIn("fewer than 50,000 tokens", section)
         self.assertIn("system prompt", section)
         self.assertIn("not measured", section)
+        flat = " ".join(section.split())
+        self.assertIn("a defect ceiling, not a target", flat)
+        # The catalogue stays harness-neutral; how a harness's usage report adds up is the
+        # runner's business.
+        self.assertNotIn("cache-read", flat)
 
     def test_every_call_parses_with_the_current_cli(self):
         parser = uprof.build_parser()

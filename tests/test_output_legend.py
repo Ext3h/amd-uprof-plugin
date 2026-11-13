@@ -831,5 +831,77 @@ class OutputLegendTest(unittest.TestCase):
         self.assertEqual(first["rows"], second["rows"])
 
 
+# The definition before #96 (22 words); the system-module flag text may add at most 4.
+OLD_SYSTEM_MODULE = (
+    "Module.isSystemModule: true = OS-shipped module, false = not OS-shipped; "
+    "NULL when uncataloged, a remainder row, or an ambiguous basename whose versions disagree"
+)
+
+
+class SystemModuleDefinitionTest(unittest.TestCase):
+    """isSystemModule is uProf's system-module flag, which also marks some vendor drivers."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "trials"))
+        import build_captures
+
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.session = build_captures.build(Path(cls.tmp.name) / "c", ["attached"])["attached"]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def check(self, text: str):
+        self.assertIn("system-module flag", text)
+        self.assertIn("OS components and some vendor drivers", text)
+        self.assertIn("false = third-party", text)
+        self.assertNotIn("OS-shipped", text)
+        self.assertLessEqual(len(text.split()), len(OLD_SYSTEM_MODULE.split()) + 4)
+
+    def profile(self, by, *extra):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(self.session),
+                "--by",
+                by,
+                *extra,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def check_views(self, views):
+        for by in views:
+            with self.subTest(view=by):
+                definition = json.loads(self.profile(by, "--json"))["legend"]["columns"][
+                    "isSystemModule"
+                ]
+                self.check(definition)
+                columns = next(
+                    line for line in self.profile(by).splitlines() if line.startswith("COLUMNS: ")
+                )
+                self.assertIn(f"isSystemModule = {definition}", columns)
+
+    def test_module_view_defines_the_flag(self):
+        self.check_views(["module"])
+
+    def test_symbolizing_views_define_the_flag(self):
+        import debug_fixtures
+
+        if debug_fixtures.READOBJ is None:
+            self.skipTest("missing llvm-readobj; install LLVM")
+        self.check_views(["function", "region"])
+
+
 if __name__ == "__main__":
     unittest.main()

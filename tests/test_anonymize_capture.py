@@ -221,10 +221,15 @@ class AnonymizeCaptureTest(unittest.TestCase):
             self.assertIn(needed, columns)
 
     def test_a_host_string_in_the_dump_fails_the_run(self):
+        # A host string in a column the handover keeps must fail the scan.
         dump = self.session / "IbsOpDump.csv"
         lines = dump.read_text(encoding="utf-8").splitlines()
-        dump.write_text("\n".join([lines[0] + ",Host"] + [f"{line},{HOST}" for line in lines[1:]])
-                        + "\n", encoding="utf-8")
+        index = lines[0].split(",").index("DataSrc")
+        rows = [line.split(",") for line in lines[1:]]
+        for row in rows:
+            row[index] = HOST
+        dump.write_text("\n".join([lines[0]] + [",".join(row) for row in rows]) + "\n",
+                        encoding="utf-8")
         code, stderr = self.run_main()
         self.assertEqual(code, 1, stderr)
         self.assertIn(HOST, stderr)

@@ -40,6 +40,12 @@ UNRESOLVED_STOP = ("unresolved samples are covered by derived function ranges: u
                    "function, which derives boundaries from the binary (.pdata, PE exports, PDB "
                    "publics) with LLVM; do not write a PE parser, map .pdata by hand or "
                    "disassemble")
+NO_NAMED_PROCESS_STOP = (
+    "a module with no source names is covered by derived function ranges: use profile --by "
+    "module; do not write a PE parser, map .pdata by hand or disassemble")
+UNRESOLVED_PROCESS_STOP = (
+    "unresolved samples are covered by derived function ranges: use profile --by module; "
+    "do not write a PE parser, map .pdata by hand or disassemble")
 
 
 def _dump_rows():
@@ -164,6 +170,15 @@ class SymbolCoverageTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("SYMBOL_COVERAGE: 6/12 samples (50.0%) resolve to a named function;",
                       result.stdout)
+        self.assertIn(
+            f"{NO_STRINGS} 3/3 (100.0% no source names (derived ranges available in --by function))",
+            result.stdout)
+        self.assertIn(f"{PARTIAL} 1/3 (33.3% unresolved, partial)", result.stdout)
+        self.assertIn(
+            f"{UNKNOWN} 2/2 (100.0% no source names (derived ranges available in --by function))",
+            result.stdout)
+        self.assertIn(NO_NAMED_PROCESS_STOP, result.stdout)
+        self.assertNotIn("use profile --by function", result.stdout)
 
     def test_coverage_is_deterministic(self):
         self.assertEqual(self.coverage(), self.coverage())
@@ -270,6 +285,38 @@ class CoverageChannelsTest(unittest.TestCase):
         self.assertEqual(entry["profile_symbolizer"]["unresolved_samples"], 0)
         self.assertEqual(entry["profile_symbolizer"]["scoped_samples"], 5575)
         self.assertTrue(entry["rows_drillable"])
+
+    def test_process_scope_points_stop_at_module_and_describes_no_source_names(self):
+        text = uprof_query._coverage_field(
+            None, {}, None, False, [],
+            _coverage([_unresolved_row("a.dll", 10, 0)], 10, 0),
+            by="process")[0][1]
+
+        self.assertIn("0/10 samples (0.0%) resolve to a named function", text)
+        self.assertIn("a.dll 10/10 (100.0% no source names (derived ranges available in --by function))", text)
+        self.assertIn(NO_NAMED_PROCESS_STOP, text)
+        self.assertNotIn("use profile --by function", text)
+
+    def test_process_scope_unresolved_stop_when_all_modules_partial(self):
+        text = uprof_query._coverage_field(
+            None, {}, None, False, [],
+            _coverage([_unresolved_row("a.dll", 10, 5)], 10, 5),
+            by="process")[0][1]
+
+        self.assertIn("5/10 samples (50.0%) resolve to a named function", text)
+        self.assertIn("a.dll 5/10 (50.0% unresolved, partial)", text)
+        self.assertIn(UNRESOLVED_PROCESS_STOP, text)
+        self.assertNotIn("use profile --by function", text)
+
+    def test_module_scope_keeps_function_stop(self):
+        text = uprof_query._coverage_field(
+            None, {}, None, False, [],
+            _coverage([_unresolved_row("a.dll", 10, 0)], 10, 0),
+            by="module")[0][1]
+
+        self.assertIn("a.dll 10/10 (100.0% unresolved, no source names)", text)
+        self.assertIn(NO_NAMED_STOP, text)
+        self.assertIn("use profile --by function", text)
 
 
 if __name__ == "__main__":

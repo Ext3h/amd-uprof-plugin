@@ -618,6 +618,12 @@ _UNRESOLVED_FUNCTION_STOP: Final = (
     "unresolved samples are covered by derived function ranges: use profile --by function, which "
     "derives boundaries from the binary (.pdata, PE exports, PDB publics) with LLVM; do not write "
     "a PE parser, map .pdata by hand or disassemble")
+_NO_NAMED_PROCESS_STOP: Final = (
+    "a module with no source names is covered by derived function ranges: use profile --by "
+    "module; do not write a PE parser, map .pdata by hand or disassemble")
+_UNRESOLVED_PROCESS_STOP: Final = (
+    "unresolved samples are covered by derived function ranges: use profile --by module; "
+    "do not write a PE parser, map .pdata by hand or disassemble")
 _RANGE_UNRESOLVED_STOP: Final = (
     "no named or derived range covers these samples; function_reason and "
     "legend.function_ranges.absent_by_module name why, and --by region is the page fallback "
@@ -1653,7 +1659,10 @@ def _coverage_field(connection: object,
         reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
         if reasons:
             text += f"; cause by module: {'; '.join(reasons)}"
-        stop = _NO_NAMED_FUNCTION_STOP if resolved == 0 else _UNRESOLVED_FUNCTION_STOP
+        if by == "process":
+            stop = _NO_NAMED_PROCESS_STOP if resolved == 0 else _UNRESOLVED_PROCESS_STOP
+        else:
+            stop = _NO_NAMED_FUNCTION_STOP if resolved == 0 else _UNRESOLVED_FUNCTION_STOP
         return [("SYMBOL_COVERAGE", f"{text}; {stop}{_SYMBOL_PATH_REMEDY}")]
     unresolved = [value for value in values
                   if int(value["samples"]) > int(value["named_samples"])]
@@ -1667,12 +1676,22 @@ def _coverage_field(connection: object,
         share = 100.0 * (samples - named_samples) / samples
         cause = (causes or {}).get(value["module_name"])
         reason = f"; cause: {cause}" if cause else ""
-        parts.append(f"{value['module_name']} {samples - named_samples}/{samples} "
-                     f"({share:.1f}% unresolved, {kind}{reason})")
+        if by == "process" and named_samples == 0:
+            parts.append(
+                f"{value['module_name']} {samples - named_samples}/{samples} "
+                f"({share:.1f}% no source names (derived ranges available in --by function){reason})")
+        else:
+            parts.append(f"{value['module_name']} {samples - named_samples}/{samples} "
+                         f"({share:.1f}% unresolved, {kind}{reason})")
     # A module with no names at all is the case that provokes a manual PE/.pdata mapping.
-    stop = (_NO_NAMED_FUNCTION_STOP
-            if any(int(value["named_samples"]) == 0 for value in unresolved)
-            else _UNRESOLVED_FUNCTION_STOP)
+    if by == "process":
+        stop = (_NO_NAMED_PROCESS_STOP
+                if any(int(value["named_samples"]) == 0 for value in unresolved)
+                else _UNRESOLVED_PROCESS_STOP)
+    else:
+        stop = (_NO_NAMED_FUNCTION_STOP
+                if any(int(value["named_samples"]) == 0 for value in unresolved)
+                else _UNRESOLVED_FUNCTION_STOP)
     remedy = _SYMBOL_PATH_REMEDY if causes else ""
     return [("SYMBOL_COVERAGE",
              f"{db_text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")]

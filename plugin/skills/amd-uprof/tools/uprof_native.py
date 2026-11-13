@@ -16,7 +16,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -355,6 +355,10 @@ def tool_operand(path: str | os.PathLike[str]) -> str:
     return os.path.abspath(os.fspath(path))
 
 
+class ToolTimeout(UprofError):
+    """An external tool did not finish within its timeout."""
+
+
 def run(
     command: Sequence[str],
     timeout: int | None = None,
@@ -377,7 +381,7 @@ def run(
     except FileNotFoundError as exc:
         raise UprofError(f"cannot run {command[0]}: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise UprofError(f"{Path(command[0]).name} timed out after {timeout}s") from exc
+        raise ToolTimeout(f"{Path(command[0]).name} timed out after {timeout}s") from exc
 
 
 def print_output(completed: subprocess.CompletedProcess[str]) -> None:
@@ -811,6 +815,18 @@ def translate_command(
     return command
 
 
+def _dump_rows(reader: Iterable[list[str]], path: Path) -> Iterator[list[str]]:
+    """The dump's rows; a cell above csv's field limit is no uProf dump cell and fails with its
+    cause."""
+    try:
+        yield from reader
+    except csv.Error as exc:
+        raise UprofError(
+            f"{path} is not a uProf ASCII dump ({exc}); regenerate it with "
+            "translate --ascii or remove it so profile generates one"
+        ) from exc
+
+
 def dump_cadence(
     path: Path, context_key: str | tuple[str, ...] = "CPU_Number", gap_limit_ns: float | None = None
 ) -> tuple[int, int, list[ContextCadence]]:
@@ -841,7 +857,7 @@ def dump_cadence(
             if all(key in header for key in keys)
             else [cpu_index]
         )
-        for row in reader:
+        for row in _dump_rows(reader, path):
             if not row:
                 continue
             samples += 1

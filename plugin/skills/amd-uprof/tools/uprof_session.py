@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from uprof_util import UprofError
+from uprof_util import UprofError, check_session_meta_size
 
 PMC_EVENT = "event#0x3000076"
 IBS_OP_EVENT = "event#0x100000000f100"
@@ -72,6 +72,7 @@ _RUN_GAP_FACTOR = 10.0
 
 def read_meta(session_dir: Path | str) -> dict[str, Any] | None:
     path = Path(session_dir) / "session.uprof"
+    check_session_meta_size(path)
     try:
         with open(path, "r", encoding="utf-8-sig") as handle:
             return json.load(handle)

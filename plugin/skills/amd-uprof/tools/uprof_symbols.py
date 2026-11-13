@@ -27,9 +27,18 @@ from uprof_native import (
     require_symbolizer,
     run,
     symbol_cache_dir,
+    ToolTimeout,
     tool_operand,
 )
-from uprof_util import UprofError, absolute, read_text, require_file, same_path, tail_lines
+from uprof_util import (
+    UprofError,
+    absolute,
+    check_session_meta_size,
+    read_text,
+    require_file,
+    same_path,
+    tail_lines,
+)
 
 _GUID = re.compile(r"^\s*GUID:\s*(.+)$")
 _AGE = re.compile(r"^\s*Age:\s*(\d+)")
@@ -46,6 +55,9 @@ _PUBLIC_ADDRESS = re.compile(r"flags\s*=\s*([^,]*),\s*addr\s*=\s*(\d+):(\d+)")
 _PUBLICS_MARKER = re.compile(r"^\s*Public Symbols\s*$", re.MULTILINE)
 
 PDB_PROBE_TIMEOUT: Final = 5 * 60
+# One module's symbolizer pass. Measured: 0.09 s for the slowest module of a 34-module real-size
+# capture, 4.1 s for 5000 addresses in a 1.3 GB PDB; a pass beyond ten minutes is not a real one.
+SYMBOLIZER_TIMEOUT: Final = 10 * 60
 # Module work is native-tool and DuckDB bound and releases the GIL, so a small fixed pool stops
 # short of oversubscribing instead of scaling with the module count.
 MAX_SYMBOLIZATION_WORKERS: Final = 8
@@ -391,6 +403,8 @@ def symbol_stores(session: str | Path | None) -> list[Path]:
     recorded in session.uprof, by default the user's symbol cache. Existing directories only.
     """
     try:
+        if session:
+            check_session_meta_size(Path(session) / "session.uprof")
         meta = json.loads(read_text(Path(session) / "session.uprof")) if session else None
     except (UprofError, ValueError):
         meta = None
@@ -560,7 +574,14 @@ def _run_symbolizer(
         "--inlines",
         "--output-style=JSON",
     ]
-    completed = run(command, input_text=read_text(rva_file), timeout=4 * 60 * 60)
+    try:
+        completed = run(command, input_text=read_text(rva_file), timeout=SYMBOLIZER_TIMEOUT)
+    except ToolTimeout as exc:
+        raise UprofError(
+            f"llvm-symbolizer did not finish {exe} within {SYMBOLIZER_TIMEOUT} s, "
+            "far beyond any real PDB measured; run profile --by module, which needs "
+            "no symbols, or pass --image-path naming a different build"
+        ) from exc
     records, empty_records = _symbol_record_stats(completed.stdout or "")
     run_result = SymbolizerRun(
         completed.returncode,

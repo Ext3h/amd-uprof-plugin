@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
@@ -167,15 +168,21 @@ def write_payload(text: str, out_path: Path | None) -> None:
 
 
 def _write_file(data: bytes, out_path: Path) -> None:
-    """Write through a temporary file so a partial table never replaces the destination."""
-    temp_path = out_path.with_name(out_path.name + ".tmp")
+    """Write through a new temporary file so a partial table never replaces the destination.
+
+    The temporary file is created exclusively under a unique name, so a link planted beside the
+    destination is never written through and concurrent runs never share one.
+    """
+    temp_path: Path | None = None
     try:
-        with open(temp_path, "wb") as handle:
-            handle.write(data)
+        handle, name = tempfile.mkstemp(
+            prefix=f".{out_path.name}-", suffix=".tmp", dir=out_path.parent
+        )
+        temp_path = Path(name)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data)
         os.replace(temp_path, out_path)
     except OSError as exc:
-        try:
-            temp_path.unlink()
-        except OSError:
-            pass
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
         raise UprofError(f"cannot write {out_path}: {exc}") from exc

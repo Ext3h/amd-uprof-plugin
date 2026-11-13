@@ -539,6 +539,33 @@ def recapture_commands(session: Path) -> tuple[str, str, str | None]:
     return cycles, cycles + " --event ibs-op", data
 
 
+def translate_timeout(session: Path, out: Path, servers: Sequence[str]) -> str:
+    """The cause and a runnable alternative for a translate stopped at TRANSLATE_TIMEOUT.
+
+    AMDuProfCLI fetches symbols during translate from the servers it is given and from the
+    shares in the caller's _NT_SYMBOL_PATH, and a slow or unreachable one stalls it with no
+    output. profile symbolizes from local stores, so a translate without network symbol sources
+    loses no row the skill reports.
+    """
+    script, script_data = uprof_shell.path_arg(
+        Path(__file__).resolve().with_name("uprof.py"), "<UPROF_PY>"
+    )
+    session_arg, session_data = uprof_shell.path_arg(session, "<SESSION_DIR>")
+    out_arg, out_data = uprof_shell.path_arg(out, "<OUT_DIR>")
+    sources = " | ".join(servers) or "none passed"
+    lines = [
+        f"translate did not finish within {TRANSLATE_TIMEOUT // 60} min and was stopped: a slow "
+        "or unreachable symbol server or share is the usual cause, since AMDuProfCLI fetches "
+        f"symbols during translate (symbol servers: {sources}; and the shares in "
+        "_NT_SYMBOL_PATH)",
+        f"ALTERNATIVE: local symbols only: python {script} translate --session {session_arg} "
+        f"--out-dir {out_arg} --force",
+        "run it with _NT_SYMBOL_PATH unset or set to a local folder only",
+    ]
+    lines += [data for data in (script_data, session_data, out_data) if data]
+    return "\n".join(lines)
+
+
 def translate_failure(
     what: str, completed: subprocess.CompletedProcess[str], log: CliLog, session: Path
 ) -> LinesError:
@@ -1160,7 +1187,10 @@ def translate(
     )
 
     log = CliLog()
-    completed = run(command, timeout=TRANSLATE_TIMEOUT)
+    try:
+        completed = run(command, timeout=TRANSLATE_TIMEOUT)
+    except ToolTimeout:
+        raise UprofError(translate_timeout(session, out, servers)) from None
     print_output(completed)
     if completed.returncode != 0:
         raise translate_failure("translate", completed, log, session)

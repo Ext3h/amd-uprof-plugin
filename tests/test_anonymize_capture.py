@@ -224,6 +224,33 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertEqual(ibs[ibs.index("--ascii") + 1], "ibsop-event-dump")
         self.assertNotIn("--ascii", timer)
 
+    def test_the_capture_set_samples_coarsely_by_default_and_options_override_it(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        def commands(settings):
+            with mock.patch.object(record.subprocess, "run") as run:
+                run.return_value = mock.Mock(returncode=0, stdout="SESSION=x\n", stderr="")
+                for mode in ("timer", "ibs", "pmc"):
+                    record.collect(mode, self.out / mode, settings)
+            return [call.args[0] for call in run.call_args_list]
+
+        timer, ibs, pmc = commands(record.Settings())
+        self.assertIn("event=timer,interval=4", timer)
+        self.assertEqual(timer[timer.index("-d") + 1], "2")
+        self.assertEqual(ibs[ibs.index("--sample-interval") + 1], "16000000")
+        self.assertEqual(ibs[ibs.index("--seconds") + 1], "2")
+        self.assertEqual(pmc[pmc.index("--sample-interval") + 1], "4ms")
+        self.assertEqual(record.Settings().stressors, 15)
+        settings = record.settings_from(record.parser().parse_args(
+            ["b", "r", "--seconds", "1", "--ibs-interval", "4000000", "--timer-ms", "10",
+             "--stressors", "8"]))
+        timer, ibs, _pmc = commands(settings)
+        self.assertIn("event=timer,interval=10", timer)
+        self.assertEqual(ibs[ibs.index("--sample-interval") + 1], "4000000")
+        self.assertEqual(ibs[ibs.index("--seconds") + 1], "1")
+        self.assertEqual(settings.stressors, 8)
+
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

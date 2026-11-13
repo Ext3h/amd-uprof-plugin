@@ -42,7 +42,7 @@ pdb=none
 outcome=resolved
 0x1370 <none> <no file>:0
 ## profile.line
-symbol_coverage=0/1 samples (0.0%) resolve to a named function; unresolved by module: <FIXTURES>/elf/fixture_nosym 1/1 (100.0% unresolved, no source names); a module with no source names is covered by derived function ranges: use profile --by function, which derives boundaries from the binary (.pdata, PE exports, PDB publics) with LLVM; do not write a PE parser, map .pdata by hand or disassemble
+symbol_coverage=uProf DB 0/1 samples (0.0%) resolve to a named function; profile symbolizer 0/1 samples (0.0%) resolve below module/RVA; a module with no source names is covered by derived function ranges: use profile --by function, which derives boundaries from the binary (.pdata, PE exports, PDB publics) with LLVM; do not write a PE parser, map .pdata by hand or disassemble; remedy: pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, or --image-path <file|dir> when the module image is not at its recorded path, or place the module's debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent PDB, the recorded CodeView path or the skill's local srv* cache scan is searched
 WARNING: cannot build the Parquet dump copy for <SESSION_ROOT>/session/IbsOpDump.csv; reading the CSV
 WARNING: session cache: disabled (the capture records no image size/checksum/bitness columns, so module version identity cannot be verified and the session cache is disabled); profiling without the cache
 line module=fixture_nosym function=<no symbol> file=<no symbol> line=0 samples=1 attribution=unresolved

@@ -16,7 +16,9 @@ import statistics
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable, Iterator, Sequence
+import threading
+import time
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -48,6 +50,14 @@ from uprof_util import (
 
 IS_WINDOWS = os.name == "nt"
 TRANSLATE_TIMEOUT: Final = 4 * 60 * 60
+# translate is stopped when AMDuProfCLI's log, the out-dir and the symbol cache all stop changing
+# for TRANSLATE_STALL: a slow or unreachable symbol source stalls it silently. Measured on healthy
+# translates of a 30 s system-wide capture with the Microsoft server: a cold symbol cache took 22
+# to 31 min, and the three signals together never paused longer than 72 s (the log alone paused
+# for 12 min while symbols downloaded). A wall-clock bound alone cannot tell a hang from a long
+# download, so TRANSLATE_CEILING (about three times the cold time) is only a backstop.
+TRANSLATE_STALL: Final = 10 * 60
+TRANSLATE_CEILING: Final = 95 * 60
 TRANSLATE_OUTPUTS: Final = ("cpu.db", "callstack.db", *DUMP_FILENAMES.values())
 # Oldest releases the tools work with: uProf 5.3 writes cpu.db as DuckDB by default (older
 # releases write SQLite), and LLVM 23 added llvm-symbolizer --pdb and llvm-objdump
@@ -467,6 +477,91 @@ def run(
         raise ToolTimeout(f"{Path(command[0]).name} timed out after {timeout}s") from exc
 
 
+class ToolStalled(UprofError):
+    """A native tool was stopped because its progress signal stopped changing."""
+
+
+def _stop_tree(process: subprocess.Popen[str]) -> None:
+    """Stop process and every process it started."""
+    if IS_WINDOWS:
+        try:
+            subprocess.run(
+                [str(_system_directory() / "taskkill.exe"), "/T", "/F", "/PID", str(process.pid)],
+                capture_output=True,
+                timeout=60,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, UprofError, subprocess.SubprocessError):
+            pass
+    if process.poll() is None:
+        process.kill()
+    process.wait()
+
+
+def run_watched(
+    command: Sequence[str],
+    *,
+    progress: Callable[[], object],
+    stall_s: float,
+    ceiling_s: float,
+    poll_s: float = 5.0,
+) -> subprocess.CompletedProcess[str]:
+    """Run a native tool that may hang without output; stop it when it makes no progress.
+
+    progress returns a value that changes while the tool works (file sizes, for example); new
+    stdout or stderr text counts as progress too. When neither changes for stall_s seconds the
+    tool and its children are stopped and ToolStalled is raised; past ceiling_s in total,
+    ToolTimeout. Output is read while the tool runs, so a full pipe cannot block it.
+    """
+    kwargs: dict[str, object] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    if IS_WINDOWS:
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        process = subprocess.Popen(command, **kwargs)
+    except FileNotFoundError as exc:
+        raise UprofError(f"cannot run {command[0]}: {exc}") from exc
+    streams: dict[str, list[str]] = {"stdout": [], "stderr": []}
+
+    def read(name: str) -> None:
+        for line in getattr(process, name):
+            streams[name].append(line)
+
+    readers = [threading.Thread(target=read, args=(name,), daemon=True) for name in streams]
+    for reader in readers:
+        reader.start()
+    started = last_change = time.monotonic()
+    last = (progress(), 0)
+    name = Path(command[0]).name
+    try:
+        while process.poll() is None:
+            time.sleep(poll_s)
+            now = time.monotonic()
+            current = (progress(), sum(len(lines) for lines in streams.values()))
+            if current != last:
+                last, last_change = current, now
+            if now - started > ceiling_s:
+                _stop_tree(process)
+                raise ToolTimeout(f"{name} did not finish within {ceiling_s:g}s")
+            if now - last_change > stall_s:
+                _stop_tree(process)
+                raise ToolStalled(f"{name} made no progress for {stall_s:g}s")
+    except BaseException:
+        if process.poll() is None:
+            _stop_tree(process)
+        raise
+    for reader in readers:
+        reader.join(timeout=10)
+    return subprocess.CompletedProcess(
+        command, process.returncode, "".join(streams["stdout"]), "".join(streams["stderr"])
+    )
+
+
 def print_output(completed: subprocess.CompletedProcess[str]) -> None:
     if completed.stdout:
         print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
@@ -511,6 +606,16 @@ class CliLog:
         )
         return sorted({path for root in roots for path in root.glob("*-AMDuProfCLI.log")})
 
+    def sizes_now(self) -> list[int]:
+        """The current size of every CLI log, so a caller can tell whether the CLI wrote."""
+        sizes = []
+        for path in self._logs():
+            try:
+                sizes.append(path.stat().st_size)
+            except OSError:
+                sizes.append(-1)
+        return sizes
+
     def appended(self) -> tuple[Path | None, str]:
         """The log that grew during the run and the text it gained (bounded to its tail)."""
         for path in self._logs():
@@ -539,8 +644,8 @@ def recapture_commands(session: Path) -> tuple[str, str, str | None]:
     return cycles, cycles + " --event ibs-op", data
 
 
-def translate_timeout(session: Path, out: Path, servers: Sequence[str]) -> str:
-    """The cause and a runnable alternative for a translate stopped at TRANSLATE_TIMEOUT.
+def translate_stopped(session: Path, out: Path, servers: Sequence[str], stalled: bool) -> str:
+    """The cause and a runnable alternative for a translate stopped by its stall or ceiling bound.
 
     AMDuProfCLI fetches symbols during translate from the servers it is given and from the
     shares in the caller's _NT_SYMBOL_PATH, and a slow or unreachable one stalls it with no
@@ -553,17 +658,34 @@ def translate_timeout(session: Path, out: Path, servers: Sequence[str]) -> str:
     session_arg, session_data = uprof_shell.path_arg(session, "<SESSION_DIR>")
     out_arg, out_data = uprof_shell.path_arg(out, "<OUT_DIR>")
     sources = " | ".join(servers) or "none passed"
+    stop = (
+        f"translate made no progress for {TRANSLATE_STALL // 60} min (AMDuProfCLI's log, "
+        "the out-dir and the symbol cache stopped changing)"
+        if stalled
+        else f"translate did not finish within {TRANSLATE_CEILING // 60} min"
+    )
     lines = [
-        f"translate did not finish within {TRANSLATE_TIMEOUT // 60} min and was stopped: a slow "
-        "or unreachable symbol server or share is the usual cause, since AMDuProfCLI fetches "
-        f"symbols during translate (symbol servers: {sources}; and the shares in "
-        "_NT_SYMBOL_PATH)",
+        f"{stop} and was stopped: a slow or unreachable symbol server or share is the usual "
+        f"cause, since AMDuProfCLI fetches symbols during translate (symbol servers: {sources}; "
+        "and the shares in _NT_SYMBOL_PATH)",
         f"ALTERNATIVE: local symbols only: python {script} translate --session {session_arg} "
         f"--out-dir {out_arg} --force",
         "run it with _NT_SYMBOL_PATH unset or set to a local folder only",
     ]
     lines += [data for data in (script_data, session_data, out_data) if data]
     return "\n".join(lines)
+
+
+def _tree_size(root: Path) -> int:
+    """Total bytes of the files under root; 0 when it cannot be read."""
+    total = 0
+    for base, _dirs, files in os.walk(root):
+        for name in files:
+            try:
+                total += os.stat(os.path.join(base, name)).st_size
+            except OSError:
+                pass
+    return total
 
 
 def translate_failure(
@@ -1187,10 +1309,19 @@ def translate(
     )
 
     log = CliLog()
+    cache_dir = Path(cache)
+
+    def progress() -> tuple[object, ...]:
+        return (tuple(log.sizes_now()), _tree_size(out), _tree_size(cache_dir))
+
     try:
-        completed = run(command, timeout=TRANSLATE_TIMEOUT)
+        completed = run_watched(
+            command, progress=progress, stall_s=TRANSLATE_STALL, ceiling_s=TRANSLATE_CEILING
+        )
+    except ToolStalled:
+        raise UprofError(translate_stopped(session, out, servers, stalled=True)) from None
     except ToolTimeout:
-        raise UprofError(translate_timeout(session, out, servers)) from None
+        raise UprofError(translate_stopped(session, out, servers, stalled=False)) from None
     print_output(completed)
     if completed.returncode != 0:
         raise translate_failure("translate", completed, log, session)

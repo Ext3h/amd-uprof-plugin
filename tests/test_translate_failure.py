@@ -62,7 +62,7 @@ class TranslateFailureTest(unittest.TestCase):
     def translate(self, appended):
         with (
             mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
-            mock.patch.object(uprof_native, "run", side_effect=self.crashing_run(appended)),
+            mock.patch.object(uprof_native, "run_watched", side_effect=self.crashing_run(appended)),
             contextlib.redirect_stdout(io.StringIO()),
             self.assertRaises(UprofError) as caught,
         ):

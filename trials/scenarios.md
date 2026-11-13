@@ -4,24 +4,32 @@ Typical profiling questions, each with its input, the correct actionable answer 
 tool calls that reach it. A trial gives an agent on a small, fast model only the question and the
 installed plugin, then compares its calls and answer with this catalogue.
 
-`tests/test_trials.py` checks the catalogue: every scenario has its fields, every call parses with
-the current `uprof.py`, and every session it names is one `build_captures.py` writes.
+`tests/test_trials.py` checks the catalogue: every scenario has its fields and every answer part,
+every call parses with the current `uprof.py`, every session it names is one `build_captures.py`
+writes, and the key shares quoted for SCN-02 and SCN-09 are what the tools print for the built
+captures.
 
 ## Conventions
 
 - Scenario IDs `SCN-nn` are stable. A dropped scenario's ID is retired, never reused.
+  Retired IDs: none.
 - **Session**: the `build_captures.py` session the scenario runs on, or `none` with the reason.
   The sessions are synthetic: they exercise the tools' code paths, not real capture statistics.
 - **Question**: the prompt, phrased as a user would write it. `<CAPTURE>` is the session
   directory; `<BEFORE>`/`<AFTER>` are two sessions, `<PDB_DIR>` and `<IMAGE_DIR>` the folders
   the user names.
+- **Answer**: the five parts of the answer contract below; a part that cannot apply says `n/a`
+  and why. A scenario recorded in `examples/` takes that example's expected answer instead. A
+  scenario without a session gives the parts' shape; its values need a capture.
 - **Minimal calls**: the `uprof.py` calls in order. Loading the skill and the final write-up are
   not counted. `<SKILL_DIR>` is the installed skill; `<OWN_MODULE>` is the module cell the
   previous call printed for the user's own image. A scenario that is not answerable today says
   `none` and why.
 - **Known gaps**: open issues the answer must state rather than paper over.
-- `cpu_seconds` is samples × interval / the analysing host's core frequency, so its value differs
-  between hosts; shares and sample counts do not.
+- `cpu_seconds` is samples × the sampling interval / the analysing host's core frequency, so its
+  value differs between hosts; shares and sample counts do not. The IBS sessions sample every
+  4,700,000 cycles.
+- ± is the relative error 1/√samples.
 
 ## Answer contract
 
@@ -45,8 +53,8 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 |---|---|
 | `attached` | attached cycle-controlled IBS OP, process `storage_test.exe` PID 3112, 97 samples. Modules: own `fixture_full.exe` with its PDB beside it (12 samples); `amdvlk64.dll`, system flag, no PDB (60); `ntdll.dll`, system flag, names recorded by uProf (20); `vendorlib.dll`, recorded path not on this host (5) |
 | `attached_after` | `attached` with the own module cut to a third (12 → 4 samples) |
-| `pdb_far` | the own exe with its PDB in `bins/pdbs`, not beside it |
-| `systemwide` | `attached` plus `node.exe` PID 4242 (80 samples), system-wide |
+| `pdb_far` | the own exe with its PDB in `bins/pdbs`, not beside it; 30 samples, 25 in the own exe |
+| `systemwide` | `attached` plus `node.exe` PID 4242 (80 samples), system-wide, 177 samples |
 | `opcount` | `attached` with op-count IBS (dispatched ops per sample) |
 | `pmc` | `attached` as a PMC `CYCLES_NOT_IN_HALT` capture without an IBS dump |
 | `timer` | the committed real timer capture of `heap_churn.exe` (see `examples/timer-heap-churn`); image and PDB in `bins/timer` |
@@ -55,7 +63,7 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** none (the 954-sample IBS capture of `examples/ibs-trial-9` is not published)
 - **Question:** "Where did my app's CPU time go? What are the hottest functions? The capture is in `<CAPTURE>`."
-- **Answer:** as recorded in `examples/ibs-trial-9`: the vendor driver `amdvlk64.dll` (system-flagged, outside) carries 51.78%; own `storage_test.exe` 8.70%; the hottest own range is derived (`pdata_…`), never called unresolved; user-mode only; `cpu_seconds` per row.
+- **Answer:** the expected answer recorded in `examples/ibs-trial-9`.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
@@ -64,7 +72,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`
 - **Question:** "My frame loop is slow. I attached AMD uProf (IBS) to my app storage_test.exe; the capture is in `<CAPTURE>`. My own code is fixture_full.exe. How much of the CPU time is mine versus the Vulkan driver (amdvlk64.dll) and ntdll, and what in my code is hot?"
-- **Answer:** outside total kept unshrunk: `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `vendorlib.dll` 0.052; user-mode only (`KERNEL_COVERAGE`) and CPU time, not frame time. Own `fixture_full.exe` 0.124 (12 samples, ±29%). Own hot function `fixture_entry`, hot RVA 0x1018, 9 samples (±33%). Which own call sites lead into the driver is not answerable (caller paths).
+- **Answer:**
+  - **Location:** own hot function `fixture_entry` in `fixture_full.exe`, hot RVA 0x1018.
+  - **Proof:** 9 samples at 0x1018, `attribution` unique, named by uProf and by the PDB beside the exe; cycle-controlled IBS OP sampler; outside modules: `amdvlk64.dll` 0.619 (60 samples), `ntdll.dll` 0.206 (20), `vendorlib.dll` 0.052 (5), kept unshrunk in one summary.
+  - **Cost:** own `fixture_full.exe` 0.124 of the core cycles (12 samples), `fixture_entry` 0.093 (9); `cpu_seconds` = samples × 4.7 M cycles / core frequency; CPU time, not frame time; user mode only (`KERNEL_COVERAGE`: no kernel samples).
+  - **Confidence:** own module ±29% (12 samples), `fixture_entry` ±33% (9).
+  - **Saving:** at most `fixture_entry`'s `cpu_seconds`; which own call sites lead into the driver is not answerable (caller paths).
 - **Known gaps:** #187
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module`
@@ -74,7 +87,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`
 - **Question:** "I have an AMD uProf capture of my app in `<CAPTURE>`. My code is fixture_full.exe (the PDB is next to the exe). Drill my hottest function down to source lines and instructions."
-- **Answer:** `fixture_entry` in `fixture_full.exe`: line `fixture_debug.c:7` (recorded as `/build/fixture_debug.c`) at 0x1018 holds all 9 of the function's samples (`parent_sample_share` 1.0); the instruction window at 0x1018 from the verified build.
+- **Answer:**
+  - **Location:** `fixture_entry` in `fixture_full.exe`, line `fixture_debug.c:7` (recorded as `/build/fixture_debug.c`), instruction 0x1018 `movl 0x24(%rsp), %ecx`.
+  - **Proof:** all 9 of the function's samples on that line and instruction (`parent_sample_share` 1.0, `attribution` unique); the disassembled image is the captured build (`build.verified`, identity by checksum).
+  - **Cost:** 0.093 of the capture's core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
+  - **Confidence:** ±33% (9 samples).
+  - **Saving:** at most that line's `cpu_seconds`.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by line --function fixture_entry --module <OWN_MODULE>`
@@ -84,7 +102,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `pdb_far`
 - **Question:** "I attached AMD uProf to my app; the capture is in `<CAPTURE>`. The PDB for my exe fixture_full.exe is not next to the exe, it is in `<PDB_DIR>`. Show me my hottest function down to source lines."
-- **Answer:** as SCN-03, with `--symbol-path` on every symbolizing call: `fixture_debug.c:7` at 0x1018, 20 samples.
+- **Answer:**
+  - **Location:** `fixture_entry` in `fixture_full.exe`, line `fixture_debug.c:7` at 0x1018.
+  - **Proof:** 20 samples, all of the function's (`parent_sample_share` 1.0), named through the PDB passed with `--symbol-path` on every symbolizing call.
+  - **Cost:** 0.667 of the capture's core cycles (20 of 30 samples); `cpu_seconds` = 20 × 4.7 M cycles / core frequency.
+  - **Confidence:** ±22% (20 samples).
+  - **Saving:** at most that line's `cpu_seconds`.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --symbol-path <PDB_DIR>`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by line --function fixture_entry --module <OWN_MODULE> --symbol-path <PDB_DIR>`
@@ -93,7 +116,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`
 - **Question:** "In my AMD uProf capture (`<CAPTURE>`) symbols are missing for some DLLs, and vendorlib.dll isn't even on this machine. Where is the time going in those DLLs?"
-- **Answer:** `vendorlib.dll`: `<unresolved>`, hot RVA 0x2040, 5 samples, module file not available; `--image-path` with the DLL is the alternative; no range. `amdvlk64.dll`: derived ranges from its exports and `.pdata` (`fixture_entry` 0x1000-0x1030 with 40 samples at 0x101B) as a finding, not a blocker. Shares unchanged.
+- **Answer:**
+  - **Location:** `amdvlk64.dll`: `fixture_entry` `[0x1000, 0x1030)` hot 0x101B, `fixture_second` `[0x1030, 0x1050)`, derived `pdata_0x1050` `[0x1050, 0x1062)`; `vendorlib.dll`: `<unresolved>`, hot RVA 0x2040, no range.
+  - **Proof:** `amdvlk64.dll` ranges come from its exports and `.pdata` (`attribution` unique for exports, derived for `pdata_`), a finding, not a blocker; `vendorlib.dll` is not available on this host (`module_missing`), and `--image-path` with the DLL is the alternative.
+  - **Cost:** `amdvlk64.dll` 0.619 (60 samples: 40, 12, 8), `vendorlib.dll` 0.052 (5); `cpu_seconds` = samples × 4.7 M cycles / core frequency.
+  - **Confidence:** `fixture_entry` in the driver ±16% (40 samples), `vendorlib.dll` ±45% (5).
+  - **Saving:** n/a (neither DLL is the user's code).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
 
@@ -101,7 +129,7 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** none (needs a live collect on an AMD host)
 - **Question:** "Profile the process I just started, PID `<PID>`, for 30 seconds and tell me where its CPU time goes."
-- **Answer:** collect, translate, then the SCN-02 answer for that process.
+- **Answer:** the SCN-02 parts for the collected process; values need a capture.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py collect --out-dir <OUT_DIR> --seconds 30 --process <PID>`
   2. `python <SKILL_DIR>/tools/uprof.py translate --session <SESSION> --out-dir <CAPTURE>`
@@ -112,7 +140,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`
 - **Question:** "AMD uProf IBS capture of my app: `<CAPTURE>`. My code is fixture_full.exe. Is my hottest spot memory-bound?"
-- **Answer:** the verdict comes from the per-instruction IBS fields at 0x1018 (`DataSrc`, `IbsDcMiss`, `IbsTagToRetCtr` of its 9 samples); the `tag_to_retire_share` versus `sample_share` ratio is a hint, not proof.
+- **Answer:**
+  - **Location:** `fixture_entry` in `fixture_full.exe`, instruction 0x1018 `movl 0x24(%rsp), %ecx` (`fixture_debug.c:7`).
+  - **Proof:** yes, memory-bound: all 9 sampled ops at 0x1018 are this load and all 9 missed the data cache (`IbsDcMiss` 9 of 9), with 2400 tag-to-retire cycles each (`IbsTagToRetCtr` sum 21600); `DataSrc` code 8 for all 9 (AMD-encoded, not decoded by the tools). The function's `tag_to_retire_share` 0.357 against its `sample_share` 0.093 points the same way but is a hint, not the proof.
+  - **Cost:** 0.093 of the core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
+  - **Confidence:** ±33% (9 samples).
+  - **Saving:** at most that instruction's `cpu_seconds`, if the load stops missing.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
@@ -121,7 +154,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`, `attached_after`
 - **Question:** "Did my fix help? I profiled my app with AMD uProf before and after the fix. Before: `<BEFORE>`  After: `<AFTER>`. My code is fixture_full.exe."
-- **Answer:** compared as cost per unit of work (equal-work runs or the same phase), in `cpu_seconds` with both sample counts: own 12 → 4 samples (a third of the CPU time), driver unchanged at 60 samples. Shares are not compared: the unchanged driver's share grows.
+- **Answer:**
+  - **Location:** own `fixture_full.exe` in both captures.
+  - **Proof:** own module 12 samples before, 4 after; `amdvlk64.dll` 60 in both; compared as cost per unit of work (equal-work runs or the same phase), not as shares: the unchanged driver's share grows from 0.619 to 0.674.
+  - **Cost:** own `cpu_seconds` falls to a third (12 → 4 samples × 4.7 M cycles / core frequency).
+  - **Confidence:** ±29% before (12 samples), ±50% after (4); the drop exceeds both.
+  - **Saving:** the measured difference, 8 samples' `cpu_seconds`, if both runs did the same work.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <BEFORE> --by module`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <AFTER> --by module`
@@ -130,7 +168,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `systemwide`
 - **Question:** "This is a system-wide AMD uProf capture: `<CAPTURE>`. What is slow in my process storage_test.exe?"
-- **Answer:** process ranking `storage_test.exe` 0.548, `node.exe` 0.452; then the SCN-02 answer scoped to PID 3112.
+- **Answer:**
+  - **Location:** in PID 3112: own `fixture_entry` at 0x1018; outside, `amdvlk64.dll` `fixture_entry` at 0x101B.
+  - **Proof:** process ranking `storage_test.exe` 0.548 (97 samples), `node.exe` 0.452 (80); scoped to PID 3112, the module and function rows of SCN-02.
+  - **Cost:** of the process: `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052; of the whole capture, the process is 0.548; `cpu_seconds` = samples × 4.7 M cycles / core frequency.
+  - **Confidence:** process ±10% (97 samples), own module ±29% (12).
+  - **Saving:** at most own `fixture_entry`'s `cpu_seconds`.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by process`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --pid 3112`
@@ -140,7 +183,7 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** none (no capture with QPC markers)
 - **Question:** "Only the loading phase is slow. My app printed QueryPerformanceCounter `<QPC1>` at its start and `<QPC2>` at its end; the capture is in `<CAPTURE>`."
-- **Answer:** both readings mapped onto the capture clock, then the SCN-02 answer under `--time-filter T1:T2`.
+- **Answer:** the SCN-02 parts restricted to the window between the two readings, mapped onto the capture clock; values need a capture.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py anchor --session <CAPTURE> --qpc <QPC1>`
   2. `python <SKILL_DIR>/tools/uprof.py anchor --session <CAPTURE> --qpc <QPC2>`
@@ -151,7 +194,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`
 - **Question:** "AMD uProf IBS capture of my app: `<CAPTURE>`. My code is fixture_full.exe. Is the hot spot spinning (waiting) or actually computing?"
-- **Answer:** the instruction mix at 0x1018 (`pause`, locked operations, `IbsDcLockedOp`) with its sample counts.
+- **Answer:**
+  - **Location:** `fixture_entry` in `fixture_full.exe`, instruction 0x1018 `movl 0x24(%rsp), %ecx`.
+  - **Proof:** not spinning: the decoded window `[0x1010, 0x1030)` has no `pause` and no locked instruction, and the dump has no `IbsDcLockedOp` column to suggest one; the hot op is a load that missed the data cache in all 9 samples, so the code computes but stalls on memory.
+  - **Cost:** 0.093 of the core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
+  - **Confidence:** ±33% (9 samples).
+  - **Saving:** at most that instruction's `cpu_seconds`.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
@@ -160,7 +208,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`
 - **Question:** "AMD uProf capture of my app storage_test.exe: `<CAPTURE>`. Which thread is hot?"
-- **Answer:** per-thread samples and share with the hot range; TID 11 carries 75 of 97 samples.
+- **Answer:**
+  - **Location:** TID 11, with the driver's `fixture_entry` at 0x101B as its hot range.
+  - **Proof:** TID 11 carries 75 of the 97 samples (`SANITY` names the busiest TID's count); no view breaks rows down by thread.
+  - **Cost:** 0.773 of the core cycles.
+  - **Confidence:** ±12% (75 samples).
+  - **Saving:** n/a (a thread is not a code range).
 - **Known gaps:** #32
 - **Minimal calls:** none (no per-thread view)
 
@@ -168,7 +221,7 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** none (no ELF capture fixture)
 - **Question:** "I have an AMD uProf capture of my Linux app in `<CAPTURE>`, built with DWARF. Drill my hottest function down to source lines."
-- **Answer:** as SCN-03, from DWARF.
+- **Answer:** the SCN-03 parts, with the lines read from DWARF; values need a capture.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by line --function <FUNCTION> --module <OWN_MODULE>`
@@ -177,7 +230,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`
 - **Question:** "AMD uProf capture: `<CAPTURE>`. Is kernel time part of the cost shown in this profile?"
-- **Answer:** no: `KERNEL_COVERAGE` states that the capture has no kernel-image samples although OS mode was requested; an elevated capture is the alternative.
+- **Answer:**
+  - **Location:** n/a (the question is about the capture, not a code range).
+  - **Proof:** no: `KERNEL_COVERAGE` reports no sample in any kernel image although the sampler requested OS mode; only an elevated capture includes kernel samples.
+  - **Cost:** every share and `cpu_seconds` in this profile is user-mode CPU time only.
+  - **Confidence:** 0 kernel samples of 97.
+  - **Saving:** n/a.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by process`
 
@@ -185,7 +243,7 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** none (no inline-frame fixture)
 - **Question:** "My hottest function in `<CAPTURE>` is mostly inlined code. Which source lines are hot?"
-- **Answer:** the innermost `file:line`, its containing function, and the inline-overload limitation stated.
+- **Answer:** the SCN-03 parts, with the innermost inlined `file:line`, its containing function, and the stated limitation that inline overloads of one name are not told apart; values need a capture.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by line --function <FUNCTION> --module <OWN_MODULE>`
@@ -194,14 +252,19 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** none (no capture with anonymous code)
 - **Question:** "My app runs JIT-compiled code. The capture is in `<CAPTURE>`. Where does the time go?"
-- **Answer:** the share of samples without a module stated, never dropped.
-- **Minimal calls:** none (not evaluated)
+- **Answer:** the share of samples without a module, stated and never dropped, beside the SCN-02 parts for the modules; values need a capture.
+- **Minimal calls:** none (not evaluated without a capture)
 
 ## SCN-17: where did time go on an op-count capture
 
 - **Session:** `opcount`
 - **Question:** "AMD uProf capture of my app: `<CAPTURE>`. Where did the time go?"
-- **Answer:** rows ranked by dispatched-op share (`amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124); no `cpu_seconds`: the op-count interval measures work, not time, so the answer gives op shares, not a time cost.
+- **Answer:**
+  - **Location:** the driver's `fixture_entry` at 0x101B is the hottest range; own `fixture_entry` at 0x1018.
+  - **Proof:** rows ranked by dispatched-op share (`METRIC`: op-count interval): `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052.
+  - **Cost:** n/a as time: the op-count interval measures work, so the shares are op shares and there is no `cpu_seconds`.
+  - **Confidence:** driver ±13% (60 samples), own ±29% (12).
+  - **Saving:** n/a as time (a cycle-controlled capture gives it).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
@@ -210,7 +273,7 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `timer`
 - **Question:** "I profiled my app heap_churn.exe with AMD uProf on an Intel machine, so it is a timer-based capture: `<CAPTURE>`. The exe and its PDB are in `<IMAGE_DIR>`. Where does its CPU time go?"
-- **Answer:** as recorded in `examples/timer-heap-churn` (on-CPU sample share; the measures a timer capture lacks are stated once).
+- **Answer:** the expected answer recorded in `examples/timer-heap-churn`.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
@@ -220,7 +283,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `pmc`
 - **Question:** "AMD uProf capture of my app: `<CAPTURE>`. Is my app memory-bound?"
-- **Answer:** this PMC capture cannot answer it (no IBS samples): the cause is stated with the re-capture alternative `collect --event ibs-op`.
+- **Answer:**
+  - **Location:** n/a (no memory evidence in this capture).
+  - **Proof:** this PMC `CYCLES_NOT_IN_HALT` capture has no IBS samples, so it cannot show data-cache misses or load latency; the alternative is a re-capture with `collect --event ibs-op`.
+  - **Cost:** n/a for memory; the rows still rank busy core cycles (own `fixture_full.exe` 0.124).
+  - **Confidence:** n/a.
+  - **Saving:** n/a.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
 
@@ -228,7 +296,12 @@ the current `uprof.py`, and every session it names is one `build_captures.py` wr
 
 - **Session:** `attached`
 - **Question:** "AMD uProf capture of my app: `<CAPTURE>`. Only fixture_full.exe is my code; vendorlib.dll is a vendor DLL, not mine. How much time is mine versus everything else, and what is hot in my code?"
-- **Answer:** own 0.124; everything else 0.876, including the third-party `vendorlib.dll` 0.052; own hot function `fixture_entry` at 0x1018.
+- **Answer:**
+  - **Location:** own hot function `fixture_entry` in `fixture_full.exe`, hot RVA 0x1018.
+  - **Proof:** 9 samples, `attribution` unique; everything outside the own exe in one total, including the third-party `vendorlib.dll` (0.052).
+  - **Cost:** own 0.124 (12 samples), everything else 0.876 (85); `fixture_entry` 0.093; `cpu_seconds` = samples × 4.7 M cycles / core frequency.
+  - **Confidence:** own ±29% (12 samples), `fixture_entry` ±33% (9).
+  - **Saving:** at most `fixture_entry`'s `cpu_seconds`.
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`

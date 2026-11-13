@@ -3,9 +3,9 @@
 The sessions exercise the tools' code paths, not real capture statistics: sample counts are small
 and the IBS field values are hand-picked. Every module image a session records is a copy of a
 committed test fixture, and the recorded PE CheckSum and SizeOfImage are read from that copy, so
-the captures stay the build the images on disk are. The system modules (`amdvlk64.dll`,
-`ntdll.dll`) are the repository's own `tests/fixtures/fixture.exe` under those names, never a
-copied vendor or OS binary.
+the captures stay the build the images on disk are. The other modules (`amdvlk64.dll`,
+`ntdll.dll`, `node.exe`) are the repository's own `tests/fixtures/fixture.exe` under those
+names, never a copied vendor or OS binary.
 
 Usage (needs the DuckDB Python package):
     python trials/build_captures.py <out_dir> [SESSION ...]

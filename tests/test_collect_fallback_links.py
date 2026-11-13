@@ -72,7 +72,8 @@ class ElevatedFallbackTest(unittest.TestCase):
                 contextlib.redirect_stdout(stdout), \
                 contextlib.redirect_stderr(io.StringIO()):
             uprof_collect.collect(options)
-        session = next(line.split("=", 1)[1] for line in stdout.getvalue().splitlines()
+        self.stdout = stdout.getvalue()
+        session = next(line.split("=", 1)[1] for line in self.stdout.splitlines()
                        if line.startswith("SESSION="))
         return outputs, Path(session)
 
@@ -124,6 +125,15 @@ class ElevatedFallbackTest(unittest.TestCase):
         self.assertFalse(fallback.is_relative_to(out), fallback)
         self.assertEqual(session.parent.resolve(), fallback.resolve())
         self.assertTrue((out / "AMDuProf-decoy" / "session.uprof").is_file())
+
+    def test_the_fallback_command_names_the_directory_it_captures_into(self):
+        out = self.base / "out"
+        out.mkdir()
+        outputs, session = self.collect(out, lambda: None)
+        commands = [line for line in self.stdout.splitlines() if line.startswith("COMMAND=")]
+        self.assertEqual(len(commands), 2, commands)
+        self.assertIn(str(outputs[1]), commands[1])
+        self.assertEqual(session.parent.resolve(), outputs[1].resolve())
 
 
 if __name__ == "__main__":

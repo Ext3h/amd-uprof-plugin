@@ -47,5 +47,21 @@ iteration (class, control):
 - wait: 15.6 ms per iteration against 0.03 ms; the 5 ms wait rounds up to the 15.6 ms timer tick.
 - efficient: below 1 ns in both.
 
+## Captures
+
+The scenarios' captures are recorded on the owner's reference machine, not committed from a
+developer host. `record.py` runs each class beside 24 stressors (`busy_01.exe` ...
+`busy_24.exe`, copies of `lab_busy.exe`) and records a 3 s system-wide capture per mode the CPU
+allows (timer, IBS, PMC), plus plain IBS and PMC captures whose `keys.txt` lists the
+`session.uprof` key names. With `--anonymize <OUT_DIR>` it runs `trials/anonymize_capture.py` on
+each: only defect_lab and the stressors remain, host paths are rewritten, HostInfo is emptied,
+and `review.txt` dumps every table for a person to read. Nothing is committed before that
+review.
+
+```console
+python trials/defect_lab/build.py <BIN_DIR>
+python trials/defect_lab/record.py <BIN_DIR> <RAW_DIR> --anonymize <OUT_DIR>
+```
+
 Each class is slower than its control. chain's control gains only 1.4x because independent
 divides share the divider. Not verified: the same ratios on an AMD host.

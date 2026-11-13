@@ -184,7 +184,7 @@ def _dispatch(args: argparse.Namespace) -> None:
             out_dir=args.out_dir, seconds=args.seconds, pids=_parse_pids(args.process),
             sample_interval=args.sample_interval, event=args.event,
             ibs_count_control=args.ibs_count_control, dry_run=args.dry_run,
-            launch=args.launch or []))
+            launch=args.launch))
     elif args.command == "translate":
         import uprof_native
         uprof_native.translate(args.session, args.out_dir, args.symbol_path, args.symbol_cache,

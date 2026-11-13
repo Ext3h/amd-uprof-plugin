@@ -48,7 +48,7 @@ python <SKILL_DIR>/tools/uprof.py collect --out-dir <OUT_DIR> --seconds 60 --eve
 | `--seconds` | capture duration; default 60; must be positive |
 | `--process PID[,PID]` | attach to existing positive PIDs; absent = `-a` system-wide |
 | `--sample-interval TIME\|OPS` | cycle modes: a time with a unit `ns`, `us`, `ms` or `s`, decimals and case allowed, default `1ms`. IBS op-count mode: a positive integer work count (dispatched ops), default `1000000`; a time string is rejected |
-| `--event cycles\|ibs-op` | default `cycles` = PMCx076 `CYCLES_NOT_IN_HALT`, hwId 118, `user=1,os=1`; `ibs-op` samples user and OS by default. Both request OS mode, which is applied and encoded, but kernel-mode samples require an elevated capture; IBS fetch is not a capture choice |
+| `--event cycles\|ibs-op\|timer` | default `cycles` = PMCx076 `CYCLES_NOT_IN_HALT`, hwId 118, `user=1,os=1`; `ibs-op` samples user and OS; both request OS mode, but kernel-mode samples need an elevated capture; `timer`: system-wide or `--launch APP`; no IBS fetch capture |
 | `--ibs-count-control op\|cycles` | only with `--event ibs-op`; default `op` (op-count interval); `cycles` takes a time `--sample-interval`, converts it like PMC, and defaults to `1ms` |
 | `--dry-run` | print the interval line and exact CLI command, then exit before capturing; does not need the CLI installed |
 

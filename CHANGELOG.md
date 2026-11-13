@@ -17,6 +17,12 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   rejects now exit 2 with `error: <cause>` and one runnable `ALTERNATIVE:` line per option;
   nothing switches mode on its own (issue #190).
 
+- `collect --event timer` records a timer capture itself: system-wide with
+  `-e event=timer,interval=<ms>` (`--sample-interval` in whole milliseconds, default 1 ms), or
+  for one app with `--launch APP [ARGS]`, which takes the app's existing path. A timer capture
+  attached with `--process` is refused, because it records no samples on Windows (measured
+  elevated and unelevated); the timer alternatives are now `uprof.py collect` calls (issue #315).
+
 - Session symbol cache: `profile` keeps the symbol, public-symbol, PDB-choice and derived
   function-range artifacts in a per-session DuckDB database keyed by the capture's module
   identity, the queried RVAs, the on-disk image state, the tool builds and the search

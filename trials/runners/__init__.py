@@ -13,6 +13,8 @@ Neutral transcript, one JSON object per line, in order:
 
 Adding a runner: write a module in this package with a class that has a `name` and
 `run(spec) -> TrialResult`, accepts its options as keyword strings, and add it to runners().
+Set TrialResult.context_tokens from the harness's usage report of the final model turn; leave it
+None when the harness reports no usage, and the run log says "not measured".
 """
 
 from __future__ import annotations
@@ -49,6 +51,9 @@ class TrialResult:
     exit_status: int | str  # the process exit code, or "timeout"
     wall_s: float
     evidence: dict[str, object] = field(default_factory=dict)  # isolation facts, model, cost
+    # The model's input at its final turn, harness system prompt and cached tokens included;
+    # None when the harness reports no usage.
+    context_tokens: int | None = None
 
 
 class Runner(Protocol):

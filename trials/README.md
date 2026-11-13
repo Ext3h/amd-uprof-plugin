@@ -55,8 +55,10 @@ be outside the repository. Per scenario with a session, the harness:
   output folder and the other trials are denied; temp variables point into the trial folder;
 - kills only the trial's own process tree after `--timeout` seconds; runs `--parallel` trials;
 - writes `out/<SCN>/transcript.jsonl` (neutral schema), `meta.json`, the runner's raw output, and
-  `runlog.md` with exit status, wall time, tool calls, tool errors, references to denied paths
-  and the isolation facts the runner reported. It does not judge answers: apply `observer.md`.
+  `runlog.md` with exit status, wall time, tool calls, tool errors, references to denied paths,
+  the final-turn context against the limit in the catalogue's pass criteria (`not measured` when
+  the runner reports no usage) and the isolation facts the runner reported. It does not judge
+  answers: apply `observer.md`.
 
 Scenarios without a session are listed as skipped with their reason. A known limit of the
 Claude Code adapter: shell commands are allowed, so a write outside the trial folder (for example
@@ -70,7 +72,8 @@ that has a `name` and `run(spec: TrialSpec) -> TrialResult`, takes its options a
 strings (`--runner-option key=value`), and add it to `runners()` in `runners/__init__.py`. It must
 start the agent with only the plugin in `spec.plugin_dir`, limit reads to `spec.read_roots`, deny
 `spec.deny_roots`, pass `spec.model`, and return the transcript in the neutral schema documented
-there; `run_process` and `trial_env` handle the timeout and the environment.
+there, with `context_tokens` set from the harness's usage report of the final model turn (or
+left `None`); `run_process` and `trial_env` handle the timeout and the environment.
 
 ## Running a scenario by hand
 

@@ -25,11 +25,13 @@ transcripts with a script: they can be large.
 | Issue | for each (a)/(b) cause: the existing issue it maps to, or `new` |
 | Overclaims | any claim beyond the evidence: cost overstated, caller paths, wrong module ownership, a share compared across captures |
 | Cost | wall time and, if the runner reported them, tokens or price |
+| Context | the run log's final-turn context and its verdict; a run passes only with outcome `correct` and context below the limit in `scenarios.md` (Pass criteria); `not measured` cannot pass |
 
 Count a call as extra when the scenario's answer was reachable without it. Reading SKILL.md and
 writing the answer are not calls. A retry after the agent's own syntax error is cause (c).
 
 ## Summary
 
-One table over all trials (scenario, outcome, calls made / minimal, extra calls by cause), then
+One table over all trials (scenario, outcome, context, pass, calls made / minimal, extra calls
+by cause), then
 the top five causes of extra calls ranked by calls lost across trials, each with its issue.

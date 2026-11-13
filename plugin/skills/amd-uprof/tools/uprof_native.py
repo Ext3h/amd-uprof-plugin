@@ -1034,11 +1034,13 @@ def translate(
             "a timer capture has no IBS sample dump", ["translate without dump"], session=session
         )
 
-    env_cache, env_servers = parse_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
+    nt_symbol_path = os.environ.get("_NT_SYMBOL_PATH") or ""
+    env_cache, env_servers = parse_symbol_path(nt_symbol_path)
     cache = symbol_cache or env_cache or symbol_cache_dir()
-    servers = list(
-        dict.fromkeys([*(env_servers or default_symbol_servers()), *(symbol_servers or [])])
-    )
+    # A set _NT_SYMBOL_PATH defines the servers exactly, possibly none, so module names can be
+    # kept off the default server; the default applies only while the variable is unset.
+    base = env_servers if nt_symbol_path.strip() else default_symbol_servers()
+    servers = list(dict.fromkeys([*base, *(symbol_servers or [])]))
     print(f"VERSION={skill_identity()}")
     print(f"SYMBOL_CACHE={cache}")
     print(f"SYMBOL_SERVERS={' | '.join(servers)}")

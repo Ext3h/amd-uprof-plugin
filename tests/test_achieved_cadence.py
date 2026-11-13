@@ -5,13 +5,11 @@ Run from the repository root: python tests/run_tests.py test_achieved_cadence
 # Spec: SPEC-24
 
 import argparse
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import uprof_collect
-import uprof_native
 import uprof_query
 import uprof_session
 
@@ -123,26 +121,6 @@ class OneFrequencyReadTest(unittest.TestCase):
         self.assertEqual(read.call_count, 1)
         self.assertEqual(limits, [10 * 4_700_000 / 4.7e9 * 1e9])
         self.assertIn("4700 MHz", text)
-
-
-class DumpCadenceTest(unittest.TestCase):
-    def test_same_tid_in_different_processes_is_two_contexts(self):
-        # Both rows sit on CPU 0, so only the (PID, TID) key can separate the two timelines.
-        with tempfile.TemporaryDirectory() as tmp:
-            dump = Path(tmp) / "IbsOpDump.csv"
-            dump.write_text(
-                "DeltaTick,CPU_Number,TID,PID,Offset,ModuleName\n"
-                "0,0,4242,100,4096,workload.exe\n"
-                "1000000000,0,4242,100,4096,workload.exe\n"
-                "1500000000,0,4242,200,8192,other.exe\n"
-                "2500000000,0,4242,200,8192,other.exe\n",
-                encoding="utf-8",
-                newline="\n",
-            )
-
-            _, _, contexts = uprof_native.dump_cadence(dump, ("PID", "TID"))
-
-        self.assertEqual(sorted(context.samples for context in contexts), [2, 2])
 
 
 if __name__ == "__main__":

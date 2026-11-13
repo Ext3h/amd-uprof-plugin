@@ -2147,6 +2147,32 @@ def _dump_contexts(
     ]
 
 
+def dump_achieved(session: Path, dump_path: Path, time_filter: str | None) -> str:
+    """The ACHIEVED text of a freshly translated IBS session, from profile's own query.
+
+    translate --ascii prints it right after writing the dump, so both commands report the
+    cadence of one SQL implementation. time_filter is the window the dump was translated for.
+    """
+    sampler = uprof_session.derive_sampler(session)
+    dump = uprof_dump.DumpInfo(util.absolute(dump_path), "beside", time_filter=time_filter)
+    args = argparse.Namespace(
+        session=session,
+        image=None,
+        pid=None,
+        by="process",
+        function=None,
+        module=None,
+        function_start=None,
+    )
+    variables = _variables(args, dump, 0, "0", _ALL_NS, sampler.event_column)
+    variables["uprof_ibs_parquet"] = ""
+    with uprof_db.open_query(
+        session / "cpu.db", [TOOLS_DIR / "views.sql"], variables
+    ) as connection:
+        (_name, text), _samples, _kernel = _achieved_field(connection, True, args, sampler, dump)
+    return text
+
+
 def _capture_scan(connection: object, check_kernel: bool) -> tuple[int, int, bool | None]:
     """Whole-capture sample count, context count and kernel coverage from one scan.
 

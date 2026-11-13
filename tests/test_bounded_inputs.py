@@ -82,29 +82,6 @@ class SessionMetaSizeTest(unittest.TestCase):
             self.assertIn(f"{uprof_util.SESSION_META_LIMIT}-byte limit", str(raised.exception))
 
 
-class DumpFieldTest(unittest.TestCase):
-    def test_a_field_larger_than_any_dump_cell_is_a_cause_not_a_traceback(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            dump = Path(tmp) / "IbsOpDump.csv"
-            dump.write_text(
-                "DeltaTick,CPU_Number,ModuleName\n1,0," + "x" * 200_000 + "\n", encoding="utf-8"
-            )
-            with self.assertRaisesRegex(
-                uprof_util.UprofError, str(dump).replace("\\", "\\\\")
-            ) as raised:
-                uprof_native.dump_cadence(dump)
-        # The only caller is translate --ascii, which just wrote this dump.
-        self.assertNotIn("translate --ascii", str(raised.exception))
-        self.assertIn("collect --out-dir <NEW_OUT_DIR>", str(raised.exception))
-
-    def test_a_huge_header_cell_is_a_cause_not_a_traceback(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            dump = Path(tmp) / "IbsOpDump.csv"
-            dump.write_text("x" * 200_000 + ",CPU_Number\n1,0\n", encoding="utf-8")
-            with self.assertRaises(uprof_util.UprofError):
-                uprof_native.dump_cadence(dump)
-
-
 class SymbolizerTimeoutTest(unittest.TestCase):
     def run_symbolizer(self, fake_run):
         with tempfile.TemporaryDirectory() as tmp:

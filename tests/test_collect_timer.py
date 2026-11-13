@@ -108,12 +108,19 @@ class TimerCollectTest(unittest.TestCase):
         self.assertIn("--launch", str(caught.exception))
 
     def test_the_command_line_quotes_or_names_the_launch_arguments(self):
-        lines = dry_run(options(launch=[str(APP), "x y", "$(whoami)"]))
+        lines = dry_run(options(launch=[str(APP), "a;b", "$(whoami)"]))
         command = command_line(lines)
-        self.assertIn(' "x y" ', command + " ")
+        self.assertIn(' "a;b" ', command + " ")
         self.assertNotIn("$(whoami)", command)
         self.assertIn("<APP_ARG_2>", command)
         self.assertIn("APP_ARG_2=" + repr("$(whoami)"), lines)
+
+    def test_a_launch_argument_with_whitespace_is_refused(self):
+        # Measured: AMDuProfCLI passes the app's arguments on unquoted, so "x y" arrives as two.
+        for argument in ("x y", "a\tb", "line\nbreak"):
+            with self.subTest(argument=argument), self.assertRaises(UprofError) as caught:
+                dry_run(options(launch=[str(APP), argument]))
+            self.assertIn("whitespace", str(caught.exception))
 
     def test_the_parser_keeps_an_empty_launch_distinct(self):
         args = uprof.build_parser().parse_args(["collect", "--out-dir", "o", "--event", "timer",

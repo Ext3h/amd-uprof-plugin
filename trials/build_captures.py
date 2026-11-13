@@ -30,7 +30,7 @@ OWN_IMAGE = FIXTURES / "debug" / "pe" / "fixture_full.exe"
 OWN_PDB = FIXTURES / "debug" / "pe" / "fixture_full.pdb"
 SYSTEM_IMAGE = FIXTURES / "fixture.exe"
 
-PID, OTHER_PID = 3112, 4242
+PID, OTHER_PID, SECOND_PID = 3112, 4242, 3113
 PROCESS, OTHER_PROCESS = "storage_test.exe", "node.exe"
 IBS_CYCLES = {
     "ibsEvents": {
@@ -298,6 +298,76 @@ def _systemwide(b: Builder) -> Path:
     )
 
 
+# Background load of a typical desktop: (process image, PIDs). Every image is the repository's
+# fixture.exe under that name; each process runs its own image plus ntdll and KernelBase.
+LOAD = [
+    ("chrome.exe", (5000, 5004, 5008)),
+    ("msedge.exe", (5100,)),
+    ("MsMpEng.exe", (5200,)),
+    ("SearchIndexer.exe", (5300,)),
+    ("explorer.exe", (5400,)),
+    ("dwm.exe", (5500,)),
+    ("Teams.exe", (5600,)),
+    ("Code.exe", (5700,)),
+    ("svchost.exe", (5800, 5804, 5808)),
+    ("OneDrive.exe", (5900,)),
+    ("Spotify.exe", (6000,)),
+    ("slack.exe", (6100,)),
+    ("steam.exe", (6200,)),
+    ("Discord.exe", (6300,)),
+    ("WmiPrvSE.exe", (6400,)),
+    ("audiodg.exe", (6500,)),
+    ("ctfmon.exe", (6600,)),
+    ("RuntimeBroker.exe", (6700,)),
+    ("SystemSettings.exe", (6800,)),
+    ("git.exe", (6900,)),
+    ("python.exe", (7000,)),
+    ("conhost.exe", (7100,)),
+]
+LOAD_RVAS = (0x101B, 0x1031, 0x1050)
+
+
+def _load(b: Builder) -> tuple[list[Module], list[Sample], list[tuple[int, str]]]:
+    """Foreign processes that outrank the target: modules, samples and (PID, name) rows."""
+    kernelbase = Builder._module(
+        30, Builder._copy(SYSTEM_IMAGE, b.root / "bins" / "sys", name="KernelBase.dll"), True, False
+    )
+    modules, samples, processes = [kernelbase], [], []
+    for index, (name, pids) in enumerate(LOAD):
+        image = Builder._copy(SYSTEM_IMAGE, b.root / "bins" / "load", name=name)
+        module = Builder._module(40 + index, image, False, False)
+        modules.append(module)
+        # Hot images first, falling to about the target's own hottest function.
+        hot = 300 - 12 * index
+        for k, pid in enumerate(pids):
+            processes.append((pid, name))
+            tid = pid + 1
+            samples += [
+                Sample(pid, tid, module.id, LOAD_RVAS[k % 3], max(30, hot // (k + 1))),
+                Sample(pid, tid, 3, 0x1000, 5),
+                Sample(pid, tid, 30, 0x1031, 3),
+            ]
+    return modules, samples, processes
+
+
+def _systemwide_loaded(b: Builder) -> Path:
+    """systemwide under desktop load: the target is 2-10 % and not the top process."""
+    modules, samples, processes = _load(b)
+    target = [
+        Sample(s.pid, s.tid, s.module, s.rva, 2 * s.count, s.data_src, s.dc_miss, s.tag_to_ret)
+        for s in BASE
+    ]
+    # A second instance of the same image, briefly busy.
+    target.append(Sample(SECOND_PID, 21, 1, 0x1000, 10))
+    return b.write(
+        "systemwide_loaded",
+        b.modules + [b.node] + modules,
+        target + samples,
+        processes=((PID, PROCESS), (SECOND_PID, PROCESS), *processes),
+        system_wide=True,
+    )
+
+
 def _opcount(b: Builder) -> Path:
     return b.write("opcount", b.modules, BASE, events=IBS_OPS)
 
@@ -325,6 +395,7 @@ SESSIONS = {
     "opcount": _opcount,
     "pmc": _pmc,
     "timer": _timer,
+    "systemwide_loaded": _systemwide_loaded,
 }
 
 

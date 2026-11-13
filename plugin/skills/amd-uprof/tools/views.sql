@@ -875,7 +875,7 @@ WITH placed AS (
                 THEN 'fully named from the uProf DB; function-range derivation skipped'
               WHEN a.range_kind = 'uprof_db'
                 THEN 'no boundary source (export, PDB public or .pdata) covers these samples: the module file is unavailable, not a PE image, or the RVA is outside a code section; the row groups by uProf Function.id, and --by region is the page view'
-              WHEN module_ambiguous(a.module_name)
+              WHEN getvariable('has_dump') AND module_ambiguous(a.module_name)
                 THEN 'the capture maps this module name to more than one image version and IBS dump rows carry the name, not Module.id, so no version''s functions are attributed; --by module is the module view'
               ELSE 'no derived range and no uProf Function.id for these samples; --by region is the page view' END
            AS function_reason

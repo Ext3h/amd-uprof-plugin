@@ -447,7 +447,7 @@ The help is JSON-only. Markdown output has no `context_help` and is byte-identic
 
 ## SQL schema — `tools/views.sql`
 
-One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twenty-one inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection. The table below is the full bound set: the twenty `uprof_*` keys of `uprof_query._variables` plus `uprof_ibs_parquet`, which the profile call binds after locating the dump's Parquet copy; `views.sql`'s header lists eighteen of the twenty-one.
+One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twenty-two inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection. The table below is the full bound set: the twenty-one `uprof_*` keys of `uprof_query._variables` plus `uprof_ibs_parquet`, which the profile call binds after locating the dump's Parquet copy; `views.sql`'s header lists nineteen of the twenty-two.
 
 | Bound input | Meaning |
 |---|---|
@@ -465,6 +465,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_pdbs` | combined `symbols.pdbs.csv`: the PDB symbolization chose per module; empty when absent |
 | `uprof_functions` | derived function ranges CSV (`module_name,function_start,function_end,function_source,function_name`); empty when no module in scope needs derivation |
 | `uprof_range_attempted` | chr(2)-joined modules for which derivation ran; a fully named module is absent, so `function_reason` says the derivation was skipped rather than failed |
+| `uprof_ambiguous_modules` | chr(2)-joined module names the capture maps to more than one image version; their dump samples get no `Function.id` |
 | `uprof_primary_measure` | `sample_share` or `time_share`, the mode measure that orders the row views and selects their `--top` and hot RVA |
 | `uprof_detail_views` | `'true'` binds the full `v_line_rows` and `v_instruction_rows` bodies (line and instruction scopes); `'false'` binds them as an empty typed relation, so every other mode skips that bind cost |
 | `uprof_sample_interval_s` | requested cycle interval in seconds, bound for `--by module|function|region`; empty when the interval is a work/fetch count or the core frequency is unavailable, which hides `cpu_seconds` |
@@ -475,6 +476,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | Macro | Definition |
 |---|---|
 | `module_key(p)` | `replace(lower(p), chr(92), '/')` — the module-path match key |
+| `module_ambiguous(name)` | whether `uprof_ambiguous_modules` lists `name` |
 | `share(part, whole)` | `part / NULLIF(whole, 0)` — a fraction 0.0-1.0, the unit stated once in the output |
 
 | Mode flag / guard | Purpose |

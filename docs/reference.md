@@ -495,4 +495,5 @@ The failure table in `SKILL.md` covers dump sanity, missing `session.uprof`/`cpu
 | `translate failed ...: the session has no translatable sample category` | the session holds no samples; AMDuProfCLI crashes (0xC0000005) instead of failing cleanly | run one of the two `collect` commands the error prints, then translate that session |
 | `translate failed ... (AMDuProfCLI crashed: access violation (0xC0000005))` without a named cause | AMDuProfCLI crashed for a reason the skill does not recognise | its last lines are in the AMDuProfCLI log the error names |
 | `--out-dir already holds a previous translation` | a reused output directory still has files translate copied or generated | pass `--force` to replace the generated files and copied inputs, or choose another `--out-dir` |
-| `SAMPLER: falling back ...` | VBS or hypervisor blocks IBS counters | disable VBS/Hyper-V, or accept cycle sampling |
+| `SAMPLER: falling back ...` | VBS or hypervisor blocks IBS counters | accept the cycle capture, or ask the user whether to turn off VBS/Hyper-V, a security change they make themselves |
+| `WARNING: running elevated; only collect needs elevation ...` | `translate` or `profile` runs with administrator or root rights | run them from a normal shell; only `collect` needs elevation |

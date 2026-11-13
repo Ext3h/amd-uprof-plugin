@@ -401,9 +401,6 @@ def _nt_symbol_path() -> NtSymbolPath:
     return parse_nt_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
 
 
-# translate records the command it ran in session.uprof as space-joined, unquoted arguments.
-
-
 def _unique_dirs(paths: Iterable[str | Path]) -> list[Path]:
     result: dict[str, Path] = {}
     for path in paths:

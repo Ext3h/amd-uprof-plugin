@@ -22,6 +22,7 @@ import duckdb
 
 import uprof_native
 import uprof_query
+import uprof_symbols
 from test_function_region_profile import FIXTURE, Session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -310,6 +311,43 @@ class CoverageChannelsTest(unittest.TestCase):
         )
         self.assertIn("cause by module: b.dll: no PDB found", text)
         self.assertIn(UNRESOLVED_STOP, text)
+        self.assertIn("remedy: pass profile --symbol-path", text)
+
+    def no_pdb_cause(self):
+        evidence = uprof_symbols.ModuleEvidence(
+            "driver.dll",
+            "C:/drivers/driver.dll",
+            outcome="readobj_failed",
+            note="the image's debug directory records no PDB",
+        )
+        return uprof_query._evidence_cause(evidence)
+
+    def test_an_image_recording_no_pdb_is_named_as_such_not_as_a_readobj_failure(self):
+        cause = self.no_pdb_cause()
+        self.assertNotIn("could not read", cause)
+        self.assertIn("no PDB can be found or staged", cause)
+
+    def test_no_pdb_staging_remedy_when_every_image_records_no_pdb(self):
+        text = uprof_query._coverage_field(
+            None,
+            {"driver.dll": self.no_pdb_cause()},
+            _symbolizer(10, 10),
+            True,
+            [],
+            _coverage([_unresolved_row("driver.dll", 10, 0)], 10, 0),
+        )[0][1]
+        self.assertNotIn("--symbol-path", text)
+        self.assertNotIn("debug file beside it", text)
+
+    def test_another_module_keeps_the_symbol_path_remedy(self):
+        text = uprof_query._coverage_field(
+            None,
+            {"driver.dll": self.no_pdb_cause(), "b.dll": "no PDB found"},
+            _symbolizer(10, 10),
+            True,
+            [],
+            _coverage([_unresolved_row("driver.dll", 5, 0), _unresolved_row("b.dll", 5, 0)], 10, 0),
+        )[0][1]
         self.assertIn("remedy: pass profile --symbol-path", text)
 
     def test_agreeing_channels_without_flags_keep_the_original_line(self):

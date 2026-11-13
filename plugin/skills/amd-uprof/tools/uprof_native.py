@@ -206,8 +206,12 @@ def find_sibling(symbolizer: Path | None, name: str) -> Path | None:
     return _first_existing(candidates)
 
 
-# apt.llvm.org's installer for one LLVM release; distribution packages are often older.
-LINUX_LLVM_INSTALL: Final = "wget https://apt.llvm.org/llvm.sh && sudo bash llvm.sh 23"
+# Installing a toolchain as root is the user's decision, so the remedy names what to install and
+# where it comes from instead of a runnable root command.
+LINUX_LLVM_INSTALL: Final = (
+    "ask the user to install LLVM 23 or later (the distribution's llvm-23 packages, or the "
+    "instructions at https://apt.llvm.org)"
+)
 
 
 _IGNORED_SHOWN: Final = 3
@@ -662,9 +666,11 @@ _VIRTUALIZATION_QUERY: Final = (
     "$c = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop; "
     "'{0} {1}' -f [int]$d.VirtualizationBasedSecurityStatus, [int][bool]$c.HypervisorPresent"
 )
+# Turning off VBS or Memory integrity lowers the host's security, which only the user decides.
 _WINDOWS_IBS_REMEDY: Final = (
-    "remedy: turn off Hyper-V and VBS (as administrator: bcdedit /set hypervisorlaunchtype off, "
-    "then disable Memory integrity and reboot)"
+    "remedy: ask the user whether to turn off Hyper-V and VBS, a security change they make "
+    "themselves (as administrator: bcdedit /set hypervisorlaunchtype off, then disable Memory "
+    "integrity and reboot); otherwise use the cycle capture"
 )
 
 

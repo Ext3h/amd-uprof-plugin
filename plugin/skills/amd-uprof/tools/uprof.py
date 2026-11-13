@@ -225,6 +225,19 @@ def _parse_pids(values: list[str] | None) -> list[int]:
     return pids
 
 
+def _warn_if_elevated(command: str) -> None:
+    """Only collect needs elevation; elsewhere the capture's files are read with the admin token."""
+    if command in ("translate", "profile"):
+        import uprof_native
+
+        if uprof_native.is_admin():
+            print(
+                f"WARNING: running elevated; only collect needs elevation, so run {command} "
+                "from a normal shell",
+                file=sys.stderr,
+            )
+
+
 def _dispatch(args: argparse.Namespace) -> None:
     if args.command == "collect":
         import uprof_collect
@@ -272,6 +285,7 @@ def _dispatch(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> int:
     util.configure_streams()
     args = build_parser().parse_args(argv)
+    _warn_if_elevated(args.command)
     try:
         _dispatch(args)
         return 0

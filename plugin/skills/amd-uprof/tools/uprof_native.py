@@ -391,25 +391,41 @@ def is_admin() -> bool:
     return hasattr(os, "geteuid") and os.geteuid() == 0
 
 
+# Numeric VBS and hypervisor state from CIM: both values print as integers in every display
+# language, unlike the systeminfo text. A missing DeviceGuard class reads as 0.
+_VIRTUALIZATION_QUERY: Final = (
+    "$d = Get-CimInstance -Namespace root/Microsoft/Windows/DeviceGuard "
+    "-ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue; "
+    "$c = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop; "
+    "'{0} {1}' -f [int]$d.VirtualizationBasedSecurityStatus, [int][bool]$c.HypervisorPresent")
+_WINDOWS_IBS_REMEDY: Final = (
+    "remedy: turn off Hyper-V and VBS (as administrator: bcdedit /set hypervisorlaunchtype off, "
+    "then disable Memory integrity and reboot), or capture with --event cycles")
+
+
 def ibs_unavailable_reason() -> str:
     """Explain why IBS counters are missing, naming VBS or a hypervisor when that is the cause."""
     if IS_WINDOWS:
         try:
-            systeminfo = run(["systeminfo"], timeout=60).stdout
+            completed = run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                             _VIRTUALIZATION_QUERY], timeout=60)
+            match = (re.fullmatch(r"\s*(\d+)\s+(\d+)\s*", completed.stdout or "")
+                     if completed.returncode == 0 else None)
         except UprofError:
-            systeminfo = ""
-        lowered = systeminfo.lower()
-        vbs_line = next((line for line in lowered.splitlines()
-                         if "virtualization-based security" in line), "")
-        disabled = "not running" in vbs_line or "not enabled" in vbs_line
-        vbs = not disabled and ("running" in vbs_line or "enabled" in vbs_line)
-        hypervisor = "hypervisor has been detected" in lowered
-        if vbs or hypervisor:
-            state = "VBS running" if vbs else "hypervisor detected"
-            return (f"hypervisor/VBS is active ({state}; check Win32_DeviceGuard: "
-                    "VirtualizationBasedSecurityStatus is 2 when running)")
-        return ("no IBS counters are available; check that Hyper-V/VBS is disabled and "
-                "Win32_DeviceGuard reports VirtualizationBasedSecurityStatus 0")
+            match = None
+        if match is None:
+            return ("no IBS counters are available, and the VBS/hypervisor state could not be "
+                    "read (Win32_DeviceGuard, Win32_ComputerSystem); " + _WINDOWS_IBS_REMEDY)
+        vbs_status, hypervisor = int(match.group(1)), int(match.group(2))
+        if vbs_status == 2:
+            return ("VBS is running (Win32_DeviceGuard VirtualizationBasedSecurityStatus 2), so "
+                    "IBS counters are not exposed; " + _WINDOWS_IBS_REMEDY)
+        if hypervisor:
+            return ("a hypervisor is present (Win32_ComputerSystem HypervisorPresent), so IBS "
+                    "counters are not exposed; " + _WINDOWS_IBS_REMEDY)
+        return ("no IBS counters are available although no hypervisor or VBS is active; check "
+                "that the CPU is AMD Zen with IBS and that uProf's driver is loaded, or capture "
+                "with --event cycles")
     try:
         with open(Path("/proc/cpuinfo"), "r", encoding="utf-8", errors="replace") as handle:
             if " hypervisor" in handle.read():
@@ -417,7 +433,8 @@ def ibs_unavailable_reason() -> str:
     except OSError:
         pass
     if any(Path("/sys/module").glob("kvm*")):
-        return "the KVM kernel module is loaded; IBS counters are not exposed to this host"
+        return ("no IBS counters are available; the KVM kernel module is loaded, which may "
+                "hide them, or check the kernel and perf permissions")
     return "no IBS counters are available; check the kernel, virtualization and perf permissions"
 
 

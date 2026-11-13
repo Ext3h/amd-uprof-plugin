@@ -11,8 +11,10 @@ the capture with uprof.py (an IBS capture with its ASCII dump). Modes:
   timer  AMDuProfCLI collect -e event=timer,interval=<ms> -a -d <S> (any x86 CPU)
   ibs    uprof.py collect --event ibs-op --sample-interval <ops> --seconds <S> (AMD with IBS)
   pmc    uprof.py collect --event cycles --sample-interval <time> --seconds <S>
-  timer-cg, ibs-cg  the timer or IBS event with AMDuProfCLI's --call-graph 1:64:user:fpo, plus
-         <name>.notes.txt: defect_lab's ns per iteration without and with the call graph.
+  timer-cg, ibs-cg  the timer or IBS event with --call-graph-mode fpo --call-graph-type user
+         --call-graph-depth 64 on a defect_lab that AMDuProfCLI launches (call stacks are not
+         recorded system-wide on Windows), plus <name>.notes.txt: defect_lab's ns per
+         iteration without and with the call graph.
          They need an elevated shell and uProf's capture driver; without elevation record.py
          stops before the first capture. Not verified on a machine with both.
 A mode the CPU or driver cannot record is reported and skipped. Two plain captures (ibs and pmc,
@@ -59,11 +61,15 @@ class Settings:
     timer_ms: int = 4
     pmc_interval: str = "4ms"
     stressors: int = 15
-    # uProf's --call-graph <interval>:<depth>:<user|kernel|all>:<fp|fpo>; this form was accepted
-    # by AMDuProfCLI 5.3.521.
-    call_graph: str = "1:64:user:fpo"
+    # AMDuProfCLI's --call-graph-mode/-type/-interval/-depth; its --call-graph I:D:S:F form
+    # prints "will be deprecated".
+    call_graph_mode: str = "fpo"
+    call_graph_depth: int = 64
 
-    def keep(self) -> list[str]:
+    def keep(self, mode: str = "timer") -> list[str]:
+        """The processes a capture keeps; a call-graph capture samples defect_lab alone."""
+        if mode in CALL_GRAPH_MODES:
+            return ["defect_lab.exe"]
         return ["defect_lab.exe"] + [f"busy_{n:02d}.exe" for n in range(1, self.stressors + 1)]
 
 
@@ -93,12 +99,16 @@ def stressor_images(bin_dir: Path, count: int) -> list[Path]:
     return images
 
 
-def collect(mode: str, raw: Path, settings: Settings) -> Path:
-    """Record one capture; return the session directory."""
+def collect(
+    mode: str, raw: Path, settings: Settings, bin_dir: Path | None = None, name: str = ""
+) -> Path:
+    """Record one capture; return the session directory.
+
+    AMDuProfCLI's console output goes to this script's own output, so its warnings show in the
+    log. A call-graph mode launches defect_lab --class <name> from bin_dir itself.
+    """
     if mode in CALL_GRAPH_MODES:
-        subprocess.run(
-            callgraph_command(mode, raw, settings), check=True, stdout=subprocess.DEVNULL
-        )
+        subprocess.run(callgraph_command(mode, raw, settings, bin_dir, name), check=True)
         return raw
     if mode == "timer":
         subprocess.run(
@@ -114,7 +124,6 @@ def collect(mode: str, raw: Path, settings: Settings) -> Path:
                 str(raw),
             ],
             check=True,
-            stdout=subprocess.DEVNULL,
         )
         return raw
     event, interval = {
@@ -139,6 +148,7 @@ def collect(mode: str, raw: Path, settings: Settings) -> Path:
         text=True,
     )
     sys.stdout.write(done.stdout[-2000:])
+    sys.stderr.write(done.stderr[-2000:])
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip()[-2000:] or f"collect exited {done.returncode}")
     match = re.search(r"^SESSION=(.+)$", done.stdout, re.M)
@@ -187,18 +197,19 @@ def record(bin_dir: Path, raw_dir: Path, name: str, mode: str, settings: Setting
         for image in stressor_images(bin_dir, settings.stressors)
     ]
     # AMDuProfCLI takes several seconds to start sampling, so the workload runs well past the
-    # capture and is stopped afterwards.
-    started.append(
-        subprocess.Popen(
-            [str(bin_dir / "defect_lab.exe"), "--class", name, "--seconds", "40"],
-            cwd=bin_dir,
-            stdout=subprocess.DEVNULL,
+    # capture and is stopped afterwards. A call-graph collection launches defect_lab itself.
+    if mode not in CALL_GRAPH_MODES:
+        started.append(
+            subprocess.Popen(
+                [str(bin_dir / "defect_lab.exe"), "--class", name, "--seconds", "40"],
+                cwd=bin_dir,
+                stdout=subprocess.DEVNULL,
+            )
         )
-    )
     raw = raw_dir / f"{name}.{mode}.raw"
     try:
         time.sleep(1)
-        session = collect(mode, raw, settings)
+        session = collect(mode, raw, settings, bin_dir, name)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
         print(f"skipped {name} {mode}: {exc}", file=sys.stderr)
         return None
@@ -213,9 +224,19 @@ def record(bin_dir: Path, raw_dir: Path, name: str, mode: str, settings: Setting
 
 
 def callgraph_command(
-    mode: str, raw: Path, settings: Settings, seconds: int | None = None
+    mode: str,
+    raw: Path,
+    settings: Settings,
+    bin_dir: Path | None,
+    name: str,
+    lab_seconds: int | None = None,
 ) -> list[str]:
-    """AMDuProfCLI collect with call stacks, system-wide, for seconds (default: the capture)."""
+    """AMDuProfCLI collect with user-mode call stacks of a defect_lab it launches.
+
+    AMDuProfCLI on Windows prints "Callstack sampling in System-wide profiling is not supported"
+    for -a, so this profiles the launched process only; -b stops it when the capture ends.
+    lab_seconds is defect_lab's own run time, by default well past the capture.
+    """
     event = (
         f"event=timer,interval={settings.timer_ms}"
         if mode == "timer-cg"
@@ -226,13 +247,22 @@ def callgraph_command(
         "collect",
         "-e",
         event,
-        "--call-graph",
-        settings.call_graph,
-        "-a",
+        "--call-graph-mode",
+        settings.call_graph_mode,
+        "--call-graph-type",
+        "user",
+        "--call-graph-depth",
+        str(settings.call_graph_depth),
         "-d",
-        str(seconds or settings.seconds),
+        str(settings.seconds),
+        "-b",
         "-o",
         str(raw),
+        str(Path(bin_dir or ".") / "defect_lab.exe"),
+        "--class",
+        name,
+        "--seconds",
+        str(lab_seconds or settings.seconds + 30),
     ]
 
 
@@ -275,10 +305,9 @@ def measure_overhead(
 ) -> None:
     """Write <name>.<mode>.notes.txt: the call graph's cost to defect_lab under the stressors.
 
-    defect_lab runs once without profiling, then once inside a longer call-graph collection
-    that is discarded (sampling starts some seconds after AMDuProfCLI says "Profiling started",
-    so the timed run begins 3 s later). The stressors are stopped afterwards, so that the kept
-    capture gets fresh ones.
+    defect_lab runs once without profiling, then once launched by a call-graph collection that
+    is discarded; it prints its rate on the console, which AMDuProfCLI passes on. The stressors
+    are stopped afterwards, so that the kept capture gets fresh ones.
     """
     started = [
         subprocess.Popen([str(image)], cwd=bin_dir)
@@ -288,19 +317,15 @@ def measure_overhead(
     with_graph = None
     try:
         without = run_lab(bin_dir, name, settings.seconds)
-        collect = subprocess.Popen(
-            callgraph_command(mode, measure, settings, settings.seconds + 8),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+        done = subprocess.run(
+            callgraph_command(mode, measure, settings, bin_dir, name, settings.seconds),
+            check=False,
+            capture_output=True,
             text=True,
         )
-        for line in collect.stdout:
-            if "Profiling started" in line:
-                time.sleep(3)
-                with_graph = run_lab(bin_dir, name, settings.seconds)
-                break
-        collect.stdout.read()
-        collect.wait()
+        sys.stdout.write(done.stdout[-2000:])
+        sys.stderr.write(done.stderr[-2000:])
+        with_graph = ns_per_iteration(done.stdout)
     finally:
         for process in started:
             process.kill()
@@ -394,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
                     str(ANONYMIZE),
                     str(session),
                     "--keep-process",
-                    *settings.keep(),
+                    *settings.keep(label.split(".", 1)[1]),
                     "--out",
                     str(args.anonymize / label),
                     "--bundle",

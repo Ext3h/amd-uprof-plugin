@@ -14,7 +14,7 @@ allows:
 - `timer`: `AMDuProfCLI collect -e event=timer,interval=4` (any x86 CPU)
 - `ibs`: `uprof.py collect --event ibs-op --sample-interval 16000000` (AMD CPU with IBS; VBS/Hyper-V must be off, see below)
 - `pmc`: `uprof.py collect --event cycles --sample-interval 4ms` (core PMC sampling)
-- `timer-cg`, `ibs-cg`: the timer or IBS event with `AMDuProfCLI collect --call-graph 1:64:user:fpo` (user-mode call stacks, at most 64 frames, unwind mode `fpo`), for the caller paths of #187. Each also writes `notes.txt` with the call graph's cost: defect_lab's ns per iteration in a run without profiling and in a run during a discarded call-graph collection.
+- `timer-cg`, `ibs-cg`: the timer or IBS event with `AMDuProfCLI collect --call-graph-mode fpo --call-graph-type user --call-graph-depth 64` (user-mode call stacks, at most 64 frames, unwind information where frame pointers are missing), for the caller paths of #187. AMDuProfCLI on Windows records no call stacks system-wide (`-a` prints `Callstack sampling in System-wide profiling is not supported on Windows`), so these modes profile only a defect_lab that AMDuProfCLI launches; the stressors still load the machine but are not in the capture. Each also writes `notes.txt` with the call graph's cost: defect_lab's ns per iteration in a run without profiling and in a run during a discarded call-graph collection.
 
 The coarse intervals and short runs keep each capture at about 1–2 MB with its dump (estimated),
 with a few hundred samples in the class's own module. `--seconds`, `--ibs-interval`,
@@ -32,7 +32,7 @@ key names, for #237.
    - IBS needs VBS and Hyper-V off. If `collect` prints `SAMPLER: falling back to cycle sampling ... VBS is running`, the `ibs` captures are cycle captures. Either turn VBS off (as administrator: `bcdedit /set hypervisorlaunchtype off`, disable Memory integrity, reboot) or leave `ibs` out of `--modes`.
    - Kernel samples need an elevated prompt; user-mode samples do not.
    - Call stacks (`timer-cg`, `ibs-cg`) need an elevated prompt and uProf's capture driver installed. `record.py` stops with a cause line when a call-graph mode is asked for without elevation; leave both out of `--modes` to record without them.
-   - **Not verified:** the call-graph modes were only checked on an unelevated Intel test machine without the driver. AMDuProfCLI accepted the command line there, but the captures held no stacks (`"hasCallstack": false` in `session.uprof`) and the overhead rates were noise. If an elevated run still shows `false` or `callstack.db` stays empty, report it with the capture.
+   - **Not verified:** the per-process call-graph command has not been run yet. `record.py` passes AMDuProfCLI's console output through, so its warnings appear in the run's log. If an elevated run still shows `false` or `callstack.db` stays empty, report it with the capture.
 5. **Record and anonymize, about 15 minutes without the call-graph modes, longer with them:**
    `python trials\defect_lab\record.py C:\lab\bin C:\lab\raw --anonymize C:\lab\out`
    - A mode the machine cannot record is printed as `skipped <class> <mode>: <cause>`.

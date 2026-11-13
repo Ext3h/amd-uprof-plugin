@@ -81,7 +81,7 @@ python <SKILL_DIR>/tools/uprof.py profile --session <SESSION_DIR> --by <granular
 | `--session` | required capture directory holding `session.uprof` and `cpu.db` |
 | `--by process\|module\|function\|region\|line\|instruction` | required grouping key |
 | `--pid N` | one process by PID (non-negative); mutually exclusive with `--image` |
-| `--image PATTERN` | case-insensitive ILIKE on the full image path; all PIDs of matching images; `'%'` = every process |
+| `--image PATTERN` | ILIKE (any case) on file name or full path; all PIDs of matching images; `'%'` = every process |
 | `--time-filter T1:T2` | seconds from capture start, `[T1,T2)`; default the whole capture; dump captures only (rejected on PMC) |
 | `--top N\|all` | default 20; `all` = no cap; returns N rows plus one `<other ...>` remainder row when truncated |
 | `--function NAME` | narrow `--by instruction\|line` to one parent function row: `function` taken from `--by function`; requires `--module`; the output carries the parent measurement |

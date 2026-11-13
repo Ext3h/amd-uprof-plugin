@@ -387,7 +387,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 
 | Bound input | Meaning |
 |---|---|
-| `uprof_image` | ILIKE pattern on the full process image path (`Process.name`); `'%'` selects every process |
+| `uprof_image` | ILIKE pattern on the process image's file name or full path (`Process.name`); `'%'` selects every process |
 | `uprof_pid` | one PID as text; empty selects every process |
 | `uprof_top` | row cap bound from `--top`: a positive `N`, or `0` for `--top all` (no cap) |
 | `uprof_time_start`, `uprof_time_end` | window in ns; `[start, end)` |

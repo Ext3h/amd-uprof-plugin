@@ -53,6 +53,19 @@ def path_arg(path: str | os.PathLike[str], placeholder: str) -> tuple[str, str |
     return placeholder, f"{placeholder.strip('<>')}={text!r}"
 
 
+def app_arg(value: str, placeholder: str) -> tuple[str, str | None]:
+    """(argument, data line) for an argument passed on to a launched app.
+
+    A leading - or @ is the app's own option there, inert to every shell, so only the character
+    set and the backslash rules of is_plain apply.
+    """
+    body = value[1:] if value[:1] in ("-", "@") else value
+    if body and is_plain(body) or value in ("-", "@"):
+        quoted = value if all(char in _BARE for char in value) else f'"{value}"'
+        return quoted, None
+    return placeholder, f"{placeholder.strip('<>')}={value!r}"
+
+
 def image_pattern(name: str) -> str:
     """An ILIKE pattern that matches name and is plain: every character off the list, and a
     leading - or @, becomes the one-character wildcard _."""

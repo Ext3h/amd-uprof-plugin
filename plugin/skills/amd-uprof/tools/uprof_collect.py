@@ -46,7 +46,8 @@ class CollectOptions:
     event: str = "cycles"  # cycles | ibs-op | timer
     ibs_count_control: str = "op"  # op | cycles
     dry_run: bool = False
-    launch: list[str] = field(default_factory=list)  # app and its arguments (timer only)
+    # --launch: None when absent; the app and its arguments otherwise (timer only).
+    launch: list[str] | None = None
 
 
 def _event_spec(options: CollectOptions, event: str, interval: int) -> str:
@@ -79,14 +80,25 @@ def _event_args(options: CollectOptions, event: str, interval: int) -> list[str]
     return ["-e", _event_spec(options, event, interval)]
 
 
-def _target_args(options: CollectOptions) -> tuple[list[str], str]:
-    """The capture target: a launched app (passed last), the PIDs, or the whole system."""
-    if options.launch:
-        return list(options.launch), " ".join(options.launch)
+def _target_args(options: CollectOptions) -> tuple[list[str], str, list[str]]:
+    """The capture target: a launched app (passed last), the PIDs, or the whole system.
+
+    Returns the argv, its printed form and the data lines for launch values that are not plain
+    (each is a placeholder in the printed form, never inside it).
+    """
+    if options.launch is not None:
+        shown, data = [], []
+        for index, value in enumerate(options.launch):
+            text, line = (uprof_shell.path_arg(value, "<APP>") if index == 0
+                          else uprof_shell.app_arg(value, f"<APP_ARG_{index}>"))
+            shown.append(text)
+            if line:
+                data.append(line)
+        return list(options.launch), " ".join(shown), data
     if not options.pids:
-        return ["-a"], "-a"
+        return ["-a"], "-a", []
     spec = ",".join(str(pid) for pid in options.pids)
-    return ["-p", spec], f"-p {spec}"
+    return ["-p", spec], f"-p {spec}", []
 
 
 def _interval_mode(options: CollectOptions) -> str:
@@ -210,6 +222,12 @@ def _validate(options: CollectOptions) -> None:
                              + ", ".join(str(pid) for pid in invalid))
     if options.event in ("cycles", "timer") and options.ibs_count_control != "op":
         raise UprofError("--ibs-count-control is only valid with --event ibs-op")
+    if options.launch is not None and not options.launch:
+        raise UprofError("--launch needs APP [ARGS]: the path of the app to start under the "
+                         "capture; or drop --launch to capture system-wide")
+    if options.launch and not Path(options.launch[0]).is_file():
+        raise UprofError(f"--launch APP must be an existing executable file; got "
+                         f"{options.launch[0]!r}; pass the app's path")
     if options.launch and options.pids:
         raise UprofError("--launch starts an app under the capture; it cannot also attach to "
                          "--process PIDs")
@@ -218,20 +236,21 @@ def _validate(options: CollectOptions) -> None:
                          f"{options.event}, attach to the running app with --process <PID>")
     if options.event == "timer" and options.pids:
         # Measured on Windows, elevated and unelevated: the raw sample file stays empty.
-        system_wide = (f"python {uprof_shell.path_arg(str(_UPROF_PY), '<UPROF_PY>')[0]} "
-                       "collect --out-dir "
-                       f"{uprof_shell.path_arg(options.out_dir, '<OUT_DIR>')[0]} --seconds "
-                       f"{options.seconds} --event timer")
+        tool, tool_data = uprof_shell.path_arg(str(_UPROF_PY), "<UPROF_PY>")
+        out, out_data = uprof_shell.path_arg(options.out_dir, "<OUT_DIR>")
+        system_wide = (f"python {tool} collect --out-dir {out} --seconds {options.seconds} "
+                       "--event timer")
+        data = "".join(f"\n{line}" for line in (tool_data, out_data) if line)
         raise UprofError(
             "a timer capture attached to --process PIDs records no samples on Windows; capture "
             f"system-wide and narrow with profile --pid: {system_wide}, or start the app with "
-            "--launch <APP>")
+            "--launch <APP>" + data)
 
 
 def _run_cli(uprof: str, event_args: list[str], target_args: list[str],
              options: CollectOptions) -> subprocess.CompletedProcess[str]:
     command = [uprof, "collect", *event_args]
-    if options.launch:
+    if options.launch is not None:
         # AMDuProfCLI takes the launched app and its arguments last.
         command += ["-d", str(options.seconds), "-o", options.out_dir, *target_args]
     else:
@@ -292,6 +311,10 @@ def _one_session(out_dir: Path, session_before: bool, children_before: set[Path]
 
 def collect(options: CollectOptions) -> None:
     _validate(options)
+    if options.launch:
+        # The app by its absolute path: AMDuProfCLI neither reads it as an option nor looks it up
+        # in the current directory or PATH.
+        options.launch = [str(Path(options.launch[0]).resolve()), *options.launch[1:]]
     mode = _interval_mode(options)
     interval, interval_line = _resolve_interval(options, mode)
     out_dir = Path(options.out_dir)
@@ -301,13 +324,14 @@ def collect(options: CollectOptions) -> None:
                                  else ("AMDuProfCLI", None))
     out_display, out_data = uprof_shell.path_arg(options.out_dir, "<OUT_DIR>")
     # A path that is not plain is a placeholder in COMMAND= and named on its own data line.
-    command_data = [line for line in (uprof_data, out_data) if line]
-    target_args, target_display = _target_args(options)
+    target_args, target_display, target_data = _target_args(options)
+    command_data = [line for line in (uprof_data, out_data, *target_data) if line]
     print(f"VERSION={skill_identity()}")
     print(interval_line)
     print(f"EVENT={_event_spec(options, options.event, interval)}")
     print(f"COMMAND={uprof_display} collect -e {_event_spec(options, options.event, interval)} "
-          + (f"-d {options.seconds} -o {out_display} {target_display}" if options.launch
+          + (f"-d {options.seconds} -o {out_display} {target_display}"
+             if options.launch is not None
              else f"{target_display} -d {options.seconds} -o {out_display}"))
     for line in command_data:
         print(line)
@@ -316,6 +340,9 @@ def collect(options: CollectOptions) -> None:
     os_requested = _requests_os_mode(options.event)
     if not elevated:
         print(_unelevated_warning(os_requested), file=sys.stderr)
+    elif options.launch:
+        print("WARNING: elevated: the launched app runs with administrator rights",
+              file=sys.stderr)
     if out_dir.is_dir():
         print(f"WARNING: {options.out_dir} exists; uProf will create an AMDuProf-* subdirectory "
               "to avoid the collision", file=sys.stderr)
@@ -351,7 +378,8 @@ def collect(options: CollectOptions) -> None:
         # The fallback cycle capture always requests OS mode; only elevation decides the warning.
         if not elevated:
             print(_FALLBACK_KERNEL_WARNING, file=sys.stderr)
-        completed = _run_cli(uprof, ["-e", cycle_spec], target_args, options)
+        completed = _run_cli(uprof, _event_args(options, effective_event, interval),
+                             target_args, options)
     if completed.returncode != 0:
         detail = failure_detail(completed)
         if (effective_event == "cycles"
@@ -366,6 +394,6 @@ def collect(options: CollectOptions) -> None:
     print(f"SESSION={absolute(session)}")
     meta = verify_collect(session, effective_event, interval,
                           options.ibs_count_control,
-                          not options.pids and not options.launch, options.pids)
+                          not options.pids and options.launch is None, options.pids)
     print(f"collectCommand={meta.get('collectCommand')}")
     print(collect_summary(meta, effective_event))

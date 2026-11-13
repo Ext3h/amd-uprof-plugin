@@ -85,6 +85,18 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.assertIn("sum of this function's own rows", document["PARENT"])
         self.assertIn("use the capture denominators", document["PARENT"])
 
+    def test_the_module_matches_in_any_spelling_of_its_path(self):
+        # Module.path or a Windows path with backslashes and other case names the same module
+        # as the normalized cell; the filter compares normalized keys.
+        session = self.derived_session()
+        expected = self.scoped(session, "pdata_0x1050")
+        spelled = str(FIXTURE).upper().replace("/", "\\")
+        document = self.document(session, "--function", "pdata_0x1050", "--module", spelled)
+        self.assertEqual(document["legend"]["function_scope"]["parent"],
+                         expected["legend"]["function_scope"]["parent"])
+        self.assertEqual(document["legend"]["function_scope"]["module"], MODULE)
+        self.assertEqual(sum(row["samples"] for row in document["rows"] if row.get("rva")), 3)
+
     def test_the_derived_range_excludes_samples_outside_it_and_keeps_capture_shares(self):
         document = self.scoped(self.derived_session(), "pdata_0x1050")
         rows = {row["rva"]: row for row in document["rows"] if row.get("rva")}

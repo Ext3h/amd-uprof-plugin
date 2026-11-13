@@ -110,7 +110,7 @@ class SanityScopeTest(unittest.TestCase):
     def test_scoped_process_that_stops_early_warns(self):
         line = self.sanity_line("--pid", "100")
 
-        self.assertIn("dump-wide", line)
+        self.assertIn("SANITY: OK, system-wide: ", line)
         self.assertIn("scoped coverage (--pid 100): WARN", line)
         self.assertIn("8.100 s before the scope window end at 10.000 s", line)
 
@@ -142,7 +142,7 @@ class SanityScopeTest(unittest.TestCase):
     def test_unfiltered_run_makes_no_scoped_claim(self):
         line = self.sanity_line()
 
-        self.assertIn("dump-wide", line)
+        self.assertIn("SANITY: OK, system-wide: ", line)
         self.assertNotIn("scoped", line)
 
     def test_attached_capture_keeps_its_attached_verdict(self):

@@ -308,6 +308,61 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertEqual(ibs[ibs.index("--seconds") + 1], "1")
         self.assertEqual(settings.stressors, 8)
 
+    def write_callstacks(self):
+        import duckdb
+
+        connection = duckdb.connect(str(self.session / "callstack.db"))
+        try:
+            connection.execute(
+                "CREATE TABLE CallstackSample (startTime UBIGINT, processId "
+                "UINTEGER, threadId UINTEGER, callstackId UBIGINT)"
+            )
+            connection.execute(
+                "CREATE TABLE CallstackFrame (callstackId UBIGINT, functionId "
+                'UBIGINT, depth UINTEGER, "offset" UBIGINT)'
+            )
+            connection.execute("CREATE TABLE Srcfile (id UINTEGER, name VARCHAR)")
+            connection.execute(
+                "INSERT INTO CallstackSample VALUES (1, ?, 11, 7), (2, ?, 77, 8)",
+                [build_captures.PID, build_captures.OTHER_PID],
+            )
+            connection.execute(
+                "INSERT INTO CallstackFrame VALUES (7, 100, 0, 16), (7, 101, 1, 4), (8, 102, 0, 32)"
+            )
+            connection.execute("INSERT INTO Srcfile VALUES (1, ?)", [PROFILE + "\\main.c"])
+        finally:
+            connection.close()
+
+    def test_call_stacks_are_handed_over_filtered_like_cpu_db(self):
+        import duckdb
+
+        self.write_callstacks()
+        code, stderr = self.run_main()
+        self.assertEqual(code, 0, stderr)
+        connection = duckdb.connect(str(self.out / "callstack.db"), read_only=True)
+        try:
+            samples = connection.execute(
+                "SELECT processId, callstackId FROM CallstackSample"
+            ).fetchall()
+            frames = connection.execute(
+                "SELECT callstackId, functionId FROM CallstackFrame ORDER BY ALL"
+            ).fetchall()
+            files = connection.execute("SELECT name FROM Srcfile").fetchall()
+        finally:
+            connection.close()
+        self.assertEqual(samples, [(build_captures.PID, 7)])
+        self.assertEqual(frames, [(7, 100), (7, 101)])
+        self.assertEqual(files, [("c:\\capture\\main.c",)])
+        review = (self.out / "review.txt").read_text(encoding="utf-8")
+        self.assertIn("== callstack.db", review)
+        self.assertIn("== table CallstackFrame (2 rows)", review)
+
+    def test_a_missing_callstack_db_is_noted(self):
+        code, stderr = self.run_main()
+        self.assertEqual(code, 0, stderr)
+        self.assertFalse((self.out / "callstack.db").exists())
+        self.assertIn("callstack.db: absent", (self.out / "review.txt").read_text(encoding="utf-8"))
+
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

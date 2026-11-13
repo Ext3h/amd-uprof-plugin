@@ -107,6 +107,29 @@ def convert(lines: list[str]) -> tuple[list[dict], dict[str, object]]:
     return events, evidence
 
 
+CONTEXT_FIELDS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def final_context_tokens(lines: list[str]) -> int | None:
+    """The main agent's input at its last turn: uncached, cache-read and cache-written tokens.
+
+    The result event's usage sums all turns, and a subagent's turns have their own context, so
+    the count comes from the last top-level assistant message that reports usage.
+    """
+    tokens = None
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") != "assistant" or event.get("parent_tool_use_id") is not None:
+            continue
+        usage = event.get("message", {}).get("usage")
+        if isinstance(usage, dict) and any(name in usage for name in CONTEXT_FIELDS):
+            tokens = sum(int(usage.get(name) or 0) for name in CONTEXT_FIELDS)
+    return tokens
+
+
 class ClaudeCodeRunner:
     name = "claude-code"
 
@@ -120,7 +143,8 @@ class ClaudeCodeRunner:
         status, wall = run_process(command(self.executable, spec, settings_file), spec.cwd,
                                    trial_env(spec, DROP_PREFIXES, DROP), raw, stderr,
                                    spec.timeout_s)
-        events, evidence = convert(
-            raw.read_text(encoding="utf-8", errors="replace").splitlines())
+        lines = raw.read_text(encoding="utf-8", errors="replace").splitlines()
+        events, evidence = convert(lines)
         evidence["setting_sources"] = "none"
-        return TrialResult(events, status, wall, evidence)
+        return TrialResult(events, status, wall, evidence,
+                           context_tokens=final_context_tokens(lines))

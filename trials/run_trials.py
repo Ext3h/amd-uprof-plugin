@@ -104,6 +104,21 @@ def prepare(run_dir: Path, scn: str, fields: dict[str, str]) -> tuple[str, Path]
     return prompt, root
 
 
+def context_limit() -> int:
+    """The catalogue's pass criterion: a run must end with fewer than this many context tokens."""
+    text = (TRIALS / "scenarios.md").read_text(encoding="utf-8")
+    match = re.search(r"fewer than ([\d,]+) tokens", text)
+    if not match:
+        raise ValueError("scenarios.md states no context limit")
+    return int(match.group(1).replace(",", ""))
+
+
+def context_verdict(tokens: int | None, limit: int) -> str:
+    if tokens is None:
+        return "not measured"
+    return "below limit" if tokens < limit else "over limit"
+
+
 def summarize(events: list[dict]) -> dict[str, object]:
     calls = [e for e in events if e["type"] == "tool_call"]
     tools: dict[str, int] = {}
@@ -152,6 +167,8 @@ def run_one(runner, run_dir: Path, scn: str, fields, plugin: Path, args,
     meta = {"scenario": scn, "prompt": prompt, "runner": runner.name, "model": args.model,
             "exit": result.exit_status, "wall_s": result.wall_s, "cwd": str(cwd),
             "capture": str(capture_root), "evidence": result.evidence,
+            "context_tokens": result.context_tokens,
+            "context": context_verdict(result.context_tokens, context_limit()),
             **summarize(result.events),
             "outside_references": outside_references(result.events, denied)}
     (out / "meta.json").write_text(json.dumps(meta, indent=1, default=str), encoding="utf-8")
@@ -165,14 +182,18 @@ def runlog(run_dir: Path, header: dict[str, str], metas: list[dict], skipped: di
     lines += ["| Item | Value |", "|---|---|"]
     lines += [f"| {key} | {value} |" for key, value in header.items()]
     lines += ["", "Answers are not judged here; apply `trials/observer.md` to the transcripts.",
+              f"Context is the final-turn context in tokens; a run passes only below "
+              f"{context_limit()}.",
               "", "| Scenario | Exit | Wall s | Tool calls | Tools | Tool errors | Answered | "
-              "Outside references |", "|---|---|---|---|---|---|---|---|"]
+              "Outside references | Context |", "|---|---|---|---|---|---|---|---|---|"]
     for meta in sorted(metas, key=lambda m: m["scenario"]):
         tools = ", ".join(f"{k} {v}" for k, v in sorted(meta["tools"].items()))
+        tokens = meta["context_tokens"]
+        context = meta["context"] if tokens is None else f"{tokens} {meta['context']}"
         lines.append(f"| {meta['scenario']} | {meta['exit']} | {meta['wall_s']} | "
                      f"{meta['tool_calls']} | {tools} | {meta['tool_errors']} | "
                      f"{'yes' if meta['answered'] else 'no'} | "
-                     f"{'; '.join(meta['outside_references']) or 'none'} |")
+                     f"{'; '.join(meta['outside_references']) or 'none'} | {context} |")
     lines += ["", "## Isolation evidence reported by the runner", ""]
     for meta in sorted(metas, key=lambda m: m["scenario"]):
         facts = "; ".join(f"{k}: {v}" for k, v in sorted(meta["evidence"].items())

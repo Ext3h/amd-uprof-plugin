@@ -553,6 +553,21 @@ LEFT JOIN Module m ON m.id = s.moduleId
 WHERE (getvariable('uprof_pid') = '' OR s.processId = CAST(getvariable('uprof_pid') AS INTEGER))
   AND COALESCE(p.name, '') ILIKE getvariable('uprof_image')$pmc$ END);
 
+-- Dump rows joined to the scoped profile population. ibs_rows in Python aggregates the dump's
+-- variable hardware columns from this view, so context annotation automatically reflects any
+-- change to the PID, image or time filter without re-reading the ASCII dump or duplicating the
+-- scope predicate.
+CREATE OR REPLACE TEMP VIEW v_dump_scoped AS
+SELECT d.*
+FROM v_dump_source d
+JOIN v_scoped s
+  ON TRY_CAST(d."DeltaTick" AS BIGINT) = s.delta_tick
+ AND TRY_CAST(d."CPU_Number" AS INTEGER) = s.cpu
+ AND TRY_CAST(d."TID" AS INTEGER) = s.tid
+ AND TRY_CAST(d."PID" AS INTEGER) = s.pid
+ AND TRY_CAST(d."Offset" AS BIGINT) = s.rva
+ AND module_key(d."ModuleName") = s.module_name;
+
 -- Late-coverage verdict for the report's scope, appended to SANITY when --image/--pid or
 -- --time-filter narrows the population below the whole dump. The scope window is the recorded
 -- translate span clipped to the profile time filter; the scope's last sample is compared against

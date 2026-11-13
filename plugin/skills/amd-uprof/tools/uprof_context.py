@@ -605,7 +605,7 @@ def ibs_expression(field: str) -> list[str]:
         return [f'count(*) FILTER (WHERE TRY_CAST("{field}" AS BIGINT) <> 0) AS "{field}"']
     if field == IBS_LATENCY:
         clipped = (f'CASE WHEN {_IBS_TAG_INT} '
-                   f'THEN LEAST(TRY_CAST("{field}" AS BIGINT), {IBS_TAG_MAX}) END')
+                   f'THEN LEAST(TRY_CAST("{field}" AS DOUBLE), {IBS_TAG_MAX}) END')
         return [f'count(*) FILTER (WHERE {_IBS_TAG_INT}) AS "{field}_samples"',
                 f'sum({clipped}) AS "{field}_sum"',
                 f'max({clipped}) AS "{field}_max"']
@@ -650,26 +650,17 @@ def ibs_rows(connection: object, module_name: str,
     dump = connection.execute("SELECT getvariable('uprof_ibs_dump')").fetchone()
     if not dump or not dump[0]:
         return {}
-    columns = {str(row[0]) for row in connection.execute(
-        "DESCRIBE SELECT * FROM read_csv(getvariable('uprof_ibs_dump'), "
-        "header = true, all_varchar = true)").fetchall()}
+    columns = {str(row[0]) for row in connection.execute("DESCRIBE v_dump_scoped").fetchall()}
     fields = present_ibs_fields(columns)
     if not fields:
         return {}
     expressions = [expression for field in fields for expression in ibs_expression(field)]
-    # The rows counted here must be the ones v_scoped kept: same PID, image and time window.
+    # The rows counted here come from v_dump_scoped, which joins v_dump_source to v_scoped.
     sql = ('SELECT CAST(d."Offset" AS BIGINT) AS rva, count(*) AS samples, '
            + ", ".join(expressions)
-           + ' FROM read_csv(getvariable(\'uprof_ibs_dump\'), header = true, all_varchar = true)'
-             ' AS d LEFT JOIN Process AS p ON p.id = TRY_CAST(d."PID" AS INTEGER)'
+           + ' FROM v_dump_scoped AS d'
              ' WHERE module_key(d."ModuleName") = CAST(? AS VARCHAR)'
              ' AND TRY_CAST(d."Offset" AS BIGINT) IN (SELECT * FROM unnest(?))'
-             ' AND TRY_CAST(d."DeltaTick" AS BIGINT) >= getvariable(\'time_start\')'
-             ' AND TRY_CAST(d."DeltaTick" AS BIGINT) < getvariable(\'time_end\')'
-             ' AND (getvariable(\'uprof_pid\') = \'\''
-             '      OR TRY_CAST(d."PID" AS INTEGER)'
-             '         = CAST(getvariable(\'uprof_pid\') AS INTEGER))'
-             ' AND COALESCE(p.name, \'\') ILIKE getvariable(\'uprof_image\')'
              ' GROUP BY rva')
     rows = connection.execute(sql, [module_name, addresses]).fetchall()
     names = [str(column[0]) for column in connection.description]

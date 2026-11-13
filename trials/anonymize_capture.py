@@ -287,10 +287,25 @@ def anonymize(session: Path, keep: list[str], out: Path) -> Path:
                           f"{detail}") from exc
     finally:
         source.close()
-    out.mkdir(parents=True, exist_ok=True)
     meta = reduced_meta(json.loads((session / "session.uprof").read_text(
         encoding="utf-8-sig")))
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        review = write_filtered(session, kept, out, meta)
+    except BaseException:
+        # A failed run leaves nothing that could be mistaken for a finished capture.
+        for name in ("cpu.db", "cpu.db.wal", "session.uprof", "review.txt"):
+            (out / name).unlink(missing_ok=True)
+        raise
+    (out / "review.txt").write_text(review, encoding="utf-8")
     (out / "session.uprof").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
+    return out / "review.txt"
+
+
+def write_filtered(session: Path, kept: list[int], out: Path, meta: dict) -> str:
+    """Write the filtered cpu.db into out and return the review dump."""
+    import duckdb
+
     # The capture is only read. The kept rows go into a fresh file with small blocks (a few
     # thousand rows take about 0.5 MB instead of ~5 MB).
     connection = duckdb.connect()
@@ -314,8 +329,7 @@ def anonymize(session: Path, keep: list[str], out: Path) -> Path:
                           f"cpu.db: {detail}") from exc
     finally:
         connection.close()
-    (out / "review.txt").write_text(review, encoding="utf-8")
-    return out / "review.txt"
+    return review
 
 
 def main(argv: list[str] | None = None) -> int:

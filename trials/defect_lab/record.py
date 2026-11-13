@@ -147,11 +147,18 @@ def main(argv: list[str] | None = None) -> int:
                 print(result)
                 translated.append((f"{name}.{mode}", result))
     if args.anonymize:
+        failed = []
         for label, session in translated:
             code = subprocess.run([sys.executable, str(ANONYMIZE), str(session),
                                    "--keep-process", *KEEP, "--out",
                                    str(args.anonymize / label)]).returncode
             print(f"anonymize {label}: exit {code}")
+            if code != 0:
+                failed.append(label)
+        if failed:
+            print(f"error: anonymization failed for {', '.join(failed)}; do not hand those "
+                  "folders over", file=sys.stderr)
+            return 1
     return 0
 
 

@@ -54,7 +54,7 @@ class ModuleProfileTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     def session(self, name="cycle", flags=True, cycle_controlled=True, modules=None,
-                body=None):
+                body=None, processes=None):
         session = self.root / name
         if session.is_dir():
             return session
@@ -62,6 +62,7 @@ class ModuleProfileTest(unittest.TestCase):
         (session / "session.uprof").write_text(json.dumps(_meta(cycle_controlled)),
                                                encoding="utf-8")
         modules = modules or [(1, WORKLOAD, False), (2, NTDLL, True), (3, HELPER, False)]
+        processes = processes or [(100, "workload.exe")]
         connection = duckdb.connect(str(session / "cpu.db"))
         try:
             connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
@@ -71,7 +72,8 @@ class ModuleProfileTest(unittest.TestCase):
                                "name VARCHAR)")
             connection.execute("CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
                                "functionId UBIGINT, moduleRVA UBIGINT)")
-            connection.execute("INSERT INTO Process VALUES (100, 'workload.exe')")
+            for pid, proc_name in processes:
+                connection.execute("INSERT INTO Process VALUES (?, ?)", [pid, proc_name])
             for module_id, path, system in modules:
                 if flags:
                     connection.execute("INSERT INTO Module VALUES (?, ?, ?)",
@@ -252,6 +254,29 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertIn("--by function", module_calls[0])
         self.assertNotIn("--by region", module_calls[0])
         self.assertNotIn("--by instruction", module_calls[0])
+
+    def test_system_wide_process_next_scopes_module_to_top_pid(self):
+        body = [
+            f"1000000000,0,1,100,4096,{WORKLOAD},100",
+            f"2000000000,0,1,100,4096,{WORKLOAD},200",
+            f"3000000000,0,1,200,4096,{HELPER},150",
+        ]
+        session = self.session("multi_proc", processes=[(100, "workload.exe"), (200, "other.exe")],
+                               body=body)
+        document = self.document(session, "process")
+        calls = document["legend"]["next"]
+        self.assertEqual(len(calls), 2)
+        # Top process (PID 100 with 2 samples) is offered first with --pid
+        self.assertIn("--by module", calls[0])
+        self.assertIn("--pid 100", calls[0])
+        # Unscoped module call is offered alongside as an alternative
+        self.assertIn("--by module", calls[1])
+        self.assertNotIn("--pid", calls[1])
+
+        # Formatted output joins both with &&
+        output = self.profile(session, by="process")
+        self.assertIn("--by module --pid 100 &&", output)
+        self.assertIn("&& python", output)
 
     def test_truncated_module_rollup_keeps_a_remainder_last(self):
         session = self.session()

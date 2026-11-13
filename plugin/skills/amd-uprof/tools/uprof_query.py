@@ -674,12 +674,14 @@ def _quote(text: str) -> str:
     return '"' + text.replace('"', '\\"') + '"'
 
 
-def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
+def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False, *,
+                     pid: int | None = None) -> str:
     """A runnable drill-down command that keeps the session and the process/image scope."""
     parts = ["python", _quote(str(TOOLS_DIR / "uprof.py")), "profile",
              "--session", _quote(str(util.absolute(args.session))), "--by", by]
-    if args.pid is not None:
-        parts += ["--pid", str(args.pid)]
+    effective_pid = pid if pid is not None else args.pid
+    if effective_pid is not None:
+        parts += ["--pid", str(effective_pid)]
     elif args.image is not None and args.image != "%":
         parts += ["--image", _quote(args.image)]
     if args.time_filter:
@@ -705,7 +707,9 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
 
 
 def _next_calls(args: argparse.Namespace,
-                row_attribution: dict[str, int] | None = None) -> list[str]:
+                row_attribution: dict[str, int] | None = None,
+                connection: object | None = None,
+                system_wide: bool = False) -> list[str]:
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
@@ -713,7 +717,26 @@ def _next_calls(args: argparse.Namespace,
     not a default drill-down. A function-scoped instruction or line view was asked for, so it
     offers the sibling view with the same --function/--module scope; the unscoped views keep
     their old stops.
+
+    On a system-wide capture with more than one process, --by process lists the module call scoped
+    to the top process (--pid <top pid>), alongside the unscoped call as an alternative.
     """
+    if args.by == "process" and system_wide and connection is not None:
+        try:
+            top_pids = [row[0] for row in connection.sql(
+                "SELECT pid FROM v_process_rows WHERE pid IS NOT NULL ORDER BY rn LIMIT 2"
+            ).fetchall()]
+            has_other = bool(connection.sql(
+                "SELECT 1 FROM v_process_rows WHERE process = '<other processes>' LIMIT 1"
+            ).fetchall())
+            if top_pids and (len(top_pids) > 1 or has_other):
+                return [
+                    _profile_command(args, "module", pid=top_pids[0]),
+                    _profile_command(args, "module"),
+                ]
+        except Exception:
+            pass
+
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))
@@ -924,7 +947,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             has_system_module: bool | None = None,
             range_info: dict[str, Any] | None = None,
             row_attribution: dict[str, int] | None = None,
-            function_scope: dict[str, Any] | None = None) -> dict[str, Any]:
+            function_scope: dict[str, Any] | None = None,
+            connection: object | None = None) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -1065,7 +1089,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution),
+        "next": _next_calls(args, row_attribution, connection=connection,
+                            system_wide=system_wide),
     }
     if function_scope is not None:
         result["function_scope"] = _function_scope_json(
@@ -2025,7 +2050,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 "uprof_tag_available": "true" if tag_available else "false"})
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
                              sample_interval_s, has_system_module, range_info, row_attribution,
-                             function_scope)
+                             function_scope, connection=connection)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             # The filter and its parent measurement precede the reading rule; both sit directly
             # below METRIC, after VERSION, before the detailed fields.

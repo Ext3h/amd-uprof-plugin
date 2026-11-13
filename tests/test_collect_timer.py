@@ -23,9 +23,11 @@ import uprof
 import uprof_collect
 import uprof_native
 import uprof_session
+import uprof_shell
 from uprof_util import UprofError
 
 FIXTURE_META = Path(__file__).resolve().parent / "fixtures" / "timer" / "session.uprof"
+APP = FIXTURE_META.with_name("heap_churn.exe")
 
 
 def options(**overrides):
@@ -81,19 +83,53 @@ class TimerCollectTest(unittest.TestCase):
         self.assertIn("collect --out-dir out --seconds 3 --event timer", message)
         self.assertIn("profile", message)
 
-    def test_a_launch_puts_the_app_last(self):
-        command = command_line(dry_run(options(launch=["app.exe", "-x", "1"])))
-        self.assertTrue(command.endswith(" app.exe -x 1"), command)
+    def test_the_refusal_names_a_placeholder_out_dir_as_data(self):
+        with self.assertRaises(UprofError) as caught:
+            dry_run(options(out_dir="o$x", pids=[42]))
+        message = str(caught.exception)
+        self.assertIn("--out-dir <OUT_DIR>", message)
+        self.assertIn("OUT_DIR=" + repr("o$x"), message.splitlines())
+
+    def test_a_launch_puts_the_resolved_app_last(self):
+        command = command_line(dry_run(options(launch=[str(APP), "-x", "1"])))
+        self.assertTrue(command.endswith(f" {uprof_shell.quote(str(APP.resolve()))} -x 1"),
+                        command)
         self.assertNotIn(" -a ", command)
+
+    def test_a_launch_app_must_be_an_existing_file(self):
+        for app in ("-o", "@resp.txt", "no_such_app.exe"):
+            with self.subTest(app=app), self.assertRaises(UprofError) as caught:
+                dry_run(options(launch=[app, "C:/x"]))
+            self.assertIn("existing", str(caught.exception))
+
+    def test_an_empty_launch_is_refused_not_turned_into_a_system_wide_capture(self):
+        with self.assertRaises(UprofError) as caught:
+            dry_run(options(launch=[]))
+        self.assertIn("--launch", str(caught.exception))
+
+    def test_the_command_line_quotes_or_names_the_launch_arguments(self):
+        lines = dry_run(options(launch=[str(APP), "x y", "$(whoami)"]))
+        command = command_line(lines)
+        self.assertIn(' "x y" ', command + " ")
+        self.assertNotIn("$(whoami)", command)
+        self.assertIn("<APP_ARG_2>", command)
+        self.assertIn("APP_ARG_2=" + repr("$(whoami)"), lines)
+
+    def test_the_parser_keeps_an_empty_launch_distinct(self):
+        args = uprof.build_parser().parse_args(["collect", "--out-dir", "o", "--event", "timer",
+                                                "--launch"])
+        self.assertEqual(args.launch, [])
+        args = uprof.build_parser().parse_args(["collect", "--out-dir", "o"])
+        self.assertIsNone(args.launch)
 
     def test_a_launch_needs_the_timer_event(self):
         with self.assertRaises(UprofError) as caught:
-            dry_run(options(event="cycles", launch=["app.exe"]))
+            dry_run(options(event="cycles", launch=[str(APP)]))
         self.assertIn("--event timer", str(caught.exception))
 
     def test_a_launch_cannot_also_attach(self):
         with self.assertRaises(UprofError):
-            dry_run(options(pids=[42], launch=["app.exe"]))
+            dry_run(options(pids=[42], launch=[str(APP)]))
 
     def test_the_cli_starts_the_app_after_the_options(self):
         calls = []
@@ -102,13 +138,13 @@ class TimerCollectTest(unittest.TestCase):
             calls.append(command)
             return subprocess.CompletedProcess(command, 1, "", "stop here")
 
-        opts = options(dry_run=False, launch=["app.exe", "-x"])
+        opts = options(dry_run=False, launch=[str(APP), "-x"])
         with mock.patch.object(uprof_collect, "run", side_effect=fake_run), \
                 contextlib.redirect_stdout(io.StringIO()):
             uprof_collect._run_cli("AMDuProfCLI", uprof_collect._event_args(opts, "timer", 1),
                                    uprof_collect._target_args(opts)[0], opts)
         self.assertEqual(calls[0][:4], ["AMDuProfCLI", "collect", "-e", "event=timer,interval=1"])
-        self.assertEqual(calls[0][-2:], ["app.exe", "-x"])
+        self.assertEqual(calls[0][-2:], [str(APP.resolve()), "-x"])
 
 
 class TimerAlternativesTest(unittest.TestCase):

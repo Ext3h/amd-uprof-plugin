@@ -53,6 +53,35 @@ class PublicSymbolsTest(unittest.TestCase):
             self.assertEqual(rows[0]["name_count"], str(count))
             self.assertEqual(rows[0]["names"], "")
 
+    def test_the_grouped_file_is_byte_exact(self):
+        # Folded, single-name, NULL-name and over-four-name starts, names a CSV must quote, and
+        # RVAs out of order: the grouping writes the same bytes whatever computes it.
+        pairs = (
+            "rva,name\n"
+            "8192,zeta\n4096,beta\n4096,alpha\n12288,\n12288,solo\n"
+            "16384,e\n16384,d\n16384,c\n16384,b\n16384,a\n16384,\n"
+            '20480,"op,comma"\n20480,"say ""hi"""\n24576,\n24576,\n'
+        )
+        pairs_path = Path(self.directory.name) / "pairs.csv"
+        out = Path(self.directory.name) / "publics.csv"
+        pairs_path.write_text(pairs, encoding="utf-8", newline="\n")
+
+        result = uprof_symbols._aggregate_publics(pairs_path, out)
+
+        self.assertEqual(result, (6, 5))
+        self.assertEqual(
+            out.read_bytes(),
+            (
+                "rva,name_count,names\n"
+                "4096,2,alpha | beta\n"
+                "8192,1,zeta\n"
+                "12288,2,solo\n"
+                "16384,6,a | b | c | d | ... (+2 more)\n"
+                '20480,2,"op,comma | say ""hi"""\n'
+                "24576,2,\n"
+            ).encode("utf-8"),
+        )
+
 
 class PdbProbeTest(unittest.TestCase):
     def test_the_readobj_probe_has_a_timeout(self):

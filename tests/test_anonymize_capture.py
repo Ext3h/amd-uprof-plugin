@@ -446,6 +446,24 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertIn("1.50", notes)
         self.assertIn("not measured", record.overhead_notes("lock", "ibs-cg", 34, None))
 
+    def test_call_graph_modes_need_an_elevated_shell(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(record, "is_elevated", return_value=False),
+            mock.patch.object(record, "record") as recorded,
+            mock.patch.object(record, "record_callgraph") as callgraph,
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = record.main([str(self.out), str(self.out / "raw"), "--modes", "timer,timer-cg"])
+        self.assertEqual(code, 2)
+        recorded.assert_not_called()
+        callgraph.assert_not_called()
+        self.assertIn("elevated", stderr.getvalue())
+        self.assertIn("driver", stderr.getvalue())
+
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

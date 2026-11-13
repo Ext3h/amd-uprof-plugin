@@ -368,6 +368,44 @@ def _systemwide_loaded(b: Builder) -> Path:
     )
 
 
+# Outside code inside the user's own process: runtime, graphics and vendor DLLs it loads.
+INPROC = [
+    "ucrtbase.dll",
+    "vcruntime140.dll",
+    "msvcp140.dll",
+    "KernelBase.dll",
+    "combase.dll",
+    "rpcrt4.dll",
+    "user32.dll",
+    "win32u.dll",
+    "gdi32full.dll",
+    "dxgi.dll",
+    "d3d12.dll",
+    "d3d12core.dll",
+    "dxcore.dll",
+    "amdxc64.dll",
+    "bcrypt.dll",
+    "ws2_32.dll",
+    "physics.dll",
+    "audio_mix.dll",
+    "netcore.dll",
+    "assetio.dll",
+    "zstd.dll",
+    "tbb12.dll",
+]
+
+
+def _attached_inproc_loaded(b: Builder) -> Path:
+    """attached, with 22 in-process DLLs each hotter than the own hottest function."""
+    modules, samples = [], []
+    for index, name in enumerate(INPROC):
+        image = Builder._copy(SYSTEM_IMAGE, b.root / "bins" / "inproc", name=name)
+        module = Builder._module(60 + index, image, index < 16, False)
+        modules.append(module)
+        samples.append(Sample(PID, 11 + index % 2, module.id, LOAD_RVAS[index % 3], 40 - index))
+    return b.write("attached_inproc_loaded", b.modules + modules, BASE + samples)
+
+
 def _opcount(b: Builder) -> Path:
     return b.write("opcount", b.modules, BASE, events=IBS_OPS)
 
@@ -396,6 +434,7 @@ SESSIONS = {
     "pmc": _pmc,
     "timer": _timer,
     "systemwide_loaded": _systemwide_loaded,
+    "attached_inproc_loaded": _attached_inproc_loaded,
 }
 
 

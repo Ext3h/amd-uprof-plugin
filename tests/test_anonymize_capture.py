@@ -45,8 +45,9 @@ class AnonymizeCaptureTest(unittest.TestCase):
             connection.execute("CREATE TABLE HostInfo (id INTEGER, hostName VARCHAR)")
             connection.execute("INSERT INTO HostInfo VALUES (1, ?)", [HOST])
             connection.execute("UPDATE Process SET name = ? || '\\' || name", [PROFILE])
-            connection.execute("UPDATE Module SET path = ? || '\\fixture_full.exe' WHERE id = 1",
-                               [PROFILE])
+            connection.execute(
+                "UPDATE Module SET path = ? || '\\fixture_full.exe' WHERE id = 1", [PROFILE]
+            )
         finally:
             connection.close()
         meta = json.loads((self.session / "session.uprof").read_text(encoding="utf-8"))
@@ -59,10 +60,20 @@ class AnonymizeCaptureTest(unittest.TestCase):
 
     def run_main(self, *args, names=(HOST, USER)):
         stderr = io.StringIO()
-        with mock.patch.object(anonymize_capture, "host_names", return_value=list(names)), \
-                contextlib.redirect_stderr(stderr):
-            code = anonymize_capture.main([str(self.session), "--keep-process",
-                                           "storage_test.exe", "--out", str(self.out), *args])
+        with (
+            mock.patch.object(anonymize_capture, "host_names", return_value=list(names)),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = anonymize_capture.main(
+                [
+                    str(self.session),
+                    "--keep-process",
+                    "storage_test.exe",
+                    "--out",
+                    str(self.out),
+                    *args,
+                ]
+            )
         return code, stderr.getvalue()
 
     def query(self, sql):
@@ -77,10 +88,14 @@ class AnonymizeCaptureTest(unittest.TestCase):
     def test_only_the_kept_process_and_its_rows_remain(self):
         code, stderr = self.run_main()
         self.assertEqual(code, 0, stderr)
-        self.assertEqual(self.query("SELECT id, name FROM Process"),
-                         [(build_captures.PID, "c:\\capture\\storage_test.exe")])
-        self.assertEqual(self.query("SELECT DISTINCT processId FROM UnifiedSampleSeries"),
-                         [(build_captures.PID,)])
+        self.assertEqual(
+            self.query("SELECT id, name FROM Process"),
+            [(build_captures.PID, "c:\\capture\\storage_test.exe")],
+        )
+        self.assertEqual(
+            self.query("SELECT DISTINCT processId FROM UnifiedSampleSeries"),
+            [(build_captures.PID,)],
+        )
         modules = {path for (path,) in self.query("SELECT path FROM Module")}
         self.assertNotIn("node.exe", " ".join(modules))
         self.assertIn("c:\\capture\\fixture_full.exe", modules)
@@ -145,19 +160,23 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.change_schema(
             "CREATE TABLE keyed (id UINTEGER PRIMARY KEY, name VARCHAR)",
             "INSERT INTO keyed SELECT id, name FROM Process",
-            "DROP TABLE Process", "ALTER TABLE keyed RENAME TO Process",
+            "DROP TABLE Process",
+            "ALTER TABLE keyed RENAME TO Process",
             "CREATE TABLE ProcessThread (id UBIGINT, processId UINTEGER REFERENCES Process(id), "
             "threadId UINTEGER, threadName VARCHAR)",
             "INSERT INTO ProcessThread SELECT DISTINCT threadId, processId, threadId, "
-            "'C:\\Users\\alice\\t' FROM UnifiedSampleSeries")
+            "'C:\\Users\\alice\\t' FROM UnifiedSampleSeries",
+        )
         code, stderr = self.run_main()
         self.assertEqual(code, 0, stderr)
-        self.assertEqual(self.query("SELECT DISTINCT processId FROM ProcessThread"),
-                         [(build_captures.PID,)])
+        self.assertEqual(
+            self.query("SELECT DISTINCT processId FROM ProcessThread"), [(build_captures.PID,)]
+        )
 
     def test_a_duckdb_failure_ends_in_one_cause_line(self):
         self.change_schema(
-            "CREATE TABLE Odd (processId VARCHAR)", "INSERT INTO Odd VALUES ('not a number')")
+            "CREATE TABLE Odd (processId VARCHAR)", "INSERT INTO Odd VALUES ('not a number')"
+        )
         code, stderr = self.run_main()
         self.assertEqual(code, 2)
         self.assertNotIn("Traceback", stderr)
@@ -166,19 +185,32 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertIn("Odd", lines[0])
         self.assertIn("DuckDB", lines[0])
         # A failed run leaves nothing that looks like a finished capture.
-        self.assertEqual([path.name for path in self.out.iterdir()] if self.out.exists()
-                         else [], [])
+        self.assertEqual(
+            [path.name for path in self.out.iterdir()] if self.out.exists() else [], []
+        )
 
     def test_the_recording_script_fails_when_an_anonymization_fails(self):
         sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
         import record
 
         failed = mock.Mock(returncode=1)
-        with mock.patch.object(record, "record", return_value=self.session), \
-                mock.patch.object(record.subprocess, "run", return_value=failed), \
-                contextlib.redirect_stdout(io.StringIO()):
-            code = record.main([str(self.out), str(self.out / "raw"), "--modes", "timer",
-                                "--classes", "lock", "--anonymize", str(self.out / "anon")])
+        with (
+            mock.patch.object(record, "record", return_value=self.session),
+            mock.patch.object(record.subprocess, "run", return_value=failed),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            code = record.main(
+                [
+                    str(self.out),
+                    str(self.out / "raw"),
+                    "--modes",
+                    "timer",
+                    "--classes",
+                    "lock",
+                    "--anonymize",
+                    str(self.out / "anon"),
+                ]
+            )
         self.assertEqual(code, 1)
 
     def test_the_ibs_dump_is_handed_over_filtered_and_profile_reads_it(self):
@@ -196,9 +228,19 @@ class AnonymizeCaptureTest(unittest.TestCase):
         review = (self.out / "review.txt").read_text(encoding="utf-8")
         self.assertIn("== dump IbsOpDump.csv", review)
         result = subprocess.run(
-            [sys.executable, str(REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"),
-             "profile", "--session", str(self.out), "--by", "module"],
-            capture_output=True, text=True, encoding="utf-8")
+            [
+                sys.executable,
+                str(REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"),
+                "profile",
+                "--session",
+                str(self.out),
+                "--by",
+                "module",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("GENERATING DUMP", result.stderr)
         self.assertIn("c:/capture/fixture_full.exe", result.stdout)
@@ -206,8 +248,10 @@ class AnonymizeCaptureTest(unittest.TestCase):
     def test_a_host_string_in_the_dump_fails_the_run(self):
         dump = self.session / "IbsOpDump.csv"
         lines = dump.read_text(encoding="utf-8").splitlines()
-        dump.write_text("\n".join([lines[0] + ",Host"] + [f"{line},{HOST}" for line in lines[1:]])
-                        + "\n", encoding="utf-8")
+        dump.write_text(
+            "\n".join([lines[0] + ",Host"] + [f"{line},{HOST}" for line in lines[1:]]) + "\n",
+            encoding="utf-8",
+        )
         code, stderr = self.run_main()
         self.assertEqual(code, 1, stderr)
         self.assertIn(HOST, stderr)
@@ -242,9 +286,22 @@ class AnonymizeCaptureTest(unittest.TestCase):
         self.assertEqual(ibs[ibs.index("--seconds") + 1], "2")
         self.assertEqual(pmc[pmc.index("--sample-interval") + 1], "4ms")
         self.assertEqual(record.Settings().stressors, 15)
-        settings = record.settings_from(record.parser().parse_args(
-            ["b", "r", "--seconds", "1", "--ibs-interval", "4000000", "--timer-ms", "10",
-             "--stressors", "8"]))
+        settings = record.settings_from(
+            record.parser().parse_args(
+                [
+                    "b",
+                    "r",
+                    "--seconds",
+                    "1",
+                    "--ibs-interval",
+                    "4000000",
+                    "--timer-ms",
+                    "10",
+                    "--stressors",
+                    "8",
+                ]
+            )
+        )
         timer, ibs, _pmc = commands(settings)
         self.assertIn("event=timer,interval=10", timer)
         self.assertEqual(ibs[ibs.index("--sample-interval") + 1], "4000000")
@@ -256,15 +313,22 @@ class AnonymizeCaptureTest(unittest.TestCase):
 
         connection = duckdb.connect(str(self.session / "callstack.db"))
         try:
-            connection.execute("CREATE TABLE CallstackSample (startTime UBIGINT, processId "
-                               "UINTEGER, threadId UINTEGER, callstackId UBIGINT)")
-            connection.execute("CREATE TABLE CallstackFrame (callstackId UBIGINT, functionId "
-                               "UBIGINT, depth UINTEGER, \"offset\" UBIGINT)")
+            connection.execute(
+                "CREATE TABLE CallstackSample (startTime UBIGINT, processId "
+                "UINTEGER, threadId UINTEGER, callstackId UBIGINT)"
+            )
+            connection.execute(
+                "CREATE TABLE CallstackFrame (callstackId UBIGINT, functionId "
+                'UBIGINT, depth UINTEGER, "offset" UBIGINT)'
+            )
             connection.execute("CREATE TABLE Srcfile (id UINTEGER, name VARCHAR)")
-            connection.execute("INSERT INTO CallstackSample VALUES (1, ?, 11, 7), (2, ?, 77, 8)",
-                               [build_captures.PID, build_captures.OTHER_PID])
-            connection.execute("INSERT INTO CallstackFrame VALUES (7, 100, 0, 16), (7, 101, 1, 4),"
-                               " (8, 102, 0, 32)")
+            connection.execute(
+                "INSERT INTO CallstackSample VALUES (1, ?, 11, 7), (2, ?, 77, 8)",
+                [build_captures.PID, build_captures.OTHER_PID],
+            )
+            connection.execute(
+                "INSERT INTO CallstackFrame VALUES (7, 100, 0, 16), (7, 101, 1, 4), (8, 102, 0, 32)"
+            )
             connection.execute("INSERT INTO Srcfile VALUES (1, ?)", [PROFILE + "\\main.c"])
         finally:
             connection.close()
@@ -278,9 +342,11 @@ class AnonymizeCaptureTest(unittest.TestCase):
         connection = duckdb.connect(str(self.out / "callstack.db"), read_only=True)
         try:
             samples = connection.execute(
-                "SELECT processId, callstackId FROM CallstackSample").fetchall()
+                "SELECT processId, callstackId FROM CallstackSample"
+            ).fetchall()
             frames = connection.execute(
-                "SELECT callstackId, functionId FROM CallstackFrame ORDER BY ALL").fetchall()
+                "SELECT callstackId, functionId FROM CallstackFrame ORDER BY ALL"
+            ).fetchall()
             files = connection.execute("SELECT name FROM Srcfile").fetchall()
         finally:
             connection.close()
@@ -298,7 +364,8 @@ class AnonymizeCaptureTest(unittest.TestCase):
         connection = duckdb.connect(str(self.session / "cpu.db"), read_only=True)
         try:
             (function,) = connection.execute(
-                "SELECT f.id FROM Function f WHERE f.moduleId = 5").fetchone()
+                "SELECT f.id FROM Function f WHERE f.moduleId = 5"
+            ).fetchone()
         finally:
             connection.close()
         self.write_callstacks()
@@ -309,25 +376,33 @@ class AnonymizeCaptureTest(unittest.TestCase):
             connection.close()
         code, stderr = self.run_main()
         self.assertEqual(code, 0, stderr)
-        self.assertEqual(self.query(f"SELECT count(*) FROM Function WHERE id = {function}"),
-                         [(1,)])
+        self.assertEqual(self.query(f"SELECT count(*) FROM Function WHERE id = {function}"), [(1,)])
         self.assertEqual(self.query("SELECT count(*) FROM Module WHERE id = 5"), [(1,)])
 
     def test_a_missing_callstack_db_is_noted(self):
         code, stderr = self.run_main()
         self.assertEqual(code, 0, stderr)
         self.assertFalse((self.out / "callstack.db").exists())
-        self.assertIn("callstack.db: absent", (self.out / "review.txt").read_text(
-            encoding="utf-8"))
+        self.assertIn("callstack.db: absent", (self.out / "review.txt").read_text(encoding="utf-8"))
 
     def test_commands_lose_symbol_servers_and_every_embedded_drive_path(self):
-        command = ("AMDuProfCLI.exe translate -i C:\\cap --symbol-cache-dir D:\\Sym "
-                   "--symbol-server srv*C:\\SymCache\\Ms*https://symbols.example.invalid/ms "
-                   "--symbol-server=SRV*C:\\SymCache\\Game*http://symbols.example.invalid/game "
-                   "--symbol-path=E:\\pdbs;F:\\more --ascii ibsop-event-dump")
+        command = (
+            "AMDuProfCLI.exe translate -i C:\\cap --symbol-cache-dir D:\\Sym "
+            "--symbol-server srv*C:\\SymCache\\Ms*https://symbols.example.invalid/ms "
+            "--symbol-server=SRV*C:\\SymCache\\Game*http://symbols.example.invalid/game "
+            "--symbol-path=E:\\pdbs;F:\\more --ascii ibsop-event-dump"
+        )
         cleaned = anonymize_capture.sanitize_command(command)
-        for leaked in ("SymCache", "example.invalid", "C:\\", "D:\\", "E:\\", "F:\\", "srv*",
-                       "SRV*"):
+        for leaked in (
+            "SymCache",
+            "example.invalid",
+            "C:\\",
+            "D:\\",
+            "E:\\",
+            "F:\\",
+            "srv*",
+            "SRV*",
+        ):
             self.assertNotIn(leaked, cleaned)
         self.assertEqual(cleaned.count("--symbol-server"), 2)
         self.assertIn("--ascii ibsop-event-dump", cleaned)
@@ -347,8 +422,9 @@ class AnonymizeCaptureTest(unittest.TestCase):
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            code = anonymize_capture.main([str(self.session), "--keep-process", "absent.exe",
-                                           "--out", str(self.out)])
+            code = anonymize_capture.main(
+                [str(self.session), "--keep-process", "absent.exe", "--out", str(self.out)]
+            )
         self.assertEqual(code, 2)
         self.assertIn("absent.exe", stderr.getvalue())
 

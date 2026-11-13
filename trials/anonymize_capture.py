@@ -34,9 +34,12 @@ import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 # Columns the tools read; a cpu.db without them is refused rather than half-filtered.
-REQUIRED = {"Process": ("id", "name"), "Module": ("id", "path"),
-            "Function": ("id", "moduleId", "name"),
-            "UnifiedSampleSeries": ("processId", "moduleId", "functionId", "moduleRVA")}
+REQUIRED = {
+    "Process": ("id", "name"),
+    "Module": ("id", "path"),
+    "Function": ("id", "moduleId", "name"),
+    "UnifiedSampleSeries": ("processId", "moduleId", "functionId", "moduleRVA"),
+}
 # Folders whose paths name no user: kept as they are.
 SYSTEM_PREFIXES = ("c:\\windows\\", "/usr/", "/lib/", "/lib64/")
 WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]|^\\\\")
@@ -50,8 +53,12 @@ class Refused(Exception):
 
 def host_names() -> list[str]:
     """This machine's name and the user's name, as a capture would spell them."""
-    names = {os.environ.get("COMPUTERNAME", ""), socket.gethostname(),
-             os.environ.get("USERNAME", ""), os.environ.get("USER", "")}
+    names = {
+        os.environ.get("COMPUTERNAME", ""),
+        socket.gethostname(),
+        os.environ.get("USERNAME", ""),
+        os.environ.get("USER", ""),
+    }
     try:
         names.add(getpass.getuser())
     except Exception:  # noqa: BLE001 - no user name to add
@@ -73,14 +80,21 @@ def rewrite_path(value: str) -> str:
 
 
 def columns_of(connection, table: str) -> dict[str, str]:
-    return {name: kind for name, kind in connection.execute(
-        "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = ?",
-        [table]).fetchall()}
+    return {
+        name: kind
+        for name, kind in connection.execute(
+            "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = ?", [table]
+        ).fetchall()
+    }
 
 
 def tables_of(connection) -> list[str]:
-    return [name for (name,) in connection.execute(
-        "SELECT table_name FROM duckdb_tables() ORDER BY table_name").fetchall()]
+    return [
+        name
+        for (name,) in connection.execute(
+            "SELECT table_name FROM duckdb_tables() ORDER BY table_name"
+        ).fetchall()
+    ]
 
 
 def check_schema(connection) -> None:
@@ -89,9 +103,11 @@ def check_schema(connection) -> None:
         columns = columns_of(connection, table) if table in present else {}
         for column in needed:
             if column not in columns:
-                raise Refused(f"cpu.db lacks {table}.{column}; the tools read Process, Module, "
-                              "Function and UnifiedSampleSeries as AMD uProf's translate "
-                              "writes them, so this capture is not one they can profile")
+                raise Refused(
+                    f"cpu.db lacks {table}.{column}; the tools read Process, Module, "
+                    "Function and UnifiedSampleSeries as AMD uProf's translate "
+                    "writes them, so this capture is not one they can profile"
+                )
 
 
 def kept_processes(connection, names: list[str]) -> list[int]:
@@ -103,8 +119,10 @@ def kept_processes(connection, names: list[str]) -> list[int]:
             found.setdefault(base, []).append(int(pid))
     missing = sorted(wanted - set(found))
     if missing:
-        raise Refused(f"no process named {', '.join(missing)} in the capture; name the process "
-                      "image as `uprof.py profile --by process` prints it")
+        raise Refused(
+            f"no process named {', '.join(missing)} in the capture; name the process "
+            "image as `uprof.py profile --by process` prints it"
+        )
     return sorted(pid for pids in found.values() for pid in pids)
 
 
@@ -116,10 +134,12 @@ def run(connection, sql: str, step: str, params=()):
         return connection.execute(sql, list(params))
     except duckdb.Error as exc:
         detail = " ".join(str(exc).split())[:300]
-        raise Refused(f"DuckDB {duckdb.__version__} failed while {step}: {detail}; send this "
-                      "line and the table list `review.txt` would show (or the output of "
-                      "`SELECT table_name, column_name, data_type FROM duckdb_columns()` on "
-                      "the capture's cpu.db)") from exc
+        raise Refused(
+            f"DuckDB {duckdb.__version__} failed while {step}: {detail}; send this "
+            "line and the table list `review.txt` would show (or the output of "
+            "`SELECT table_name, column_name, data_type FROM duckdb_columns()` on "
+            "the capture's cpu.db)"
+        ) from exc
 
 
 def stack_functions(session: Path, pids: list[int]) -> set[int]:
@@ -139,21 +159,34 @@ def stack_functions(session: Path, pids: list[int]) -> set[int]:
             names = set(columns_of(connection, table))
             stack = next((n for n in ("callstackId", "callStackId") if n in names), None)
             if "processId" in names and stack:
-                stacks.append(f'SELECT "{stack}" FROM "{table}" WHERE "processId" IN '
-                              f"({pid_list})")
+                stacks.append(f'SELECT "{stack}" FROM "{table}" WHERE "processId" IN ({pid_list})')
             if "processId" in names and "functionId" in names:
-                functions |= {row[0] for row in run(
-                    connection, f'SELECT DISTINCT "functionId" FROM "{table}" WHERE '
-                    f'"processId" IN ({pid_list}) AND "functionId" IS NOT NULL',
-                    f"reading the functions of {table}").fetchall()}
+                functions |= {
+                    row[0]
+                    for row in run(
+                        connection,
+                        f'SELECT DISTINCT "functionId" FROM "{table}" WHERE '
+                        f'"processId" IN ({pid_list}) AND "functionId" IS NOT NULL',
+                        f"reading the functions of {table}",
+                    ).fetchall()
+                }
         for table in tables:
             names = set(columns_of(connection, table))
-            if stacks and "callstackId" in names and "functionId" in names \
-                    and "processId" not in names:
-                functions |= {row[0] for row in run(
-                    connection, f'SELECT DISTINCT "functionId" FROM "{table}" WHERE '
-                    f'"callstackId" IN ({" UNION ".join(stacks)}) AND "functionId" IS NOT NULL',
-                    f"reading the frames of {table}").fetchall()}
+            if (
+                stacks
+                and "callstackId" in names
+                and "functionId" in names
+                and "processId" not in names
+            ):
+                functions |= {
+                    row[0]
+                    for row in run(
+                        connection,
+                        f'SELECT DISTINCT "functionId" FROM "{table}" WHERE '
+                        f'"callstackId" IN ({" UNION ".join(stacks)}) AND "functionId" IS NOT NULL',
+                        f"reading the frames of {table}",
+                    ).fetchall()
+                }
         return functions
     finally:
         connection.close()
@@ -166,30 +199,59 @@ def copy_filtered(connection, pids: list[int], reached: set[int] = frozenset()) 
     constraint of the capture, so removing another process's rows cannot violate one.
     """
     pid_list = ", ".join(str(pid) for pid in pids)
-    tables = [name for (name,) in run(
-        connection, "SELECT table_name FROM duckdb_tables() WHERE database_name = 'src' "
-        "ORDER BY table_name", "listing the tables").fetchall()]
+    tables = [
+        name
+        for (name,) in run(
+            connection,
+            "SELECT table_name FROM duckdb_tables() WHERE database_name = 'src' "
+            "ORDER BY table_name",
+            "listing the tables",
+        ).fetchall()
+    ]
 
     def columns(table: str) -> set[str]:
-        return {name for (name,) in run(
-            connection, "SELECT column_name FROM duckdb_columns() WHERE database_name = 'src' "
-            "AND table_name = ?", f"reading the columns of {table}", [table]).fetchall()}
+        return {
+            name
+            for (name,) in run(
+                connection,
+                "SELECT column_name FROM duckdb_columns() WHERE database_name = 'src' "
+                "AND table_name = ?",
+                f"reading the columns of {table}",
+                [table],
+            ).fetchall()
+        }
 
-    modules = {row[0] for row in run(
-        connection, f"SELECT DISTINCT moduleId FROM src.UnifiedSampleSeries WHERE moduleId IS "
-        f"NOT NULL AND processId IN ({pid_list})", "selecting the kept modules").fetchall()}
-    if "ModuleInstance" in tables:
-        modules |= {row[0] for row in run(
-            connection, f"SELECT DISTINCT moduleId FROM src.ModuleInstance WHERE moduleId IS "
+    modules = {
+        row[0]
+        for row in run(
+            connection,
+            f"SELECT DISTINCT moduleId FROM src.UnifiedSampleSeries WHERE moduleId IS "
             f"NOT NULL AND processId IN ({pid_list})",
-            "selecting the kept module instances").fetchall()}
+            "selecting the kept modules",
+        ).fetchall()
+    }
+    if "ModuleInstance" in tables:
+        modules |= {
+            row[0]
+            for row in run(
+                connection,
+                f"SELECT DISTINCT moduleId FROM src.ModuleInstance WHERE moduleId IS "
+                f"NOT NULL AND processId IN ({pid_list})",
+                "selecting the kept module instances",
+            ).fetchall()
+        }
     if reached:
         # Modules only the kept call stacks reach, so their frames still resolve.
         reached_list = ", ".join(str(int(f)) for f in reached)
-        modules |= {row[0] for row in run(
-            connection, f"SELECT DISTINCT moduleId FROM src.Function WHERE id IN "
-            f"({reached_list}) AND moduleId IS NOT NULL",
-            "selecting the modules the call stacks reach").fetchall()}
+        modules |= {
+            row[0]
+            for row in run(
+                connection,
+                f"SELECT DISTINCT moduleId FROM src.Function WHERE id IN "
+                f"({reached_list}) AND moduleId IS NOT NULL",
+                "selecting the modules the call stacks reach",
+            ).fetchall()
+        }
     module_list = ", ".join(str(int(m)) for m in modules) or "NULL"
     for table in tables:
         names = columns(table)
@@ -205,8 +267,11 @@ def copy_filtered(connection, pids: list[int], reached: set[int] = frozenset()) 
             where = f'"moduleId" IN ({module_list})'
         else:
             where = "TRUE"
-        run(connection, f'CREATE TABLE packed."{table}" AS SELECT * FROM src."{table}" '
-                        f"WHERE {where}", f"copying table {table}")
+        run(
+            connection,
+            f'CREATE TABLE packed."{table}" AS SELECT * FROM src."{table}" WHERE {where}',
+            f"copying table {table}",
+        )
 
 
 def rewrite_strings(connection) -> None:
@@ -218,22 +283,56 @@ def rewrite_strings(connection) -> None:
             if table == "ProcessThread" and column == "threadName":
                 run(connection, f'UPDATE "{table}" SET "{column}" = \'\'', step)
                 continue
-            values = [value for (value,) in run(
-                connection, f'SELECT DISTINCT "{column}" FROM "{table}" '
-                f'WHERE "{column}" IS NOT NULL', step).fetchall()]
+            values = [
+                value
+                for (value,) in run(
+                    connection,
+                    f'SELECT DISTINCT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL',
+                    step,
+                ).fetchall()
+            ]
             for value in values:
                 replaced = rewrite_path(value)
                 if replaced != value:
-                    run(connection, f'UPDATE "{table}" SET "{column}" = ? WHERE "{column}" = ?',
-                        step, [replaced, value])
+                    run(
+                        connection,
+                        f'UPDATE "{table}" SET "{column}" = ? WHERE "{column}" = ?',
+                        step,
+                        [replaced, value],
+                    )
+
+
+EMBEDDED_PATH = re.compile(r"[A-Za-z]:[\\/]|\\\\|(^|[=;*])/")
+# Options whose value names a local cache or a server; their values are replaced outright.
+SERVER_OPTIONS = ("--symbol-server",)
 
 
 def sanitize_command(command: object) -> object:
+    """A recorded command with symbol-server values and every token holding a path replaced."""
     if not isinstance(command, str):
         return command
-    return " ".join("<PATH>" if WINDOWS_PATH.match(token.strip('"'))
-                    or token.strip('"').startswith("/") else token
-                    for token in command.split())
+    tokens = command.split()
+    result = []
+    replace_next = False
+    for token in tokens:
+        bare = token.strip('"')
+        if replace_next:
+            result.append("<VALUE>")
+            replace_next = False
+            continue
+        option, equals, value = bare.partition("=")
+        if option in SERVER_OPTIONS:
+            if equals:
+                result.append(f"{option}=<VALUE>")
+            else:
+                result.append(option)
+                replace_next = True
+            continue
+        if EMBEDDED_PATH.search(bare):
+            result.append(f"{option}=<PATH>" if equals and option.startswith("-") else "<PATH>")
+            continue
+        result.append(token)
+    return " ".join(result)
 
 
 def reduced_meta(meta: dict) -> dict:
@@ -244,18 +343,23 @@ def reduced_meta(meta: dict) -> dict:
     reduced_target: dict[str, object] = {"systemWide": target.get("systemWide")}
     if target.get("attachedProcesses") is not None:
         reduced_target["attachedProcesses"] = [
-            {"processId": item.get("processId")} for item in target["attachedProcesses"]
-            if isinstance(item, dict)]
+            {"processId": item.get("processId")}
+            for item in target["attachedProcesses"]
+            if isinstance(item, dict)
+        ]
     if target.get("launchApp"):
         reduced_target["launchApp"] = PureWindowsPath(
-            str(target["launchApp"]).replace("/", "\\")).name
+            str(target["launchApp"]).replace("/", "\\")
+        ).name
     result: dict[str, object] = {
-        "collection": {"events": collection.get("events") or {},
-                       "schedule": {key: schedule[key] for key in SCHEDULE_KEYS
-                                    if key in schedule},
-                       "target": reduced_target},
-        "auxiliary": {key: auxiliary[key] for key in ("eventColumnIds", "ibsOpSampling")
-                      if key in auxiliary},
+        "collection": {
+            "events": collection.get("events") or {},
+            "schedule": {key: schedule[key] for key in SCHEDULE_KEYS if key in schedule},
+            "target": reduced_target,
+        },
+        "auxiliary": {
+            key: auxiliary[key] for key in ("eventColumnIds", "ibsOpSampling") if key in auxiliary
+        },
     }
     for key in ("collectCommand", "translateCommand"):
         if key in meta:
@@ -320,28 +424,37 @@ def anonymize(session: Path, keep: list[str], out: Path) -> Path:
         source = duckdb.connect(str(session / "cpu.db"), read_only=True)
     except duckdb.Error as exc:
         detail = " ".join(str(exc).split())[:300]
-        raise Refused(f"DuckDB {duckdb.__version__} cannot open the capture's cpu.db: {detail}; "
-                      "it may be written by a uProf whose DuckDB storage version this DuckDB "
-                      "does not read") from exc
+        raise Refused(
+            f"DuckDB {duckdb.__version__} cannot open the capture's cpu.db: {detail}; "
+            "it may be written by a uProf whose DuckDB storage version this DuckDB "
+            "does not read"
+        ) from exc
     try:
         try:
             check_schema(source)
             kept = kept_processes(source, keep)
         except duckdb.Error as exc:
             detail = " ".join(str(exc).split())[:300]
-            raise Refused(f"DuckDB {duckdb.__version__} failed while reading the capture: "
-                          f"{detail}") from exc
+            raise Refused(
+                f"DuckDB {duckdb.__version__} failed while reading the capture: {detail}"
+            ) from exc
     finally:
         source.close()
-    meta = reduced_meta(json.loads((session / "session.uprof").read_text(
-        encoding="utf-8-sig")))
+    meta = reduced_meta(json.loads((session / "session.uprof").read_text(encoding="utf-8-sig")))
     out.mkdir(parents=True, exist_ok=True)
     try:
         review = write_filtered(session, kept, out, meta)
     except BaseException:
         # A failed run leaves nothing that could be mistaken for a finished capture.
-        for name in ("cpu.db", "cpu.db.wal", "callstack.db", "callstack.db.wal",
-                     "session.uprof", "review.txt", *DUMP_NAMES):
+        for name in (
+            "cpu.db",
+            "cpu.db.wal",
+            "callstack.db",
+            "callstack.db.wal",
+            "session.uprof",
+            "review.txt",
+            *DUMP_NAMES,
+        ):
             (out / name).unlink(missing_ok=True)
         raise
     (out / "review.txt").write_text(review, encoding="utf-8")
@@ -357,10 +470,16 @@ def write_filtered(session: Path, kept: list[int], out: Path, meta: dict) -> str
     # thousand rows take about 0.5 MB instead of ~5 MB).
     connection = duckdb.connect()
     try:
-        run(connection, f"ATTACH '{(session / 'cpu.db').as_posix()}' AS src (READ_ONLY)",
-            "attaching the capture read-only")
-        run(connection, f"ATTACH '{(out / 'cpu.db').as_posix()}' AS packed (BLOCK_SIZE 16384)",
-            "creating the filtered cpu.db")
+        run(
+            connection,
+            f"ATTACH '{(session / 'cpu.db').as_posix()}' AS src (READ_ONLY)",
+            "attaching the capture read-only",
+        )
+        run(
+            connection,
+            f"ATTACH '{(out / 'cpu.db').as_posix()}' AS packed (BLOCK_SIZE 16384)",
+            "creating the filtered cpu.db",
+        )
         copy_filtered(connection, kept, stack_functions(session, kept))
     finally:
         connection.close()
@@ -372,12 +491,14 @@ def write_filtered(session: Path, kept: list[int], out: Path, meta: dict) -> str
             review = dump(connection, meta)
         except duckdb.Error as exc:
             detail = " ".join(str(exc).split())[:300]
-            raise Refused(f"DuckDB {duckdb.__version__} failed while dumping the filtered "
-                          f"cpu.db: {detail}") from exc
+            raise Refused(
+                f"DuckDB {duckdb.__version__} failed while dumping the filtered cpu.db: {detail}"
+            ) from exc
     finally:
         connection.close()
-    return (review + handover_dump(session, kept, out, meta)
-            + handover_callstacks(session, kept, out))
+    return (
+        review + handover_dump(session, kept, out, meta) + handover_callstacks(session, kept, out)
+    )
 
 
 def handover_callstacks(session: Path, kept: list[int], out: Path) -> str:
@@ -391,30 +512,58 @@ def handover_callstacks(session: Path, kept: list[int], out: Path) -> str:
     pid_list = ", ".join(str(pid) for pid in kept)
     connection = duckdb.connect()
     try:
-        run(connection, f"ATTACH '{source.as_posix()}' AS src (READ_ONLY)",
-            "attaching callstack.db read-only")
-        run(connection, f"ATTACH '{(out / 'callstack.db').as_posix()}' AS packed "
-            "(BLOCK_SIZE 16384)", "creating the filtered callstack.db")
-        tables = [name for (name,) in run(
-            connection, "SELECT table_name FROM duckdb_tables() WHERE database_name = 'src' "
-            "ORDER BY table_name", "listing the callstack.db tables").fetchall()]
+        run(
+            connection,
+            f"ATTACH '{source.as_posix()}' AS src (READ_ONLY)",
+            "attaching callstack.db read-only",
+        )
+        run(
+            connection,
+            f"ATTACH '{(out / 'callstack.db').as_posix()}' AS packed (BLOCK_SIZE 16384)",
+            "creating the filtered callstack.db",
+        )
+        tables = [
+            name
+            for (name,) in run(
+                connection,
+                "SELECT table_name FROM duckdb_tables() WHERE database_name = 'src' "
+                "ORDER BY table_name",
+                "listing the callstack.db tables",
+            ).fetchall()
+        ]
         stacks = []
         for table in tables:
-            names = {name for (name,) in run(
-                connection, "SELECT column_name FROM duckdb_columns() WHERE database_name = "
-                "'src' AND table_name = ?", f"reading the columns of {table}", [table]
-            ).fetchall()}
-            stack_column = "callstackId" if "callstackId" in names else (
-                "callStackId" if "callStackId" in names else None)
+            names = {
+                name
+                for (name,) in run(
+                    connection,
+                    "SELECT column_name FROM duckdb_columns() WHERE database_name = "
+                    "'src' AND table_name = ?",
+                    f"reading the columns of {table}",
+                    [table],
+                ).fetchall()
+            }
+            stack_column = (
+                "callstackId"
+                if "callstackId" in names
+                else ("callStackId" if "callStackId" in names else None)
+            )
             if "processId" in names and stack_column:
-                stacks.append(f'SELECT "{stack_column}" FROM src."{table}" '
-                              f'WHERE "processId" IN ({pid_list})')
+                stacks.append(
+                    f'SELECT "{stack_column}" FROM src."{table}" WHERE "processId" IN ({pid_list})'
+                )
         kept_stacks = " UNION ".join(stacks) or "SELECT NULL"
         for table in tables:
-            names = {name for (name,) in run(
-                connection, "SELECT column_name FROM duckdb_columns() WHERE database_name = "
-                "'src' AND table_name = ?", f"reading the columns of {table}", [table]
-            ).fetchall()}
+            names = {
+                name
+                for (name,) in run(
+                    connection,
+                    "SELECT column_name FROM duckdb_columns() WHERE database_name = "
+                    "'src' AND table_name = ?",
+                    f"reading the columns of {table}",
+                    [table],
+                ).fetchall()
+            }
             if "host" in table.lower():
                 where = "FALSE"
             elif "processId" in names:
@@ -423,8 +572,11 @@ def handover_callstacks(session: Path, kept: list[int], out: Path) -> str:
                 where = f'"callstackId" IN ({kept_stacks})'
             else:
                 where = "TRUE"
-            run(connection, f'CREATE TABLE packed."{table}" AS SELECT * FROM src."{table}" '
-                            f"WHERE {where}", f"copying callstack.db table {table}")
+            run(
+                connection,
+                f'CREATE TABLE packed."{table}" AS SELECT * FROM src."{table}" WHERE {where}',
+                f"copying callstack.db table {table}",
+            )
     finally:
         connection.close()
     connection = duckdb.connect(str(out / "callstack.db"))
@@ -435,22 +587,27 @@ def handover_callstacks(session: Path, kept: list[int], out: Path) -> str:
             section = dump(connection, {})
         except duckdb.Error as exc:
             detail = " ".join(str(exc).split())[:300]
-            raise Refused(f"DuckDB {duckdb.__version__} failed while dumping the filtered "
-                          f"callstack.db: {detail}") from exc
+            raise Refused(
+                f"DuckDB {duckdb.__version__} failed while dumping the filtered "
+                f"callstack.db: {detail}"
+            ) from exc
     finally:
         connection.close()
     return "== callstack.db\n" + section
 
 
 DUMP_NAMES = ("IbsOpDump.csv", "IbsFetchDump.csv")
-UPROF = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools" / \
-    "uprof.py"
+UPROF = (
+    Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"
+)
 
 
 def is_ibs(meta: dict) -> bool:
     events = (meta.get("collection") or {}).get("events") or {}
-    return bool((meta.get("auxiliary") or {}).get("ibsOpSampling")
-                or (events.get("ibsEvents") or {}).get("op"))
+    return bool(
+        (meta.get("auxiliary") or {}).get("ibsOpSampling")
+        or (events.get("ibsEvents") or {}).get("op")
+    )
 
 
 def dump_source(session: Path, meta: dict, workdir: Path) -> Path | None:
@@ -463,15 +620,29 @@ def dump_source(session: Path, meta: dict, workdir: Path) -> Path | None:
             return session / name
     if not is_ibs(meta):
         return None
-    done = subprocess.run([sys.executable, str(UPROF), "translate", "--session", str(session),
-                           "--out-dir", str(workdir), "--ascii", "ibsop-event-dump"],
-                          capture_output=True, text=True)
+    done = subprocess.run(
+        [
+            sys.executable,
+            str(UPROF),
+            "translate",
+            "--session",
+            str(session),
+            "--out-dir",
+            str(workdir),
+            "--ascii",
+            "ibsop-event-dump",
+        ],
+        capture_output=True,
+        text=True,
+    )
     dump = workdir / "IbsOpDump.csv"
     if done.returncode != 0 or not dump.is_file():
         detail = " ".join((done.stderr or done.stdout or "").split())[-300:]
-        raise Refused("the capture is IBS but has no IbsOpDump.csv, and generating it with "
-                      f"`uprof.py translate --ascii ibsop-event-dump` failed: {detail}; run that "
-                      "translate on the raw session and anonymize its output")
+        raise Refused(
+            "the capture is IBS but has no IbsOpDump.csv, and generating it with "
+            f"`uprof.py translate --ascii ibsop-event-dump` failed: {detail}; run that "
+            "translate on the raw session and anonymize its output"
+        )
     return dump
 
 
@@ -488,32 +659,54 @@ def handover_dump(session: Path, kept: list[int], out: Path, meta: dict) -> str:
         pid_list = ", ".join(str(pid) for pid in kept)
         connection = duckdb.connect()
         try:
-            run(connection, "CREATE TABLE dump AS SELECT * FROM read_csv(?, header = true, "
+            run(
+                connection,
+                "CREATE TABLE dump AS SELECT * FROM read_csv(?, header = true, "
                 f"all_varchar = true) WHERE TRY_CAST(PID AS BIGINT) IN ({pid_list})",
-                f"reading {source.name}", [str(source)])
+                f"reading {source.name}",
+                [str(source)],
+            )
             rewrite_strings(connection)
-            run(connection, "COPY dump TO ? (HEADER, DELIMITER ',')", f"writing {source.name}",
-                [str(target)])
+            run(
+                connection,
+                "COPY dump TO ? (HEADER, DELIMITER ',')",
+                f"writing {source.name}",
+                [str(target)],
+            )
             columns = list(columns_of(connection, "dump"))
             rows = run(connection, "SELECT count(*) FROM dump", "counting the dump").fetchone()[0]
             strings: set[str] = set()
             for column in columns:
-                strings.update(value for (value,) in run(
-                    connection, f'SELECT DISTINCT "{column}" FROM dump WHERE "{column}" IS NOT '
-                    f"NULL AND TRY_CAST(\"{column}\" AS DOUBLE) IS NULL",
-                    f"reading the strings of {source.name}").fetchall())
+                strings.update(
+                    value
+                    for (value,) in run(
+                        connection,
+                        f'SELECT DISTINCT "{column}" FROM dump WHERE "{column}" IS NOT '
+                        f'NULL AND TRY_CAST("{column}" AS DOUBLE) IS NULL',
+                        f"reading the strings of {source.name}",
+                    ).fetchall()
+                )
         finally:
             connection.close()
-    lines = [f"== dump {source.name} ({rows} rows)", ",".join(columns),
-             f"== distinct strings in {source.name} ({len(strings)})", *sorted(strings)]
+    lines = [
+        f"== dump {source.name} ({rows} rows)",
+        ",".join(columns),
+        f"== distinct strings in {source.name} ({len(strings)})",
+        *sorted(strings),
+    ]
     return "\n".join(lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("session", type=Path, help="translated session directory")
-    parser.add_argument("--keep-process", nargs="+", required=True, metavar="NAME",
-                        help="process image names to keep, e.g. defect_lab.exe")
+    parser.add_argument(
+        "--keep-process",
+        nargs="+",
+        required=True,
+        metavar="NAME",
+        help="process image names to keep, e.g. defect_lab.exe",
+    )
     parser.add_argument("--out", type=Path, required=True, help="new or empty directory")
     args = parser.parse_args(argv)
     try:
@@ -523,8 +716,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     found = disclosures(review.read_text(encoding="utf-8"), host_names())
     if found:
-        print(f"error: {review} still contains {'; '.join(found)}; do not hand these files "
-              "over, and report the table and column review.txt shows it in", file=sys.stderr)
+        print(
+            f"error: {review} still contains {'; '.join(found)}; do not hand these files "
+            "over, and report the table and column review.txt shows it in",
+            file=sys.stderr,
+        )
         return 1
     print(review)
     return 0

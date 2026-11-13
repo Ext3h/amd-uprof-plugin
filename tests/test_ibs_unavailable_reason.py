@@ -27,6 +27,8 @@ def windows_reason(stdout, returncode=0, raises=False):
         return subprocess.CompletedProcess(command, returncode, stdout, "")
 
     with mock.patch.object(uprof_native, "IS_WINDOWS", True), \
+            mock.patch.object(uprof_native, "_system_directory",
+                              return_value=Path("C:/Windows/System32")), \
             mock.patch.object(uprof_native, "run", side_effect=fake_run):
         reason = uprof_native.ibs_unavailable_reason()
     return reason, calls

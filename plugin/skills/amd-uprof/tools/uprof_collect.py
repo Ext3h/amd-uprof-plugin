@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+import uprof_shell
 from uprof_native import (IS_WINDOWS, failure, failure_detail, find_uprof,
                           ibs_unavailable_reason, is_admin, print_output, require_uprof, run)
 from uprof_session import collect_summary, verify_collect
@@ -242,13 +243,20 @@ def collect(options: CollectOptions) -> None:
     interval, interval_line = _resolve_interval(options, mode)
     out_dir = Path(options.out_dir)
     # --dry-run prints the command without requiring the CLI to be installed.
-    uprof_display = find_uprof() or "AMDuProfCLI"
+    found = find_uprof()
+    uprof_display, uprof_data = (uprof_shell.path_arg(found, "<AMDUPROFCLI>") if found
+                                 else ("AMDuProfCLI", None))
+    out_display, out_data = uprof_shell.path_arg(options.out_dir, "<OUT_DIR>")
+    # A path that is not plain is a placeholder in COMMAND= and named on its own data line.
+    command_data = [line for line in (uprof_data, out_data) if line]
     target_args, target_display = _target_args(options)
     print(f"VERSION={skill_identity()}")
     print(interval_line)
     print(f"EVENT={_event_spec(options, options.event, interval)}")
-    print(f'COMMAND="{uprof_display}" collect -e {_event_spec(options, options.event, interval)} '
-          f'{target_display} -d {options.seconds} -o "{options.out_dir}"')
+    print(f"COMMAND={uprof_display} collect -e {_event_spec(options, options.event, interval)} "
+          f"{target_display} -d {options.seconds} -o {out_display}")
+    for line in command_data:
+        print(line)
     elevated = is_admin()
     print(f"Elevated={elevated}")
     os_requested = _requests_os_mode(options.event)
@@ -279,8 +287,10 @@ def collect(options: CollectOptions) -> None:
             interval, interval_line = _resolve_interval(options, "cycles", text=_CYCLE_DEFAULT)
             print(interval_line)
         cycle_spec = _event_spec(options, effective_event, interval)
-        print(f'COMMAND="{uprof_display}" collect -e {cycle_spec} {target_display} '
-              f'-d {options.seconds} -o "{options.out_dir}"')
+        print(f"COMMAND={uprof_display} collect -e {cycle_spec} {target_display} "
+              f"-d {options.seconds} -o {out_display}")
+        for line in command_data:
+            print(line)
         # The fallback cycle capture always requests OS mode; only elevation decides the warning.
         if not elevated:
             print(_FALLBACK_KERNEL_WARNING, file=sys.stderr)

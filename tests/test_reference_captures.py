@@ -6,8 +6,9 @@ the lab images and PDBs they were recorded with. The repository is public, so ev
 every file is checked: the database tables, session.uprof, the IBS dumps, the notes and the
 strings of the images and PDBs.
 
-Allowed paths: c:\\capture\\ (the anonymizer's rewrite), c:\\windows\\ (system modules and
-drivers), and LLVM's install folder, which the compiler and linker record in every PDB.
+Allowed paths in the captures' files: c:\\capture\\ (the anonymizer's rewrite) and c:\\windows\\
+(system modules and drivers). In the images and PDBs only LLVM's install folder, which the
+compiler and linker record in every PDB.
 
 Run from the repository root: python tests/run_tests.py test_reference_captures
 """
@@ -22,7 +23,7 @@ import debug_fixtures as F
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "trials"))
-import anonymize_capture  # noqa: E402
+import anonymize_capture
 
 CAPTURES = REPO / "trials" / "defect_lab" / "captures"
 CLASSES = ("memory", "lock", "branch", "os", "vendor", "wait", "chain", "efficient")
@@ -116,6 +117,9 @@ class ReferenceCaptureTest(unittest.TestCase):
         import duckdb
 
         self.assertTrue(platforms(), f"no platform folder under {CAPTURES}")
+        # The checks below must have something to check: a capture without either is fine, a
+        # set without any would pass unseen.
+        seen = {"HostInfo": False, "threadName": False}
         for platform in platforms():
             for path in sorted(platform.glob("*/cpu.db")):
                 with self.subTest(capture=path.parent.name):
@@ -128,6 +132,7 @@ class ReferenceCaptureTest(unittest.TestCase):
                             ).fetchall()
                         }
                         if "HostInfo" in tables:
+                            seen["HostInfo"] = True
                             count = connection.execute("SELECT count(*) FROM HostInfo")
                             self.assertEqual(count.fetchone()[0], 0)
                         columns = {
@@ -138,6 +143,7 @@ class ReferenceCaptureTest(unittest.TestCase):
                             ).fetchall()
                         }
                         if "threadName" in columns:
+                            seen["threadName"] = True
                             named = connection.execute(
                                 "SELECT count(*) FROM ProcessThread "
                                 "WHERE coalesce(threadName, '') <> ''"
@@ -145,6 +151,35 @@ class ReferenceCaptureTest(unittest.TestCase):
                             self.assertEqual(named.fetchone()[0], 0)
                     finally:
                         connection.close()
+        self.assertEqual(seen, {"HostInfo": True, "threadName": True})
+
+
+class HostStringRuleTest(unittest.TestCase):
+    """The disclosure rules themselves, on planted strings, so a regression is not silent."""
+
+    def test_planted_host_strings_are_found(self):
+        for path, text in (
+            ("x.uprof", "C:\\Users\\bob\\x.dll"),
+            ("x.uprof", "D:\\build\\lab_core.obj"),
+            ("x.uprof", "translate --symbol-server srv*C:\\S*https://sym.example"),
+            ("x.uprof", "https://intranet.example/x"),
+            ("x.uprof", "bob@corp.example"),
+            ("x.pdb", "C:\\Users\\bob\\lab_core.c"),
+            ("x.pdb", "D:\\build\\lab_core.obj"),
+        ):
+            with self.subTest(path=path, text=text):
+                self.assertTrue(host_strings(Path(path), {text}))
+
+    def test_allowed_strings_pass(self):
+        for path, text in (
+            ("x.uprof", "translate --symbol-server <VALUE>"),
+            ("x.uprof", "c:\\capture\\lab_core.dll"),
+            ("x.uprof", "c:\\windows\\system32\\ntdll.dll"),
+            ("x.pdb", "C:\\Program Files\\LLVM\\bin\\clang.exe"),
+            ("x.pdb", ALLOWED_URL),
+        ):
+            with self.subTest(path=path, text=text):
+                self.assertEqual(host_strings(Path(path), {text}), [])
 
 
 if __name__ == "__main__":

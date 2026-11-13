@@ -85,6 +85,17 @@ def embedded_basename(path: str) -> str:
     return path.replace("\\", "/").rsplit("/", 1)[-1]
 
 
+def context_instructions(context: dict) -> list[tuple[dict, dict]]:
+    """(instruction entry, its run) for every instruction of an instruction context."""
+    return [(item, run) for run in context["runs"] for item in run["instructions"]]
+
+
+def context_frame(context: dict, run: dict) -> tuple:
+    """(function, file, line) of a run: its own value where given, else the context's."""
+    return (run.get("function", context.get("function")),
+            run.get("file", context.get("file")), run["line"])
+
+
 def run(tool, *args, input_text: str | None = None) -> subprocess.CompletedProcess:
     command = [os.fspath(tool), *[os.fspath(arg) for arg in args]]
     return subprocess.run(command, input=input_text, capture_output=True,

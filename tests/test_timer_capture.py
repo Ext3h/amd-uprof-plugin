@@ -99,6 +99,25 @@ class _Session(unittest.TestCase):
         return self.profile(by, "--image-path", str(timer_fixture.IMAGE_DIR), *extra)
 
 
+class NamedRowsWarningTest(_Session):
+    """Every heap_churn.exe row is named from the uProf DB, so the function view does not ask
+    for --image-path; the line view still needs the image for file:line and keeps the advice."""
+
+    def warnings_for_image(self, by):
+        result = self.run_tool("profile", "--session", str(self.session), "--by", by)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [line for line in result.stderr.splitlines()
+                if line.startswith("WARNING: no symbols resolved for") and "heap_churn" in line]
+
+    def test_the_function_view_does_not_ask_for_the_image(self):
+        self.assertEqual(self.warnings_for_image("function"), [])
+
+    def test_the_line_view_keeps_the_image_advice(self):
+        warnings = self.warnings_for_image("line")
+        self.assertTrue(warnings)
+        self.assertIn("--image-path", warnings[0])
+
+
 class TimerFixtureTest(unittest.TestCase):
     """The committed tables belong to the committed image: every image sample lies in one of the
     Function ranges uProf resolved from its PDB, and no host path is left in the fixture."""

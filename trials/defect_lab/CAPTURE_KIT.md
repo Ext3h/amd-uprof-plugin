@@ -14,6 +14,7 @@ allows:
 - `timer`: `AMDuProfCLI collect -e event=timer,interval=4` (any x86 CPU)
 - `ibs`: `uprof.py collect --event ibs-op --sample-interval 16000000` (AMD CPU with IBS; VBS/Hyper-V must be off, see below)
 - `pmc`: `uprof.py collect --event cycles --sample-interval 4ms` (core PMC sampling)
+- `timer-cg`, `ibs-cg`: the timer or IBS event with `AMDuProfCLI collect --call-graph 1:64:user:fpo` (user-mode call stacks, at most 64 frames, unwind mode `fpo`), for the caller paths of #187. Each also writes `notes.txt` with the call graph's cost: defect_lab's ns per iteration in a run without profiling and in a run during a discarded call-graph collection.
 
 The coarse intervals and short runs keep each capture at about 1–2 MB with its dump (estimated),
 with a few hundred samples in the class's own module. `--seconds`, `--ibs-interval`,
@@ -30,13 +31,15 @@ key names, for #237.
 4. **Check what the CPU can record:**
    - IBS needs VBS and Hyper-V off. If `collect` prints `SAMPLER: falling back to cycle sampling ... VBS is running`, the `ibs` captures are cycle captures. Either turn VBS off (as administrator: `bcdedit /set hypervisorlaunchtype off`, disable Memory integrity, reboot) or leave `ibs` out of `--modes`.
    - Kernel samples need an elevated prompt; user-mode samples do not.
-5. **Record and anonymize, about 15 minutes:**
+   - Call stacks (`timer-cg`, `ibs-cg`) need an elevated prompt and uProf's capture driver installed. `record.py` stops with a cause line when a call-graph mode is asked for without elevation; leave both out of `--modes` to record without them.
+   - **Not verified:** the call-graph modes were only checked on an unelevated Intel test machine without the driver. AMDuProfCLI accepted the command line there, but the captures held no stacks (`"hasCallstack": false` in `session.uprof`) and the overhead rates were noise. If an elevated run still shows `false` or `callstack.db` stays empty, report it with the capture.
+5. **Record and anonymize, about 15 minutes without the call-graph modes, longer with them:**
    `python trials\defect_lab\record.py C:\lab\bin C:\lab\raw --anonymize C:\lab\out`
    - A mode the machine cannot record is printed as `skipped <class> <mode>: <cause>`.
    - Every capture ends with `anonymize <class>.<mode>: exit 0`. An exit 1 means `review.txt` still names this machine, the user or a profile path: do not hand that folder over.
 6. **Review:** read `C:\lab\out\<class>.<mode>\review.txt`. It holds every table of the filtered capture as text and, after `== distinct strings`, every path and name in it. Only `defect_lab.exe`, `busy_NN.exe`, `lab_core.dll`, `lab_vendor.dll` under `c:\capture\`, Windows system modules, function names and timestamps should appear.
 7. **Hand over:**
-   - `C:\lab\out\` with each folder's `cpu.db`, `session.uprof` and `review.txt`, plus the filtered `IbsOpDump.csv` for an IBS capture. `profile` needs that dump and cannot regenerate it without the raw files;
+   - `C:\lab\out\` with each folder's `cpu.db`, `session.uprof` and `review.txt`, plus the filtered `IbsOpDump.csv` for an IBS capture, `callstack.db` where uProf wrote one, and `notes.txt` for a call-graph capture. `profile` needs that dump and cannot regenerate it without the raw files;
    - the `*.keys.txt` files from `C:\lab\raw\`: key names and value types only, no values.
 
    Do not hand over `C:\lab\raw\` itself: the raw and translated captures name the machine, the user and every running process.

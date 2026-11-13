@@ -113,7 +113,9 @@ class DumpIdentityTest(unittest.TestCase):
         self.make_capture(self.session, b"capture A")
         (self.session / "cpu" / "capture.prd").unlink()
         cache = self.root / "cache" / "k"
-        cache.mkdir(parents=True)
+        # A cache an earlier run left: the tool creates both directories private to the user.
+        cache.parent.mkdir(mode=0o700)
+        cache.mkdir(mode=0o700)
         (cache / DUMP_FILENAMES[KIND]).write_bytes(b"other")
         (cache / "cache.json").write_text(json.dumps(
             {"kind": KIND, "timeFilter": "", "capture": []}), encoding="utf-8")

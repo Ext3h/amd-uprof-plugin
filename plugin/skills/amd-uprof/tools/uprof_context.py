@@ -802,7 +802,7 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
     if anchor.name is not None:
         anchor_json["name"] = anchor.name
     anchor_json["distance"] = hot_rva - anchor.rva
-    entries: list[dict[str, object]] = []
+    framed: list[tuple[tuple[str | None, str | None, int | None], dict[str, object]]] = []
     for instruction in sorted(instructions, key=lambda item: item.rva):
         count = int(samples.get(instruction.rva, 0))
         entry: dict[str, object] = {
@@ -812,16 +812,8 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
             "sample_share": instruction_share(count, total_samples),
         }
         symbol = symbols.get(instruction.rva)
-        if symbol is not None:
-            symbol_json: dict[str, object] = {}
-            if symbol.function is not None:
-                symbol_json["function"] = symbol.function
-            if symbol.file is not None:
-                symbol_json["file"] = symbol.file
-            if symbol.line is not None:
-                symbol_json["line"] = symbol.line
-            if symbol_json:
-                entry["symbol"] = symbol_json
+        frame = ((symbol.function, symbol.file, symbol.line) if symbol is not None
+                 else (None, None, None))
         slot = resolve_iat_call(instruction, build.image_base, imports)
         if slot is not None:
             entry["import"] = {"dll": slot.dll, "name": slot.name,
@@ -829,8 +821,48 @@ def build_context(anchor: Anchor, build: VerifiedBuild, hot_rva: int,
         ibs_labels = ibs.get(instruction.rva)
         if ibs_labels:
             entry["ibs"] = ibs_labels
-        entries.append(entry)
-    return {"anchor": anchor_json, "build": build_json(build), "instructions": entries}
+        framed.append((frame, entry))
+    context: dict[str, object] = {"anchor": anchor_json, "build": build_json(build)}
+    context.update(_context_source(frame for frame, _entry in framed))
+    context["runs"] = _source_runs(framed, context)
+    return context
+
+
+def _context_source(frames) -> dict[str, object]:
+    """The function and file most instructions of the window share (first seen on a tie)."""
+    counts: dict[tuple[str | None, str | None], int] = {}
+    for function, file, _line in frames:
+        if function is not None or file is not None:
+            counts[(function, file)] = counts.get((function, file), 0) + 1
+    if not counts:
+        return {}
+    function, file = max(counts, key=counts.get)
+    source: dict[str, object] = {}
+    if function is not None:
+        source["function"] = function
+    if file is not None:
+        source["file"] = file
+    return source
+
+
+def _source_runs(framed, context: dict[str, object]) -> list[dict[str, object]]:
+    """Consecutive instructions with the same frame 0, each run naming what differs."""
+    runs: list[dict[str, object]] = []
+    previous = None
+    for frame, entry in framed:
+        if frame != previous:
+            function, file, line = frame
+            run: dict[str, object] = {}
+            if function != context.get("function"):
+                run["function"] = function
+            if file != context.get("file"):
+                run["file"] = file
+            run["line"] = line
+            run["instructions"] = []
+            runs.append(run)
+            previous = frame
+        runs[-1]["instructions"].append(entry)
+    return runs
 
 
 _CONTEXT_HELP_FIELDS: Final = {
@@ -842,16 +874,20 @@ _CONTEXT_HELP_FIELDS: Final = {
               "unverified; image_base, time_date_stamp, checksum, capture_checksum, "
               "size_of_image and capture_size are hex; size_of_image, capture_size and warning "
               "are present when known"),
-    "instructions": ("the static decoded stream in ascending rva; each entry has rva, instruction "
-                     "(assembly), samples (raw count), sample_share (fraction) and optional "
-                     "symbol, import and ibs; instruction may include llvm-objdump's "
-                     "nearest-symbol <...> decoration, which is not the frame-0 symbol, so use "
-                     "symbol for the real frame"),
-    "instructions[].symbol": ("llvm-symbolizer frame 0 for the instruction: function, file and "
-                              "line; absent when the tool returned no frame"),
-    "instructions[].import": ("the IAT target of a call through a slot: dll, name and slot_rva; "
-                              "absent for register or non-IAT targets"),
-    "instructions[].ibs": ("IBS OP aggregates for the same PID, image and time window as the "
+    "function, file": ("llvm-symbolizer frame 0 shared by most instructions of the window; "
+                       "absent when no instruction has one"),
+    "runs": ("the static decoded stream in ascending rva, grouped into runs of consecutive "
+             "instructions with the same frame 0; each run has line and instructions, and "
+             "function or file only where the run's frame differs from the context; null means "
+             "the frame has none, and a run with function, file and line null has no frame"),
+    "runs[].instructions": ("each entry has rva, instruction (assembly), samples (raw count), "
+                            "sample_share (fraction) and optional import and ibs; instruction "
+                            "may include llvm-objdump's nearest-symbol <...> decoration, which "
+                            "is not the frame-0 symbol, so use the run's function for the real "
+                            "frame"),
+    "runs[].instructions[].import": ("the IAT target of a call through a slot: dll, name and "
+                                     "slot_rva; absent for register or non-IAT targets"),
+    "runs[].instructions[].ibs": ("IBS OP aggregates for the same PID, image and time window as the "
                            "row's samples: DataSrc, CacheHitSt and IbsOpMemWidth are value "
                            "histograms; IbsDcMiss, IbsOpBrnMisp and IbsDcLockedOp are nonzero "
                            "counts as {set, of}; IbsTagToRetCtr is {samples, sum, max} over "

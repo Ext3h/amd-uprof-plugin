@@ -113,17 +113,21 @@ class CandidateDirectoryTest(unittest.TestCase):
                                    else str(safe)])
         for value in offered:
             self.assertTrue(plain(value, PATH_PLAIN), value)
-        for name in HOSTILE_DIRECTORIES:
+        held = message.split("not offered as commands", 1)[1]
+        self.assertIn(f"{len(HOSTILE_DIRECTORIES)} not offered as commands", message)
+        for name in sorted(HOSTILE_DIRECTORIES)[:5]:
             with self.subTest(name=name):
-                self.assertIn(repr(str(self.root / name)), message)
+                self.assertIn(repr(str(self.root / name)), held)
 
     def test_only_hostile_directories_still_end_in_one_cause_line(self):
-        self.capture("a\u201d;calc;\u201cb")
+        self.capture("a\u202eexe.txt")
         message = self.message()
         self.assertNotIn("\n", message)
         self.assertNotIn("run one of", message)
         self.assertEqual(self.offered_sessions(message), [])
-        self.assertIn("not offered as commands", message)
+        self.assertIn("1 not offered as commands", message)
+        self.assertIn(repr(str(self.root / "a\u202eexe.txt")), message)
+        self.assertNotIn("\u202e", message)
 
 
 if __name__ == "__main__":

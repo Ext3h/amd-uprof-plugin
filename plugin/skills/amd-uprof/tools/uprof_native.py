@@ -126,7 +126,46 @@ def _newest(paths: Iterable[Path]) -> list[Path]:
     return sorted(paths, key=_version_key, reverse=True)
 
 
+def _program_files_dirs() -> list[Path]:
+    """The Program Files directories as HKLM records them; the environment variables naming
+    them belong to the caller and can point anywhere."""
+    import winreg
+
+    roots: list[Path] = []
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+        ) as key:
+            for name in ("ProgramW6432Dir", "ProgramFilesDir", "ProgramFilesDir (x86)"):
+                try:
+                    value, _ = winreg.QueryValueEx(key, name)
+                except OSError:
+                    continue
+                if value:
+                    roots.append(Path(value))
+    except OSError:
+        return []
+    return list(dict.fromkeys(roots))
+
+
+def _admin_install_candidates() -> list[Path]:
+    """AMDuProfCLI install locations only an administrator can write."""
+    if IS_WINDOWS:
+        return [
+            root / "AMD" / "AMDuProf" / "bin" / "AMDuProfCLI.exe" for root in _program_files_dirs()
+        ]
+    return [
+        *_newest(Path("/opt").glob("AMDuProf_*/bin/AMDuProfCLI")),
+        *_newest(Path("/opt").glob("AMD/uProf*/bin/AMDuProfCLI")),
+        Path("/usr/local/bin/AMDuProfCLI"),
+    ]
+
+
 def find_uprof() -> Path | None:
+    if is_admin():
+        # An elevated run would start whatever the caller's environment names with
+        # administrator rights, so only admin-writable install locations count.
+        return _first_existing(_admin_install_candidates())
     env = os.environ.get("AMDUPROF_CLI")
     candidates: list[str | os.PathLike[str] | None] = [env, _which("AMDuProfCLI")]
     if IS_WINDOWS:
@@ -172,6 +211,16 @@ LINUX_LLVM_INSTALL: Final = "wget https://apt.llvm.org/llvm.sh && sudo bash llvm
 
 def require_uprof() -> Path:
     found = find_uprof()
+    if not found and is_admin():
+        ignored = [
+            str(path) for path in (os.environ.get("AMDUPROF_CLI"), _which("AMDuProfCLI")) if path
+        ]
+        named = f" (ignored: {', '.join(ignored)})" if ignored else ""
+        raise UprofError(
+            "AMDuProfCLI not found in an admin-writable install location; an elevated run "
+            f"ignores AMDUPROF_CLI and PATH{named}. Install AMD uProf to its default location, "
+            "or run collect from an unelevated shell, which captures user-mode samples only"
+        )
     if not found:
         hint = (
             "install AMD uProf, or set AMDUPROF_CLI to AMDuProfCLI.exe"

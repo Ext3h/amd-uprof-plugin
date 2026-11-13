@@ -148,15 +148,15 @@ LAB_EXPORT u64 lab_vendor(u64 ms, int control)
     return iterations;
 }
 
-/* wait: blocks on an event that is never set, with a little work between the waits, so the
-   module still has samples while most of the wall time is off-CPU. */
+/* wait: blocks on an event that is never set, with a burst of work (a few milliseconds) between
+   the waits, so a 10 ms timer still samples the module while most of the wall time is off-CPU. */
 LAB_EXPORT u64 lab_wait(u64 ms, int control)
 {
     HANDLE event = CreateEventA(0, 1, 0, 0);
     u64 state = 1, iterations = 0;
     u64 end = GetTickCount64() + ms;
     do {
-        for (u32 i = 0; i < 20000u; ++i)
+        for (u32 i = 0; i < 2000000u; ++i)
             sink += xorshift(&state);
         if (!control)
             WaitForSingleObject(event, 5u);

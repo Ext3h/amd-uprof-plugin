@@ -75,6 +75,14 @@ Maintainers are the people with write access to this repository.
   the developer's environment (symbol paths, caches, temp roots).
   Why: proves the defect and keeps CI and local runs equal.
 
+## Authoritative documents
+
+- `plugin/skills/amd-uprof/references/spec.md` defines what the tools do. Every change conforms to it.
+  Changing the spec itself needs an accepted issue first.
+- The product goals and design constraints above define what the plugin is for and how it may be built.
+- `SKILL.md`, the other references and the tool output follow the spec and never extend it. Where they
+  disagree with it, that is a bug.
+
 ## Sensitive changes
 
 - Changes to CI workflows or their permissions, fixtures or binaries, or shipped skill text get

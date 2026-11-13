@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Final
 
 import uprof_shell
-from uprof_session import (ContextCadence, achieved_summary, derive_sampler, read_meta,
-                           run_gap_limit_ns, system_wide)
+from uprof_session import (ContextCadence, achieved_summary, cycle_frequency_hz, derive_sampler,
+                           read_meta, run_gap_limit_ns, system_wide)
 from uprof_util import (COPY_DIRS, DUMP_FILENAMES, UprofError, absolute, contains,
                         copy_session, parse_time_filter, skill_identity, tail_lines)
 
@@ -898,9 +898,12 @@ def translate(session_dir: Path | str, out_dir: Path | str,
         sampler = derive_sampler(out)
         wide = system_wide(out)
         label = "CPU" if wide else "thread"
+        frequency_hz = cycle_frequency_hz(sampler)
         samples, cpus, contexts = dump_cadence(
-            dump, "CPU_Number" if wide else ("PID", "TID"), run_gap_limit_ns(sampler))
+            dump, "CPU_Number" if wide else ("PID", "TID"),
+            run_gap_limit_ns(sampler, frequency_hz))
         window_s = _dump_window_s(out, time_filter)
-        print(f"ACHIEVED: {achieved_summary(samples, window_s, cpus, sampler, contexts, label)}")
+        summary = achieved_summary(samples, window_s, cpus, sampler, contexts, label, frequency_hz)
+        print(f"ACHIEVED: {summary}")
     else:
         print("ACHIEVED: reported at profile time (translate wrote no dump without --ascii)")

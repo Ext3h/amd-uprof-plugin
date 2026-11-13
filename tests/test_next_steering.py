@@ -16,9 +16,15 @@ import uprof_query
 SESSION = "C:/captures/run" if uprof_query.os.name == "nt" else "/captures/run"
 
 
-def next_calls(*argv, system_wide, unresolved=0):
+def next_calls(*argv, system_wide, unresolved=0, top_pid=None):
     args = uprof.build_parser().parse_args(["profile", "--session", SESSION, *argv])
-    return uprof_query._next_calls(args, {"unresolved": unresolved}, system_wide=system_wide)
+    return uprof_query._next_calls(args, {"unresolved": unresolved}, system_wide=system_wide,
+                                   top_pid=top_pid)
+
+
+def argv_of(call):
+    """The profile arguments of an emitted call, the way the next call would be parsed."""
+    return call.split(" profile ", 1)[1].replace('"', "").split()[2:]
 
 
 def bys(calls):
@@ -52,7 +58,26 @@ class NextSteeringTest(unittest.TestCase):
         self.assertEqual(bys(next_calls("--by", "function", system_wide=False)), [])
 
     def test_the_process_view_still_points_to_modules(self):
-        self.assertEqual(bys(next_calls("--by", "process", system_wide=True)), ["module"])
+        self.assertEqual(bys(next_calls("--by", "process", system_wide=False)), ["module"])
+
+    def test_a_system_wide_process_view_scopes_its_module_call_to_the_top_process(self):
+        calls = next_calls("--by", "process", system_wide=True, top_pid=4242)
+        self.assertEqual(bys(calls), ["module"])
+        self.assertIn("--pid 4242", calls[0])
+
+    def test_following_next_from_the_system_wide_process_ranking_never_loops(self):
+        # process -> module --pid -> function --pid, never back to the process ranking.
+        seen = ["process"]
+        calls = next_calls("--by", "process", system_wide=True, top_pid=4242)
+        while calls:
+            self.assertEqual(len(calls), 1, calls)
+            argv = argv_of(calls[0])
+            self.assertIn("--pid", argv)
+            by = argv[argv.index("--by") + 1]
+            self.assertNotIn(by, seen)
+            seen.append(by)
+            calls = next_calls(*argv, system_wide=True, top_pid=4242)
+        self.assertEqual(seen, ["process", "module", "function"])
 
 
 if __name__ == "__main__":

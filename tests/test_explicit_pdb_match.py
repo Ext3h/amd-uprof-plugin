@@ -71,13 +71,13 @@ class ExplicitPdbMatchTest(unittest.TestCase):
         return result, stream.getvalue()
 
     def test_another_modules_pdb_is_not_used_without_an_image_guid(self):
-        result, _ = self.symbolize(self.pdb("app.pdb"), ("plugin.pdb", None, None))
+        result, _ = self.symbolize(self.pdb("app.pdb"), ("plugin.pdb", None, None, None))
 
         self.assertIsNone(result.pdb)
         self.assertEqual(result.evidence.outcome, "pdb_unmatched")
 
     def test_the_rejection_is_one_line_with_a_concrete_remedy(self):
-        result, _ = self.symbolize(self.pdb("app.pdb"), ("plugin.pdb", None, None))
+        result, _ = self.symbolize(self.pdb("app.pdb"), ("plugin.pdb", None, None, None))
         line = io.StringIO()
         uprof_symbols._evidence_line(result.evidence, line)
         text = line.getvalue()
@@ -89,13 +89,13 @@ class ExplicitPdbMatchTest(unittest.TestCase):
 
     def test_the_modules_own_pdb_is_used_without_an_image_guid(self):
         own = self.pdb("plugin.pdb")
-        result, _ = self.symbolize(own, ("plugin.pdb", None, None))
+        result, _ = self.symbolize(own, ("plugin.pdb", None, None, None))
 
         self.assertEqual(result.pdb, own)
 
     def test_another_modules_pdb_is_not_used_without_pdbutil(self):
         result, _ = self.symbolize(
-            self.pdb("app.pdb"), ("plugin.pdb", "ABCD", 1), tools=("llvm-readobj",)
+            self.pdb("app.pdb"), ("plugin.pdb", "ABCD", 1, None), tools=("llvm-readobj",)
         )
 
         self.assertIsNone(result.pdb)

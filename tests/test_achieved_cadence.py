@@ -43,10 +43,10 @@ class AchievedCadenceTest(unittest.TestCase):
         self.assertIn("8 active CPUs", text)
 
     def test_all_contexts_at_one_percent_warn(self):
-        contexts = [uprof_session.ContextCadence(100, 100_000_000)] * 8
+        contexts = [uprof_session.ContextCadence(100)] * 8
         text = self.achieved(contexts, window_s=10.0)
         self.assertIn("WARN", text)
-        self.assertIn("busiest CPU 10/s", text)
+        self.assertIn("busiest CPU 10.00/s", text)
 
     def test_intermittent_thread_with_correct_gaps_does_not_warn(self):
         # One thread, 500 samples over 100 s: 5/s overall, but every running gap is 1 ms.

@@ -665,6 +665,34 @@ def _cpu_seconds_interval(sampler: uprof_session.Sampler) -> float | None:
     return interval_s
 
 
+_MODULE_SUFFIXES: Final = (".dll", ".sys", ".so", ".dylib")
+
+
+def _looks_like_module(pattern: str) -> bool:
+    """True for a pattern whose suffix names a module file, not a process image."""
+    name = pattern.strip().strip('"').replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.endswith(_MODULE_SUFFIXES)
+
+
+def _is_module_pattern(connection: object | None, pattern: str | None) -> bool:
+    """True when pattern looks like a module file or matches a known module in the capture."""
+    if not pattern or pattern == "%":
+        return False
+    if _looks_like_module(pattern):
+        return True
+    if connection is not None:
+        try:
+            base = pattern.strip().strip('"').replace("\\", "/").rsplit("/", 1)[-1].lower()
+            rows = connection.execute(
+                "SELECT 1 FROM Module WHERE lower(replace(path, '\\', '/')) LIKE ? "
+                "OR lower(replace(path, '\\', '/')) = ? LIMIT 1",
+                [f"%/{base}", base]).fetchall()
+            return bool(rows)
+        except Exception:
+            return False
+    return False
+
+
 def _quote(text: str) -> str:
     """Quote one shell argument; on Windows also protect %NAME% from cmd.exe expansion."""
     if os.name == "nt":
@@ -674,30 +702,42 @@ def _quote(text: str) -> str:
     return '"' + text.replace('"', '\\"') + '"'
 
 
-def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False) -> str:
+def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False, *,
+                     image: str | None = None,
+                     omit_image: bool = False,
+                     omit_pid: bool = False,
+                     function: str | None = None,
+                     module: str | None = None) -> str:
     """A runnable drill-down command that keeps the session and the process/image scope."""
     parts = ["python", _quote(str(TOOLS_DIR / "uprof.py")), "profile",
              "--session", _quote(str(util.absolute(args.session))), "--by", by]
-    if args.pid is not None:
-        parts += ["--pid", str(args.pid)]
-    elif args.image is not None and args.image != "%":
-        parts += ["--image", _quote(args.image)]
-    if args.time_filter:
-        parts += ["--time-filter", _quote(args.time_filter)]
-    if getattr(args, "function", None):
-        parts += ["--function", _quote(args.function)]
-        module = getattr(args, "module", None)
+    if function is not None:
+        parts += ["--function", _quote(function)]
         if module:
             parts += ["--module", _quote(module)]
-        if getattr(args, "function_start", None) is not None:
-            parts += ["--function-start", f"0x{args.function_start:X}"]
+    else:
+        if not omit_pid and args.pid is not None:
+            parts += ["--pid", str(args.pid)]
+        elif not omit_image:
+            img = image if image is not None else (args.image if args.image != "%" else None)
+            if img is not None:
+                parts += ["--image", _quote(img)]
+        if getattr(args, "function", None):
+            parts += ["--function", _quote(args.function)]
+            mod = getattr(args, "module", None)
+            if mod:
+                parts += ["--module", _quote(mod)]
+            if getattr(args, "function_start", None) is not None:
+                parts += ["--function-start", f"0x{args.function_start:X}"]
+    if getattr(args, "time_filter", None):
+        parts += ["--time-filter", _quote(args.time_filter)]
     if getattr(args, "symbol_path", None):
         for value in args.symbol_path:
             parts += ["--symbol-path", _quote(value)]
     if getattr(args, "image_path", None):
         for value in args.image_path:
             parts += ["--image-path", _quote(value)]
-    if args.top != "20":
+    if getattr(args, "top", "20") != "20":
         parts += ["--top", str(args.top)]
     if json_mode:
         parts.append("--json")
@@ -705,7 +745,8 @@ def _profile_command(args: argparse.Namespace, by: str, json_mode: bool = False)
 
 
 def _next_calls(args: argparse.Namespace,
-                row_attribution: dict[str, int] | None = None) -> list[str]:
+                row_attribution: dict[str, int] | None = None,
+                connection: object | None = None) -> list[str]:
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
@@ -713,7 +754,39 @@ def _next_calls(args: argparse.Namespace,
     not a default drill-down. A function-scoped instruction or line view was asked for, so it
     offers the sibling view with the same --function/--module scope; the unscoped views keep
     their old stops.
+
+    On an empty scope, NEXT offers the alternatives instead: the same call with each available
+    image (or with no --image), and for a module pattern, the --function ... --module form.
     """
+    empty = False
+    if connection is not None:
+        try:
+            totals = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
+            empty = bool(totals and totals[0][0] == 0)
+        except Exception:
+            empty = False
+
+    if empty:
+        available_images: list[str] = []
+        if connection is not None:
+            try:
+                available_images = [row[0] for row in connection.execute(
+                    "SELECT DISTINCT name FROM Process WHERE COALESCE(name, '') <> '' "
+                    "ORDER BY name").fetchall()]
+            except Exception:
+                available_images = []
+
+        calls: list[str] = []
+        if available_images and args.image not in (None, "%"):
+            for img in available_images[:10]:
+                calls.append(_profile_command(args, args.by, image=img))
+        else:
+            calls.append(_profile_command(args, args.by, omit_image=True, omit_pid=True))
+
+        if getattr(args, "image", None) and _is_module_pattern(connection, args.image):
+            calls.append(_profile_command(args, "line", function="...", module=args.image))
+        return calls
+
     calls = [_profile_command(args, by) for by in _NEXT_BY[args.by]]
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region"))
@@ -924,7 +997,8 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
             has_system_module: bool | None = None,
             range_info: dict[str, Any] | None = None,
             row_attribution: dict[str, int] | None = None,
-            function_scope: dict[str, Any] | None = None) -> dict[str, Any]:
+            function_scope: dict[str, Any] | None = None,
+            connection: object | None = None) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
     sample_share's meaning is mode-specific; time_share is a time share estimated from gaps, not
@@ -1065,7 +1139,7 @@ def _legend(sampler: uprof_session.Sampler, dump: uprof_dump.DumpInfo | None,
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution),
+        "next": _next_calls(args, row_attribution, connection=connection),
     }
     if function_scope is not None:
         result["function_scope"] = _function_scope_json(
@@ -1689,15 +1763,6 @@ def _tag_nonzero(connection: object) -> int:
     return int(rows[0][0] or 0) if rows else 0
 
 
-_MODULE_SUFFIXES: Final = (".dll", ".sys", ".so", ".dylib")
-
-
-def _looks_like_module(pattern: str) -> bool:
-    """True for a pattern whose suffix names a module file, not a process image."""
-    name = pattern.strip().strip('"').replace("\\", "/").rsplit("/", 1)[-1].lower()
-    return name.endswith(_MODULE_SUFFIXES)
-
-
 def _scope_warning(connection: object, image_pattern: str | None = None) -> list[tuple[str, str]]:
     """Say that the scope matched nothing, and for --image name what the filter selects.
 
@@ -1719,7 +1784,7 @@ def _scope_warning(connection: object, image_pattern: str | None = None) -> list
                 message += f"; available images in this capture: {shown}"
             else:
                 message += "; this capture records no process image names"
-            if _looks_like_module(image_pattern):
+            if _is_module_pattern(connection, image_pattern):
                 message += ("; the pattern looks like a module name: --image scopes process image "
                             "names, not modules; use --by module or --function ... --module")
         fields.append(("WARNING", message))
@@ -2025,7 +2090,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 "uprof_tag_available": "true" if tag_available else "false"})
             legend = _legend(sampler, dump, has_tag, tag_available, args, system_wide,
                              sample_interval_s, has_system_module, range_info, row_attribution,
-                             function_scope)
+                             function_scope, connection=connection)
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             # The filter and its parent measurement precede the reading rule; both sit directly
             # below METRIC, after VERSION, before the detailed fields.

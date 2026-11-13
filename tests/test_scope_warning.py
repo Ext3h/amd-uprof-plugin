@@ -78,6 +78,48 @@ class ScopeWarningTest(unittest.TestCase):
         self.assertIn("WARNING: no samples in the selected scope; the process or time filter "
                       "matched nothing", result.stderr)
 
+    def test_empty_scope_offers_available_image_and_module_form(self):
+        out_file = self.root / "profile.json"
+        result = self.run_profile("--image", "ntdll.dll", "--json", "--out-file", str(out_file))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(out_file.read_text(encoding="utf-8"))
+        next_calls = document["legend"]["next"]
+        self.assertTrue(any("--image" in call and "workload.exe" in call for call in next_calls),
+                        f"Expected workload.exe in next calls: {next_calls}")
+        self.assertTrue(any("--function" in call and "--module" in call and "ntdll.dll" in call
+                            for call in next_calls),
+                        f"Expected --function/--module in next calls: {next_calls}")
+        self.assertFalse(any("--image" in call and "ntdll.dll" in call for call in next_calls),
+                         f"Did not expect empty filter --image ntdll.dll in: {next_calls}")
+
+    def test_empty_scope_with_non_module_image_pattern(self):
+        out_file = self.root / "profile.json"
+        result = self.run_profile("--image", "other.exe", "--json", "--out-file", str(out_file))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(out_file.read_text(encoding="utf-8"))
+        next_calls = document["legend"]["next"]
+        self.assertTrue(any("--image" in call and "workload.exe" in call for call in next_calls),
+                        f"Expected workload.exe in next calls: {next_calls}")
+        self.assertFalse(any("--function" in call and "--module" in call for call in next_calls),
+                         f"Did not expect --module form for other.exe in: {next_calls}")
+        self.assertFalse(any("--image" in call and "other.exe" in call for call in next_calls),
+                         f"Did not expect empty filter --image other.exe in: {next_calls}")
+
+    def test_empty_scope_with_pid_offers_unscoped_call(self):
+        out_file = self.root / "profile.json"
+        result = self.run_profile("--pid", "999", "--json", "--out-file", str(out_file))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(out_file.read_text(encoding="utf-8"))
+        next_calls = document["legend"]["next"]
+        self.assertTrue(any("--by module" in call and "--pid" not in call and "--image" not in call
+                            for call in next_calls),
+                        f"Expected unscoped call in next calls: {next_calls}")
+        self.assertFalse(any("--pid" in call and "999" in call for call in next_calls),
+                         f"Did not expect empty filter --pid 999 in: {next_calls}")
+
 
 if __name__ == "__main__":
     unittest.main()

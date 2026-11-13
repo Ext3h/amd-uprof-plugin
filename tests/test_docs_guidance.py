@@ -67,7 +67,7 @@ SKILL_FRAGMENTS = (
     "do not spend calls removing temp files",
     "one `CONTEXT:` line",
     "do not read `uprof_context.py` or `context_help`",
-    "--by module",
+    "tools/uprof.py profile --session <SESSION_DIR> --by module",
     "profile --by instruction --json",
     "## Worked example: where did CPU time go?",
     "attached, cycle-controlled IBS",

@@ -672,7 +672,8 @@ def translate_stopped(
         "and the shares in _NT_SYMBOL_PATH)",
         f"ALTERNATIVE: local symbols only: python {script} translate --session {session_arg} "
         f"--out-dir {out_arg} --force",
-        "run it with _NT_SYMBOL_PATH unset or set to a local folder only",
+        "run it with _NT_SYMBOL_PATH set to a local folder only: a set _NT_SYMBOL_PATH "
+        "defines the symbol servers exactly, and an unset one uses the Microsoft server",
     ]
     lines += [data for data in (script_data, session_data, out_data) if data]
     return LinesError(lines)

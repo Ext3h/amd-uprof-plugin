@@ -194,6 +194,20 @@ class TimerAlternativesTest(unittest.TestCase):
         self.assertIn("--launch <APP>", lines[1])
         self.assertNotIn("--process", message)
 
+    def test_no_data_line_names_a_placeholder_no_alternative_uses(self):
+        # A uProf path that is not plain once became <AMDUPROFCLI> plus a data line; no
+        # alternative runs AMDuProfCLI any more, so that data line names nothing.
+        labels = ["timer capture", "timer capture (launch)", "Zen host", "whole capture"]
+        with mock.patch.object(
+            uprof_native, "find_uprof", return_value=Path("C:/uProf$5/AMDuProfCLI.exe")
+        ):
+            message = str(uprof_native.failure("cause", labels, session="C:/a$b/session"))
+        lines = message.splitlines()
+        commands = "\n".join(line for line in lines if line.startswith("ALTERNATIVE: "))
+        for data in lines[1 + len(labels) :]:
+            placeholder = "<" + data.split("=", 1)[0] + ">"
+            self.assertIn(placeholder, commands, data)
+
 
 class TimerVerifyTest(unittest.TestCase):
     def session(self, meta):

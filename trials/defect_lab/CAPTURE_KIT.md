@@ -32,7 +32,7 @@ key names, for #237.
    - Every capture ends with `anonymize <class>.<mode>: exit 0`. An exit 1 means `review.txt` still names this machine, the user or a profile path: do not hand that folder over.
 6. **Review:** read `C:\lab\out\<class>.<mode>\review.txt`. It holds every table of the filtered capture as text and, after `== distinct strings`, every path and name in it. Only `defect_lab.exe`, `busy_NN.exe`, `lab_core.dll`, `lab_vendor.dll` under `c:\capture\`, Windows system modules, function names and timestamps should appear.
 7. **Hand over:**
-   - `C:\lab\out\` with each folder's `cpu.db`, `session.uprof` and `review.txt`;
+   - `C:\lab\out\` with each folder's `cpu.db`, `session.uprof` and `review.txt`, plus the filtered `IbsOpDump.csv` for an IBS capture. `profile` needs that dump and cannot regenerate it without the raw files;
    - the `*.keys.txt` files from `C:\lab\raw\`: key names and value types only, no values.
 
    Do not hand over `C:\lab\raw\` itself: the raw and translated captures name the machine, the user and every running process.

@@ -28,7 +28,9 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 # Columns the tools read; a cpu.db without them is refused rather than half-filtered.
@@ -294,7 +296,7 @@ def anonymize(session: Path, keep: list[str], out: Path) -> Path:
         review = write_filtered(session, kept, out, meta)
     except BaseException:
         # A failed run leaves nothing that could be mistaken for a finished capture.
-        for name in ("cpu.db", "cpu.db.wal", "session.uprof", "review.txt"):
+        for name in ("cpu.db", "cpu.db.wal", "session.uprof", "review.txt", *DUMP_NAMES):
             (out / name).unlink(missing_ok=True)
         raise
     (out / "review.txt").write_text(review, encoding="utf-8")
@@ -329,7 +331,74 @@ def write_filtered(session: Path, kept: list[int], out: Path, meta: dict) -> str
                           f"cpu.db: {detail}") from exc
     finally:
         connection.close()
-    return review
+    return review + handover_dump(session, kept, out, meta)
+
+
+DUMP_NAMES = ("IbsOpDump.csv", "IbsFetchDump.csv")
+UPROF = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools" / \
+    "uprof.py"
+
+
+def is_ibs(meta: dict) -> bool:
+    events = (meta.get("collection") or {}).get("events") or {}
+    return bool((meta.get("auxiliary") or {}).get("ibsOpSampling")
+                or (events.get("ibsEvents") or {}).get("op"))
+
+
+def dump_source(session: Path, meta: dict, workdir: Path) -> Path | None:
+    """The capture's IBS dump: beside the session, or generated now from its raw files.
+
+    A handover carries no raw files, so profile could not generate the dump there.
+    """
+    for name in DUMP_NAMES:
+        if (session / name).is_file():
+            return session / name
+    if not is_ibs(meta):
+        return None
+    done = subprocess.run([sys.executable, str(UPROF), "translate", "--session", str(session),
+                           "--out-dir", str(workdir), "--ascii", "ibsop-event-dump"],
+                          capture_output=True, text=True)
+    dump = workdir / "IbsOpDump.csv"
+    if done.returncode != 0 or not dump.is_file():
+        detail = " ".join((done.stderr or done.stdout or "").split())[-300:]
+        raise Refused("the capture is IBS but has no IbsOpDump.csv, and generating it with "
+                      f"`uprof.py translate --ascii ibsop-event-dump` failed: {detail}; run that "
+                      "translate on the raw session and anonymize its output")
+    return dump
+
+
+def handover_dump(session: Path, kept: list[int], out: Path, meta: dict) -> str:
+    """Write the dump's kept rows, paths rewritten, beside the filtered cpu.db; return its
+    review section."""
+    import duckdb
+
+    with tempfile.TemporaryDirectory(prefix="anonymize-dump-") as directory:
+        source = dump_source(session, meta, Path(directory) / "translated")
+        if source is None:
+            return ""
+        target = out / source.name
+        pid_list = ", ".join(str(pid) for pid in kept)
+        connection = duckdb.connect()
+        try:
+            run(connection, "CREATE TABLE dump AS SELECT * FROM read_csv(?, header = true, "
+                f"all_varchar = true) WHERE TRY_CAST(PID AS BIGINT) IN ({pid_list})",
+                f"reading {source.name}", [str(source)])
+            rewrite_strings(connection)
+            run(connection, "COPY dump TO ? (HEADER, DELIMITER ',')", f"writing {source.name}",
+                [str(target)])
+            columns = list(columns_of(connection, "dump"))
+            rows = run(connection, "SELECT count(*) FROM dump", "counting the dump").fetchone()[0]
+            strings: set[str] = set()
+            for column in columns:
+                strings.update(value for (value,) in run(
+                    connection, f'SELECT DISTINCT "{column}" FROM dump WHERE "{column}" IS NOT '
+                    f"NULL AND TRY_CAST(\"{column}\" AS DOUBLE) IS NULL",
+                    f"reading the strings of {source.name}").fetchall())
+        finally:
+            connection.close()
+    lines = [f"== dump {source.name} ({rows} rows)", ",".join(columns),
+             f"== distinct strings in {source.name} ({len(strings)})", *sorted(strings)]
+    return "\n".join(lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:

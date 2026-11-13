@@ -86,9 +86,17 @@ def write_keys(session: Path, target: Path) -> None:
     target.write_text("\n".join(sorted(set(key_paths(meta)))) + "\n", encoding="utf-8")
 
 
-def translate(session: Path, translated: Path) -> None:
-    subprocess.run([sys.executable, str(UPROF), "translate", "--session", str(session),
-                    "--out-dir", str(translated)], check=True, stdout=subprocess.DEVNULL)
+def translate(session: Path, translated: Path, mode: str) -> None:
+    """Translate a capture; an IBS capture also gets its ASCII dump beside the session.
+
+    The dump is generated here, where the raw files are; the handover carries only the
+    translated tables and the anonymized dump, from which profile cannot regenerate it.
+    """
+    command = [sys.executable, str(UPROF), "translate", "--session", str(session),
+               "--out-dir", str(translated)]
+    if mode == "ibs":
+        command += ["--ascii", "ibsop-event-dump"]
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 
 
 def record(bin_dir: Path, raw_dir: Path, name: str, mode: str) -> Path | None:
@@ -112,7 +120,7 @@ def record(bin_dir: Path, raw_dir: Path, name: str, mode: str) -> Path | None:
             process.wait()
     write_keys(session, raw_dir / f"{name}.{mode}.keys.txt")
     translated = raw_dir / f"{name}.{mode}.translated"
-    translate(session, translated)
+    translate(session, translated, mode)
     return translated
 
 

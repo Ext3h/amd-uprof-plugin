@@ -50,13 +50,14 @@ iteration (class, control):
 ## Captures
 
 The scenarios' captures are recorded on the owner's reference machine, not committed from a
-developer host. `record.py` runs each class beside 24 stressors (`busy_01.exe` ...
-`busy_24.exe`, copies of `lab_busy.exe`) and records a 3 s system-wide capture per mode the CPU
-allows (timer, IBS, PMC), plus plain IBS and PMC captures whose `keys.txt` lists the
-`session.uprof` key names. With `--anonymize <OUT_DIR>` it runs `trials/anonymize_capture.py` on
-each: only defect_lab and the stressors remain, host paths are rewritten, HostInfo is emptied,
-and `review.txt` dumps every table for a person to read. Nothing is committed before that
-review.
+developer host. `record.py` runs each class beside 15 stressors (`busy_01.exe` ...
+`busy_15.exe`, copies of `lab_busy.exe`) and records a 2 s system-wide capture per mode the CPU
+allows: timer at 4 ms, IBS every 16,000,000 ops with its ASCII dump, PMC at 4 ms. It also makes
+plain IBS and PMC captures whose `keys.txt` lists the `session.uprof` key names; every interval
+and count is an option. With `--anonymize <OUT_DIR>` it runs `trials/anonymize_capture.py` on
+each. Only defect_lab and the stressors remain in `cpu.db`, `callstack.db` and the IBS dump, host
+paths are rewritten, HostInfo is emptied, and `review.txt` dumps every table for a person to
+read. Nothing is committed before that review.
 
 ```console
 python trials/defect_lab/build.py <BIN_DIR>

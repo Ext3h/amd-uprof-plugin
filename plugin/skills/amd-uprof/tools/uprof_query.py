@@ -2177,6 +2177,10 @@ def _candidate_calls(args: argparse.Namespace, candidates: list[Path]) -> str:
     return "; ".join(parts) + "".join(f"\n{name}={value!r}" for name, value in data.items())
 
 
+# The line in views.sql that ends the export contract guard.
+_CONTRACT_END: Final = "-- END OF THE EXPORT CONTRACT GUARD"
+
+
 def run_query_command(args: argparse.Namespace) -> None:
     _check_args(args)
     session = util.require_dir(args.session, "capture directory")
@@ -2193,8 +2197,17 @@ def run_query_command(args: argparse.Namespace) -> None:
     out_path = _out_path(args, cpu_db, session)
 
     if args.command == "schema":
-        with uprof_db.open_query(cpu_db, [], {}) as connection:
+        # The listing is unchanged; then the same contract guard profile runs, for this capture's
+        # mode (an IBS capture reads its dump, a PMC or timer capture its event column), without
+        # resolving or generating a dump. A missing item fails with the guard's own error.
+        sampler = uprof_session.derive_sampler(session)
+        variables = {"uprof_ibs_dump": "" if sampler.pmc or sampler.timer else "<dump>",
+                     "uprof_event_column": sampler.event_column or ""}
+        with uprof_db.open_query(cpu_db, [], variables) as connection:
             uprof_db.output(connection, TOOLS_DIR / "schema.sql", [], False, out_path)
+            uprof_db.run_script_until(connection, TOOLS_DIR / "views.sql", _CONTRACT_END)
+        print("CONTRACT: the export has every table and column the query surface reads for "
+              "this capture mode", file=sys.stderr)
         return
 
     _require_llvm(args)

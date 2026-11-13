@@ -86,7 +86,10 @@ def _system_directory() -> Path:
     """The Windows system directory as the OS reports it, not from SystemRoot or windir, which
     the caller's environment can point anywhere."""
     buffer = ctypes.create_unicode_buffer(32768)
-    length = ctypes.windll.kernel32.GetSystemDirectoryW(buffer, len(buffer))
+    try:
+        length = ctypes.windll.kernel32.GetSystemDirectoryW(buffer, len(buffer))
+    except (AttributeError, OSError) as exc:
+        raise UprofError(f"cannot read the Windows system directory: {exc}") from exc
     if not 0 < length < len(buffer):
         raise UprofError("cannot read the Windows system directory (GetSystemDirectoryW failed)")
     return Path(buffer.value)

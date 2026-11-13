@@ -77,6 +77,7 @@ class OutFileGuardTest(unittest.TestCase):
                 mock.patch.object(uprof_query, "_primary_measure",
                                   return_value=("sample_share", None)), \
                 mock.patch.object(uprof_query, "_dump_sanity", side_effect=_Reached()), \
+                mock.patch.object(uprof_query, "_bind_ambiguous_modules"), \
                 mock.patch.object(uprof_query.uprof_db, "open_query", real_connection):
             uprof_query.run_query_command(args)
 

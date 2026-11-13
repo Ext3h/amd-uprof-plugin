@@ -24,6 +24,8 @@
 --                       range was derived, so function rows fall back to uProf Function.id
 --   uprof_range_attempted  chr(2)-joined modules for which derivation ran (fully named modules
 --                       are skipped); lets function_reason say "skipped" only when it was
+--   uprof_ambiguous_modules  chr(2)-joined module names the capture maps to more than one image
+--                       version; dump samples of these get no Function.id
 --   uprof_primary_measure  the column that orders function/region rows and --top: sample_share,
 --                       time_share or samples
 --   uprof_detail_views  'true' (the default when unset) binds the full line and instruction
@@ -35,6 +37,10 @@
 
 -- Macros are TEMP because cpu.db is opened read-only.
 CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/');
+-- A dump row carries the module name, not Module.id, so a name with several image versions
+-- cannot be tied to one version's Function rows.
+CREATE OR REPLACE TEMP MACRO module_ambiguous(name) AS COALESCE(list_contains(
+  string_split(NULLIF(getvariable('uprof_ambiguous_modules'), ''), chr(2)), name), false);
 -- A share is a fraction of the scoped total (0.0-1.0); the unit is stated once in the output.
 CREATE OR REPLACE TEMP MACRO share(part, whole) AS part / NULLIF(whole, 0);
 -- A kernel image is loaded in the kernel half of the x64 address space, or, when the catalog has
@@ -530,7 +536,7 @@ LEFT JOIN (
          max(s.functionId) AS function_id
   FROM UnifiedSampleSeries s
   JOIN Module m ON m.id = s.moduleId
-  WHERE s.functionId IS NOT NULL
+  WHERE s.functionId IS NOT NULL AND NOT module_ambiguous(module_key(m.path))
   GROUP BY module_name, rva
 ) rf ON w.module_name = rf.module_name AND w.rva = rf.rva
 WHERE (getvariable('uprof_pid') = '' OR w.pid = CAST(getvariable('uprof_pid') AS INTEGER))
@@ -869,6 +875,8 @@ WITH placed AS (
                 THEN 'fully named from the uProf DB; function-range derivation skipped'
               WHEN a.range_kind = 'uprof_db'
                 THEN 'no boundary source (export, PDB public or .pdata) covers these samples: the module file is unavailable, not a PE image, or the RVA is outside a code section; the row groups by uProf Function.id, and --by region is the page view'
+              WHEN module_ambiguous(a.module_name)
+                THEN 'the capture maps this module name to more than one image version and IBS dump rows carry the name, not Module.id, so no version''s functions are attributed; --by module is the module view'
               ELSE 'no derived range and no uProf Function.id for these samples; --by region is the page view' END
            AS function_reason
   FROM agg a

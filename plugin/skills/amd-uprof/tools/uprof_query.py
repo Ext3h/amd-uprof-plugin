@@ -202,6 +202,7 @@ def _variables(args: argparse.Namespace, dump: uprof_dump.DumpInfo | None, top: 
         "uprof_pdbs": "",
         "uprof_functions": "",
         "uprof_range_attempted": "",
+        "uprof_ambiguous_modules": "",
         "uprof_sample_interval_s": "" if sample_interval_s is None else repr(sample_interval_s),
         "uprof_primary_measure": primary_measure,
         # Only the line and instruction projections read the detail views (FUNCTION_SCOPED);
@@ -411,6 +412,15 @@ def _pdb_identities(pdbs: Path | None, evidence: list) -> list[dict[str, object]
     except OSError:
         return []
     return result
+
+
+def _bind_ambiguous_modules(connection: object, variables: dict[str, str]) -> None:
+    """Bind the module names the capture maps to more than one image version for views.sql."""
+    names = [str(row[0]) for row in connection.execute(
+        "SELECT DISTINCT module_key(path) FROM Module WHERE path IS NOT NULL").fetchall()]
+    value = chr(2).join(uprof_cache.ambiguous_modules(connection, names))
+    variables["uprof_ambiguous_modules"] = value
+    uprof_db.set_variables(connection, {"uprof_ambiguous_modules": value})
 
 
 def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO,
@@ -2237,6 +2247,7 @@ def run_query_command(args: argparse.Namespace) -> None:
     try:
         with uprof_db.open_query(cpu_db, [TOOLS_DIR / "views.sql"], variables) as connection:
             _guard_out_file_images(out_path, connection, args)
+            _bind_ambiguous_modules(connection, variables)
             causes: dict[str, str] = {}
             symbolizer: dict[str, Any] | None = None
             symbolized = False

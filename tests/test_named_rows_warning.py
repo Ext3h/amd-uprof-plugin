@@ -25,18 +25,18 @@ class NamedRowsWarningTest(unittest.TestCase):
         self.assertEqual(uprof_query._fully_named_modules(None), set())
 
     def test_the_filter_drops_only_those_modules_warning_lines(self):
+        # The quiet module still counts as unresolved, so its progress line goes too.
         target = io.StringIO()
-        stream = uprof_query._QuietModuleWarnings(target, {"app.exe"})
+        stream = uprof_query._SymbolDiagnostics(target, None, quiet={"app.exe"})
         stream.write("MODULE: app.exe: 3 addresses in C:/app.exe\n")
         stream.write("WARNING: no symbols resolved for app.exe (C:/app.exe): gone; "
                      "pass --image-path\nWARNING: no symbols resolved for vendor.dll ")
         stream.write("(C:/vendor.dll): gone\n")
-        stream.write("WARNING: no symbols resolved for app.exe.bak (x): kept\n")
+        stream.write("WARNING: no symbols resolved for app.exe.bak (C:/app.exe.bak): kept\n")
         stream.flush()
         self.assertEqual(target.getvalue(),
-                         "MODULE: app.exe: 3 addresses in C:/app.exe\n"
                          "WARNING: no symbols resolved for vendor.dll (C:/vendor.dll): gone\n"
-                         "WARNING: no symbols resolved for app.exe.bak (x): kept\n")
+                         "WARNING: no symbols resolved for app.exe.bak (C:/app.exe.bak): kept\n")
 
 
 if __name__ == "__main__":

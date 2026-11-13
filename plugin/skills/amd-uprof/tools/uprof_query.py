@@ -236,38 +236,31 @@ class _Tee(io.TextIOBase):
         self.target.flush()
 
 
-class _QuietModuleWarnings(io.TextIOBase):
-    """Forward a stream, dropping the symbolizer warning lines of the given modules.
-
-    A function or region view of a module whose every scoped sample has a uProf DB name prints
-    the same rows whatever --symbol-path/--image-path adds, so that module's "no symbols
-    resolved" advice would only invite a re-run. Lines are matched whole.
-    """
-
-    def __init__(self, target: TextIO, modules: set[str]):
-        self.target = target
-        self.prefixes = tuple(f"WARNING: no symbols resolved for {module} ("
-                              for module in sorted(modules))
-        self.pending = ""
-
-    def write(self, text: str) -> int:
-        self.pending += text
-        *lines, self.pending = self.pending.split("\n")
-        for line in lines:
-            if not line.startswith(self.prefixes):
-                self.target.write(line + "\n")
-        return len(text)
-
-    def flush(self) -> None:
-        if self.pending and not self.pending.startswith(self.prefixes):
-            self.target.write(self.pending)
-        self.pending = ""
-        self.target.flush()
-
-
 _MODULE_LINE = re.compile(r"^MODULE: (.+?): \d+ addresses in ")
-_NO_SYMBOLS = re.compile(r"^WARNING: no symbols resolved for (.+?) \((.*?)\): (.*)$")
-_NO_RANGES = re.compile(r"^WARNING: no function range derived for (.+?) \((.*?)\): (.*)$")
+_NO_SYMBOLS = "WARNING: no symbols resolved for "
+_NO_RANGES = "WARNING: no function range derived for "
+
+
+def _owner_and_cause(line: str, prefix: str) -> tuple[str, str] | None:
+    """(module, cause) of a "<prefix><module> (<path>): <cause>" line.
+
+    A path may itself contain " (" and "): ", as under "Program Files (x86)", so the split is
+    the first one where the module and its path name the same file.
+    """
+    if not line.startswith(prefix):
+        return None
+    rest = line[len(prefix):]
+    start = rest.find(" (")
+    while start >= 0:
+        name, tail = rest[:start], rest[start + 2:]
+        end = tail.find("): ")
+        while end >= 0:
+            if _module_key(Path(tail[:end].replace("\\", "/")).name) == _module_key(
+                    Path(name.replace("\\", "/")).name):
+                return name, tail[end + 3:]
+            end = tail.find("): ", end + 1)
+        start = rest.find(" (", start + 1)
+    return None
 _RANGES_LINE = re.compile(r"^FUNCTION_RANGES: (.+?): (\d+) ranges from ")
 _LISTED_MODULES = 5
 
@@ -283,11 +276,17 @@ class _SymbolDiagnostics(io.TextIOBase):
     keeps only its warning, not its MODULE/PDB/FOLDS progress lines. A warning cause shared by
     several modules is printed once with the modules it covers, and FUNCTION_RANGES lines become
     one summary. Every other line passes through in order.
+
+    A quiet module's "no symbols resolved" line is dropped: a function or region view of a
+    module whose every scoped sample has a uProf DB name prints the same rows whatever
+    --symbol-path/--image-path adds, so the advice would only invite a re-run.
     """
 
-    def __init__(self, target: TextIO, scope_module: str | None = None):
+    def __init__(self, target: TextIO, scope_module: str | None = None,
+                 quiet: set[str] | frozenset[str] = frozenset()):
         self.target = target
         self.scope = _module_key(scope_module) if scope_module else None
+        self.quiet = {_module_key(module) for module in quiet}
         self.pending = ""
         self.lines: list[str] = []
 
@@ -317,11 +316,11 @@ class _SymbolDiagnostics(io.TextIOBase):
             if match := _MODULE_LINE.match(line):
                 current = match.group(1)
                 parsed.append((current, "progress", line, ""))
-            elif match := _NO_SYMBOLS.match(line):
-                parsed.append((match.group(1), "no_symbols", line, match.group(3)))
+            elif split := _owner_and_cause(line, _NO_SYMBOLS):
+                parsed.append((split[0], "no_symbols", line, split[1]))
                 current = None
-            elif match := _NO_RANGES.match(line):
-                parsed.append((match.group(1), "no_ranges", line, match.group(3)))
+            elif split := _owner_and_cause(line, _NO_RANGES):
+                parsed.append((split[0], "no_ranges", line, split[1]))
             elif match := _RANGES_LINE.match(line):
                 parsed.append((match.group(1), "ranges", line, match.group(2)))
             elif current is not None and line.startswith(("PDB", "FOLDS:")):
@@ -333,6 +332,9 @@ class _SymbolDiagnostics(io.TextIOBase):
                 parsed.append((None, "other", line, ""))
         parsed = [item for item in parsed if item[0] is None or self._in_scope(item[0])]
         unresolved = {item[0] for item in parsed if item[1] == "no_symbols"}
+        # A quiet module counts as unresolved, but its symbol-path advice is not printed.
+        parsed = [item for item in parsed
+                  if not (item[1] == "no_symbols" and _module_key(item[0]) in self.quiet)]
         groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
         for owner, kind, line, key in parsed:
             if kind in ("no_symbols", "no_ranges", "ranges"):
@@ -2423,16 +2425,15 @@ def run_query_command(args: argparse.Namespace) -> None:
                 if (not symbol_hit or (range_needed and not range_hit)) and not cache.ensure_write():
                     symbol_hit = False
                     range_hit = False
-                # The cache keeps the full symbolization text; only a range view of a module
-                # the uProf DB names fully drops that module's symbol-path advice on output.
-                # The cache keeps the raw text; the diagnostics filter condenses it on output,
-                # so a cache hit prints what the cold run printed.
-                symbol_out: TextIO = _SymbolDiagnostics(stream, diagnostics_scope)
+                # The cache keeps the raw symbolization text; the diagnostics filter condenses
+                # it on output, so a cache hit prints what the cold run printed. Only a range
+                # view of a module the uProf DB names fully drops that module's symbol-path
+                # advice.
+                quiet: set[str] = set()
                 if args.by in RANGE_SCOPES:
                     db_coverage = _coverage_values(connection)
                     quiet = _fully_named_modules(db_coverage)
-                    if quiet:
-                        symbol_out = _QuietModuleWarnings(symbol_out, quiet)
+                symbol_out: TextIO = _SymbolDiagnostics(stream, diagnostics_scope, quiet)
                 if symbol_hit:
                     try:
                         symbol_hit, causes = _apply_symbol_hit(

@@ -60,5 +60,52 @@ class HttpSymbolServerTest(unittest.TestCase):
         self.assertEqual(self.warnings(self.stderr(servers=["https://symbols.example/store"])), [])
 
 
+class SymbolPathDefinesServersTest(unittest.TestCase):
+    """A set, non-empty _NT_SYMBOL_PATH defines exactly which servers translate uses; the
+    platform default applies only while the variable is unset or empty."""
+
+    def servers(self, nt_symbol_path, extra=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session"
+            session.mkdir()
+            (session / "session.uprof").write_text("{}", encoding="utf-8")
+            out = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {}),
+                mock.patch.object(uprof_native, "require_uprof", side_effect=_Stop()),
+                contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                os.environ.pop("_NT_SYMBOL_PATH", None)
+                if nt_symbol_path is not None:
+                    os.environ["_NT_SYMBOL_PATH"] = nt_symbol_path
+                with self.assertRaises(_Stop):
+                    uprof_native.translate(session, Path(tmp) / "out", symbol_servers=extra)
+        line = next(
+            line for line in out.getvalue().splitlines() if line.startswith("SYMBOL_SERVERS=")
+        )
+        value = line.split("=", 1)[1]
+        return value.split(" | ") if value else []
+
+    def test_unset_uses_the_platform_default(self):
+        self.assertEqual(self.servers(None), uprof_native.default_symbol_servers())
+
+    def test_empty_uses_the_platform_default(self):
+        self.assertEqual(self.servers(""), uprof_native.default_symbol_servers())
+
+    def test_local_directories_only_use_no_server(self):
+        self.assertEqual(self.servers(r"C:\private\symbols;D:\more"), [])
+
+    def test_its_srv_entries_are_the_only_servers(self):
+        entry = r"srv*C:\cache*https://symbols.example/store"
+        self.assertEqual(self.servers(entry), [entry])
+
+    def test_symbol_server_options_still_append(self):
+        self.assertEqual(
+            self.servers(r"C:\private\symbols", ["https://extra.example"]),
+            ["https://extra.example"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

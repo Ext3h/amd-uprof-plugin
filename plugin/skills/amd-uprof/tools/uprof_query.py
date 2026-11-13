@@ -1972,9 +1972,10 @@ def _coverage_field(connection: object,
     Two channels exist. coverage.sql reads cpu.db Function.name, which uProf wrote at translate
     time and which profile's symbol-path flags do not change. agreement.sql reads the parquet
     llvm-symbolizer produced for line/instruction rows, counting a sample resolved when the
-    symbolizer named its address. When the rows are symbolized and the channels disagree, or when
-    a symbol path was passed explicitly, or for line/instruction scopes where rows were symbolized,
-    both are named so a resolved table is never paired with a "cannot be drilled" stop line.
+    symbolizer named its address. For line and instruction both channels are named whenever the
+    symbolizer ran, also when it failed and resolved nothing, so a resolved table is never paired
+    with a "cannot be drilled" stop line and an unsymbolized one never with a full uProf DB share
+    alone.
     causes carries the per-module symbolization outcome.
 
     For function and region the rows also carry derived ranges, so the emitted row split (named /

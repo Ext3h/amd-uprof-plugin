@@ -548,7 +548,8 @@ def parse_nt_symbol_path(value: str | None) -> NtSymbolPath:
             slots = parts[2 if kind == "symsrv" else 1 :]
             caches += [store for store in slots[:-1] if store and not _is_url(store)]
             upstreams += [store for store in slots[-1:] if store]
-            if kind == "srv" and len(slots) >= 2:
+            # srv*<upstream> uses the default downstream store and still names a server.
+            if kind == "srv" and slots and slots[-1]:
                 servers.append("*".join(parts))
                 if download_cache is None and slots[0] and not _is_url(slots[0]):
                     download_cache = slots[0]

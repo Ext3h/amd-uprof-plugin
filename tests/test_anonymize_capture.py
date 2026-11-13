@@ -181,6 +181,49 @@ class AnonymizeCaptureTest(unittest.TestCase):
                                 "--classes", "lock", "--anonymize", str(self.out / "anon")])
         self.assertEqual(code, 1)
 
+    def test_the_ibs_dump_is_handed_over_filtered_and_profile_reads_it(self):
+        import csv
+        import subprocess
+
+        code, stderr = self.run_main()
+        self.assertEqual(code, 0, stderr)
+        with open(self.out / "IbsOpDump.csv", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertTrue(rows)
+        self.assertEqual({row["PID"] for row in rows}, {str(build_captures.PID)})
+        modules = {path for (path,) in self.query("SELECT path FROM Module")}
+        self.assertLessEqual({row["ModuleName"] for row in rows}, modules)
+        review = (self.out / "review.txt").read_text(encoding="utf-8")
+        self.assertIn("== dump IbsOpDump.csv", review)
+        result = subprocess.run(
+            [sys.executable, str(REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"),
+             "profile", "--session", str(self.out), "--by", "module"],
+            capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("GENERATING DUMP", result.stderr)
+        self.assertIn("c:/capture/fixture_full.exe", result.stdout)
+
+    def test_a_host_string_in_the_dump_fails_the_run(self):
+        dump = self.session / "IbsOpDump.csv"
+        lines = dump.read_text(encoding="utf-8").splitlines()
+        dump.write_text("\n".join([lines[0] + ",Host"] + [f"{line},{HOST}" for line in lines[1:]])
+                        + "\n", encoding="utf-8")
+        code, stderr = self.run_main()
+        self.assertEqual(code, 1, stderr)
+        self.assertIn(HOST, stderr)
+
+    def test_ibs_captures_are_translated_with_their_ascii_dump(self):
+        sys.path.insert(0, str(REPO / "trials" / "defect_lab"))
+        import record
+
+        with mock.patch.object(record.subprocess, "run") as run:
+            record.translate(self.session, self.out / "t", "ibs")
+            record.translate(self.session, self.out / "t", "timer")
+        ibs, timer = (call.args[0] for call in run.call_args_list)
+        self.assertIn("--ascii", ibs)
+        self.assertEqual(ibs[ibs.index("--ascii") + 1], "ibsop-event-dump")
+        self.assertNotIn("--ascii", timer)
+
     def test_an_unknown_process_is_refused(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

@@ -181,9 +181,10 @@ def failure(cause: str, labels: Iterable[str], *,
     then = (f"; {tool} translate --session <NEW_OUT_DIR> --out-dir <NEW_TR_DIR>; "
             f"{tool} profile --session <NEW_TR_DIR> --by process")
     chains = {
-        "timer capture": (f"{cli} collect --config tbp -d <S> -o <NEW_OUT_DIR> -p <PID>"
+        "timer capture": (f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer"
                           + then),
-        "timer capture (launch)": f"{cli} collect --config tbp -o <NEW_OUT_DIR> <APP>" + then,
+        "timer capture (launch)": (f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> "
+                                   "--event timer --launch <APP>" + then),
         "timer window": (f"{tool} translate --session {known} --out-dir <NEW_TR_DIR> "
                          f"--time-filter <T1>:<T2>; {tool} profile --session <NEW_TR_DIR> "
                          "--by process"),

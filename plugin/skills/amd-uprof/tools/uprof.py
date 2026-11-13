@@ -78,12 +78,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="cycle modes: a time with a unit (ns, us, ms, s), e.g. 200us or 1ms, converted to "
              "core cycles at the machine's reported core frequency; default 1ms. IBS op-count "
              "mode: a positive integer work count (dispatched ops), not time; default 1000000 ops")
-    collect.add_argument("--event", choices=("cycles", "ibs-op"), default="cycles",
-                         help="cycles (PMC, default) or ibs-op (IBS OP)")
+    collect.add_argument("--event", choices=("cycles", "ibs-op", "timer"), default="cycles",
+                         help="cycles (PMC, default), ibs-op (IBS OP) or timer (uProf timer, "
+                              "system-wide or with --launch; --sample-interval in whole ms)")
     collect.add_argument("--ibs-count-control", choices=("op", "cycles"), default="op",
                          help="IBS OP interval control: op (work count, default) or cycles "
                               "(time converted to cycles)")
     collect.add_argument("--dry-run", action="store_true")
+    collect.add_argument("--launch", nargs=argparse.REMAINDER, metavar="APP [ARGS]",
+                         help="--event timer only: start APP with its arguments under the "
+                              "capture; must be the last option")
 
     translate = sub.add_parser("translate", help="resolve symbols; optionally write an ASCII dump")
     translate.add_argument("--session", required=True)
@@ -179,7 +183,8 @@ def _dispatch(args: argparse.Namespace) -> None:
         uprof_collect.collect(uprof_collect.CollectOptions(
             out_dir=args.out_dir, seconds=args.seconds, pids=_parse_pids(args.process),
             sample_interval=args.sample_interval, event=args.event,
-            ibs_count_control=args.ibs_count_control, dry_run=args.dry_run))
+            ibs_count_control=args.ibs_count_control, dry_run=args.dry_run,
+            launch=args.launch or []))
     elif args.command == "translate":
         import uprof_native
         uprof_native.translate(args.session, args.out_dir, args.symbol_path, args.symbol_cache,

@@ -412,9 +412,9 @@ class TimerFailureTest(_Session):
             first = str(uprof_native.failure("a", ["timer capture (launch)", "Zen host"]))
             second = str(uprof_native.failure("b", ["Zen host", "timer capture (launch)"]))
         self.assertEqual(_alternatives(first), _alternatives(second))
-        cli = uprof_shell.quote(str(Path(FAKE_CLI)))
-        self.assertIn(f"ALTERNATIVE: timer capture (launch): {cli} collect --config tbp "
-                      "-o <NEW_OUT_DIR> <APP>; python ", first)
+        self.assertIn("ALTERNATIVE: timer capture (launch): python ", first)
+        self.assertIn(" collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer --launch <APP>",
+                      first)
 
 
 class CollectRejectionTest(unittest.TestCase):
@@ -427,7 +427,8 @@ class CollectRejectionTest(unittest.TestCase):
         calls = []
         rejected = "ERROR: Invalid event(CYCLES_NOT_IN_HALT) specified with option(-e or --event)."
 
-        def fake_run_cli(_uprof, spec, _target_args, _options):
+        def fake_run_cli(_uprof, event_args, _target_args, _options):
+            spec = " ".join(event_args)
             calls.append(spec)
             if "IBS" in spec.upper() and len(calls) == 1:
                 return subprocess.CompletedProcess(spec, 1, "", "ibs counters are not available")
@@ -458,8 +459,10 @@ class CollectRejectionTest(unittest.TestCase):
                     "AMDuProfCLI rejected CYCLES_NOT_IN_HALT: ERROR: Invalid event"), text)
                 self.assertEqual(_labels(text), ["timer capture", "timer capture (launch)",
                                                  "whole capture", "Zen host"])
+                # The timer alternatives do not retry the rejected cycle or IBS sampler.
                 for line in _alternatives(text)[:3]:
-                    self.assertNotIn("--event", line)
+                    self.assertNotIn("--event cycles", line)
+                    self.assertNotIn("--event ibs-op", line)
                 # The same option is the same text wherever it is offered.
                 with mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)):
                     no_sampler = str(uprof_native.failure(
@@ -467,7 +470,8 @@ class CollectRejectionTest(unittest.TestCase):
                 shared = [line for line in _alternatives(text)
                           if not line.startswith("ALTERNATIVE: whole capture: ")]
                 self.assertEqual(shared, _alternatives(no_sampler))
-                self.assertIn("collect --config tbp -d <S> -o <NEW_OUT_DIR> -p <PID>", shared[0])
+                self.assertIn("collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer;",
+                              shared[0])
 
 
 if __name__ == "__main__":

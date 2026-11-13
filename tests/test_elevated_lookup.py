@@ -5,6 +5,8 @@ non-admin process of the same user controls. Elevated, a binary named there woul
 administrator rights, so only the install locations the OS reports are accepted.
 """
 
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -65,6 +67,45 @@ class ElevatedLookupTest(unittest.TestCase):
         self.assertIn("default location", message)
         self.assertIn("unelevated", message)
         self.assertIn(str(self.planted), message)
+
+    def refusal(self):
+        with (
+            mock.patch.object(uprof_native, "is_admin", return_value=True),
+            mock.patch.object(uprof_native, "_admin_install_candidates", return_value=[]),
+        ):
+            with self.assertRaises(uprof_util.UprofError) as raised:
+                uprof_native.require_uprof()
+        return raised.exception
+
+    def test_the_refusal_offers_a_runnable_unelevated_call(self):
+        error = self.refusal()
+        self.assertIsInstance(error, uprof_util.LinesError)
+        lines = str(error).splitlines()
+        alternative = next(line for line in lines if line.startswith("ALTERNATIVE: "))
+        self.assertIn("collect --out-dir <NEW_OUT_DIR> --seconds <S>", alternative)
+        self.assertIn("unelevated", alternative)
+
+    def test_a_long_ignored_value_keeps_the_refusal_bounded(self):
+        with mock.patch.dict(os.environ, {"AMDUPROF_CLI": "C:\\" + "y" * 3000}):
+            error = self.refusal()
+        self.assertLess(max(len(line) for line in str(error).splitlines()), 1500)
+
+    def test_tools_offers_no_override_an_elevated_run_ignores(self):
+        out = io.StringIO()
+        with (
+            mock.patch.object(uprof_native, "is_admin", return_value=True),
+            mock.patch.object(uprof_native, "_admin_install_candidates", return_value=[]),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            try:
+                uprof_native.tool_report()
+            except uprof_util.UprofError as exc:
+                print(exc)
+        missing = [line for line in out.getvalue().splitlines() if "uProf CLI" in line]
+        self.assertTrue(missing, out.getvalue())
+        for line in missing:
+            self.assertNotIn("set AMDUPROF_CLI", line)
 
     def test_install_locations_do_not_come_from_the_environment(self):
         fake = {

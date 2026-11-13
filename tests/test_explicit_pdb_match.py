@@ -53,7 +53,15 @@ class UnverifiablePdbTest(unittest.TestCase):
                 "find_sibling",
                 side_effect=lambda _tool, name: Path(name + ".exe") if name in tools else None,
             ),
-            mock.patch.object(uprof_symbols, "_readobj_info", return_value=readobj_info),
+            mock.patch.object(
+                uprof_symbols,
+                "_readobj_info",
+                **(
+                    {"side_effect": readobj_info}
+                    if isinstance(readobj_info, Exception)
+                    else {"return_value": readobj_info}
+                ),
+            ),
             mock.patch.object(uprof_symbols, "_run_symbolizer", return_value=failed) as run,
             mock.patch.object(
                 uprof_symbols, "_write_parquet", return_value=self.root / "symbols.parquet"
@@ -156,13 +164,22 @@ class UnverifiablePdbTest(unittest.TestCase):
         self.assertIn("install llvm-readobj beside llvm-symbolizer.exe", text)
         self.assertNotIn("--symbol-path <file|dir>", text)
 
-    def test_an_image_without_a_pdb_identity_gets_the_image_alternative(self):
-        result, _, _ = self.symbolize(None, ("plugin.pdb", None, None))
+    def test_a_failed_readobj_gets_the_image_alternative(self):
+        failed = uprof_symbols.UprofError("llvm-readobj exited 1: not a valid image")
+        result, _, passed = self.symbolize(None, failed)
         text = self.evidence_line(result)
 
+        self.assertEqual(passed, [])
         self.assertEqual(len(text.splitlines()), 1)
-        self.assertIn("--image-path", text)
+        self.assertIn("llvm-readobj exited 1", text)
+        self.assertIn("--image-path <file|dir> naming an image of the captured build", text)
         self.assertNotIn("--symbol-path <file|dir> for a symbol or debug file", text)
+
+    def test_an_image_recording_no_pdb_keeps_its_symbolizer_pass(self):
+        # DWARF and the COFF symbol table are the only sources then; no PDB can be loaded.
+        _, _, passed = self.symbolize(None, ("plugin.pdb", None, None))
+
+        self.assertEqual(passed, [None])
 
     def test_without_pdbutil_the_line_names_the_tool_to_install_where(self):
         result, _, _ = self.symbolize(

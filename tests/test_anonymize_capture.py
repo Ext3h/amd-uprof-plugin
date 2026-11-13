@@ -425,11 +425,19 @@ class AnonymizeCaptureTest(unittest.TestCase):
         import record
 
         settings = record.Settings()
-        timer = record.callgraph_command("timer-cg", self.out / "t", settings)
-        ibs = record.callgraph_command("ibs-cg", self.out / "i", settings)
+        timer = record.callgraph_command("timer-cg", self.out / "t", settings, self.out, "lock")
+        ibs = record.callgraph_command("ibs-cg", self.out / "i", settings, self.out, "lock")
         for command in (timer, ibs):
-            self.assertEqual(command[command.index("--call-graph") + 1], "1:64:user:fpo")
-            self.assertIn("-a", command)
+            # Call stacks are not recorded system-wide on Windows: the collection launches
+            # defect_lab and ends it with the capture.
+            self.assertNotIn("-a", command)
+            self.assertNotIn("--call-graph", command)
+            self.assertEqual(command[command.index("--call-graph-mode") + 1], "fpo")
+            self.assertEqual(command[command.index("--call-graph-type") + 1], "user")
+            self.assertIn("-b", command)
+            launched = command[command.index(str(self.out / "defect_lab.exe")) :]
+            self.assertEqual(launched[1:3], ["--class", "lock"])
+        self.assertEqual(settings.keep("timer-cg"), ["defect_lab.exe"])
         self.assertIn("event=timer,interval=4", timer)
         self.assertIn("event=ibs-op,ibsop-count-control=1,interval=16000000", ibs)
         self.assertIn("timer-cg", record.MODES)

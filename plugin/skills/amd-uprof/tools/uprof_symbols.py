@@ -165,9 +165,10 @@ def resolve_image(
     for directory in image_dirs:
         for name in names:
             candidate = Path(directory) / name
-            if candidate.is_file():
+            if os.path.isfile(candidate):
                 return candidate, f"found in --image-path directory {directory}"
-    if module_path and Path(module_path).is_file():
+    # os.path.isfile is False on any OSError, such as a capture path too long for the OS.
+    if module_path and os.path.isfile(module_path):
         return Path(module_path), None
     return None, None
 

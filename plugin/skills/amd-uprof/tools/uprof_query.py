@@ -777,8 +777,8 @@ def _derive_scope_ranges(
         if not path:
             info["absent_by_module"][name] = "the capture records no module path"
             continue
-        if not Path(path).is_file():
-            info["absent_by_module"][name] = f"{path} is not on this host"
+        if not os.path.isfile(path):
+            info["absent_by_module"][name] = f"{util.inline(path)} is not on this host"
             continue
         identity = identities.get(name)
         if identity is not None and (identity[0] or identity[1]):

@@ -1011,9 +1011,14 @@ def symbolize_module(
                 evidence.note = readobj_error
                 evidence.remedy = image_remedy
             else:
-                # No PDB can serve this image, but DWARF or a separate debug file still can, so
-                # the default remedy stays unless a --symbol-path PDB was refused below.
+                # No PDB can serve this image, so offering to stage one misleads; the symbolizer
+                # still reads DWARF or the COFF symbol table if the image carries them.
                 evidence.note = "the image's debug directory records no PDB"
+                evidence.remedy = (
+                    "no PDB can be found or staged for it; its export and .pdata names "
+                    "(profile --by function) are the finest available, and a third-party module "
+                    "with no symbols is a finding, not a blocker"
+                )
             evidence.outcome = "no_debug_info" if found_debug_info is False else "readobj_failed"
             if pdb_files:
                 shown = ", ".join(os.fspath(path) for path in pdb_files)
@@ -1022,7 +1027,10 @@ def symbolize_module(
                     f"the image records no PDB identity ({evidence.note}), so "
                     f"--symbol-path {shown} cannot be verified and is not used"
                 )
-                evidence.remedy = evidence.remedy or image_remedy
+                # A refused --symbol-path PDB needs an image that names one; a missing readobj
+                # keeps its install remedy.
+                if readobj is not None:
+                    evidence.remedy = image_remedy
             pdb = None
         elif pdbutil:
             evidence.search = _choose_pdb(

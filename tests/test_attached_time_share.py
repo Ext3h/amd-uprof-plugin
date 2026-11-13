@@ -253,7 +253,8 @@ class CollectModeParseTest(unittest.TestCase):
             "collection": {
                 "events": {"ibsEvents": {"op": {"interval": 4_700_000},
                                           "opInterval": 4_700_000,
-                                          "opCycleCount": True}},
+                                          "opCycleCount": True,
+                                          "opOs": True}},
                 "target": {"systemWide": value,
                            "attachedProcesses": [{"processId": 100}]},
             },
@@ -276,6 +277,81 @@ class CollectModeParseTest(unittest.TestCase):
 
             self.assertTrue(uprof_session.system_wide(session))
             uprof_session.verify_collect(session, "ibsop", 4_700_000, "cycles", True, [])
+
+    def test_pmc_missing_user_mode_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session"
+            session.mkdir()
+            meta = {
+                "collection": {
+                    "events": {"pmcEvents": {"pmcEventList": [{
+                        "hwId": 118, "interval": 4_700_000, "isSampling": True,
+                        "user": False, "os": True,
+                    }]}},
+                    "target": {"systemWide": True},
+                },
+                "auxiliary": {},
+            }
+            (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+            with self.assertRaises(uprof_session.UprofError) as context:
+                uprof_session.verify_collect(session, "cycles", 4_700_000, "cycles", True, [])
+            self.assertIn("user=False", str(context.exception))
+
+    def test_pmc_missing_os_mode_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session"
+            session.mkdir()
+            meta = {
+                "collection": {
+                    "events": {"pmcEvents": {"pmcEventList": [{
+                        "hwId": 118, "interval": 4_700_000, "isSampling": True,
+                        "user": True, "os": False,
+                    }]}},
+                    "target": {"systemWide": True},
+                },
+                "auxiliary": {},
+            }
+            (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+            with self.assertRaises(uprof_session.UprofError) as context:
+                uprof_session.verify_collect(session, "cycles", 4_700_000, "cycles", True, [])
+            self.assertIn("os=False", str(context.exception))
+
+    def test_ibs_missing_opos_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session"
+            session.mkdir()
+            meta = {
+                "collection": {
+                    "events": {"ibsEvents": {"op": {"interval": 4_700_000},
+                                              "opInterval": 4_700_000,
+                                              "opCycleCount": True,
+                                              "opOs": False}},
+                    "target": {"systemWide": True},
+                },
+                "auxiliary": {"ibsOpSampling": True},
+            }
+            (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+            with self.assertRaises(uprof_session.UprofError) as context:
+                uprof_session.verify_collect(session, "ibsop", 4_700_000, "cycles", True, [])
+            self.assertIn("opOs=False", str(context.exception))
+
+    def test_pmc_applied_user_and_os_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session"
+            session.mkdir()
+            meta = {
+                "collection": {
+                    "events": {"pmcEvents": {"pmcEventList": [{
+                        "hwId": 118, "interval": 4_700_000, "isSampling": True,
+                        "user": True, "os": True,
+                    }]}},
+                    "target": {"systemWide": True},
+                },
+                "auxiliary": {},
+            }
+            (session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+            result = uprof_session.verify_collect(session, "cycles", 4_700_000, "cycles", True, [])
+            self.assertEqual(result, meta)
 
 
 if __name__ == "__main__":

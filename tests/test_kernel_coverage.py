@@ -390,7 +390,8 @@ class CollectOsModeTest(unittest.TestCase):
             (out / "session.uprof").write_text(json.dumps({
                 "collection": {
                     "events": {"pmcEvents": {"pmcEventList": [{
-                        "hwId": 118, "interval": 4_700_000, "isSampling": True}]}},
+                        "hwId": 118, "interval": 4_700_000, "isSampling": True,
+                        "user": True, "os": True}]}},
                     "target": {"systemWide": True}},
                 "auxiliary": {},
             }), encoding="utf-8")

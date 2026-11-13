@@ -256,6 +256,10 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
             raise UprofError(f"interval is {applied.get('interval')}, expected {interval}")
         if not applied.get("isSampling"):
             raise UprofError("PMC event is not sampling")
+        if not records_true(applied.get("user")):
+            raise UprofError(f"PMC event has user={applied.get('user')}, expected True")
+        if not records_true(applied.get("os")):
+            raise UprofError(f"PMC event has os={applied.get('os')}, expected True")
         if (meta.get("auxiliary") or {}).get("ibsOpSampling"):
             raise UprofError("capture is IBS, not PMC cycle counting")
     else:
@@ -269,6 +273,8 @@ def verify_collect(session_dir: Path | str, event: str, interval: int, count_con
         if bool(ibs.get("opCycleCount")) != (count_control == "cycles"):
             raise UprofError(f"IBS count control is opCycleCount={ibs.get('opCycleCount')}, "
                              f"expected {count_control == 'cycles'} ({count_control})")
+        if not records_true(ibs.get("opOs")):
+            raise UprofError(f"IBS event has opOs={ibs.get('opOs')}, expected True")
     if records_true(target.get("systemWide")) != system_wide:
         raise UprofError(f"capture target mode is systemWide={target.get('systemWide')}, "
                          f"expected {system_wide} (use -a or --process)")

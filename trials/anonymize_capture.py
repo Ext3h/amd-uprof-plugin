@@ -335,12 +335,6 @@ def write_filtered(session: Path, kept: list[int], out: Path, meta: dict) -> str
 
 
 DUMP_NAMES = ("IbsOpDump.csv", "IbsFetchDump.csv")
-# The dump columns the tools read: views.sql and uprof_dump.SAMPLE_COLUMNS for the profile
-# views, uprof_context.IBS_FIELDS for the instruction context. Every other column only makes
-# the handover bigger.
-DUMP_COLUMNS = ("DeltaTick", "CPU_Number", "TID", "PID", "Offset", "ModuleName",
-                "IbsTagToRetCtr", "DataSrc", "CacheHitSt", "IbsDcMiss", "IbsOpBrnMisp",
-                "IbsDcLockedOp", "IbsOpMemWidth")
 UPROF = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools" / \
     "uprof.py"
 
@@ -386,14 +380,9 @@ def handover_dump(session: Path, kept: list[int], out: Path, meta: dict) -> str:
         pid_list = ", ".join(str(pid) for pid in kept)
         connection = duckdb.connect()
         try:
-            present = [name for (name,) in run(
-                connection, "SELECT column_name FROM (DESCRIBE SELECT * FROM read_csv(?, "
-                "header = true, all_varchar = true))", f"reading the columns of {source.name}",
-                [str(source)]).fetchall()]
-            kept_columns = ", ".join(f'"{name}"' for name in DUMP_COLUMNS if name in present)
-            run(connection, f"CREATE TABLE dump AS SELECT {kept_columns} FROM read_csv(?, "
-                f"header = true, all_varchar = true) WHERE TRY_CAST(PID AS BIGINT) IN "
-                f"({pid_list})", f"reading {source.name}", [str(source)])
+            run(connection, "CREATE TABLE dump AS SELECT * FROM read_csv(?, header = true, "
+                f"all_varchar = true) WHERE TRY_CAST(PID AS BIGINT) IN ({pid_list})",
+                f"reading {source.name}", [str(source)])
             rewrite_strings(connection)
             run(connection, "COPY dump TO ? (HEADER, DELIMITER ',')", f"writing {source.name}",
                 [str(target)])

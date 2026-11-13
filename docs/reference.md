@@ -487,7 +487,7 @@ The failure table in `SKILL.md` covers dump sanity, missing `session.uprof`/`cpu
 
 | Symptom | Cause | Command or remedy |
 |---|---|---|
-| `MISSING ...` from `tools` | uProf CLI, DuckDB 2.x or llvm-symbolizer not found | install or set `AMDUPROF_CLI` / `LLVM_SYMBOLIZER`; `python -m pip install duckdb` |
+| `MISSING ...` from `tools` | uProf CLI, DuckDB 2.x or llvm-symbolizer not found | install or set `AMDUPROF_CLI` / `LLVM_SYMBOLIZER` (an elevated `collect` ignores `AMDUPROF_CLI` and `PATH`: install uProf to its default location); `python -m pip install duckdb` |
 | `uProf export incomplete: missing ...` | uProf export differs from the expected schema | run `schema --session <dir>` and compare; use a matching uProf version |
 | `error: argument --image: not allowed with argument --pid` | both scope flags given | pass one |
 | capture directory locked during `translate` | open in the GUI | close it and retry |

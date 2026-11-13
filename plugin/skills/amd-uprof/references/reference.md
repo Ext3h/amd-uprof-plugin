@@ -130,7 +130,7 @@ derived function ranges — in one DuckDB database per capture session. On Windo
 `$XDG_CACHE_HOME/amd-uprof/session-cache` (or `~/.cache/...`); the file name is a digest of the
 session path and `cpu.db` size/mtime. `UPROF_SESSION_CACHE_ROOT` relocates the root,
 `UPROF_SESSION_CACHE_DISABLE=1` (also `true`/`yes`/`on`) opts out. A database is capped at
-1024 MB, orphan cleanup waits 7 days, and attach/store retries stop after 30 s.
+1024 MB and attach/store retries stop after 30 s.
 
 The capture `cpu.db` stays read-only and is refused if it stores a macro, view or generated column. The cache is attached read-only for lookups and read-write
 for a run that stores; DuckDB permits one writer per file, so a busy cache is waited for up to

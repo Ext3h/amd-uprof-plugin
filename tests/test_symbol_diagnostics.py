@@ -174,23 +174,16 @@ class ProfileStderrTest(unittest.TestCase):
     def stderr(self, by: str, *extra: str) -> tuple[dict, str]:
         return F.profile_with_stderr(self.session, by, extra)
 
-    def test_the_function_view_prints_a_shared_cause_once(self):
+    def test_only_the_module_without_names_prints_a_cause(self):
+        # The stand-ins record no PDB, but their COFF symbol table names the addresses.
         _document, stderr = self.stderr("function")
         warnings = [
             line
             for line in stderr.splitlines()
             if line.startswith("WARNING: no symbols resolved for")
         ]
-        shared = [line for line in warnings if re.search(r"for \d+ modules \(", line)]
-        self.assertEqual(len(shared), 1, stderr)
-        self.assertIn("amdvlk64.dll", shared[0])
-        self.assertIn("node.exe", shared[0])
-        self.assertNotIn(
-            "MODULE: ",
-            "\n".join(
-                line for line in stderr.splitlines() if "amdvlk64" in line or "node.exe" in line
-            ),
-        )
+        self.assertEqual(len(warnings), 1, stderr)
+        self.assertIn("vendorlib.dll", warnings[0])
 
     def test_a_module_scoped_view_names_no_other_module(self):
         document, _ = self.stderr("function")

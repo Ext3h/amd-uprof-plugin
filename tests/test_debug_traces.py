@@ -104,9 +104,7 @@ class GoldenSemanticsTest(unittest.TestCase):
             if not frames:
                 continue
             with self.subTest(trace=f"{path.parent.name}/{path.name}"):
-                outcome = [
-                    line for line in sections["production"] if line.startswith("outcome=")
-                ]
+                outcome = [line for line in sections["production"] if line.startswith("outcome=")]
                 self.assertEqual(outcome, ["outcome=resolved"])
                 for name in ("profile.line", "profile.function"):
                     warnings = [

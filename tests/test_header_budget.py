@@ -83,7 +83,7 @@ CEILINGS = {
     "instruction": {
         "ACHIEVED": 41,
         "AGREEMENT": 49,
-        "COLUMNS": 69,
+        "COLUMNS": 66,
         "DUMP": 7,
         "FILTER": 29,
         "KERNEL_COVERAGE": 38,

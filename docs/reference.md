@@ -156,8 +156,8 @@ directory is gone are removed on startup, and a rewritten `cpu.db` (a new digest
 stale sibling databases for the same live session rather than waiting for the TTL; unreadable
 databases are removed only after 7 days. Cleanup touches only the
 digest-named `.duckdb` files and their `.corrupt` copies, so other files in a shared root stay. If a wrong-build PDB is overwritten in place in a location whose
-directory identity does not change, delete `<root>/<digest>.duckdb` or set
-`UPROF_SESSION_CACHE_DISABLE=1`; probe candidates are fingerprinted, which covers the normal
+directory identity does not change, the cached database is possibly incompatible; set
+`UPROF_SESSION_CACHE_DISABLE=1` or `UPROF_SESSION_CACHE_ROOT` to a new directory; probe candidates are fingerprinted, which covers the normal
 staging paths.
 
 ### Sanity check

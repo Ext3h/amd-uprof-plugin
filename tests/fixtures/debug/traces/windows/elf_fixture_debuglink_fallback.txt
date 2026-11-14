@@ -2,5 +2,5 @@
 # production fallback-root layout
 ## production
 pdb=none
-outcome=readobj_failed
+outcome=resolved
 0x1380 fixture_entry /build\fixture_debug.c:6

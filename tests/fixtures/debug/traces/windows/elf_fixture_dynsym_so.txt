@@ -55,20 +55,18 @@ Disassembly of section .plt:
 0x13E0 fixture_entry <no file>:0
 ## production
 pdb=none
-outcome=readobj_failed
+outcome=resolved
 0x13D0 fixture_helper <no file>:0
 0x13E0 fixture_entry <no file>:0
 ## profile.line
 symbol_coverage=uProf DB 0/2 samples (0.0%) resolve to a named function; profile symbolizer 2/2 samples (100.0%) resolve below module/RVA; every scoped sample is drillable below module/RVA; the uProf DB share reflects only what translate recorded, and profile's symbol paths affect the rows, not that share
 WARNING: cannot build the Parquet dump copy for <SESSION_ROOT>\session\IbsOpDump.csv; reading the CSV
 WARNING: session cache: disabled (the capture records no image size/checksum/bitness columns, so module version identity cannot be verified and the session cache is disabled); profiling without the cache
-WARNING: no symbols resolved for <FIXTURES>/elf/fixture_dynsym.so (<FIXTURES>\elf\fixture_dynsym.so): image GUID unknown age unknown; debug info recorded: unknown; the image's debug directory records no PDB; pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, --image-path <file|dir> when the module image is not at its recorded path, or place the matching debug file beside the module or in a local srv* cache (translate --symbol-path/--symbol-cache/--symbol-server can stage it), then re-run profile; a third-party module with no symbols is a finding, not a blocker
 line module=fixture_dynsym.so function=fixture_entry file=<no source line> line=0 samples=1 attribution=unique
 line module=fixture_dynsym.so function=fixture_helper file=<no source line> line=0 samples=1 attribution=unique
 ## profile.function
-symbol_coverage=uProf DB 0/2 samples (0.0%) resolve to a named function; rows named 0/2 samples (0.0%), derived 0/2 samples (0.0%) from a synthetic binary range, unresolved 2/2 samples (100.0%) (<no symbol>); cause by module: <FIXTURES>/elf/fixture_dynsym.so: llvm-readobj could not read the debug directory: the image's debug directory records no PDB; no named or derived range covers these samples; function_reason and legend.function_ranges.absent_by_module name why, and --by region is the page fallback where no boundary source exists; remedy: pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, or --image-path <file|dir> when the module image is not at its recorded path, or place the module's debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent PDB, the recorded CodeView path or the skill's local srv* cache scan is searched
+symbol_coverage=uProf DB 0/2 samples (0.0%) resolve to a named function; rows named 0/2 samples (0.0%), derived 0/2 samples (0.0%) from a synthetic binary range, unresolved 2/2 samples (100.0%) (<no symbol>); no named or derived range covers these samples; function_reason and legend.function_ranges.absent_by_module name why, and --by region is the page fallback where no boundary source exists; remedy: pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, or --image-path <file|dir> when the module image is not at its recorded path, or place the module's debug file beside it; llvm-symbolizer ignores _NT_SYMBOL_PATH, and only an adjacent PDB, the recorded CodeView path or the skill's local srv* cache scan is searched
 WARNING: cannot build the Parquet dump copy for <SESSION_ROOT>\session\IbsOpDump.csv; reading the CSV
 WARNING: session cache: disabled (the capture records no image size/checksum/bitness columns, so module version identity cannot be verified and the session cache is disabled); profiling without the cache
-WARNING: no symbols resolved for <FIXTURES>/elf/fixture_dynsym.so (<FIXTURES>\elf\fixture_dynsym.so): image GUID unknown age unknown; debug info recorded: unknown; the image's debug directory records no PDB; pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, --image-path <file|dir> when the module image is not at its recorded path, or place the matching debug file beside the module or in a local srv* cache (translate --symbol-path/--symbol-cache/--symbol-server can stage it), then re-run profile; a third-party module with no symbols is a finding, not a blocker
 WARNING: no function range derived for <FIXTURES>/elf/fixture_dynsym.so (<FIXTURES>\elf\fixture_dynsym.so): not_pe: llvm-readobj file headers lack ImageBase, TimeDateStamp, CheckSum, Magic
 function module=fixture_dynsym.so function=<unresolved> start=none end=none source=none samples=2 attribution=unresolved

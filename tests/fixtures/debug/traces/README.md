@@ -58,8 +58,9 @@ depend on real IBS or PMC capture are not runnable in CI and are not represented
 The comparison is per OS; a Linux test never reads the Windows goldens, or the reverse. Known
 differences are expected:
 
-- On Windows, production symbolization enters the PDB discovery path even for ELF and ends
-  with `outcome=readobj_failed`; on Linux that path is skipped and the outcome is `resolved`.
+- On Windows, production symbolization enters the PDB discovery path even for ELF; an image
+  that records no PDB is `resolved` when DWARF or its symbol table names an address, and
+  `outcome=no_pdb_record` otherwise. On Linux that path is skipped.
 - Source paths are joined with the host separator by `llvm-symbolizer`.
 - PDB acceptance, public folds and PDB-derived function ranges appear only in the Windows
   traces because production only looks for PDBs there.

@@ -27,7 +27,7 @@ Each case runs in two modes:
 
 Cases: `profile-process`, `profile-module`, `profile-function`, `profile-line`,
 `profile-region`, `profile-instruction`, `translate`, `translate-ascii` and `collect`
-(`--seconds` capture). The default is the four `profile` scopes the issue names.
+(`--seconds` capture). The default is every `profile` scope.
 
 Each profile case runs once per session-cache mode (`--session-cache`, default `cold,warm`): cold
 gives every run an empty session cache, warm shares one that a warmup fills. Results name them

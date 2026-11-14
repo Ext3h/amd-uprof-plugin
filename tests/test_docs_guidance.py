@@ -166,7 +166,8 @@ SKILL_PARTS = {
     ),
     "first call": (
         "with no `ls` or preflight before it",
-        "| which process, a system-wide capture, kernel time | `process` |",
+        "| which process, kernel time | `process` |",
+        "Options: `--image %<exe>`/`--pid N` for the named process,",
         (
             "then the view asked for: `--by line` or `--by instruction --top 1`, with "
             "`--function`/`--module` from its row"

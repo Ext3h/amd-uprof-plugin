@@ -1,10 +1,11 @@
-"""NEXT steers an unscoped system-wide rollup to the process ranking, and nothing else to it.
+"""NEXT steers an unscoped system-wide rollup to a process scope, and nothing else to it.
 
 The first profile call depends on the question: an attached capture goes straight to the
 module or function lens. Only an unscoped module, function or region rollup of a system-wide
-capture mixes every process, so its NEXT names `--by process` first; a --pid/--image or
---function scope, line and instruction drill-downs, an attached capture and the process view
-itself keep their calls.
+capture mixes every process, so its NEXT names the same view scoped to the user's process
+(`--image %<EXE>`) first and the process ranking second, for a question that names no process;
+a --pid/--image or --function scope, line and instruction drill-downs, an attached capture and
+the process view itself keep their calls.
 Run from the repository root: python tests/run_tests.py test_next_steering
 """
 # Spec: SPEC-77
@@ -32,10 +33,22 @@ def bys(calls):
 
 
 class NextSteeringTest(unittest.TestCase):
-    def test_an_unscoped_system_wide_rollup_names_the_process_ranking_first(self):
-        for by, rest in (("module", ["function"]), ("function", []), ("region", [])):
+    def test_an_unscoped_system_wide_rollup_names_its_process_scoped_form_first(self):
+        # A question that names the process reaches the scoped view without the process
+        # ranking (#384); the ranking stays for a question that names none.
+        for by in ("module", "function", "region"):
             with self.subTest(by=by):
-                self.assertEqual(bys(next_calls("--by", by, system_wide=True)), ["process", *rest])
+                calls = next_calls("--by", by, system_wide=True)
+                self.assertEqual(bys(calls), [by, "process"])
+                self.assertIn(f"--by {by} --image %<EXE>", calls[0])
+
+    def test_following_the_process_scoped_form_never_returns_to_the_ranking(self):
+        # module -> module --image %<EXE> -> function --image %<EXE>; the caller fills <EXE>.
+        calls = next_calls("--by", "module", system_wide=True)
+        argv = [value.replace("<EXE>", "app.exe") for value in argv_of(calls[0])]
+        calls = next_calls(*argv, system_wide=True)
+        self.assertEqual(bys(calls), ["function"])
+        self.assertIn("--image %app.exe", calls[0])
 
     def test_line_and_instruction_drill_downs_keep_their_calls(self):
         self.assertEqual(bys(next_calls("--by", "line", system_wide=True)), ["instruction"])
@@ -85,9 +98,10 @@ class NextSteeringTest(unittest.TestCase):
                         if flag in values:
                             value = values[values.index(flag) + 1]
                             # The only value a NEXT call may leave open is the process the caller
-                            # picks from the rows.
+                            # picks from the rows or names in the question.
                             self.assertTrue(
-                                value in given or (flag, value) == ("--pid", "<PID>"),
+                                value in given
+                                or (flag, value) in (("--pid", "<PID>"), ("--image", "%<EXE>")),
                                 f"{flag} {value} in {call}",
                             )
 

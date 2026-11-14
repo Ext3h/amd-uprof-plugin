@@ -1073,7 +1073,11 @@ def _command_arg(value: str, placeholder: str, data: dict[str, str]) -> str:
 
 
 def _profile_command(
-    args: argparse.Namespace, by: str, json_mode: bool = False, data: dict[str, str] | None = None
+    args: argparse.Namespace,
+    by: str,
+    json_mode: bool = False,
+    data: dict[str, str] | None = None,
+    session_placeholder: str = "<SESSION_DIR>",
 ) -> str:
     """A drill-down command that keeps the session and the process/image scope.
 
@@ -1086,7 +1090,7 @@ def _profile_command(
         _command_arg(str(TOOLS_DIR / "uprof.py"), "<UPROF_PY>", data),
         "profile",
         "--session",
-        _command_arg(str(util.absolute(args.session)), "<SESSION_DIR>", data),
+        _command_arg(str(util.absolute(args.session)), session_placeholder, data),
         "--by",
         by,
     ]
@@ -1304,10 +1308,18 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
         else f" --function-start 0x{args.function_start:X}"
     )
     if not rows:
-        raise util.UprofError(
-            f"no function row matches {wanted}; copy the function, module and function_start "
-            "cells from a --by function row (the filter uses the same --pid/--image/"
-            "--time-filter scope)"
+        listing = argparse.Namespace(**vars(args))
+        listing.function = listing.module = listing.function_start = None
+        data: dict[str, str] = {}
+        call = _profile_command(listing, "function", data=data)
+        raise util.LinesError(
+            [
+                (
+                    f"no function row matches {wanted} in this scope; list the rows with "
+                    f"{call} and copy the function, module and function_start cells of one"
+                ),
+                *(f"{name}={value!r}" for name, value in data.items()),
+            ]
         )
     if len(rows) > 1:
         starts = sorted(f"0x{row[3]:X}" for row in rows if row[3] is not None)
@@ -2969,15 +2981,27 @@ def run_query_command(args: argparse.Namespace) -> None:
                 f"cpu.db not found: {cpu_db}; --session must be one "
                 f"translated capture, and {_candidate_calls(args, candidates)}".split("\n")
             )
-        session_arg, data = uprof_shell.path_arg(session, "<SESSION_DIR>")
+        # translate writes cpu.db only into --out-dir, so the chain queries that new directory.
+        data: dict[str, str] = {}
+        translated = uprof_native.unused_dir(f"{util.absolute(session)}-translated")
+        script = _command_arg(str(TOOLS_DIR / "uprof.py"), "<UPROF_PY>", data)
+        source = _command_arg(str(util.absolute(session)), "<SESSION_DIR>", data)
+        out = _command_arg(translated, "<NEW_TR_DIR>", data)
+        then = argparse.Namespace(**vars(args))
+        then.session = translated
+        query = (
+            _profile_command(then, args.by, data=data, session_placeholder="<NEW_TR_DIR>")
+            if args.command == "profile"
+            else f"python {script} schema --session {out}"
+        )
         raise util.LinesError(
             [
                 (
-                    f"cpu.db not found: {cpu_db} (run translate --session "
-                    f"{session_arg} --out-dir <COPY_DIR> first, then query the "
-                    "original session)"
+                    f"cpu.db not found: {cpu_db}; translate the capture, then query the "
+                    f"translated copy: python {script} translate --session {source} --out-dir "
+                    f"{out}; {query}"
                 ),
-                data or "",
+                *(f"{name}={value!r}" for name, value in data.items()),
             ]
         )
     out_path = _out_path(args, cpu_db, session)

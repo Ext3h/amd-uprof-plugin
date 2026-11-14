@@ -22,7 +22,19 @@ REMOTE = (
     "//192.0.2.1/share/app.exe",
     r"\\?\UNC\192.0.2.1\share\app.exe",
     r"\\.\PhysicalDrive0",
+    r"\??\UNC\192.0.2.1\share\app.exe",
+    r"\GLOBAL??\UNC\192.0.2.1\share\app.exe",
+    r"\Device\Mup\192.0.2.1\share\app.exe",
+    r"\??\C:\app\app.exe",
 )
+
+# Prefixes that Win32 resolves in the NT object namespace, where a path may name a share.
+_NT_PREFIXES = ("\\??\\", "\\GLOBAL??\\", "\\DEVICE\\")
+
+
+def _is_remote(path):
+    text = os.fspath(path).replace("/", "\\").upper()
+    return text.startswith("\\\\") or text.startswith(_NT_PREFIXES)
 
 
 class _Touched(Exception):
@@ -31,7 +43,7 @@ class _Touched(Exception):
 
 def _guard(path, *args, **kwargs):
     text = os.fspath(path)
-    if text.startswith(("\\\\", "//")):
+    if _is_remote(text):
         raise _Touched(text)
     return _real_stat(path, *args, **kwargs)
 
@@ -50,7 +62,7 @@ def _no_remote_touch():
         real = getattr(os.path, name)
 
         def checked(path, real=real):
-            if os.fspath(path).startswith(("\\\\", "//")):
+            if _is_remote(path):
                 raise _Touched(os.fspath(path))
             return real(path)
 

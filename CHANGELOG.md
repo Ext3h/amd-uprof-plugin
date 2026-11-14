@@ -62,6 +62,13 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   ranking and an unscoped drill-down; SKILL.md names `--image %<EXE>`/`--pid N` for the process
   the question names (issue #384).
 
+- A `profile` header states each fact once. `READ` no longer restates the column meanings, `COLUMNS`
+  names METRIC's sample share instead of repeating it, `WEIGHTS` and `SANITY` leave the gap rule
+  to `TIME_SHARE`, `TAG_TO_RETIRE_SHARE` leaves the definition to `METRIC`, a PMC capture prints no
+  `TIME_SHARE`/`TAG_TO_RETIRE_SHARE` lines (`COLUMNS` states both as absent with their cause),
+  `SANITY` drops the dump path that `DUMP` prints, and `SYMBOL_COVERAGE` names a cause shared by
+  several modules once. On the reference captures the header is 7-22 % shorter (issue #389).
+
 - A PDB is used only when `llvm-pdbutil` verifies that its GUID and age match the image. Without
   `llvm-pdbutil` or an image GUID no PDB is used, and llvm-symbolizer runs without a PDB only
   for an image `llvm-readobj` shows to record none, so it cannot load a stale PDB by name. The

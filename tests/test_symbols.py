@@ -647,6 +647,53 @@ class LlvmVersionGateTest(unittest.TestCase):
         self.assertNotIn("--symbol-path", outcome.output)
 
 
+class SymbolizeFailureEvidenceTest(unittest.TestCase):
+    """A module whose symbolization raises keeps the evidence gathered before the failure."""
+
+    @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")
+    def test_the_failure_line_keeps_the_image_identity_and_the_probes(self):
+        with tempfile.TemporaryDirectory(prefix="uprof-failure-evidence-") as directory:
+            root = Path(directory)
+            module = root / "fixture.exe"
+            module.write_bytes(b"MZ")
+            pdb = root / "fixture.pdb"
+            pdb.write_bytes(b"pdb")
+            search = uprof_symbols.PdbSearch(
+                pdb=pdb, probes=[uprof_symbols.PdbProbe(pdb, "accepted", detail="GUID match")]
+            )
+            with (
+                mock.patch.object(
+                    uprof_symbols, "require_symbolizer", return_value=Path("llvm-symbolizer.exe")
+                ),
+                mock.patch.object(
+                    uprof_symbols, "find_sibling", side_effect=lambda _tool, name: Path(name)
+                ),
+                mock.patch.object(
+                    uprof_symbols,
+                    "_readobj_info",
+                    return_value=("fixture.pdb", "0123456789ABCDEF0123456789ABCDEF", 3, None),
+                ),
+                mock.patch.object(uprof_symbols, "_choose_pdb", return_value=search),
+                mock.patch.object(
+                    uprof_symbols,
+                    "_run_symbolizer",
+                    side_effect=UprofError("llvm-symbolizer exited 1: no output"),
+                ),
+            ):
+                outcome = uprof_symbols._symbolize_worker(
+                    0, "fixture.exe", str(module), ["0x1000"], root, None, (), (), (), ()
+                )
+
+        self.assertIsNone(outcome.error)
+        self.assertEqual(outcome.evidence.outcome, "failed")
+        self.assertEqual(outcome.evidence.image_guid, "0123456789ABCDEF0123456789ABCDEF")
+        self.assertEqual(outcome.evidence.image_age, 3)
+        self.assertIs(outcome.evidence.search, search)
+        self.assertIn("image GUID 0123456789ABCDEF0123456789ABCDEF age 3", outcome.output)
+        self.assertIn("GUID match", outcome.output)
+        self.assertIn("llvm-symbolizer exited 1: no output", outcome.output)
+
+
 class SourcePathProbeTest(unittest.TestCase):
     """--symbol-path and --image-path each accept a file or a directory, probed by the tool."""
 

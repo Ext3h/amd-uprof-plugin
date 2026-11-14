@@ -48,7 +48,8 @@ class NextSteeringTest(unittest.TestCase):
         argv = [value.replace("<EXE>", "app.exe") for value in argv_of(calls[0])]
         calls = next_calls(*argv, system_wide=True)
         self.assertEqual(bys(calls), ["function"])
-        self.assertIn("--image %app.exe", calls[0])
+        # A % value is not shell-plain, so it is printed as data under a placeholder.
+        self.assertIn("--image <IMAGE>", calls[0])
 
     def test_line_and_instruction_drill_downs_keep_their_calls(self):
         self.assertEqual(bys(next_calls("--by", "line", system_wide=True)), ["instruction"])

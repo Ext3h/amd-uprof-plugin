@@ -266,5 +266,55 @@ class FoldLabelBoundTest(unittest.TestCase):
         self.assertEqual(rows, [("shared: fa | fb", "shared"), ("slow", "unique")])
 
 
+# X has one sample outside every range and three inside the range Exp.
+PARENT_SCOPE = {
+    "ranges": [FunctionRange(MODULE, 0x1000, 0x1080, "export", "Exp")],
+    "functions": [(1, "X")],
+    "samples": [(1, 0x1010, 2), (1, 0x1020, 1), (1, 0x2000, 1)],
+    "uprof_function_module": MODULE,
+}
+
+
+class FunctionIdParentTest(unittest.TestCase):
+    """A Function.id parent scopes only the samples its row holds (#82).
+
+    A sample inside a derived range belongs to the range row, even when uProf gives it the
+    Function.id of a row outside every range. A function-scoped view of that Function.id row
+    lists only the samples outside every range, so the shares of its children sum to 1.
+    """
+
+    def test_instruction_children_of_a_function_id_parent(self):
+        rows = query(
+            "SELECT rva, samples, parent_samples FROM v_instruction_rows "
+            "WHERE module IS NOT NULL ORDER BY rva",
+            uprof_by="instruction",
+            uprof_function="X",
+            **PARENT_SCOPE,
+        )
+
+        self.assertEqual(rows, [("0x2000", 1, 1)])
+
+    def test_line_children_of_a_function_id_parent(self):
+        rows = query(
+            "SELECT samples, parent_samples FROM v_line_rows WHERE module IS NOT NULL",
+            uprof_by="line",
+            uprof_function="X",
+            **PARENT_SCOPE,
+        )
+
+        self.assertEqual(rows, [(1, 1)])
+
+    def test_instruction_children_of_a_range_parent(self):
+        rows = query(
+            "SELECT rva, samples, parent_samples FROM v_instruction_rows "
+            "WHERE module IS NOT NULL ORDER BY rva",
+            uprof_by="instruction",
+            uprof_function="Exp",
+            **PARENT_SCOPE,
+        )
+
+        self.assertEqual(rows, [("0x1010", 2, 3), ("0x1020", 1, 3)])
+
+
 if __name__ == "__main__":
     unittest.main()

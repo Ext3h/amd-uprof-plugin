@@ -523,6 +523,33 @@ class ContextHelpTest(unittest.TestCase):
         self.assertIn("one missing-symbol finding, not one failure per row", summary)
         self.assertIn("--symbol-path", summary)
 
+    def test_context_omission_summary_covers_an_unverified_pdb(self):
+        contexts = [
+            {"omitted": True, "reason": "pdb_unverified", "detail": "app.exe records a PDB"}
+            for _ in range(3)
+        ]
+        summary = uprof_context.context_omission_summary(contexts)
+
+        self.assertIn("all 3 instruction contexts omitted with pdb_unverified", summary)
+        self.assertIn("one missing-symbol finding, not one failure per row", summary)
+        self.assertIn("--symbol-path", summary)
+
+    def test_context_omission_summary_needs_one_shared_symbol_reason(self):
+        self.assertIsNone(
+            uprof_context.context_omission_summary(
+                [
+                    {"omitted": True, "reason": "symbolizer_failed", "detail": "x"},
+                    {"omitted": True, "reason": "pdb_unverified", "detail": "y"},
+                ]
+            )
+        )
+
+    def test_parse_image_records_whether_the_image_names_a_pdb(self):
+        record = "  DebugEntry {\n    PDBInfo {\n      PDBGUID: {C30C06AD-43AB}\n    }\n  }\n"
+
+        self.assertFalse(uprof_context.parse_image(FILE_HEADERS).records_pdb)
+        self.assertTrue(uprof_context.parse_image(FILE_HEADERS + record).records_pdb)
+
     def test_context_omission_summary_needs_every_row_and_one_reason(self):
         self.assertIsNone(uprof_context.context_omission_summary([]))
         self.assertIsNone(

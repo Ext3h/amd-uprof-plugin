@@ -98,7 +98,7 @@ class ExamplesLayoutTest(unittest.TestCase):
         self.assertIn(f"Tool calls: {count} ", _section(_readme(), "Reference metrics"))
 
     def test_the_path_follows_the_skill_for_an_attached_capture(self):
-        # SKILL.md picks the first call from the question; an attached capture has no process
+        # The first call follows from the question; an attached capture has no process
         # ranking step, and loading the skill is not a counted step.
         steps = STEP.findall(_section(_readme(), "Minimal path: "))
         self.assertNotIn("--by process", steps[0])

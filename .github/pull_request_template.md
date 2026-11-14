@@ -16,8 +16,8 @@ Closes #
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-- [ ] Links an existing issue a maintainer has commented "accepted" on; one issue per pull request.
-- [ ] Behaviour change: failing test committed before the fix (docs/CI-only: said so under Test); `python tests/run_tests.py` passes; CI green.
+- [ ] Links an existing issue labelled `accepted`; one issue per pull request.
+- [ ] Behaviour change: failing test committed before the fix (docs/CI-only: said so under Test); CI green.
 - [ ] Changes to CI workflows or their permissions, fixtures or binaries, or shipped skill text: why is stated above.
 - [ ] No instructions aimed at AI reviewers or agents in this pull request or its commits.
 - [ ] Written in English; no @-mentions beyond maintainers.

@@ -1,18 +1,27 @@
 # Contributing
 
-Short rules, each with the reason. A pull request without an accepted issue is closed
-unreviewed; a pull request that breaks any other rule is sent back.
+Short rules, each with the reason. A pull request without an accepted issue is not reviewed; a
+pull request that breaks any other rule is sent back.
 
 Maintainers are the people with write access to this repository.
 
 ## Issue first
 
-- Every pull request links an existing issue that a maintainer has accepted. An issue is
-  accepted when a maintainer comments "accepted" on it; labels set at filing do not count.
-  Pull requests that link no issue or an unaccepted one are closed unreviewed.
+- Every pull request links an existing issue that carries the `accepted` label. A maintainer sets
+  `accepted` once the issue's design is decided, never at filing. A pull request that links no
+  issue or an unaccepted one is not reviewed or considered further.
   Why: the design decision happens on the issue, before anyone spends review time on code.
 - One issue per pull request; keep pull requests small.
   Why: small, single-purpose changes are reviewed fast and reverted cleanly.
+
+## Labels
+
+- Type, one per issue: `bug` (wrong against the spec or the docs), `change` (new or changed
+  behaviour), `debt` (works, but maintainability, coverage or robustness needs work).
+- `accepted`: the design is decided; a pull request may start.
+- `needs-decision`: waits on a maintainer decision.
+- `security`: the defect is a path, credential or network contact the tool must not touch.
+  Why: labels show at a glance what an issue is and whether it is ready for a pull request.
 
 ## Test first
 

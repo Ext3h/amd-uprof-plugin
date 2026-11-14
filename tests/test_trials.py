@@ -472,6 +472,27 @@ class LabScenarioTest(unittest.TestCase):
                 if name == "wait":
                     self.assertIn("off-CPU", answer)
 
+    def test_the_session_notes_quote_the_ibs_cause_fields(self):
+        # SANITY refuses memory.ibs and lock.ibs, but the attached ibs-cg captures pass and carry
+        # the cause, so each IBS class's note quotes the field that names it, from the capture it
+        # was read on. The runner loads only the timer capture, so the IBS values stay in the note.
+        catalogue = scenarios()
+        expected = {
+            "memory": ("the attached memory.ibs-cg passes", "IbsDcMiss set on 14 of 14"),
+            "lock": ("the attached lock.ibs-cg passes", "IbsDcLockedOp set on 6 of 39"),
+            "branch": ("branch.ibs", "IbsOpBrnMisp set on 19 of 36"),
+            "chain": ("chain.ibs", "IbsDcMiss set on 0 of 277"),
+        }
+        for number, name in enumerate(LAB_CLASSES, start=21):
+            if name not in expected:
+                continue
+            session = catalogue[f"SCN-{number}"]["fields"]["Session"]
+            capture, field = expected[name]
+            with self.subTest(defect_class=name):
+                self.assertIn(capture, session)
+                self.assertIn(field, session)
+                self.assertNotIn("the cause needs", session)
+
 
 def base_name(path: object) -> str:
     return str(path).replace("\\", "/").rsplit("/", 1)[-1]

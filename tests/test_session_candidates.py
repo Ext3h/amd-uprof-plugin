@@ -8,6 +8,7 @@ Run from the repository root: python tests/run_tests.py test_session_candidates
 """
 # Spec: SPEC-107
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,10 +56,20 @@ class SessionCandidatesTest(unittest.TestCase):
             )
         self.assertNotIn(str(self.root / "raw"), message)
 
-    def test_without_captures_below_the_translate_remedy_stays(self):
+    def test_without_captures_below_the_translate_call_is_runnable(self):
+        (Path(f"{self.root}-translated")).mkdir()
+        self.addCleanup(Path(f"{self.root}-translated").rmdir)
         message = self.refused("profile", "--session", str(self.root), "--by", "module")
-        self.assertIn("run translate", message)
-        self.assertNotIn("--by module", message)
+        # translate writes cpu.db only into --out-dir, so the chain queries that new directory,
+        # never the original session, and never one that already exists.
+        out = uprof_shell.quote(f"{self.root}-translated-2")
+        self.assertRegex(
+            message,
+            rf"python \S+ translate --session {re.escape(uprof_shell.quote(str(self.root)))} "
+            rf"--out-dir {re.escape(out)}; python \S+ profile --session {re.escape(out)} "
+            "--by module$",
+        )
+        self.assertNotIn("<", message)
 
     def test_the_list_is_bounded(self):
         for index in range(7):

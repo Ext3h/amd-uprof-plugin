@@ -50,7 +50,7 @@ REFERENCE_FRAGMENTS = (
     "One text call answers the module question",
     "highest-sample address as `hot_rva`",
     "`HOT_RVA:` summary",
-    "maximum `hot_samples` across all function rows",
+    "maximum `hot_rva_samples` across all function rows",
     "`unresolved` is the attribution category",
     "a derived range is attributed, not unresolved",
     "report the row attribution, not the channel count",
@@ -62,7 +62,7 @@ REFERENCE_FRAGMENTS = (
     "single unscoped instruction run",
     "on stderr before the document is written",
     "`--image` filters on `Process.name`, not modules",
-    "`other_samples` is `samples - hot_samples`",
+    "`samples_outside_hot_rva` is `samples - hot_rva_samples`",
     "isSystemModule = false",
     "neither an OS-shipped predicate nor a kernel predicate",
     "kernel image",
@@ -132,7 +132,7 @@ class DocsGuidanceTest(unittest.TestCase):
             "report per-scope agreement and coverage",
             "the maximum per-function hot sample count",
             "must not be used to claim the sample-hot address",
-            "other_samples",
+            "samples_outside_hot_rva",
             "module keys are normalized",
             "parent totals are a join of the capture's rows, not a second measurement",
             "the profile symbolizer share, not the share of samples the capture itself named",
@@ -248,6 +248,13 @@ class SkillTest(unittest.TestCase):
 
 
 class ValidationQuoteTest(unittest.TestCase):
+    def test_the_pmc_row_describes_the_printed_header(self):
+        # A PMC capture prints no TIME_SHARE or TAG_TO_RETIRE_SHARE line; COLUMNS states both
+        # columns as absent with their cause (#389).
+        row = next(line for line in VALIDATION.splitlines() if line.startswith("| `pmc-session`"))
+        self.assertNotIn("not applicable", row)
+        self.assertIn("`COLUMNS` names `time_share` and `tag_to_retire_share` absent", row)
+
     def test_agreement_quotes_use_the_printed_field_syntax(self):
         # The AGREEMENT line prints `mismatch_rate=<p>%`, `name_mismatches=<n> addresses of <m>
         # compared` and `unresolved=<u> addresses`; a quote of it may abbreviate but not respell.

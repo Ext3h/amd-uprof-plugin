@@ -53,7 +53,7 @@ print for the committed ones.
 
 | Part | Content |
 |---|---|
-| Location | module + function range `[function_start, function_end)` + `hot_rva`, or source `file:line`, or instruction RVAs |
+| Location | module + function range `[range_start, range_end_exclusive)` + `hot_rva`, or source `file:line`, or instruction RVAs |
 | Proof | samples behind it; `attribution` (`unique`/`derived`/`shared`); the symbol-coverage split; the build identity of the image used; the sampler from `METRIC` |
 | Cost | primary-measure share, plus `cpu_seconds` (sampled CPU time, not wall or frame time) |
 | Confidence | sample count and relative error ≈ 1/√samples; `SANITY`/`ACHIEVED`; `KERNEL_COVERAGE` |

@@ -4,6 +4,17 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ## Unreleased
 
+### Breaking
+
+- Seven `profile` output columns are renamed in Markdown and JSON, so the name says what the
+  legend had to (issue #389): `function_start` -> `range_start`, `function_end` ->
+  `range_end_exclusive`, `function_derived` -> `synthetic_name`, `function_reason` ->
+  `no_range_reason`, `hot_samples` -> `hot_rva_samples`, `other_samples` ->
+  `samples_outside_hot_rva`, `hot_sample_share` -> `hot_rva_share`. The `legend.columns`,
+  `legend.region` and `legend.function_scope` keys follow; `legend.columns` drops the entries
+  the names now state (`range_end_exclusive`, `hot_rva_samples`, `no_range_reason`).
+  `--function-start` is unchanged.
+
 ### Added
 
 - Timer captures are profiled as an on-CPU time share; unsupported cases fail with a cause
@@ -61,6 +72,13 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   scoped with `--image %<EXE>` first in `NEXT`, then `--by process`, instead of the process
   ranking and an unscoped drill-down; SKILL.md names `--image %<EXE>`/`--pid N` for the process
   the question names (issue #384).
+
+- A `profile` header states each fact once. `READ` no longer restates the column meanings, `COLUMNS`
+  names METRIC's sample share instead of repeating it, `WEIGHTS` and `SANITY` leave the gap rule
+  to `TIME_SHARE`, `TAG_TO_RETIRE_SHARE` leaves the definition to `METRIC`, a PMC capture prints no
+  `TIME_SHARE`/`TAG_TO_RETIRE_SHARE` lines (`COLUMNS` states both as absent with their cause),
+  `SANITY` drops the dump path that `DUMP` prints, and `SYMBOL_COVERAGE` names a cause shared by
+  several modules once. On the reference captures the header is 7-22 % shorter (issue #389).
 
 - A PDB is used only when `llvm-pdbutil` verifies that its GUID and age match the image. Without
   `llvm-pdbutil` or an image GUID no PDB is used, and llvm-symbolizer runs without a PDB only

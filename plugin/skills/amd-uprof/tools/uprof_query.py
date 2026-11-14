@@ -960,7 +960,7 @@ _PROCESS_COVERAGE_STOP: Final = (
     f"these samples to their module; {_NO_PE_WORK}"
 )
 _RANGE_UNRESOLVED_STOP: Final = (
-    "no named or derived range covers these samples; function_reason and "
+    "no named or derived range covers these samples; no_range_reason and "
     "legend.function_ranges.absent_by_module name why, and --by region is the page fallback "
     "where no boundary source exists"
 )
@@ -1242,8 +1242,8 @@ def _function_scope_json(
         "module": scope["module"],
         "function": scope["function"],
         "range_kind": "derived_range" if start is not None else "uprof_function_id",
-        "function_start": None if start is None else f"0x{start:X}",
-        "function_end": None if end is None else f"0x{end:X}",
+        "range_start": None if start is None else f"0x{start:X}",
+        "range_end_exclusive": None if end is None else f"0x{end:X}",
         "filter": scope["filter"],
         "parent": {
             "samples": int(scope["samples"] or 0),
@@ -1305,7 +1305,7 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
     )
     if not rows:
         raise util.UprofError(
-            f"no function row matches {wanted}; copy the function, module and function_start "
+            f"no function row matches {wanted}; copy the function, module and range_start "
             "cells from a --by function row (the filter uses the same --pid/--image/"
             "--time-filter scope)"
         )
@@ -1314,11 +1314,11 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
         if not starts:
             raise util.UprofError(
                 f"{wanted} matches {len(rows)} function rows with no derived range; neither row "
-                "has a function_start, so --function-start cannot separate them"
+                "has a range_start, so --function-start cannot separate them"
             )
         raise util.UprofError(
             f"{wanted} matches {len(rows)} function rows; add --function-start <RVA> to choose "
-            f"one (function_start: {', '.join(starts)})"
+            f"one (range_start: {', '.join(starts)})"
         )
     (
         module_name,
@@ -1467,32 +1467,19 @@ def _legend(
             "unique / shared (folded names) / derived (synthetic binary "
             "range) / unresolved (no symbol)"
         )
-        columns["function_start"] = (
-            "first RVA of the derived function range (inclusive); NULL when no range was derived"
-        )
-        columns["function_end"] = "address after the function range (exclusive)"
+        columns["range_start"] = "NULL when no range was derived"
         columns["function_source"] = (
             "boundary source of the range: pdb_public, export, pdata "
             "or none (no boundary source; the row falls back to uProf "
             "Function.id or is unresolved)"
         )
-        columns["function_derived"] = (
-            "true when the displayed name is synthetic "
-            "(sub_<rva>/pdata_<start>), not a source symbol"
-        )
+        columns["synthetic_name"] = "true for a sub_<rva>/pdata_<start> name, not a source symbol"
         attribution = _hot_rva_attribution(sampler, "range")
         columns["hot_rva"] = (
             f"highest-sample RVA in the function; ties pick the lowest RVA; {attribution}"
         )
-        columns["hot_samples"] = "samples at hot_rva"
-        columns["other_samples"] = (
-            "samples outside hot_rva: samples - hot_samples; the rest of "
-            "the function, not a second hot address"
-        )
-        columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
-        columns["function_reason"] = (
-            "why this row has no derived range (function_start/function_end are NULL)"
-        )
+        columns["samples_outside_hot_rva"] = "the rest of the row, not a second hot address"
+        columns["hot_rva_share"] = "share of the scoped capture total"
     elif args.by in ("line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
         if function_scope is not None:
@@ -1523,14 +1510,12 @@ def _legend(
         columns["hot_rva"] = (
             f"highest-sample RVA in the page; ties pick the lowest RVA; {attribution}"
         )
-        columns["hot_samples"] = "samples at hot_rva"
-        columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
+        columns["hot_rva_share"] = "share of the scoped capture total"
         columns["function_source"] = (
             "hot_rva's boundary source: pdb_public, export, pdata or none (no range covers hot_rva)"
         )
-        columns["function_derived"] = (
-            "true when the hot function name is synthetic "
-            "(sub_<rva>/pdata_<start>), not a source symbol"
+        columns["synthetic_name"] = (
+            "true for a sub_<rva>/pdata_<start> hot-function name, not a source symbol"
         )
         columns["symbol_reason"] = "why function/file/line are NULL for hot_rva"
     absent: dict[str, str] = {}
@@ -1608,12 +1593,8 @@ def _legend(
             columns["hot_rva"] = (
                 f"highest-sample RVA in the module; ties pick the lowest RVA; {attribution}"
             )
-            columns["hot_samples"] = "samples at hot_rva"
-            columns["other_samples"] = (
-                "samples outside hot_rva: samples - hot_samples; the "
-                "rest of the module, not a second hot address"
-            )
-            columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
+            columns["samples_outside_hot_rva"] = "the rest of the row, not a second hot address"
+            columns["hot_rva_share"] = "share of the scoped capture total"
         if has_system_module:
             columns["isSystemModule"] = _SYSTEM_MODULE_MEANING
         else:
@@ -1681,7 +1662,7 @@ def _legend(
             result["impact"]["sample_hot"] = (
                 "this instruction table is time_share-ordered, not sample-hot: do not read its "
                 "first row as the sample-hot RVA or claim that no single instruction exceeds a "
-                "sample threshold; the function or region hot_rva and hot_samples are the "
+                "sample threshold; the function or region hot_rva and hot_rva_samples are the "
                 "sample-hot attribution"
             )
         else:
@@ -1702,8 +1683,8 @@ def _legend(
             "absent_by_module": info.get("absent_by_module") or {},
             "fallback": (
                 "a fully named module is not read, so its rows keep the uProf Function.id "
-                "grouping and function_reason says derivation was skipped; a module with "
-                "no derived range groups by Function.id and function_reason says why no "
+                "grouping and no_range_reason says derivation was skipped; a module with "
+                "no derived range groups by Function.id and no_range_reason says why no "
                 "range exists"
             ),
             "meaning": (
@@ -1722,15 +1703,13 @@ def _legend(
             "page_end": "address after the page (exclusive)",
             "sampled_addresses": "distinct RVAs with samples in the page",
             "hot_rva": "highest-sample RVA in the page; ties pick the lowest RVA",
-            "hot_samples": "samples at hot_rva",
-            "hot_sample_share": "hot_samples / total_samples",
+            "hot_rva_samples": "samples at hot_rva",
+            "hot_rva_share": "hot_rva_samples / total_samples",
             "function_source": (
                 "hot_rva's boundary source: pdb_public, export, pdata or none "
                 "(no range covers hot_rva)"
             ),
-            "function_derived": (
-                "true when the hot function name is synthetic, not a source symbol"
-            ),
+            "synthetic_name": ("true when the hot function name is synthetic, not a source symbol"),
             "symbol_reason": "why function/file/line are NULL for the hot RVA",
             "derived_function": (
                 "the hot RVA carries its derived function when a range covers "
@@ -1753,17 +1732,9 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         if measure == "time_share":
             read = f"time_share orders the functions: {reason}; sample_share is not a per-op cost"
         elif measure == "sample_share":
-            read = f"sample_share orders the functions: {reason}"
+            read = "sample_share orders the functions"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
-        read += (
-            "; hot_rva is the highest-sample RVA inside the function; function_start and "
-            "function_end delimit the derived range; a name with function_derived=true is "
-            "synthetic (sub_/pdata_), derived from the binary, not a source symbol; "
-            "function_reason explains a row with no derived range"
-        )
-        if "tag_to_retire_share" in legend["columns"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
         read += "; the <other functions> row is last, not ranked"
@@ -1774,7 +1745,7 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         if measure == "time_share":
             read = f"time_share orders the pages: {reason}; sample_share is not a per-op cost"
         elif measure == "sample_share":
-            read = f"sample_share orders the pages: {reason}"
+            read = "sample_share orders the pages"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
         hot_desc = (
@@ -1783,13 +1754,9 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         )
         read += (
             f"; {hot_desc} and sampled_addresses "
-            "shows whether the page is a tight cluster or a diffuse bucket; hot_rva's "
-            "function_source names the boundary source and function_derived=true marks a "
-            "synthetic binary name; a page may span unrelated code, so do not read it as a "
-            "contiguous region, hot path or basic block"
+            "shows whether the page is a tight cluster or a diffuse bucket; a page may span "
+            "unrelated code, so do not read it as a contiguous region, hot path or basic block"
         )
-        if "tag_to_retire_share" in legend["columns"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
         read += "; the <other regions> row is last, not ranked"
@@ -1803,8 +1770,6 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
                 "time_share ranks where each thread's elapsed time went (PID, TID partition, "
                 "so a migrating thread is counted once); sample_share is not a per-op cost"
             )
-        if "tag_to_retire_share" in legend["columns"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
     elif measure == "sample_share":
@@ -1814,13 +1779,11 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
                 "cycles were spent"
             )
         else:
-            read = f"sample_share orders the rows: {sample}"
+            read = "sample_share orders the rows"
             if sample.startswith(("dispatched-op", "fetch-sample")):
                 read += f"; {_SAMPLE_CAVEAT}"
-        if "tag_to_retire_share" in legend["columns"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
     elif sample == _TIMER_SHARE_MEANING:
-        read = f"sample_share orders the rows: {sample}"
+        read = "sample_share orders the rows"
     elif sample.startswith("not established"):
         read = (
             "sample_share is not established for this event; rows are ordered by raw sample "
@@ -1848,6 +1811,14 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
     return read
 
 
+def _causes_by_module(causes: dict[str, str]) -> str:
+    """Each cause once, after the modules it applies to, in module order."""
+    modules: dict[str, list[str]] = {}
+    for module, cause in sorted(causes.items()):
+        modules.setdefault(cause, []).append(module)
+    return "; ".join(f"{', '.join(names)}: {cause}" for cause, names in modules.items())
+
+
 def _next_text(calls: list[str]) -> str:
     """Full runnable calls joined by && so the Markdown line can be pasted as one command."""
     return " && ".join(calls)
@@ -1863,20 +1834,20 @@ def _legend_fields(
 ) -> list[tuple[str, str]]:
     """The short legend: columns and unit, what to read, and runnable next calls.
 
-    A timer capture states its missing measures once, in METRIC, so COLUMNS does not repeat them.
-    top_row is the precision clause READ carries for the first row.
+    A header states each fact once. A timer capture states its missing measures once, in METRIC,
+    so COLUMNS does not repeat them; METRIC also states the sample_share meaning when it carries
+    it, and TIME_SHARE how gaps are charged. top_row is the precision clause READ carries for the
+    first row.
     """
     parts = []
     if "attribution" in legend["columns"]:
         parts.append(f"attribution = {legend['columns']['attribution']}")
-    parts += ["samples = raw count", f"sample_share = {legend['columns']['sample_share']}"]
+    sample = legend["columns"]["sample_share"]
+    if sample.rstrip(")") in sampler.metric:
+        sample = "the METRIC sample share"
+    parts += ["samples = raw count", f"sample_share = {sample}"]
     if "time_share" in legend["columns"]:
-        if system_wide:
-            parts.append("time_share = time share")
-        else:
-            parts.append(
-                "time_share = per-thread time share (off-CPU gaps are charged to the ending sample)"
-            )
+        parts.append(f"time_share = {'time share' if system_wide else 'per-thread time share'}")
     elif not timer:
         parts.append(f"time_share absent ({legend['absent']['time_share']})")
     if "tag_to_retire_share" in legend["columns"]:
@@ -1884,20 +1855,26 @@ def _legend_fields(
     elif not timer:
         parts.append(f"tag_to_retire_share absent ({legend['absent']['tag_to_retire_share']})")
     if "function_scope" in legend:
-        for key in ("parent_sample_share", "parent_time_share", "parent_tag_to_retire_share"):
-            if key in legend["columns"]:
-                parts.append(f"{key} = {legend['columns'][key]}")
+        # One sentence for the parent shares: each is the row's measure over the parent's.
+        measures = {
+            "parent_sample_share": "samples",
+            "parent_time_share": "gap weight",
+            "parent_tag_to_retire_share": "tag-to-retire cycles",
+        }
+        present = [key for key in measures if key in legend["columns"]]
+        if present:
+            parts.append(
+                f"{', '.join(present)} = the row's {', '.join(measures[k] for k in present)} as "
+                "a share of the selected parent function's, not the capture"
+            )
     if "function_ranges" in legend:
         for key in (
-            "function_start",
-            "function_end",
+            "range_start",
             "function_source",
-            "function_derived",
+            "synthetic_name",
             "hot_rva",
-            "hot_samples",
-            "other_samples",
-            "hot_sample_share",
-            "function_reason",
+            "samples_outside_hot_rva",
+            "hot_rva_share",
         ):
             if key in legend["columns"]:
                 parts.append(f"{key} = {legend['columns'][key]}")
@@ -1906,10 +1883,9 @@ def _legend_fields(
             "region",
             "sampled_addresses",
             "hot_rva",
-            "hot_samples",
-            "hot_sample_share",
+            "hot_rva_share",
             "function_source",
-            "function_derived",
+            "synthetic_name",
             "symbol_reason",
         ):
             parts.append(f"{key} = {legend['columns'][key]}")
@@ -1918,7 +1894,7 @@ def _legend_fields(
         and "attribution" not in legend["columns"]
         and "region" not in legend["columns"]
     ):
-        for key in ("hot_rva", "hot_samples", "other_samples", "hot_sample_share"):
+        for key in ("hot_rva", "samples_outside_hot_rva", "hot_rva_share"):
             parts.append(f"{key} = {legend['columns'][key]}")
     if "isSystemModule" in legend["columns"]:
         parts.append(f"isSystemModule = {legend['columns']['isSystemModule']}")
@@ -1969,41 +1945,13 @@ def _header_fields(
             )
         )
     elif dump is None:
-        if sampler.pmc_cycle_shares:
-            share = (
-                "sample_share is the busy core-cycle share (fixed cycles per sample; "
-                "halted excluded)"
-            )
-        else:
-            share = (
-                "sample_share is not established for this PMC event; capture --event cycles "
-                "(CYCLES_NOT_IN_HALT, hwId 118) to make it a core-cycle share"
-            )
+        # COLUMNS states the share and both absent columns with their cause.
         fields.append(
             (
                 "DUMP",
                 (
                     "none; this PMC capture has no IBS ASCII dump, so samples are the "
-                    f"UnifiedSampleSeries event-column counts; {share}"
-                ),
-            )
-        )
-        fields.append(
-            (
-                "TIME_SHARE",
-                (
-                    "not applicable; this export aggregates PMC samples per "
-                    "window, so time_share is omitted; capture with --event "
-                    "ibs-op (IBS OP with per-sample timestamps) to get it"
-                ),
-            )
-        )
-        fields.append(
-            (
-                "TAG_TO_RETIRE_SHARE",
-                (
-                    "not applicable; this export has no tag-to-retire "
-                    "counter, so tag_to_retire_share is omitted"
+                    "UnifiedSampleSeries event-column counts"
                 ),
             )
         )
@@ -2076,20 +2024,17 @@ def _header_fields(
                     )
                 )
             elif tag_available:
-                fields.append(
-                    (
-                        "TAG_TO_RETIRE_SHARE",
-                        (
-                            "share of tag-to-retire cycles summed "
-                            "over sampled ops (AMD tag at dispatch to "
-                            "retirement, queue/stalls included; 16-bit "
-                            "counter clipped at 65535); a total, not "
-                            "per-op latency: a higher share means more "
-                            "total tag-to-retire cycles, not a higher "
-                            "per-op cost"
-                        ),
-                    )
+                total = (
+                    "a total, not per-op latency: a higher share means more total "
+                    "tag-to-retire cycles, not a higher per-op cost"
                 )
+                if "tag-to-retire: " not in sampler.metric:
+                    total = (
+                        "share of tag-to-retire cycles summed over sampled ops (AMD tag at "
+                        "dispatch to retirement, queue/stalls included; 16-bit counter clipped "
+                        f"at 65535); {total}"
+                    )
+                fields.append(("TAG_TO_RETIRE_SHARE", total))
             else:
                 fields.append(
                     (
@@ -2117,48 +2062,14 @@ def _header_fields(
                 )
             )
     if sampler.timer:
-        weights = (
-            "timer sample counts from UnifiedSampleSeries; sample_share is the on-CPU time share"
-        )
+        weights = "timer sample counts from UnifiedSampleSeries"
     elif dump is None:
-        if sampler.pmc_cycle_shares:
-            weights = (
-                "PMC sample counts from UnifiedSampleSeries; sample_share is the busy "
-                "core-cycle share"
-            )
-        else:
-            weights = (
-                "PMC sample counts from UnifiedSampleSeries; sample_share is not "
-                "established for this event"
-            )
+        weights = "PMC sample counts from UnifiedSampleSeries"
     else:
-        if system_wide:
-            window = (
-                "whole capture"
-                if args.time_filter is None
-                else f"time filter {args.time_filter} (first sample per CPU inside the "
-                "window excluded)"
-            )
-            weights = (
-                "exact DeltaTick-gap weights per CPU_Number (the first sample per CPU is "
-                "ignored, no gap before it; gap time is charged to the later sample); "
-                f"{window}; sample_share is the dump's raw sample share and time_share "
-                "weights the same rows by gap"
-            )
-        else:
-            window = (
-                "whole capture"
-                if args.time_filter is None
-                else f"time filter {args.time_filter} (first sample per thread inside the "
-                "window excluded)"
-            )
-            weights = (
-                "exact DeltaTick-gap weights per (PID, TID) (the first sample per thread "
-                "is ignored, no gap before it; gap time, including off-CPU time, is charged "
-                "to the later sample); "
-                f"{window}; sample_share is the dump's raw sample share and time_share "
-                "weights the same rows by gap"
-            )
+        # TIME_SHARE states how gaps are charged and that the first sample has none.
+        window = "whole capture" if args.time_filter is None else f"time filter {args.time_filter}"
+        context = "CPU_Number" if system_wide else "(PID, TID)"
+        weights = f"exact DeltaTick-gap weights per {context}; {window}"
     fields.append(("WEIGHTS", f"{weights}; --by {args.by}: {GRANULARITY_LABELS[args.by]}"))
     return fields
 
@@ -2570,9 +2481,8 @@ def _coverage_field(
                     ),
                 )
             ]
-        reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
-        if reasons:
-            text += f"; cause by module: {'; '.join(reasons)}"
+        if causes:
+            text += f"; cause by module: {_causes_by_module(causes)}"
         return [("SYMBOL_COVERAGE", f"{text}; {_RANGE_UNRESOLVED_STOP}{_coverage_remedy(causes)}")]
     scoped = (
         int(symbolizer["scoped_samples"])
@@ -2599,9 +2509,8 @@ def _coverage_field(
                     ),
                 )
             ]
-        reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
-        if reasons:
-            text += f"; cause by module: {'; '.join(reasons)}"
+        if causes:
+            text += f"; cause by module: {_causes_by_module(causes)}"
         stop = _NO_NAMED_FUNCTION_STOP if resolved == 0 else _UNRESOLVED_FUNCTION_STOP
         return [("SYMBOL_COVERAGE", f"{text}; {stop}{_coverage_remedy(causes)}")]
     unresolved = [value for value in values if int(value["samples"]) > int(value["named_samples"])]
@@ -2757,8 +2666,8 @@ def _hot_rva_field(connection: object) -> list[tuple[str, str]]:
             (
                 f"{module or '<unknown module>'} {function or '<unresolved>'} at "
                 f"{hot_rva} with {hot} samples ({share} of the scoped capture); "
-                f"other_samples {other} = the function's {int(samples or 0)} samples "
-                f"minus hot_samples {hot}; the highest-sample address across the "
+                f"samples_outside_hot_rva {other} = the function's {int(samples or 0)} samples "
+                f"minus hot_rva_samples {hot}; the highest-sample address across the "
                 "function rows, not the top function row's hot_rva"
             ),
         )

@@ -54,6 +54,31 @@ CREATE OR REPLACE TEMP MACRO module_ambiguous(name) AS COALESCE(list_contains(
   string_split(NULLIF(getvariable('uprof_ambiguous_modules'), ''), chr(2)), name), false);
 -- A share is a fraction of the scoped total (0.0-1.0); the unit is stated once in the output.
 CREATE OR REPLACE TEMP MACRO share(part, whole) AS part / NULLIF(whole, 0);
+-- The plain identifier a function name carries: before the first '@' of a decorated MSVC public
+-- ('?f@@YAHH@Z', '?m@K@ns@@...', '??$f@H@@...' for a template), else the last identifier of a
+-- demangled spelling once template arguments and the parameter list are removed
+-- ('int __cdecl ns::f<float>(int)' -> 'f'). Empty when there is none (operators, constructors).
+CREATE OR REPLACE TEMP MACRO name_identifier(n) AS CASE
+  WHEN n LIKE '?%' THEN regexp_extract(n, '^\?(\?\$)?([A-Za-z_][A-Za-z0-9_]*)@', 2)
+  ELSE regexp_extract(
+         regexp_replace(
+           regexp_replace(regexp_replace(regexp_replace(n, '<[^<>]*>', '', 'g'),
+                                         '<[^<>]*>', '', 'g'), '<[^<>]*>', '', 'g'),
+           '\(.*$', ''),
+         '([A-Za-z_][A-Za-z0-9_]*)$', 1) END;
+-- A folded public start (several names at one address) labels an address 'shared' unless the
+-- symbolizer frame there names a function outside the fold: a static function after the folded
+-- body matches the start too, because the start is joined ASOF. The frame is outside only when
+-- every folded name and the frame have an identifier and none agrees; a truncated name list
+-- ('... (+N more)') cannot show that.
+CREATE OR REPLACE TEMP MACRO fold_holds(name_count, names, frame) AS COALESCE(
+  COALESCE(name_count, 1) > 1
+  AND (COALESCE(frame, '') = ''
+       OR names LIKE '%... (+% more)'
+       OR name_identifier(frame) = ''
+       OR len(list_filter(string_split(names, ' | '),
+                          lambda n: name_identifier(n) IN ('', name_identifier(frame)))) > 0),
+  false);
 -- A kernel image is loaded in the kernel half of the x64 address space, or, when the catalog has
 -- no instance to ask, has a basename only the kernel uses. 0xFFFF800000000000 starts that half;
 -- the Windows kernel and HAL carry no .sys suffix, and Linux core images carry no suffix at all.
@@ -982,6 +1007,8 @@ WHERE COALESCE(getvariable('uprof_function'), '') <> ''
 --
 -- Folded /OPT:ICF bodies: the public-symbol cache is ASOF-joined per module, so the merged body is
 -- labelled 'shared: nameA | nameB'; a line whose addresses include one gets attribution 'shared'.
+-- The folded body ends where a derived range starts after the folded start or where the
+-- symbolizer frame names a function outside the fold (fold_holds).
 -- When --top truncates, one <other lines> row carries the rest.
 CREATE OR REPLACE TEMP VIEW v_line_rows AS
 SELECT * FROM query(CASE
@@ -1010,12 +1037,18 @@ scoped AS (
          s.function AS sym_function, s.function_short AS sym_short,
          s.containing_function AS sym_containing,
          s.file AS sym_file, s.line AS sym_line,
-         a.name_count, a.names
+         a.names,
+         fold_holds(a.name_count, a.names, s.containing_function)
+           AND COALESCE(r.function_start <= a.rva, true) AS folded
   FROM scoped w
   LEFT JOIN v_symbols s
     ON w.module_name = s.module_name AND w.rva = s.rva
   ASOF LEFT JOIN v_public_starts a
     ON w.module_name = a.module_name AND w.rva >= a.rva
+  -- A derived range that starts after the folded public start ends the folded body.
+  LEFT JOIN v_function_ranges r
+    ON w.module_name = r.module_name
+   AND w.rva >= r.function_start AND w.rva < r.function_end
 ), spellings AS (
   SELECT module_name AS spelling_module, sym_short AS spelling_short,
          count(DISTINCT sym_containing) FILTER (
@@ -1030,16 +1063,16 @@ scoped AS (
               WHEN COALESCE(sym_file, '') = '' THEN '<no source line>'
               ELSE sym_file END AS file_name,
          CASE WHEN COALESCE(sym_function, '') = '' THEN 0 ELSE COALESCE(sym_line, 0) END AS line_number,
-         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared: ' || names
+         CASE WHEN folded THEN 'shared: ' || names
               WHEN COALESCE(sym_function, '') = '' THEN '<no symbol>'
               ELSE sym_function END AS function_label,
-         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared: ' || names
+         CASE WHEN folded THEN 'shared: ' || names
               WHEN COALESCE(sym_function, '') = '' THEN '<no symbol>'
               WHEN COALESCE(sp.overload_count, 0) > 1 THEN sym_function
               WHEN COALESCE(placed.sym_short, '') <> '' THEN placed.sym_short
               ELSE sym_function END AS function_key,
          COALESCE(NULLIF(module_name, ''), '<unknown module>') AS module_label,
-         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared'
+         CASE WHEN folded THEN 'shared'
               WHEN COALESCE(sym_function, '') = '' THEN 'unresolved'
               ELSE 'unique' END AS address_attribution,
          samples, weight, tag_cycles
@@ -1131,23 +1164,29 @@ scoped AS (
 ), placed AS (
   SELECT w.module_name, w.rva, w.samples, w.weight, w.tag_cycles,
          s.function AS sym_function, s.file AS sym_file, s.line AS sym_line,
-         a.name_count, a.names
+         a.names,
+         fold_holds(a.name_count, a.names, s.containing_function)
+           AND COALESCE(r.function_start <= a.rva, true) AS folded
   FROM scoped w
   LEFT JOIN v_symbols s
     ON w.module_name = s.module_name AND w.rva = s.rva
   ASOF LEFT JOIN v_public_starts a
     ON w.module_name = a.module_name AND w.rva >= a.rva
+  -- A derived range that starts after the folded public start ends the folded body.
+  LEFT JOIN v_function_ranges r
+    ON w.module_name = r.module_name
+   AND w.rva >= r.function_start AND w.rva < r.function_end
 ), normalized AS (
   SELECT COALESCE(NULLIF(module_name, ''), '<unknown module>') AS module_name,
          rva,
-         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared: ' || names
+         CASE WHEN folded THEN 'shared: ' || names
               WHEN COALESCE(sym_function, '') = '' THEN '<no symbol>'
               ELSE sym_function END AS function_name,
          CASE WHEN COALESCE(sym_function, '') = '' THEN '<no symbol>'
               WHEN COALESCE(sym_file, '') = '' THEN '<no source line>'
               ELSE sym_file END AS file_name,
          CASE WHEN COALESCE(sym_function, '') = '' THEN 0 ELSE COALESCE(sym_line, 0) END AS line_number,
-         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared'
+         CASE WHEN folded THEN 'shared'
               WHEN COALESCE(sym_function, '') = '' THEN 'unresolved'
               ELSE 'unique' END AS attribution,
          samples, weight, tag_cycles
@@ -1238,7 +1277,9 @@ WITH paged AS (
 ), placed AS (
   SELECT p.*, h.hot_rva, h.hot_samples,
          s.function AS sym_function, s.file AS hot_file, s.line AS hot_line,
-         a.name_count, a.names,
+         a.names,
+         fold_holds(a.name_count, a.names, s.containing_function)
+           AND COALESCE(r.function_start <= a.rva, true) AS folded,
          r.function_start AS hot_function_start,
          r.function_source AS ranged_source,
          r.function_name AS hot_range_name
@@ -1253,19 +1294,19 @@ WITH paged AS (
    AND h.hot_rva >= r.function_start AND h.hot_rva < r.function_end
 ), labelled AS (
   SELECT *,
-         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared: ' || names
+         CASE WHEN folded THEN 'shared: ' || names
               WHEN COALESCE(sym_function, '') <> '' THEN sym_function
               WHEN hot_range_name IS NOT NULL THEN hot_range_name
               WHEN hot_function_start IS NOT NULL AND ranged_source = 'pdata'
                 THEN printf('pdata_0x%X', hot_function_start)
               WHEN hot_function_start IS NOT NULL THEN printf('sub_0x%X', hot_function_start)
               ELSE NULL END AS hot_function,
-         CASE WHEN COALESCE(name_count, 1) > 1 THEN 'shared'
+         CASE WHEN folded THEN 'shared'
               WHEN COALESCE(sym_function, '') <> '' THEN 'unique'
               WHEN hot_range_name IS NOT NULL THEN 'unique'
               WHEN hot_function_start IS NOT NULL THEN 'derived'
               ELSE 'unresolved' END AS attribution,
-         CASE WHEN COALESCE(name_count, 1) <= 1 AND COALESCE(sym_function, '') = ''
+         CASE WHEN NOT folded AND COALESCE(sym_function, '') = ''
                    AND hot_function_start IS NULL
               THEN 'no symbolizer frame and no derived function range cover hot_rva; the page is the coarse bucket'
               WHEN COALESCE(sym_function, '') = '' AND COALESCE(hot_file, '') = ''

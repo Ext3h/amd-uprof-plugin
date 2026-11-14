@@ -73,7 +73,16 @@ class PmcTimeFilterTest(unittest.TestCase):
             )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--time-filter cannot be applied to a PMC capture", result.stderr)
-        self.assertIn("--event ibs-op", result.stderr)
+        # Without IBS on the host an IBS capture cannot succeed, so the whole capture is a
+        # runnable alternative next to the new capture.
+        alternatives = [
+            line.split(": ", 2)[1:]
+            for line in result.stderr.splitlines()
+            if line.startswith("ALTERNATIVE: ")
+        ]
+        self.assertEqual([label for label, _ in alternatives], ["whole capture", "Zen host"])
+        self.assertTrue(all(command.startswith("python ") for _, command in alternatives))
+        self.assertIn("--event <ibs-op|cycles>", alternatives[1][1])
 
 
 class TranslateSessionLinesTest(unittest.TestCase):

@@ -3030,11 +3030,12 @@ def run_query_command(args: argparse.Namespace) -> None:
         dump = None
     elif sampler.pmc:
         if args.time_filter:
-            raise util.UprofError(
+            raise uprof_native.failure(
                 "--time-filter cannot be applied to a PMC capture: this export aggregates PMC "
-                "samples per window and carries no "
-                "per-sample timestamps, so the window cannot be selected; capture with "
-                "--event ibs-op to use --time-filter"
+                "samples per window and carries no per-sample timestamps, so the window cannot "
+                "be selected; an --event ibs-op capture supports --time-filter",
+                ["whole capture", "Zen host"],
+                session=session,
             )
         dump = None
     else:

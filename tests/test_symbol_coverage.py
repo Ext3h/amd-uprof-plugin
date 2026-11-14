@@ -329,10 +329,18 @@ class CoverageChannelsTest(unittest.TestCase):
         evidence = uprof_symbols.ModuleEvidence(
             "driver.dll",
             "C:/drivers/driver.dll",
-            outcome="readobj_failed",
+            outcome="no_pdb_record",
             note=uprof_symbols.NO_PDB_NOTE,
         )
         return uprof_query._evidence_cause(evidence)
+
+    def test_an_image_recording_no_pdb_is_a_stable_outcome_the_cache_keeps(self):
+        def evidence(outcome):
+            return uprof_symbols.ModuleEvidence("driver.dll", "C:/d/driver.dll", outcome=outcome)
+
+        self.assertFalse(uprof_query._transient_outcome(evidence("no_pdb_record")))
+        self.assertFalse(uprof_query._transient_outcome(evidence("resolved")))
+        self.assertTrue(uprof_query._transient_outcome(evidence("readobj_failed")))
 
     def test_an_image_recording_no_pdb_is_named_as_such_not_as_a_readobj_failure(self):
         cause = self.no_pdb_cause()

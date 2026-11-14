@@ -6,6 +6,7 @@ systems, because LLVM reads PE, PDB, ELF and DWARF on either.
 """
 
 import csv
+import io
 import os
 import shutil
 import tempfile
@@ -183,17 +184,18 @@ class PeCoffSymbolTableTest(FixtureTestCase):
         module, records, stream = F.production(F.PE / "fixture_coff.exe", [F.PE_HELPER, F.PE_ENTRY])
         self.assertIsNone(module.pdb)
         self.assertIn("PDB=none", stream)
-        self.assertEqual(module.evidence.outcome, "readobj_failed")
+        # The COFF symbol table named the addresses, so the module is resolved.
+        self.assertEqual(module.evidence.outcome, "resolved")
         resolved = frames(records)
         self.assert_names_no_line(resolved[F.PE_HELPER], "fixture_helper")
         self.assert_names_no_line(resolved[F.PE_ENTRY], "fixture_entry")
 
     @unittest.skipUnless(os.name == "nt", NT_ONLY)
-    def test_production_reports_no_debug_info_when_the_database_records_none(self):
+    def test_resolved_names_outrank_the_capture_debug_info_flag(self):
         module, _, _ = F.production(
             F.PE / "fixture_coff.exe", [F.PE_HELPER], found_debug_info=False
         )
-        self.assertEqual(module.evidence.outcome, "no_debug_info")
+        self.assertEqual(module.evidence.outcome, "resolved")
 
 
 @unittest.skipIf(F.tool_skip(), F.tool_skip() or "")
@@ -493,6 +495,16 @@ class PeDwarfTest(FixtureTestCase):
         self.assert_names_line(resolved[F.PE_HELPER], "fixture_helper", 2)
         self.assert_names_line(resolved[F.PE_ENTRY], "fixture_entry", 6)
         self.assert_names_line(resolved[F.PE_ENTRY_BODY], "fixture_entry", 7)
+
+    @unittest.skipUnless(os.name == "nt", NT_ONLY)
+    def test_production_reports_the_resolved_dwarf_without_a_warning(self):
+        module, _, _ = F.production(
+            F.PE / "fixture_pe_dwarf.exe", [F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY]
+        )
+        self.assertEqual(module.evidence.outcome, "resolved")
+        stream = io.StringIO()
+        uprof_symbols._evidence_line(module.evidence, stream)
+        self.assertEqual(stream.getvalue(), "")
 
 
 @unittest.skipIf(F.tool_skip(), F.tool_skip() or "")

@@ -76,3 +76,42 @@ class ProfileSectionTest(unittest.TestCase):
                 self.assertTrue(any("<SESSION_ROOT>" in line for line in warnings), text)
                 self.assertNotIn("uprof-trace-session-", text)
                 self.assertNotIn(str(F.DEBUG), text)
+
+
+def _sections(text: str) -> dict[str, list[str]]:
+    """The lines of each '## name' section of a trace."""
+    sections: dict[str, list[str]] = {}
+    current = None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            current = sections.setdefault(line[3:].strip(), [])
+        elif current is not None:
+            current.append(line)
+    return sections
+
+
+class GoldenSemanticsTest(unittest.TestCase):
+    """The committed goldens never approve a symbol outcome that contradicts the resolved rows."""
+
+    def test_a_module_whose_rows_resolve_gets_no_unresolved_warning(self):
+        for path in sorted((F.DEBUG / "traces").glob("*/*.txt")):
+            sections = _sections(path.read_text(encoding="utf-8"))
+            frames = [
+                line
+                for line in sections.get("production", [])
+                if line.startswith("0x") and line.split()[1] != "<none>"
+            ]
+            if not frames:
+                continue
+            with self.subTest(trace=f"{path.parent.name}/{path.name}"):
+                outcome = [
+                    line for line in sections["production"] if line.startswith("outcome=")
+                ]
+                self.assertEqual(outcome, ["outcome=resolved"])
+                for name in ("profile.line", "profile.function"):
+                    warnings = [
+                        line
+                        for line in sections.get(name, [])
+                        if line.startswith("WARNING: no symbols resolved")
+                    ]
+                    self.assertEqual(warnings, [], name)

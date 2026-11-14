@@ -365,7 +365,8 @@ class NoPdbEvidenceTest(unittest.TestCase):
                 )
 
         self.assertIsNone(result.pdb)
-        self.assertEqual(result.evidence.outcome, "readobj_failed")
+        # llvm-readobj read the debug directory; it records no PDB, and nothing resolved.
+        self.assertEqual(result.evidence.outcome, "no_pdb_record")
         self.assertEqual(result.evidence.note, uprof_symbols.NO_PDB_NOTE)
 
     @unittest.skipUnless(os.name == "nt", HOST_SKIP + "the PDB search runs on Windows")

@@ -64,6 +64,23 @@ class NextSteeringTest(unittest.TestCase):
         self.assertNotIn("--json", call)
         self.assertTrue(call.endswith("--top 1"), call)
 
+    def test_following_next_from_a_drill_never_returns_to_a_visited_view(self):
+        # line -> instruction, then no call; the instruction view never sends the caller back
+        # to --by line for the same scope (#310).
+        for start in ("line", "instruction"):
+            with self.subTest(start=start):
+                seen = [start]
+                calls = next_calls(
+                    "--by", start, "--function", "f", "--module", "m.dll", system_wide=False
+                )
+                while calls:
+                    self.assertEqual(len(calls), 1, calls)
+                    argv = argv_of(calls[0])
+                    by = argv[argv.index("--by") + 1]
+                    self.assertNotIn(by, seen)
+                    seen.append(by)
+                    calls = next_calls(*argv, system_wide=False)
+
     def test_a_function_scoped_instruction_view_ends_the_drill(self):
         # Its rows carry the instruction text; NEXT does not go back to --by line (#385).
         calls = next_calls(

@@ -24,6 +24,11 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bench"))
 import bench_timing
 
+# Imported before any test patches sys.modules: a patch drops modules first imported inside it,
+# and DuckDB's native extension cannot be imported a second time in one process.
+import duckdb
+import uprof_cache
+
 CAPTURE = REPO / "trials" / "defect_lab" / "captures" / "windows-x64-llvm-23.1.4" / "chain.timer"
 CACHE_ENV = "UPROF_SESSION_CACHE_ROOT"
 
@@ -118,7 +123,6 @@ class DuckdbProxyTest(unittest.TestCase):
         self.recorder = bench_timing.Recorder(Path(directory.name))
         restore = bench_timing.install_duckdb_proxy(self.recorder)
         self.addCleanup(restore)
-        import duckdb
 
         self.connection = duckdb.connect()
         self.addCleanup(self.connection.close)
@@ -139,7 +143,6 @@ class DuckdbProxyTest(unittest.TestCase):
         self.assertIsNone(record["profile"])
 
     def test_restore_puts_the_original_connect_back(self):
-        import duckdb
 
         proxy = duckdb.connect
         bench_timing.install_duckdb_proxy(self.recorder)()
@@ -251,6 +254,23 @@ class MainTest(unittest.TestCase):
         out = REPO / "bench" / "refused-results.json"
         self.assertEqual(self.main("--out", str(out)), 2)
         self.assertFalse(out.exists())
+
+    def test_a_disabled_session_cache_is_warned_about(self):
+
+        out = self.root / "r.json"
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(uprof_cache, "DISABLE", True),
+            mock.patch.dict(sys.modules, {"uprof": FakeUprof()}),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = bench_timing.main(
+                ["--session", str(self.session), "--out", str(out), "--cases", "profile-process"]
+                + ["--reps", "1", "--instrumented-reps", "0"]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("warning: UPROF_SESSION_CACHE_DISABLE", stderr.getvalue())
 
     def test_results_name_each_profile_case_with_its_cache_mode(self):
         out = self.root / "results" / "r.json"

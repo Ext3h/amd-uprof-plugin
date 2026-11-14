@@ -627,16 +627,22 @@ class CliLog:
         return None, ""
 
 
-def recapture_commands(session: Path) -> tuple[str, str, str | None]:
-    """Cycle and IBS collect commands writing next to session, for a capture that holds nothing
-    to translate, and the data lines for any path that had to become a placeholder."""
+def recapture_commands(session: Path) -> tuple[str, str, str, str | None]:
+    """Cycle, IBS and timer collect commands writing next to session into a directory that does
+    not exist yet, for a capture that holds nothing to translate, and the data lines for any path
+    that had to become a placeholder. The timer capture needs neither IBS nor a PMC counter."""
     script, script_data = uprof_shell.path_arg(
         Path(__file__).resolve().with_name("uprof.py"), "<UPROF_PY>"
     )
-    out_dir, out_data = uprof_shell.path_arg(f"{session}-recapture", "<NEW_OUT_DIR>")
+    new_dir = f"{session}-recapture"
+    number = 2
+    while os.path.lexists(new_dir):
+        new_dir = f"{session}-recapture-{number}"
+        number += 1
+    out_dir, out_data = uprof_shell.path_arg(new_dir, "<NEW_OUT_DIR>")
     cycles = f"python {script} collect --out-dir {out_dir} --seconds 60"
     data = "\n".join(line for line in (script_data, out_data) if line) or None
-    return cycles, cycles + " --event ibs-op", data
+    return cycles, cycles + " --event ibs-op", cycles + " --event timer", data
 
 
 def translate_stopped(
@@ -731,13 +737,13 @@ def _translate_failure_lines(
     )
     log_path, log_text = log.appended()
     if NO_CATEGORY_LOG in log_text:
-        cycles, ibs, data = recapture_commands(session)
+        cycles, ibs, timer, data = recapture_commands(session)
         return [
             (
                 f"{what} failed with {code}{crash}: the session has no translatable sample "
                 "category (per the AMDuProfCLI log), so it holds no samples to translate; "
-                f"remedy: capture again with {cycles} (cycles) or {ibs} (IBS), then translate "
-                "that session"
+                f"remedy: capture again with {cycles} (cycles), {ibs} (IBS) or {timer} "
+                "(timer, system-wide), then translate that session"
             ),
             *(data.split("\n") if data else []),
         ]

@@ -169,7 +169,7 @@ def resolve_image(
             if os.path.isfile(candidate):
                 return candidate, f"found in --image-path directory {directory}"
     # os.path.isfile is False on any OSError, such as a capture path too long for the OS. A
-    # network or device path from the capture is never opened.
+    # network, device or NT-namespace path from the capture is never opened.
     if module_path and not is_remote_path(module_path) and os.path.isfile(module_path):
         return Path(module_path), None
     return None, None
@@ -1380,7 +1380,8 @@ def _symbolize_worker(
                 )
             else:
                 where = (
-                    "is a network or device path the capture names, which is never opened,"
+                    "is a network, device or NT-namespace path the capture names, which is "
+                    "never opened,"
                     if is_remote_path(module_path)
                     else "is not on this host"
                 )

@@ -784,8 +784,8 @@ def _derive_scope_ranges(
             continue
         if util.is_remote_path(path):
             info["absent_by_module"][name] = (
-                f"{util.inline(path)} is a network or device path the capture names, which is "
-                "never opened; pass --image-path with a local copy"
+                f"{util.inline(path)} is a network, device or NT-namespace path the capture "
+                "names, which is never opened; pass --image-path with a local copy"
             )
             continue
         if not os.path.isfile(path):

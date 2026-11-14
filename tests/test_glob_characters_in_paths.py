@@ -19,6 +19,29 @@ from test_context_annotate import DUMP
 from test_dump_parquet_cache import ROWS, TOOLS_DIR, VARIABLES, _dump, _info, _session
 
 
+class LiteralPathTest(unittest.TestCase):
+    def test_the_python_and_sql_twins_escape_alike(self):
+        macro = next(
+            line
+            for line in (TOOLS_DIR / "views.sql").read_text(encoding="utf-8").splitlines()
+            if line.startswith("CREATE OR REPLACE TEMP MACRO literal_path(")
+        )
+        connection = duckdb.connect()
+        self.addCleanup(connection.close)
+        connection.execute(macro)
+        for path, expected in (
+            (r"C:\captures\run", r"C:\captures\run"),
+            (r"C:\capture[1]\d.csv", r"C:\capture[[]1]\d.csv"),
+            ("/tmp/a*b", "/tmp/a[*]b"),
+            ("/tmp/a?b", "/tmp/a[?]b"),
+            ("/tmp/a]b", "/tmp/a]b"),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(uprof_util.literal_path(path), expected)
+                sql = connection.execute("SELECT literal_path(?)", [path]).fetchone()[0]
+                self.assertEqual(sql, expected)
+
+
 class _Siblings(unittest.TestCase):
     """capture[1] with the real data and capture1 beside it with other data."""
 

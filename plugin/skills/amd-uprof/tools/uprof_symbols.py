@@ -585,7 +585,8 @@ def _run_symbolizer(
     """
     if stream is None:
         stream = sys.stderr
-    command = [str(symbolizer), f"--obj={exe}"]
+    # --no-debuginfod: profile never contacts a symbol URL, even when DEBUGINFOD_URLS is set.
+    command = [str(symbolizer), "--no-debuginfod", f"--obj={exe}"]
     if pdb:
         command.append(f"--pdb={pdb}")
     command += [f"--debug-file-directory={directory}" for directory in debug_dirs]

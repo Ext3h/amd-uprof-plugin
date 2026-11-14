@@ -810,7 +810,8 @@ HAVING count(*) > 0;
 
 -- Function shares. A sample is grouped by the derived function range that covers its RVA (from
 -- v_function_ranges) when one exists; the range name, else the uProf Function.name, else a visibly
--- synthetic pdata_0x<start>/sub_0x<start> names the row. Samples outside every derived range fall
+-- synthetic pdata_0x<start>/sub_0x<start> names the row, and a name names it only when the
+-- range's samples agree on it. Samples outside every derived range fall
 -- back to Function.id, so a module whose binary is unavailable keeps its uProf naming. hot_rva is
 -- the highest-sample RVA in the row; attribution 'derived' marks a synthetic binary name, not a
 -- source symbol, and 'shared' a range whose start carries several public names. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
@@ -858,8 +859,14 @@ WITH placed AS (
          max(function_start) AS function_start,
          max(function_end) AS function_end,
          max(function_source) AS function_source,
-         max(range_name) AS range_name,
-         max(db_name) AS db_name,
+         -- A range absorbs code without its own boundary, so a name holds for the row only
+         -- when its samples agree: the range name while they carry at most one uProf name,
+         -- the uProf name when every sample carries the same one. Otherwise the row keeps
+         -- the synthetic range name and is derived.
+         CASE WHEN count(DISTINCT NULLIF(db_name, '')) <= 1 THEN max(range_name) END
+           AS range_name,
+         CASE WHEN count(DISTINCT NULLIF(db_name, '')) = 1 AND bool_and(db_name <> '')
+              THEN max(db_name) ELSE '' END AS db_name,
          CAST(sum(samples) AS BIGINT) AS samples,
          sum(weight) AS weight,
          sum(tag_cycles) AS tag_cycles

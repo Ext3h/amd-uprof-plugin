@@ -9,10 +9,10 @@ FROM (
          samples * TRY_CAST(getvariable('uprof_sample_interval_s') AS DOUBLE) AS cpu_seconds,
          sampled_addresses,
          printf('0x%X', hot_rva) AS hot_rva,
-         hot_samples,
-         share(hot_samples, total_samples) AS hot_sample_share,
+         hot_samples AS hot_rva_samples,
+         share(hot_samples, total_samples) AS hot_rva_share,
          hot_function AS "function", hot_file AS file, hot_line AS line,
-         attribution, symbol_reason, function_source, function_derived,
+         attribution, symbol_reason, function_source, function_derived AS synthetic_name,
          weight, tag_cycles, total_samples, total_weight, total_tag_cycles, sort_key, rn
   FROM v_region_rows
 ) q

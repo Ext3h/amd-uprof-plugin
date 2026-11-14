@@ -81,7 +81,7 @@ symbolize, `process` and `module` do not. Row keys and symbolization mechanics a
 filter is a prerequisite.
 
 **SPEC-54** `--by module` emits the rollup with the system flag, an estimated `cpu_seconds` (omitted with its
-reason when not derivable) and the hot address fields; **SPEC-55** `other_samples` is the rest of the row, and
+reason when not derivable) and the hot address fields; **SPEC-55** `samples_outside_hot_rva` is the rest of the row, and
 module keys are normalized so a basename and a full path classify together.
 
 **SPEC-56** Function is the semantic unit: the tool derives boundaries from the binary, and the consumer must

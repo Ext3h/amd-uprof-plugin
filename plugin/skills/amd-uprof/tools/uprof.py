@@ -159,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     profile.add_argument(
         "--function-start",
         metavar="RVA",
-        help="optional function_start (0x hex or decimal) when --function matches more than one "
+        help="optional range_start (0x hex or decimal) when --function matches more than one "
         "row in the module",
     )
     profile.add_argument(

@@ -4,6 +4,15 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ## Unreleased
 
+### Breaking
+
+- Seven `profile` output columns are renamed in Markdown and JSON, so the name says what the
+  legend had to (issue #389): `function_start` -> `range_start`, `function_end` ->
+  `range_end_exclusive`, `function_derived` -> `synthetic_name`, `function_reason` ->
+  `no_range_reason`, `hot_samples` -> `hot_rva_samples`, `other_samples` ->
+  `samples_outside_hot_rva`, `hot_sample_share` -> `hot_rva_share`. The `legend.columns`,
+  `legend.region` and `legend.function_scope` keys follow; `--function-start` is unchanged.
+
 ### Added
 
 - Timer captures are profiled as an on-CPU time share; unsupported cases fail with a cause

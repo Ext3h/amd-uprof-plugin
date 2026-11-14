@@ -101,7 +101,7 @@ are the uncapped views.
 | Fixture | Capture | Rows (process/function/line/instruction) | Shares | Column set |
 |---|---|---:|---|---|
 | `icf-session` | IBS OP, no tag column | 1/8/9/13 | `sample_share`, `time_share` 1.0 | samples, sample_share, time_share; `TAG_TO_RETIRE_SHARE` names the missing `IbsTagToRetCtr` |
-| `pmc-session` | PMC `CYCLES_NOT_IN_HALT` | 1/6/12/27 | `sample_share` 1.0 | samples, sample_share only; TIME_SHARE/TAG_TO_RETIRE_SHARE "not applicable" |
+| `pmc-session` | PMC `CYCLES_NOT_IN_HALT` | 1/6/12/27 | `sample_share` 1.0 | samples, sample_share only; `COLUMNS` names `time_share` and `tag_to_retire_share` absent with their cause |
 | `ibs-session` | IBS OP, tagged | 57/4249/1606/6915 | all three shares 1.0 | adds `tag_to_retire_share` |
 | `fetch-session` | IBS fetch | 1/8/9/13 | `sample_share`, `time_share` 1.0 | no `tag_to_retire_share`; `TAG_TO_RETIRE_SHARE` says this export has no tag-to-retire counter |
 | `t1-fold-session` | IBS OP, no tag | 1/1/1/1 | `sample_share`, `time_share` 1.0 | line row `shared: fold_alpha \| fold_beta`, attribution `shared` |

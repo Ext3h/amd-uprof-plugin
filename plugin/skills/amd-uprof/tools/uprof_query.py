@@ -1473,13 +1473,13 @@ def _legend(
             "or none (no boundary source; the row falls back to uProf "
             "Function.id or is unresolved)"
         )
-        columns["synthetic_name"] = "sub_<rva>/pdata_<start>, not a source symbol"
+        columns["synthetic_name"] = "true for a sub_<rva>/pdata_<start> name, not a source symbol"
         attribution = _hot_rva_attribution(sampler, "range")
         columns["hot_rva"] = (
             f"highest-sample RVA in the function; ties pick the lowest RVA; {attribution}"
         )
-        columns["samples_outside_hot_rva"] = "not a second hot address"
-        columns["hot_rva_share"] = "of the scoped capture total"
+        columns["samples_outside_hot_rva"] = "the rest of the row, not a second hot address"
+        columns["hot_rva_share"] = "share of the scoped capture total"
     elif args.by in ("line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
         if function_scope is not None:
@@ -1510,13 +1510,12 @@ def _legend(
         columns["hot_rva"] = (
             f"highest-sample RVA in the page; ties pick the lowest RVA; {attribution}"
         )
-        columns["hot_rva_share"] = "of the scoped capture total"
+        columns["hot_rva_share"] = "share of the scoped capture total"
         columns["function_source"] = (
             "hot_rva's boundary source: pdb_public, export, pdata or none (no range covers hot_rva)"
         )
         columns["synthetic_name"] = (
-            "true when the hot function name is synthetic "
-            "(sub_<rva>/pdata_<start>), not a source symbol"
+            "true for a sub_<rva>/pdata_<start> hot-function name, not a source symbol"
         )
         columns["symbol_reason"] = "why function/file/line are NULL for hot_rva"
     absent: dict[str, str] = {}
@@ -1594,8 +1593,8 @@ def _legend(
             columns["hot_rva"] = (
                 f"highest-sample RVA in the module; ties pick the lowest RVA; {attribution}"
             )
-            columns["samples_outside_hot_rva"] = "not a second hot address"
-            columns["hot_rva_share"] = "of the scoped capture total"
+            columns["samples_outside_hot_rva"] = "the rest of the row, not a second hot address"
+            columns["hot_rva_share"] = "share of the scoped capture total"
         if has_system_module:
             columns["isSystemModule"] = _SYSTEM_MODULE_MEANING
         else:

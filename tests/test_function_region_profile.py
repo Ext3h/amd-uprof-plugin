@@ -155,27 +155,27 @@ class FunctionRangeProfileTest(unittest.TestCase):
 
         entry = rows["fixture_entry"]
         self.assertEqual(entry["samples"], 4)
-        self.assertEqual((entry["function_start"], entry["function_end"]), ("0x1000", "0x1030"))
+        self.assertEqual((entry["range_start"], entry["range_end_exclusive"]), ("0x1000", "0x1030"))
         self.assertEqual(entry["function_source"], "export")
-        self.assertFalse(entry["function_derived"])
+        self.assertFalse(entry["synthetic_name"])
         self.assertEqual(entry["attribution"], "unique")
-        self.assertIsNone(entry["function_reason"])
-        self.assertEqual((entry["hot_rva"], entry["hot_samples"]), ("0x101B", 3))
-        self.assertEqual(entry["other_samples"], 1)
-        self.assertAlmostEqual(entry["hot_sample_share"], 3 / 9)
+        self.assertIsNone(entry["no_range_reason"])
+        self.assertEqual((entry["hot_rva"], entry["hot_rva_samples"]), ("0x101B", 3))
+        self.assertEqual(entry["samples_outside_hot_rva"], 1)
+        self.assertAlmostEqual(entry["hot_rva_share"], 3 / 9)
         self.assertFalse(entry["isSystemModule"])
         self.assertIsNotNone(entry["cpu_seconds"])
 
         synthetic = rows["pdata_0x1050"]
         self.assertEqual(synthetic["samples"], 3)
         self.assertEqual(
-            (synthetic["function_start"], synthetic["function_end"]), ("0x1050", "0x1062")
+            (synthetic["range_start"], synthetic["range_end_exclusive"]), ("0x1050", "0x1062")
         )
         self.assertEqual(synthetic["function_source"], "pdata")
-        self.assertTrue(synthetic["function_derived"])
+        self.assertTrue(synthetic["synthetic_name"])
         self.assertEqual(synthetic["attribution"], "derived")
-        self.assertEqual((synthetic["hot_rva"], synthetic["hot_samples"]), ("0x1050", 2))
-        self.assertEqual(synthetic["other_samples"], 1)
+        self.assertEqual((synthetic["hot_rva"], synthetic["hot_rva_samples"]), ("0x1050", 2))
+        self.assertEqual(synthetic["samples_outside_hot_rva"], 1)
 
         self.assertEqual(rows["fixture_second"]["function_source"], "export")
         self.assertEqual(
@@ -202,7 +202,8 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertIn("FUNCTION_RANGES: ", result.stderr)
         self.assertIn("HOT_RVA: ", result.stdout)
         self.assertIn(
-            "other_samples 1 = the function's 4 samples minus hot_samples 3", result.stdout
+            "samples_outside_hot_rva 1 = the function's 4 samples minus hot_rva_samples 3",
+            result.stdout,
         )
         # Every row is resolved, so the drill-down stops here and offers no region call; this
         # unscoped view of a system-wide capture names its process-scoped form and the ranking.
@@ -264,7 +265,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
 
         document = self.document(session)
         self.assertEqual(
-            document["rows"][0]["function_reason"],
+            document["rows"][0]["no_range_reason"],
             "fully named from the uProf DB; function-range derivation skipped",
         )
         self.assertEqual(document["legend"]["function_ranges"]["derived_modules"], 0)
@@ -310,16 +311,16 @@ class FunctionRangeProfileTest(unittest.TestCase):
         )
         first = rows[0]
         self.assertEqual((first["page_end"], first["sampled_addresses"]), ("0x2000", 2))
-        self.assertEqual((first["hot_rva"], first["hot_samples"]), ("0x101B", 2))
+        self.assertEqual((first["hot_rva"], first["hot_rva_samples"]), ("0x101B", 2))
         self.assertEqual(first["function"], "fixture_entry")
         self.assertEqual(first["function_source"], "export")
-        self.assertFalse(first["function_derived"])
+        self.assertFalse(first["synthetic_name"])
         self.assertEqual(first["attribution"], "unique")
 
         outside = rows[2]
         self.assertEqual((outside["sampled_addresses"], outside["hot_rva"]), (1, "0x201B"))
         self.assertEqual(outside["function_source"], "none")
-        self.assertFalse(outside["function_derived"])
+        self.assertFalse(outside["synthetic_name"])
 
     def test_region_legend_states_the_page_meaning_verbatim(self):
         session = Session(self.root, "legend")
@@ -392,9 +393,9 @@ class FunctionRangeProfileTest(unittest.TestCase):
         rows = {row["function"]: row for row in document["rows"]}
         self.assertEqual(rows["ghost_fn"]["attribution"], "unique")
         self.assertEqual(rows["ghost_fn"]["function_source"], "none")
-        self.assertIn("no boundary source", rows["ghost_fn"]["function_reason"])
+        self.assertIn("no boundary source", rows["ghost_fn"]["no_range_reason"])
         self.assertEqual(rows["<unresolved>"]["attribution"], "unresolved")
-        self.assertIsNone(rows["<unresolved>"]["function_start"])
+        self.assertIsNone(rows["<unresolved>"]["range_start"])
         absent = document["legend"]["function_ranges"]["absent_by_module"]
         self.assertIn(module_key(missing), absent)
         self.assertIn("not on this host", absent[module_key(missing)])

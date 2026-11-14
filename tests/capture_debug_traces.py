@@ -385,14 +385,14 @@ def profile_section(case: Case, by: str) -> list[str]:
             )
     else:
         rows = sorted(
-            rows, key=lambda row: (row.get("function") or "", row.get("function_start") or "")
+            rows, key=lambda row: (row.get("function") or "", row.get("range_start") or "")
         )
         for row in rows:
             facts.append(
                 f"function module={Path(row.get('module') or '').name}"
                 f" function={row.get('function') or '<no symbol>'}"
-                f" start={row.get('function_start') or 'none'}"
-                f" end={row.get('function_end') or 'none'}"
+                f" start={row.get('range_start') or 'none'}"
+                f" end={row.get('range_end_exclusive') or 'none'}"
                 f" source={row.get('function_source') or 'none'}"
                 f" samples={row.get('samples', 0)}"
                 f" attribution={row.get('attribution') or 'unknown'}"

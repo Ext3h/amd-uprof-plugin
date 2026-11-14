@@ -74,7 +74,7 @@ class AmbiguousModuleAttributionTest(unittest.TestCase):
         rows = self.rows(self.session((0x1111, 0x2222)))
         self.assertFalse(NAMES & {row["function"] for row in rows}, rows)
         self.assertEqual([row["attribution"] for row in rows], ["unresolved"], rows)
-        self.assertIn("more than one image version", rows[0]["function_reason"])
+        self.assertIn("more than one image version", rows[0]["no_range_reason"])
         self.assertEqual(rows[0]["samples"], 4)
 
     def test_one_version_in_two_rows_keeps_its_names(self):

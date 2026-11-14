@@ -135,7 +135,7 @@ below the hot address, with no backward decode. **SPEC-90** Anything that preven
 with a stable reason and never guesses; **SPEC-91** an unverified build is emitted unverified. **SPEC-92** The row cap
 counts emitted slots in the mode's primary order; **SPEC-93** an omitted row consumes a slot, and the remainder
 row carries none. **SPEC-94** Windows modules only. **SPEC-87** The decoded instruction at the row's RVA is a
-row column in Markdown and JSON, empty where the row's context omits; the context block is JSON-only.
+row column in Markdown and JSON, empty where the row's context omits; **SPEC-130** the context block is JSON-only.
 
 ## 4. Columns and capture modes
 

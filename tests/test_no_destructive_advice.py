@@ -14,6 +14,9 @@ import re
 import unittest
 from pathlib import Path
 
+import debug_fixtures as F
+import uprof_query
+import uprof_util
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL = ROOT / "plugin" / "skills" / "amd-uprof"
@@ -51,9 +54,10 @@ def _python_texts(path: Path) -> list[tuple[int, str]]:
                 part.value if isinstance(part, ast.Constant) else "{}" for part in node.values
             )
             texts.append((node.lineno, text))
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if id(node) not in skip:
-                texts.append((node.lineno, node.value))
+        elif (
+            isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip
+        ):
+            texts.append((node.lineno, node.value))
     return texts
 
 
@@ -106,6 +110,35 @@ class NoDestructiveAdviceTest(unittest.TestCase):
 
     def test_no_shipped_text_instructs_a_delete_or_remove(self):
         self.assertEqual(destructive_instructions(), [])
+
+
+class DisagreeingDumpTest(unittest.TestCase):
+    """A dump that disagrees with session.uprof is refused with a fresh dump as the alternative."""
+
+    class _Connection:
+        def sql(self, _text):
+            import duckdb
+
+            raise duckdb.InvalidInputException(
+                "Invalid Input Error: dump d.csv disagrees with session.uprof: 2 thread(s) hold "
+                "samples outside the recorded span; the dump is possibly incompatible with this "
+                "session"
+            )
+
+    @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip())
+    def test_the_refusal_offers_a_fresh_dump_beside_a_new_translation(self):
+        session = Path(__file__).resolve().parent / "capture"
+        with self.assertRaises(uprof_util.LinesError) as raised:
+            uprof_query._dump_sanity(self._Connection(), True, False, True, session)
+        lines = str(raised.exception).splitlines()
+        self.assertIn("possibly incompatible with this session", lines[0])
+        self.assertEqual(len(lines), 2, lines)
+        self.assertRegex(
+            lines[1],
+            r"^ALTERNATIVE: fresh dump: python \S+ translate --session \S+ --out-dir "
+            r"<NEW_TR_DIR> --ascii ibsop-event-dump; python \S+ profile --session "
+            r"<NEW_TR_DIR> --by process$",
+        )
 
 
 if __name__ == "__main__":

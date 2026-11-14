@@ -982,8 +982,56 @@ def symbolize_module(
     caller: a file is an explicit symbol/debug file; a directory is a search root and is also
     passed to llvm-symbolizer as a debug-file search directory. When no PDB is accepted the
     symbolizer still runs once, so its JSON Error object names the missing file instead of a
-    synthetic "GUID/age mismatch".
+    synthetic "GUID/age mismatch". A raised UprofError carries the evidence gathered so far as
+    its evidence attribute (see failure_evidence).
     """
+    evidence = ModuleEvidence(module_name or exe, exe, found_debug_info=found_debug_info)
+    try:
+        return _symbolize_module(
+            exe,
+            rva_file,
+            out_dir,
+            stream,
+            evidence,
+            symbol_files,
+            symbol_dirs,
+            symbol_stores,
+        )
+    except UprofError as exc:
+        exc.evidence = evidence
+        raise
+
+
+def failure_evidence(
+    exc: UprofError, module_name: str, module_path: str, found_debug_info: bool | None
+) -> ModuleEvidence:
+    """The evidence for a module whose symbolization raised exc.
+
+    The GUID, age and probes read before the failure are kept, so the warning does not call a
+    known image identity unknown.
+    """
+    evidence = getattr(exc, "evidence", None)
+    if not isinstance(evidence, ModuleEvidence):
+        evidence = ModuleEvidence(module_name, module_path, found_debug_info=found_debug_info)
+    evidence.outcome = "failed"
+    evidence.note = str(exc)
+    # The failure is the cause now; a remedy for an earlier finding would mislead.
+    evidence.remedy = None
+    evidence.toolchain = isinstance(exc, SymbolizerUnsupported)
+    return evidence
+
+
+def _symbolize_module(
+    exe: str,
+    rva_file: str | Path,
+    out_dir: str | Path,
+    stream: TextIO,
+    evidence: ModuleEvidence,
+    symbol_files: Iterable[str | Path],
+    symbol_dirs: Iterable[str | Path],
+    symbol_stores: Iterable[str | Path],
+) -> SymbolizedModule:
+    """symbolize_module's body; it fills evidence as it goes."""
     exe_input = exe  # llvm-symbolizer records this spelling as ModuleName
     exe_path = require_file(exe, "module")
     rva_path = require_file(rva_file, "RVA file")
@@ -992,7 +1040,7 @@ def symbolize_module(
     jsonl_file = out_path / "symbols.jsonl"
     parquet_file = out_path / "symbols.parquet"
     symbolizer_path = require_symbolizer()
-    evidence = ModuleEvidence(module_name or exe, exe, found_debug_info=found_debug_info)
+    found_debug_info = evidence.found_debug_info
     pdb: Path | None = None
     pdb_files = [Path(path) for path in symbol_files if Path(path).suffix.lower() == ".pdb"]
     search_dirs = [Path(path) for path in symbol_dirs]
@@ -1468,13 +1516,8 @@ def _symbolize_worker(
                 symbol_stores=symbol_stores,
             )
         except UprofError as exc:
-            evidence = ModuleEvidence(
-                module_name,
-                module_path,
-                found_debug_info=(debug_info or {}).get(module_name),
-                outcome="failed",
-                note=str(exc),
-                toolchain=isinstance(exc, SymbolizerUnsupported),
+            evidence = failure_evidence(
+                exc, module_name, module_path, (debug_info or {}).get(module_name)
             )
             _evidence_line(evidence, output)
             return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence)

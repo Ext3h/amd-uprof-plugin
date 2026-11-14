@@ -12,7 +12,7 @@ from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-import uprof_cache
+import uprof_dump
 import uprof_native
 import uprof_symbols
 import uprof_util
@@ -26,6 +26,7 @@ class RedactCredentialsTest(unittest.TestCase):
             "https://msdl.microsoft.com/download/symbols",
             "srv*C:\\cache*https://msdl.microsoft.com/download/symbols",
             "user@example.com wrote C:\\a@b\\x.pdb",
+            "see https://example.com/a@b",
         ):
             with self.subTest(text=text):
                 self.assertEqual(uprof_util.redact_credentials(text), text)
@@ -42,9 +43,11 @@ class RedactCredentialsTest(unittest.TestCase):
             "srv*C:\\cache*https://***@symbols.corp.net/download",
         )
 
-    def test_cache_uses_the_shared_redaction(self):
-        self.assertFalse(hasattr(uprof_cache, "_CREDENTIALS"))
-        self.assertFalse(hasattr(uprof_cache.SessionCache, "_redact"))
+    def test_a_raw_at_in_the_password_is_redacted_too(self):
+        self.assertEqual(
+            uprof_util.redact_credentials("https://user:p@ss@host.example/x"),
+            "https://***@host.example/x",
+        )
 
 
 class TranslateRedactTest(unittest.TestCase):
@@ -113,6 +116,40 @@ class TranslateRedactTest(unittest.TestCase):
         text = str(error)
         self.assert_clean(text)
         self.assertIn("https://***@a.example", text)
+
+
+class DumpRedactTest(unittest.TestCase):
+    def test_a_missing_or_empty_dump_error_carries_no_credentials(self):
+        echoed = "fetching https://myuser:mypass@a.example/x.pdb"
+        for empty in (False, True):
+            with self.subTest(empty=empty), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                session = root / "session"
+                session.mkdir()
+                (session / "session.uprof").write_text("{}", encoding="utf-8")
+
+                def fake_run(command, empty_dump=empty, **_kwargs):
+                    if empty_dump:
+                        staging = Path(command[command.index("-i") + 1])
+                        (staging / uprof_util.DUMP_FILENAMES["ibsop-event-dump"]).touch()
+                    return subprocess.CompletedProcess(command, 0, echoed, echoed)
+
+                with ExitStack() as stack:
+                    stack.enter_context(
+                        mock.patch.object(
+                            uprof_dump, "require_uprof", return_value=Path("AMDuProfCLI")
+                        )
+                    )
+                    stack.enter_context(mock.patch.object(uprof_dump, "run", side_effect=fake_run))
+                    stack.enter_context(redirect_stderr(io.StringIO()))
+                    with self.assertRaises(uprof_util.UprofError) as cm:
+                        uprof_dump._make_dump(
+                            session, "ibsop-event-dump", None, root / "cache" / "dump", None
+                        )
+                text = str(cm.exception)
+                for secret in SECRETS:
+                    self.assertNotIn(secret, text)
+                self.assertIn("https://***@a.example/x.pdb", text)
 
 
 class EvidenceRedactTest(unittest.TestCase):

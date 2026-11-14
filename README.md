@@ -72,8 +72,9 @@ The skill runs `tools/uprof.py`:
 | `schema` | print the live DuckDB schema for drift checks |
 | `tools` | print resolved tool paths and versions |
 
-`SKILL.md` in `plugin/skills/amd-uprof/` is the entry point and the full contract; `docs/`
-carries the specification, derivation notes and validation records (not installed).
+`SKILL.md` in `plugin/skills/amd-uprof/` is the entry point; the tool output and `--help`
+state the rest. `docs/` carries the specification, derivation notes and validation records
+(not installed).
 
 ## Elevation
 

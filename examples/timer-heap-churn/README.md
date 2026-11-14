@@ -40,8 +40,8 @@ counted.
 Step 1 is the first call SKILL.md names for "where CPU time went, mine versus the rest"; the
 capture is attached, so there is no process ranking. Step 2 is step 1's `NEXT` call as printed;
 its rows are already named from the capture's database. Step 3 is asked for by the prompt
-(source lines): the function view prints no `NEXT`, so the call comes from the SKILL.md
-template, with `--function`/`--module` taken from the function row and `--image-path` from the
+(source lines): the function view prints no `NEXT`, so the call comes from SKILL.md's drill
+row, with `--function`/`--module` taken from the function row and `--image-path` from the
 prompt. No `--by process`, `--by region`, `--by instruction`, `--json` re-run, `tools` or SQL is
 needed.
 

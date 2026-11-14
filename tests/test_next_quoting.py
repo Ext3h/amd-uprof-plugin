@@ -151,7 +151,8 @@ class RealShellNextTest(unittest.TestCase):
             "ns::f;g",
             "--module",
             "a&b.dll",
-            "--json",
+            "--top",
+            "1",
         ]
         return line, expected
 

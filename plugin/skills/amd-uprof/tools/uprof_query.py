@@ -100,13 +100,13 @@ def _check_args(args: argparse.Namespace) -> None:
 def _require_llvm(args: argparse.Namespace) -> None:
     """Stop before any work when a found LLVM tool this profile runs is below its minimum.
 
-    Symbolizing modes (and a --function scope) run the symbolizer; instruction JSON also builds
-    contexts with llvm-readobj and llvm-objdump. Process and module rows run no LLVM tool.
+    Symbolizing modes (and a --function scope) run the symbolizer; an instruction view also
+    decodes its rows with llvm-readobj and llvm-objdump. Process and module rows run no LLVM tool.
     """
     names: list[str] = []
     if args.by in SYMBOLIZED or getattr(args, "function", None) is not None:
         names += uprof_native.SYMBOLIZE_TOOLS
-    if args.by == "instruction" and getattr(args, "json", False):
+    if args.by == "instruction":
         names += uprof_native.CONTEXT_TOOLS
     if names:
         uprof_native.require_llvm(dict.fromkeys(names))
@@ -1133,9 +1133,9 @@ def _next_calls(
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
     when function rows still carry unresolved samples; instruction context is a separate request,
-    not a default drill-down. A function-scoped instruction or line view was asked for, so it
-    offers the sibling view with the same --function/--module scope; the unscoped views keep
-    their old stops. An unscoped module, function or region rollup of a system-wide capture mixes
+    not a default drill-down. A line view offers the instruction view with the same
+    --function/--module scope and --top 1; the instruction rows carry the instruction text, so
+    the instruction view ends the drill. An unscoped module, function or region rollup of a system-wide capture mixes
     every process (see below); line and instruction views are asked-for drill-downs and keep their
     calls. The first call itself is chosen by the question. The
     system-wide process ranking scopes its module call to --pid <PID>: which process to drill into
@@ -1162,9 +1162,9 @@ def _next_calls(
     if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
         calls.append(_profile_command(args, "region", data=data))
     if args.by == "line":
-        calls.append(_profile_command(args, "instruction", json_mode=True, data=data))
-    if args.by == "instruction" and getattr(args, "function", None):
-        calls.append(_profile_command(args, "line", data=data))
+        one_row = argparse.Namespace(**vars(args))
+        one_row.top = "1"
+        calls.append(_profile_command(one_row, "instruction", data=data))
     return calls
 
 
@@ -1482,6 +1482,8 @@ def _legend(
         columns["hot_rva_share"] = "share of the scoped capture total"
     elif args.by in ("line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
+        if args.by == "instruction":
+            columns["instruction"] = "llvm-objdump's decode at rva; NULL where its context omits"
         if function_scope is not None:
             columns["parent_sample_share"] = (
                 "row samples as a share of the selected parent function's samples, not the capture"
@@ -1842,6 +1844,8 @@ def _legend_fields(
     parts = []
     if "attribution" in legend["columns"]:
         parts.append(f"attribution = {legend['columns']['attribution']}")
+    if "instruction" in legend["columns"]:
+        parts.append(f"instruction = {legend['columns']['instruction']}")
     sample = legend["columns"]["sample_share"]
     if sample.rstrip(")") in sampler.metric:
         sample = "the METRIC sample share"
@@ -2734,8 +2738,12 @@ def _write_profile(
     out_path: Path | None,
     legend: dict[str, object] | None = None,
 ) -> None:
-    """Render the profile; instruction JSON fetches its SELECT once and joins contexts to it."""
-    if args.json and args.by == "instruction":
+    """Render the profile; an instruction view fetches its SELECT once and decodes its rows.
+
+    Each instruction row gains the instruction column, the decoded instruction at its RVA (NULL
+    where its context omits); the context block itself goes to JSON only.
+    """
+    if args.by == "instruction":
         columns, types, rows = uprof_db.fetch_typed(
             connection, TOOLS_DIR / "profile-instruction.sql"
         )
@@ -2764,6 +2772,15 @@ def _write_profile(
         summary = uprof_context.context_omission_summary(contexts)
         if summary:
             print(f"CONTEXT: {summary}", file=sys.stderr)
+        rva_at = columns.index("rva") + 1
+        columns = [*columns[:rva_at], "instruction", *columns[rva_at:]]
+        types = [*types[:rva_at], "VARCHAR", *types[rva_at:]]
+        rows = [
+            (*row[:rva_at], uprof_context.row_instruction(context, row[rva_at - 1]), *row[rva_at:])
+            for row, context in zip(rows, contexts)
+        ]
+        if not args.json:
+            contexts, help_text = None, None
         uprof_db.output_rows(
             columns, types, rows, fields, args.json, out_path, legend, contexts, help_text
         )

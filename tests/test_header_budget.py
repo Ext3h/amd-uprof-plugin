@@ -70,7 +70,7 @@ CEILINGS = {
         "FILTER": 29,
         "KERNEL_COVERAGE": 38,
         "METRIC": 41,
-        "NEXT": 12,
+        "NEXT": 13,
         "PARENT": 55,
         "READ": 51,
         "SANITY": 24,
@@ -83,7 +83,7 @@ CEILINGS = {
     "instruction": {
         "ACHIEVED": 41,
         "AGREEMENT": 49,
-        "COLUMNS": 58,
+        "COLUMNS": 69,
         "DUMP": 7,
         "FILTER": 29,
         "KERNEL_COVERAGE": 38,

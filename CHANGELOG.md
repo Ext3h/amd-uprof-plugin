@@ -11,7 +11,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   `range_end_exclusive`, `function_derived` -> `synthetic_name`, `function_reason` ->
   `no_range_reason`, `hot_samples` -> `hot_rva_samples`, `other_samples` ->
   `samples_outside_hot_rva`, `hot_sample_share` -> `hot_rva_share`. The `legend.columns`,
-  `legend.region` and `legend.function_scope` keys follow; `--function-start` is unchanged.
+  `legend.region` and `legend.function_scope` keys follow; `legend.columns` drops the entries
+  the names now state (`range_end_exclusive`, `hot_rva_samples`, `no_range_reason`).
+  `--function-start` is unchanged.
 
 ### Added
 

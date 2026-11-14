@@ -75,7 +75,7 @@ class TranslateFailureTest(unittest.TestCase):
         self.assertNotIn("\n", message)
         for part in ("no translatable sample category", "0xC0000005"):
             self.assertIn(part, message)
-        # Both alternatives are complete commands: no placeholder, an absolute script path and
+        # All alternatives are complete commands: no placeholder, an absolute script path and
         # an output directory derived from the session.
         self.assertNotIn("<", message)
         self.assertNotIn(">", message)
@@ -87,6 +87,7 @@ class TranslateFailureTest(unittest.TestCase):
         )
         self.assertIn(cycles, message)
         self.assertIn(cycles + " --event ibs-op", message)
+        self.assertIn(cycles + " --event timer", message)
 
     def test_an_earlier_run_in_the_log_is_not_blamed(self):
         self.log.write_text(NO_CATEGORY_LOG, encoding="utf-8")

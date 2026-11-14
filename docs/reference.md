@@ -22,7 +22,7 @@ optional `DB`, `TIME_SHARE`, `TAG_TO_RETIRE_SHARE`, `WEIGHTS`, optional `SANITY`
 
 ## session.uprof
 
-UTF-8 JSON (a BOM is tolerated). The keys the tools read:
+UTF-8 JSON (a BOM is tolerated). A file that is not readable JSON is read as empty, so the metric basis is reported as not established. JSON that is not an object, a section of the wrong type, or a non-integer ID or start time is an error (exit 2); an absent or null section is empty. Integers may be JSON numbers, decimal text or `0x` hex text. The keys the tools read:
 
 | Key | Used for |
 |---|---|

@@ -20,12 +20,16 @@ import uprof_util
 REMOTE = (
     r"\\192.0.2.1\share\app.exe",
     "//192.0.2.1/share/app.exe",
+    r"/\192.0.2.1\share\app.exe",
+    r"\/192.0.2.1/share/app.exe",
     r"\\?\UNC\192.0.2.1\share\app.exe",
     r"\\.\PhysicalDrive0",
     r"\??\UNC\192.0.2.1\share\app.exe",
     r"\GLOBAL??\UNC\192.0.2.1\share\app.exe",
     r"\Device\Mup\192.0.2.1\share\app.exe",
     r"\??\C:\app\app.exe",
+    r"\??\unc\192.0.2.1\share\app.exe",
+    "/??/UNC/192.0.2.1/share/app.exe",
 )
 
 # Prefixes that Win32 resolves in the NT object namespace, where a path may name a share.

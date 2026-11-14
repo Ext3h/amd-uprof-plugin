@@ -425,6 +425,27 @@ class InstructionProfileTest(unittest.TestCase):
         self.assertIsNone(call[7])
         self.assertIsNone(call[8])
 
+    def test_a_markdown_cell_is_empty_where_the_context_omits(self):
+        # SPEC-87: empty in Markdown; the JSON row keeps null.
+        columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
+        for json_mode, expected in ((False, ""), (True, None)):
+            args = argparse.Namespace(json=json_mode, by="instruction")
+            with (
+                mock.patch.object(
+                    uprof_query.uprof_db, "fetch_typed", return_value=(columns, types, rows)
+                ),
+                mock.patch.object(
+                    uprof_query.uprof_context,
+                    "instruction_contexts",
+                    return_value=[{"omitted": True, "reason": "row_cap"}],
+                ),
+                mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered,
+                mock.patch.object(uprof_query.uprof_cache, "ambiguous_modules", return_value=[]),
+            ):
+                uprof_query._write_profile(None, args, [], None)
+            with self.subTest(json=json_mode):
+                self.assertEqual(rendered.call_args.args[2], [("a", "0x1", expected)])
+
 
 class ContextHelpTest(unittest.TestCase):
     LEGEND: ClassVar[dict] = {

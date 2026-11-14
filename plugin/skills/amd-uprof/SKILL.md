@@ -16,7 +16,7 @@ Run every command as `python <SKILL_DIR>/tools/uprof.py <command> ...`; `<SKILL_
 | hottest functions, missing symbols | `function` |
 | where CPU time went, mine versus the rest | `module` |
 | which process, a system-wide capture, kernel time | `process` |
-| source lines; memory-bound, spinning or disassembly | `function`, then only the view asked for: `line` or `instruction --json --top 1`, with `--function`/`--module` from its row |
+| source lines; memory-bound, spinning or disassembly | `function`, then the view asked for: `--by line` or `--by instruction --top 1`, with `--function`/`--module` from its row |
 
 Options: `--symbol-path <file|dir>` when the user names symbols, `--image-path <file|dir>` for a moved module image, `--pid N`, `--time-filter T1:T2` (seconds; `anchor --session S --qpc TICKS` converts a QPC marker).
 

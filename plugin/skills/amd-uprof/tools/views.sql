@@ -39,6 +39,10 @@
 -- Macros are TEMP because cpu.db is opened read-only.
 CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/');
 
+-- read_csv, read_json and glob take a pattern: '[', '*' and '?' in a capture path (capture[1])
+-- would match a sibling (capture1). A one-character class matches each of them literally.
+CREATE OR REPLACE TEMP MACRO literal_path(p) AS regexp_replace(p, '([\[*?])', '[\1]', 'g');
+
 -- --image selects a process when its pattern matches the image's file name or its full path:
 -- uProf stores Process.name as the full image path, and callers name the file.
 CREATE OR REPLACE TEMP MACRO image_matches(name, pattern) AS
@@ -144,7 +148,7 @@ SET VARIABLE schema_check_pid = CASE WHEN NOT getvariable('has_dump') THEN (
 
 SET VARIABLE dump_guard = CASE
   WHEN NOT getvariable('has_dump') THEN 1
-  WHEN NOT (SELECT count(*) > 0 FROM glob(getvariable('uprof_ibs_dump')))
+  WHEN NOT (SELECT count(*) > 0 FROM glob(literal_path(getvariable('uprof_ibs_dump'))))
     THEN error('IBS ASCII dump not found at ' || getvariable('uprof_ibs_dump') || '; generate it with AMDuProfCLI translate --ascii ibsop-event-dump on a COPY of the session')
   WHEN TRY_CAST(NULLIF(getvariable('uprof_time_end'), '') AS BIGINT)
        <= TRY_CAST(COALESCE(NULLIF(getvariable('uprof_time_start'), ''), '0') AS BIGINT)
@@ -166,7 +170,7 @@ SET VARIABLE dump_columns_guard = (
                     AS required(name)
                WHERE NOT EXISTS (
                  SELECT 1
-                 FROM (DESCRIBE SELECT * FROM read_csv(getvariable('uprof_ibs_dump'),
+                 FROM (DESCRIBE SELECT * FROM read_csv(literal_path(getvariable('uprof_ibs_dump')),
                                                       header = true, all_varchar = true)) AS d
                  WHERE d.column_name = required.name)$cols$
     ELSE 'SELECT NULL::VARCHAR AS missing_name WHERE false' END)
@@ -177,7 +181,7 @@ SET VARIABLE dump_columns_guard = (
 SET VARIABLE has_tag = (
   SELECT has_tag FROM query(CASE WHEN getvariable('has_dump')
     THEN $tag$SELECT count(*) > 0 AS has_tag
-              FROM (DESCRIBE SELECT * FROM read_csv(getvariable('uprof_ibs_dump'),
+              FROM (DESCRIBE SELECT * FROM read_csv(literal_path(getvariable('uprof_ibs_dump')),
                                                     header = true, all_varchar = true))
               WHERE column_name = 'IbsTagToRetCtr'$tag$
     ELSE 'SELECT false AS has_tag' END)
@@ -217,7 +221,7 @@ SELECT * FROM query(CASE
     THEN $parquet$SELECT * FROM read_parquet(getvariable('uprof_ibs_parquet'))$parquet$
   -- The sample only infers types and every column is read as text, so sample_size = 1 reads the
   -- header and stops instead of scanning data rows at bind time.
-  ELSE $csv$SELECT * FROM read_csv(getvariable('uprof_ibs_dump'),
+  ELSE $csv$SELECT * FROM read_csv(literal_path(getvariable('uprof_ibs_dump')),
                                    header = true, all_varchar = true,
                                    sample_size = 1)$csv$
 END);
@@ -278,7 +282,7 @@ WITH meta AS (
                       json_extract_string(collection, '$.schedule.elapsed') AS elapsed_ms,
                       json_extract_string(collection, '$.schedule.profileDuration') AS duration_s,
                       lower(json_extract_string(collection, '$.target.systemWide')) AS system_wide
-               FROM read_json(getvariable('uprof_session_meta'),
+               FROM read_json(literal_path(getvariable('uprof_session_meta')),
                               columns = {'translateCommand': 'VARCHAR', 'collection': 'JSON'})$meta$
     ELSE $meta$SELECT NULL::VARCHAR AS translateCommand, NULL::VARCHAR AS elapsed_ms,
                       NULL::VARCHAR AS duration_s, NULL::VARCHAR AS system_wide$meta$ END)

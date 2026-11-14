@@ -42,6 +42,7 @@ from uprof_util import (
     capture_identity,
     check_session_meta_size,
     copy_session,
+    literal_path,
     read_text,
     same_capture,
     sha256_file,
@@ -360,7 +361,7 @@ def _build_samples(
             connection.execute(
                 f"COPY (SELECT {columns} FROM read_csv(?, header = true, all_varchar = true)) "
                 "TO ? (FORMAT PARQUET, COMPRESSION zstd)",
-                [str(source), str(staging)],
+                [literal_path(source), str(staging)],
             )
             rows = connection.execute(
                 "SELECT count(*) FROM read_parquet(?)", [str(staging)]
@@ -373,7 +374,7 @@ def _build_samples(
                 try:
                     described = connection.execute(
                         "DESCRIBE SELECT * FROM read_csv(?, header = true, all_varchar = true)",
-                        [str(source)],
+                        [literal_path(source)],
                     ).fetchall()
                     available = {str(row[0]) for row in described}
                     missing = [name for name in SAMPLE_COLUMNS if name not in available]

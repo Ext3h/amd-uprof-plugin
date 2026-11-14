@@ -268,8 +268,13 @@ def search_identity(
 
 
 def _disk_identity(paths: list[str]) -> list[list[object]]:
+    """[path, exists, size, mtime_ns] per capture module path; a remote path is never statted
+    and records None for all three."""
     result: list[list[object]] = []
     for path in sorted(set(paths)):
+        if is_remote_path(path):
+            result.append([path, None, None, None])
+            continue
         try:
             stat = Path(path).stat()
             result.append([path, True, stat.st_size, stat.st_mtime_ns])

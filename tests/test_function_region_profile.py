@@ -205,9 +205,10 @@ class FunctionRangeProfileTest(unittest.TestCase):
             "other_samples 1 = the function's 4 samples minus hot_samples 3", result.stdout
         )
         # Every row is resolved, so the drill-down stops here and offers no region call; this
-        # unscoped view of a system-wide capture names only the process ranking.
+        # unscoped view of a system-wide capture names its process-scoped form and the ranking.
         next_lines = [line for line in result.stdout.splitlines() if line.startswith("NEXT: ")]
         self.assertEqual(len(next_lines), 1)
+        self.assertIn("--by function --image %<EXE>", next_lines[0])
         self.assertIn("--by process", next_lines[0])
         self.assertNotIn("--by region", next_lines[0])
 

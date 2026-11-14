@@ -68,7 +68,7 @@ CASE_BY_SCOPE = {
     "profile-region": "region",
     "profile-instruction": "instruction",
 }
-DEFAULT_CASES = "profile-process,profile-module,profile-function,profile-line"
+DEFAULT_CASES = ",".join(PROFILE_CASES)
 TRANSLATE_CASES = ("translate", "translate-ascii")
 ALL_CASES = PROFILE_CASES + TRANSLATE_CASES + ("collect",)
 PROCESS_SCAN_FUNCTIONS = ("READ_CSV", "READ_CSV_AUTO")

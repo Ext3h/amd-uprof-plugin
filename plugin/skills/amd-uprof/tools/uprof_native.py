@@ -640,20 +640,42 @@ def recapture_commands(session: Path) -> tuple[str, str, str | None]:
 
 
 def translate_stopped(
-    session: Path, out: Path, servers: Sequence[str], stalled: bool
+    session: Path,
+    out: Path,
+    servers: Sequence[str],
+    stalled: bool,
+    *,
+    cache: Path | str | None = None,
+    symbol_paths: Sequence[Path] = (),
+    time_filter: str | None = None,
+    ascii_kind: str | None = None,
 ) -> LinesError:
     """The cause and a runnable alternative for a translate stopped by its stall or ceiling bound.
 
     AMDuProfCLI fetches symbols during translate from the servers it is given and from the
     shares in the caller's _NT_SYMBOL_PATH, and a slow or unreachable one stalls it with no
     output. profile symbolizes from local stores, so a translate without network symbol sources
-    loses no row the skill reports.
+    loses no row the skill reports. The alternative repeats the stopped call without its symbol
+    servers; an unset _NT_SYMBOL_PATH would add the Microsoft server again, so its label names the
+    local symbol cache as the value to set first.
     """
     script, script_data = uprof_shell.path_arg(
         Path(__file__).resolve().with_name("uprof.py"), "<UPROF_PY>"
     )
     session_arg, session_data = uprof_shell.path_arg(session, "<SESSION_DIR>")
     out_arg, out_data = uprof_shell.path_arg(out, "<OUT_DIR>")
+    cache_arg, cache_data = uprof_shell.path_arg(cache or symbol_cache_dir(), "<SYMBOL_CACHE>")
+    data = [script_data, session_data, out_data, cache_data]
+    options = ""
+    for index, path in enumerate(symbol_paths, 1):
+        path_arg, path_data = uprof_shell.path_arg(path, f"<SYMBOL_PATH_{index}>")
+        options += f" --symbol-path {path_arg}"
+        data.append(path_data)
+    options += f" --symbol-cache {cache_arg}"
+    if time_filter:
+        options += f" --time-filter {uprof_shell.quote(time_filter)}"
+    if ascii_kind:
+        options += f" --ascii {ascii_kind}"
     sources = " | ".join(map(redact_credentials, servers)) or "none passed"
     stop = (
         f"translate made no progress for {TRANSLATE_STALL // 60} min (AMDuProfCLI's log, "
@@ -668,15 +690,12 @@ def translate_stopped(
             f"{sources}; and the shares in _NT_SYMBOL_PATH)"
         ),
         (
-            f"ALTERNATIVE: local symbols only: python {script} translate --session {session_arg} "
-            f"--out-dir {out_arg} --force"
-        ),
-        (
-            "run it with _NT_SYMBOL_PATH set to a local folder only: a set _NT_SYMBOL_PATH "
-            "defines the symbol servers exactly, and an unset one uses the Microsoft server"
+            f"ALTERNATIVE: local symbols only, with _NT_SYMBOL_PATH={cache_arg} set first: "
+            f"python {script} translate --session {session_arg} --out-dir {out_arg}{options} "
+            "--force"
         ),
     ]
-    lines += [data for data in (script_data, session_data, out_data) if data]
+    lines += [line for line in data if line]
     return LinesError(lines)
 
 
@@ -1241,10 +1260,17 @@ def translate(
         completed = run_watched(
             command, progress=progress, stall_s=TRANSLATE_STALL, ceiling_s=TRANSLATE_CEILING
         )
-    except ToolStalled:
-        raise translate_stopped(session, out, servers, stalled=True) from None
-    except ToolTimeout:
-        raise translate_stopped(session, out, servers, stalled=False) from None
+    except (ToolStalled, ToolTimeout) as exc:
+        raise translate_stopped(
+            session,
+            out,
+            servers,
+            stalled=isinstance(exc, ToolStalled),
+            cache=cache,
+            symbol_paths=[absolute(path) for path in symbol_paths or ()],
+            time_filter=time_filter,
+            ascii_kind=ascii_kind,
+        ) from None
     print_output(completed)
     if completed.returncode != 0:
         raise translate_failure("translate", completed, log, session)

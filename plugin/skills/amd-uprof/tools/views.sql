@@ -1301,7 +1301,10 @@ WITH paged AS (
          CASE WHEN NOT folded AND COALESCE(sym_function, '') = ''
                    AND hot_function_start IS NULL
               THEN 'no symbolizer frame and no derived function range cover hot_rva; the page is the coarse bucket'
-              WHEN COALESCE(sym_function, '') = '' AND COALESCE(hot_file, '') = ''
+              WHEN folded AND COALESCE(sym_function, '') = ''
+              THEN 'no source line: hot_rva is in a folded body that several public names share, and there is no symbolizer file/line'
+              WHEN COALESCE(sym_function, '') = '' AND hot_function_start IS NOT NULL
+                   AND COALESCE(hot_file, '') = ''
               THEN 'no source line: the derived function range names hot_rva but there is no symbolizer file/line'
               WHEN COALESCE(sym_function, '') <> '' AND COALESCE(hot_file, '') = ''
               THEN 'no source line: the symbolizer named hot_rva''s function but returned no file/line'

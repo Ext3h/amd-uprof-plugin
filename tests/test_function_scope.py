@@ -76,7 +76,7 @@ class FunctionScopeProfileTest(unittest.TestCase):
         scope = document["legend"]["function_scope"]
 
         self.assertEqual(scope["range_kind"], "derived_range")
-        self.assertEqual((scope["function_start"], scope["function_end"]), ("0x1050", "0x1062"))
+        self.assertEqual((scope["range_start"], scope["range_end_exclusive"]), ("0x1050", "0x1062"))
         parent = scope["parent"]
         self.assertEqual(parent["samples"], 3)
         self.assertAlmostEqual(parent["sample_share"], 3 / 9)
@@ -180,7 +180,7 @@ class FunctionScopeProfileTest(unittest.TestCase):
         rows = {row["rva"]: row for row in document["rows"] if row.get("rva")}
 
         self.assertEqual(scope["range_kind"], "uprof_function_id")
-        self.assertIsNone(scope["function_start"])
+        self.assertIsNone(scope["range_start"])
         self.assertIn("uProf Function.id 10 (no derived range)", document["FILTER"])
         self.assertEqual(scope["parent"]["samples"], 3)
         self.assertEqual(set(rows), {"0x101B", "0x201B"})
@@ -197,7 +197,7 @@ class FunctionScopeProfileTest(unittest.TestCase):
             "--function-start",
             "0x1000",
         )
-        self.assertEqual(document["legend"]["function_scope"]["function_start"], "0x1000")
+        self.assertEqual(document["legend"]["function_scope"]["range_start"], "0x1000")
 
     def test_the_filtered_view_offers_its_sibling_and_nothing_else(self):
         derived = self.derived_session()

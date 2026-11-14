@@ -940,8 +940,11 @@ _NEXT_BY: Final = {
     "line": (),
     "instruction": (),
 }
-# Rollups whose unscoped system-wide rows mix every process, so NEXT names --by process first.
+# Rollups whose unscoped system-wide rows mix every process, so NEXT names the same view scoped
+# to the user's process first, then --by process.
 _PROCESS_STEERED: Final = ("module", "function", "region")
+# The --image value a NEXT call leaves to the caller: the process image the question names.
+_IMAGE_PLACEHOLDER: Final = "%<EXE>"
 _NO_PE_WORK: Final = "do not write a PE parser, map .pdata by hand or disassemble"
 _DERIVED_RANGES: Final = (
     "covered by derived function ranges: use profile --by function, which derives boundaries "
@@ -1089,6 +1092,8 @@ def _profile_command(
     ]
     if args.pid is not None:
         parts += ["--pid", str(args.pid)]
+    elif args.image == _IMAGE_PLACEHOLDER:
+        parts += ["--image", _IMAGE_PLACEHOLDER]
     elif args.image is not None and args.image != "%":
         parts += ["--image", _command_arg(args.image, "<IMAGE>", data)]
     if args.time_filter:
@@ -1136,12 +1141,20 @@ def _next_calls(
     system-wide process ranking scopes its module call to --pid <PID>: which process to drill into
     is the caller's choice from the rows, so NEXT never fills in a row value (only the caller's own
     session, scope, filter and paths are carried), and following it never returns to the ranking.
+    An unscoped rollup of a system-wide capture first names the same view with --image %<EXE>, the
+    process the question names, and then the process ranking for a question that names none; the
+    unscoped drill-down is dropped, since its rows would mix every process again.
     """
     data = {} if data is None else data
     calls = [_profile_command(args, by, data=data) for by in _NEXT_BY[args.by]]
     unscoped = _unscoped(args)
     if system_wide and unscoped and args.by in _PROCESS_STEERED:
-        calls.insert(0, _profile_command(args, "process", data=data))
+        scoped = argparse.Namespace(**vars(args))
+        scoped.image = _IMAGE_PLACEHOLDER
+        calls = [
+            _profile_command(scoped, args.by, data=data),
+            _profile_command(args, "process", data=data),
+        ]
     if system_wide and unscoped and args.by == "process":
         scoped = argparse.Namespace(**vars(args))
         scoped.pid, scoped.image = "<PID>", None

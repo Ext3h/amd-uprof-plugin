@@ -15,10 +15,10 @@ Run every command as `python <SKILL_DIR>/tools/uprof.py <command> ...`; `<SKILL_
 |---|---|
 | hottest functions, missing symbols | `function` |
 | where CPU time went, mine versus the rest | `module` |
-| which process, a system-wide capture, kernel time | `process` |
+| which process, kernel time | `process` |
 | source lines; memory-bound, spinning or disassembly | `function`, then the view asked for: `--by line` or `--by instruction --top 1`, with `--function`/`--module` from its row |
 
-Options: `--symbol-path <file|dir>` when the user names symbols, `--image-path <file|dir>` for a moved module image, `--pid N`, `--time-filter T1:T2` (seconds; `anchor --session S --qpc TICKS` converts a QPC marker).
+Options: `--image %<exe>`/`--pid N` for the named process, `--symbol-path <file|dir>` for named symbols, `--image-path <file|dir>` for a moved module image, `--time-filter T1:T2` (seconds; `anchor --session S --qpc TICKS` converts a QPC marker).
 
 New capture: `collect --out-dir <new dir> --seconds 30 [--process PID] [--event ibs-op]` (IBS OP for memory-bound, spinning or `--time-filter`), then `translate --session <its SESSION=> --out-dir <new dir>`, then `profile` on the translated copy.
 

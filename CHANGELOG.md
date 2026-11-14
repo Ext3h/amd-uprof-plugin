@@ -57,6 +57,11 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   question now runs only the one view it asks for, and every `instruction` view runs with
   `--top 1` (issue #118).
 
+- An unscoped module, function or region view of a system-wide capture names the same view
+  scoped with `--image %<EXE>` first in `NEXT`, then `--by process`, instead of the process
+  ranking and an unscoped drill-down; SKILL.md names `--image %<exe>`/`--pid N` for the process
+  the question names (issue #384).
+
 - A PDB is used only when `llvm-pdbutil` verifies that its GUID and age match the image. Without
   `llvm-pdbutil` or an image GUID no PDB is used, and llvm-symbolizer runs without a PDB only
   for an image `llvm-readobj` shows to record none, so it cannot load a stale PDB by name. The

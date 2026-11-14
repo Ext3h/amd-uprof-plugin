@@ -383,7 +383,18 @@ class InstructionProfileTest(unittest.TestCase):
         )
         rendered.assert_called_once()
         call = rendered.call_args.args
-        self.assertEqual(call[:6], (columns, types, rows, [("METRIC", "x")], True, None))
+        # The rows gain the instruction column after rva; this context has no window, so None.
+        self.assertEqual(
+            call[:6],
+            (
+                ["module", "rva", "instruction"],
+                ["VARCHAR", "VARCHAR", "VARCHAR"],
+                [("a", "0x1", None)],
+                [("METRIC", "x")],
+                True,
+                None,
+            ),
+        )
         self.assertIs(call[6], legend)
         self.assertIs(call[7], contexts)
         help_text = call[8]
@@ -392,12 +403,27 @@ class InstructionProfileTest(unittest.TestCase):
         )
         legacy.assert_not_called()
 
-    def test_a_markdown_profile_uses_the_configured_query_file(self):
+    def test_a_markdown_profile_gets_the_column_but_not_the_context(self):
+        columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
+        window = {"runs": [{"instructions": [{"rva": "0x1", "instruction": "nop\t"}]}]}
         args = argparse.Namespace(json=False, by="instruction")
-        with mock.patch.object(uprof_query.uprof_db, "output") as rendered:
+        with (
+            mock.patch.object(
+                uprof_query.uprof_db, "fetch_typed", return_value=(columns, types, rows)
+            ) as fetched,
+            mock.patch.object(
+                uprof_query.uprof_context, "instruction_contexts", return_value=[window]
+            ),
+            mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered,
+            mock.patch.object(uprof_query.uprof_cache, "ambiguous_modules", return_value=[]),
+        ):
             uprof_query._write_profile(None, args, [], None)
 
-        self.assertEqual(rendered.call_args[0][1].name, "profile-instruction.sql")
+        self.assertEqual(fetched.call_args[0][1].name, "profile-instruction.sql")
+        call = rendered.call_args.args
+        self.assertEqual(call[2], [("a", "0x1", "nop")])
+        self.assertIsNone(call[7])
+        self.assertIsNone(call[8])
 
 
 class ContextHelpTest(unittest.TestCase):

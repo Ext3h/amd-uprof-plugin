@@ -199,18 +199,17 @@ class FunctionScopeProfileTest(unittest.TestCase):
         )
         self.assertEqual(document["legend"]["function_scope"]["range_start"], "0x1000")
 
-    def test_the_filtered_view_offers_its_sibling_and_nothing_else(self):
+    def test_the_filtered_line_view_offers_the_instruction_view_and_nothing_else(self):
+        # The instruction rows carry the instruction text, so that view ends the drill (#385).
         derived = self.derived_session()
         instruction = self.scoped(derived, "pdata_0x1050")
         line = self.scoped(derived, "pdata_0x1050", by="line")
 
-        self.assertEqual(len(instruction["legend"]["next"]), 1)
-        self.assertIn("--by line", instruction["legend"]["next"][0])
-        self.assertIn("--function pdata_0x1050", instruction["legend"]["next"][0])
-        self.assertIn("--module", instruction["legend"]["next"][0])
+        self.assertEqual(instruction["legend"]["next"], [])
         self.assertEqual(len(line["legend"]["next"]), 1)
         self.assertIn("--by instruction", line["legend"]["next"][0])
-        self.assertIn("--json", line["legend"]["next"][0])
+        self.assertNotIn("--json", line["legend"]["next"][0])
+        self.assertIn("--top 1", line["legend"]["next"][0])
         self.assertIn("--function pdata_0x1050", line["legend"]["next"][0])
 
     def test_the_unscoped_instruction_stop_is_unchanged(self):
@@ -223,7 +222,7 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.assertNotIn("parent_sample_share", instruction["legend"]["columns"])
         self.assertEqual(len(line["legend"]["next"]), 1)
         self.assertIn("--by instruction", line["legend"]["next"][0])
-        self.assertIn("--json", line["legend"]["next"][0])
+        self.assertNotIn("--json", line["legend"]["next"][0])
         self.assertNotIn("--function", line["legend"]["next"][0])
 
     def test_the_filter_is_rejected_without_an_explicit_scope(self):

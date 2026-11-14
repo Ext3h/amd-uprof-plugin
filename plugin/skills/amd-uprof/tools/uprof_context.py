@@ -1527,6 +1527,21 @@ _SUMMARY_FALLBACK: Final = {
 }
 
 
+def row_instruction(context: object | None, rva: object) -> str | None:
+    """The decoded instruction at the row's RVA from its context, whitespace collapsed.
+
+    None for a row without an RVA (the remainder), an omitted context or an RVA the window lacks.
+    """
+    if not isinstance(context, dict) or context.get("omitted") or rva is None:
+        return None
+    wanted = int(str(rva), 0)
+    for source_run in context.get("runs", ()):
+        for entry in source_run.get("instructions", ()):
+            if int(str(entry["rva"]), 0) == wanted:
+                return " ".join(str(entry["instruction"]).split())
+    return None
+
+
 def context_omission_summary(contexts: Sequence[object | None]) -> str | None:
     """One stated fact when every emitted context omitted for the same missing-symbol reason.
 

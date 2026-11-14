@@ -129,8 +129,9 @@ wall-clock time is reported as UTC with its precision.
   carries it. **SPEC-84** A process-image filter names the process images and the module remedy.
 - **SPEC-85** No CSV mode and no table-rendering dependency on the database library.
 
-**SPEC-86** **Instruction context.** The instruction JSON adds one context per row; **SPEC-87** Markdown bytes are
-identical. **SPEC-88** It names the anchor, the build identity and the decoded window with raw samples and
+**SPEC-86** **Instruction context.** The instruction JSON adds one context per row; **SPEC-87** The decoded
+instruction at the row's RVA is a row column in Markdown and JSON, empty where the row's context omits; the
+context block is JSON-only. **SPEC-88** It names the anchor, the build identity and the decoded window with raw samples and
 per-instruction shares, defining no second share scale; **SPEC-89** the anchor is the nearest safe start at or
 below the hot address, with no backward decode. **SPEC-90** Anything that prevents a correct block omits it
 with a stable reason and never guesses; **SPEC-91** an unverified build is emitted unverified. **SPEC-92** The row cap

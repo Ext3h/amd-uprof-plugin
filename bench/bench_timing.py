@@ -1491,6 +1491,12 @@ def _measure(
         "cases": {},
     }
 
+    if uprof_cache.DISABLE:
+        print(
+            "warning: UPROF_SESSION_CACHE_DISABLE is set, so the tools skip the session cache: "
+            "warm runs measure the same work as cold ones",
+            file=sys.stderr,
+        )
     runs = [(case, mode) for case in cases for mode in (modes if case in CASE_BY_SCOPE else [None])]
     started = time.perf_counter()
     for case, mode in runs:

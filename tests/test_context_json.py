@@ -383,7 +383,18 @@ class InstructionProfileTest(unittest.TestCase):
         )
         rendered.assert_called_once()
         call = rendered.call_args.args
-        self.assertEqual(call[:6], (columns, types, rows, [("METRIC", "x")], True, None))
+        # The rows gain the instruction column after rva; this context has no window, so None.
+        self.assertEqual(
+            call[:6],
+            (
+                ["module", "rva", "instruction"],
+                ["VARCHAR", "VARCHAR", "VARCHAR"],
+                [("a", "0x1", None)],
+                [("METRIC", "x")],
+                True,
+                None,
+            ),
+        )
         self.assertIs(call[6], legend)
         self.assertIs(call[7], contexts)
         help_text = call[8]
@@ -392,12 +403,48 @@ class InstructionProfileTest(unittest.TestCase):
         )
         legacy.assert_not_called()
 
-    def test_a_markdown_profile_uses_the_configured_query_file(self):
+    def test_a_markdown_profile_gets_the_column_but_not_the_context(self):
+        columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
+        window = {"runs": [{"instructions": [{"rva": "0x1", "instruction": "nop\t"}]}]}
         args = argparse.Namespace(json=False, by="instruction")
-        with mock.patch.object(uprof_query.uprof_db, "output") as rendered:
+        with (
+            mock.patch.object(
+                uprof_query.uprof_db, "fetch_typed", return_value=(columns, types, rows)
+            ) as fetched,
+            mock.patch.object(
+                uprof_query.uprof_context, "instruction_contexts", return_value=[window]
+            ),
+            mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered,
+            mock.patch.object(uprof_query.uprof_cache, "ambiguous_modules", return_value=[]),
+        ):
             uprof_query._write_profile(None, args, [], None)
 
-        self.assertEqual(rendered.call_args[0][1].name, "profile-instruction.sql")
+        self.assertEqual(fetched.call_args[0][1].name, "profile-instruction.sql")
+        call = rendered.call_args.args
+        self.assertEqual(call[2], [("a", "0x1", "nop")])
+        self.assertIsNone(call[7])
+        self.assertIsNone(call[8])
+
+    def test_a_markdown_cell_is_empty_where_the_context_omits(self):
+        # SPEC-87: empty in Markdown; the JSON row keeps null.
+        columns, types, rows = ["module", "rva"], ["VARCHAR", "VARCHAR"], [("a", "0x1")]
+        for json_mode, expected in ((False, ""), (True, None)):
+            args = argparse.Namespace(json=json_mode, by="instruction")
+            with (
+                mock.patch.object(
+                    uprof_query.uprof_db, "fetch_typed", return_value=(columns, types, rows)
+                ),
+                mock.patch.object(
+                    uprof_query.uprof_context,
+                    "instruction_contexts",
+                    return_value=[{"omitted": True, "reason": "row_cap"}],
+                ),
+                mock.patch.object(uprof_query.uprof_db, "output_rows") as rendered,
+                mock.patch.object(uprof_query.uprof_cache, "ambiguous_modules", return_value=[]),
+            ):
+                uprof_query._write_profile(None, args, [], None)
+            with self.subTest(json=json_mode):
+                self.assertEqual(rendered.call_args.args[2], [("a", "0x1", expected)])
 
 
 class ContextHelpTest(unittest.TestCase):

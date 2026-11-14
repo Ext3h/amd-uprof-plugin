@@ -329,9 +329,9 @@ The sample-hot address is the `hot_rva` with the largest `hot_rva_samples`, and 
 
 `--by module` emits `cpu_seconds` as `samples × interval / core_frequency`: `samples` is the row count and `interval` is the requested cycle count converted at the core frequency `ACHIEVED` reports, the capture's nominal execution clock. The session records the interval in cycles, not the frequency of the capture machine, so a capture from other hardware gives an approximate figure and the seconds are an estimate at that clock, not a measured cycle count. The conversion does not apply to op-count or fetch samples: their interval is work, not time, and `cpu_seconds` is omitted with that reason.
 
-## Instruction context — `--by instruction --json`
+## Instruction context — `--by instruction`
 
-`uprof_query` calls `uprof_context.instruction_contexts()` before rendering JSON for instruction scope; Markdown never builds or receives the block. The block answers "what instructions surround this hot address" without replacing the row's own numbers.
+`uprof_query` calls `uprof_context.instruction_contexts()` before rendering every instruction view. Each row gains the `instruction` column after `rva`: the decoded instruction at the row's RVA, whitespace collapsed, or empty (JSON `null`) where the row's context omits (the remainder row, a row past the 20-row cap, a module without a verified image). The block itself goes to `--json` only; Markdown never receives it. The block answers "what instructions surround this hot address" without replacing the row's own numbers.
 
 **Anchor.** The hot RVA must lie in an executable PE section (`IMAGE_SCN_CNT_CODE` or `IMAGE_SCN_MEM_EXECUTE`). Safe starts are the `v_public_starts` PDB publics, the PE export table (`llvm-readobj --coff-exports`) and the `.pdata` runtime functions (`llvm-readobj --unwind`), all inside that section at or below the hot RVA. The nearest start wins; at the same RVA an export is preferred, then a PDB public, then a `.pdata` start. When it is within 1 MiB it is the anchor; otherwise the section start is used if it is within 1 MiB; otherwise `anchor_too_far`. `anchor.kind` is the source of the chosen start: `export`, `pdb_public`, `pdata` or `section`. The anchor is where decoding begins — x86 has no backward decode, so an anchor after the hot RVA cannot help.
 

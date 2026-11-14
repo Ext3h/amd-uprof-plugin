@@ -12,6 +12,7 @@ skips elsewhere, with a reason that UPROF_REQUIRE_TOOLS=1 turns into a failure.
 Run from the repository root: python tests/run_tests.py test_header_repeats
 """
 
+import json
 import os
 import re
 import subprocess
@@ -29,6 +30,7 @@ SKIPPED = ("NEXT", "VERSION")
 PHRASE = 6
 # One synthetic capture per sampler: IBS OP cycle and op count, system-wide IBS, PMC, timer.
 SESSIONS = ("attached", "opcount", "pmc", "systemwide", "timer")
+NUMBER = re.compile(r"\d[\d.,]*")
 OLD_NAMES = re.compile(
     r"\b(function_start|function_end|function_derived|function_reason|hot_samples|"
     r"other_samples|hot_sample_share)\b"
@@ -97,6 +99,27 @@ class HeaderRepeatsTest(unittest.TestCase):
         self.assertNotIn("\nTAG_TO_RETIRE_SHARE: ", output)
         self.assertIn("time_share absent (", output)
         self.assertIn("tag_to_retire_share absent (", output)
+
+    def test_the_json_document_holds_everything_the_text_shows(self):
+        # The JSON output never holds less information than the Markdown output: every header
+        # line is a JSON field with the same value, and every table column is a row key. The
+        # two calls are separate runs, so a number measured at run time (ACHIEVED reads the
+        # host's core frequency) is compared as a placeholder.
+        for session in SESSIONS:
+            for view in ("process", "module"):
+                with self.subTest(session=session, view=view):
+                    text = self.run_profile(session, "--by", view)
+                    document = json.loads(self.run_profile(session, "--by", view, "--json"))
+                    for line in text.splitlines():
+                        match = HEADER.match(line)
+                        if match and not match.group(2).startswith("'"):
+                            self.assertEqual(
+                                NUMBER.sub("N", str(document.get(match.group(1)))),
+                                NUMBER.sub("N", match.group(2)),
+                            )
+                    table = next(line for line in text.splitlines() if line.startswith("| "))
+                    for column in (cell.strip() for cell in table.strip("|").split("|")):
+                        self.assertIn(column, document["rows"][0])
 
     def test_no_output_names_a_renamed_column(self):
         # The seven columns renamed for #389 appear under their new names only, in the text,

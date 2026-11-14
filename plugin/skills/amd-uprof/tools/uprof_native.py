@@ -627,6 +627,16 @@ class CliLog:
         return None, ""
 
 
+def unused_dir(base: str) -> str:
+    """base, or base-2, base-3, ... : the first name nothing exists at yet, for a printed
+    --out-dir that must not meet an earlier run."""
+    found, number = base, 2
+    while os.path.lexists(found):
+        found = f"{base}-{number}"
+        number += 1
+    return found
+
+
 def recapture_commands(session: Path) -> tuple[str, str, str, str | None]:
     """Cycle, IBS and timer collect commands writing next to session into a directory that does
     not exist yet, for a capture that holds nothing to translate, and the data lines for any path
@@ -634,12 +644,7 @@ def recapture_commands(session: Path) -> tuple[str, str, str, str | None]:
     script, script_data = uprof_shell.path_arg(
         Path(__file__).resolve().with_name("uprof.py"), "<UPROF_PY>"
     )
-    new_dir = f"{session}-recapture"
-    number = 2
-    while os.path.lexists(new_dir):
-        new_dir = f"{session}-recapture-{number}"
-        number += 1
-    out_dir, out_data = uprof_shell.path_arg(new_dir, "<NEW_OUT_DIR>")
+    out_dir, out_data = uprof_shell.path_arg(unused_dir(f"{session}-recapture"), "<NEW_OUT_DIR>")
     cycles = f"python {script} collect --out-dir {out_dir} --seconds 60"
     data = "\n".join(line for line in (script_data, out_data) if line) or None
     return cycles, cycles + " --event ibs-op", cycles + " --event timer", data

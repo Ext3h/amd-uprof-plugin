@@ -220,7 +220,9 @@ def literal_path(path: os.PathLike[str] | str) -> str:
 
     read_csv, read_json and glob take a pattern, so '[', '*' and '?' in a capture path
     (capture[1]) would match a sibling (capture1); a one-character class matches each literally.
-    views.sql's literal_path macro is the SQL twin.
+    views.sql's literal_path macro is the SQL twin. Cache and temp files need neither: their
+    paths are the cache root or a mkdtemp directory plus a digest and a fixed file name, which no
+    capture can shape.
     """
     return re.sub(r"([\[*?])", r"[\1]", os.fspath(path))
 

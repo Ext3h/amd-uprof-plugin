@@ -107,9 +107,13 @@ class NoRemoteTouchTest(unittest.TestCase):
         with _no_remote_touch():
             uprof_cache.search_identity(None, None, list(REMOTE))
 
-    def test_the_cache_keys_stat_no_remote_module_path(self):
+    def test_the_disk_identity_stats_no_remote_module_path(self):
+        with _no_remote_touch():
+            identity = uprof_cache._disk_identity(list(REMOTE))
+        self.assertEqual(identity, [[path, None, None, None] for path in sorted(REMOTE)])
+
+    def test_the_cache_keys_take_module_paths_through_the_disk_identity(self):
         rows = [("app.exe", path, "0x1000") for path in REMOTE]
-        recorded = {}
 
         def fetch(_connection, sql):
             if sql.name == "profile-rvas.sql":
@@ -124,22 +128,12 @@ class NoRemoteTouchTest(unittest.TestCase):
             mock.patch.object(uprof_cache, "tool_identities", return_value={"readobj": []}),
             mock.patch.object(uprof_cache, "search_identity", return_value={}),
             mock.patch.object(uprof_cache.uprof_symbols, "symbol_stores", return_value=[]),
-            mock.patch.object(
-                uprof_cache,
-                "symbol_key",
-                side_effect=lambda *a: recorded.setdefault("symbols", a[2]) and "key",
-            ),
-            mock.patch.object(
-                uprof_cache,
-                "ranges_key",
-                side_effect=lambda *a: recorded.setdefault("ranges", a[2]) and "key",
-            ),
+            mock.patch.object(uprof_cache, "_disk_identity", return_value=[]) as disk,
             _no_remote_touch(),
         ):
             uprof_cache.build_symbols_key(None, None)
             uprof_cache.build_ranges_key(None, "key")
-        expected = [[path, None, None, None] for path in sorted(REMOTE)]
-        self.assertEqual(recorded, {"symbols": expected, "ranges": expected})
+        self.assertEqual([call.args for call in disk.call_args_list], [(list(REMOTE),)] * 2)
 
     def test_translate_command_names_no_symbol_store(self):
         with tempfile.TemporaryDirectory() as tmp:

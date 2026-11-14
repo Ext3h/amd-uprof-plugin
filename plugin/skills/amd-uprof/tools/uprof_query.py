@@ -2314,8 +2314,10 @@ def _achieved_field(
     any sample landed in a kernel image, so the kernel-coverage check adds no query of its own.
     """
     meta = uprof_session.read_meta(args.session) or {}
-    schedule = (meta.get("collection") or {}).get("schedule") or {}
-    elapsed_ms = schedule.get("elapsed")
+    collection = uprof_session.meta_section(meta, "collection", "collection")
+    elapsed_ms = uprof_session.meta_section(collection, "schedule", "collection.schedule").get(
+        "elapsed"
+    )
     contexts: list[uprof_session.ContextCadence] = []
     label = "CPU"
     window_s: float | None = None

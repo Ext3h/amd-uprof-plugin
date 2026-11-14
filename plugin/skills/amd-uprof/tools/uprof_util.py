@@ -215,6 +215,16 @@ def is_remote_path(path: os.PathLike[str] | str) -> bool:
     return False
 
 
+def literal_path(path: os.PathLike[str] | str) -> str:
+    """path as a DuckDB file pattern that matches only path itself.
+
+    read_csv, read_json and glob take a pattern, so '[', '*' and '?' in a capture path
+    (capture[1]) would match a sibling (capture1); a one-character class matches each literally.
+    views.sql's literal_path macro is the SQL twin.
+    """
+    return re.sub(r"([\[*?])", r"[\1]", os.fspath(path))
+
+
 def same_path(first: os.PathLike[str] | str, second: os.PathLike[str] | str) -> bool:
     """Whether both paths name the same file or directory, however each is spelled.
 

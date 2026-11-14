@@ -20,7 +20,7 @@ from typing import Any, Final
 
 from uprof_native import find_sibling, find_symbolizer, run, tool_operand
 from uprof_symbols import resolve_image
-from uprof_util import UprofError, inline, one_line, tail_lines
+from uprof_util import UprofError, inline, literal_path, one_line, tail_lines
 
 ANCHOR_DISTANCE_CAP: Final = 1 << 20
 WINDOW_BEFORE: Final = 32
@@ -723,11 +723,11 @@ def ibs_rows(connection: object, module_name: str, rvas: list[int]) -> dict[int,
     dump = connection.execute("SELECT getvariable('uprof_ibs_dump')").fetchone()
     if not dump or not dump[0]:
         return {}
+    pattern = literal_path(str(dump[0]))
     columns = {
         str(row[0])
         for row in connection.execute(
-            "DESCRIBE SELECT * FROM read_csv(getvariable('uprof_ibs_dump'), "
-            "header = true, all_varchar = true)"
+            "DESCRIBE SELECT * FROM read_csv(?, header = true, all_varchar = true)", [pattern]
         ).fetchall()
     }
     fields = present_ibs_fields(columns)
@@ -738,7 +738,7 @@ def ibs_rows(connection: object, module_name: str, rvas: list[int]) -> dict[int,
     sql = (
         'SELECT CAST(d."Offset" AS BIGINT) AS rva, count(*) AS samples, '
         + ", ".join(expressions)
-        + " FROM read_csv(getvariable('uprof_ibs_dump'), header = true, all_varchar = true)"
+        + " FROM read_csv(?, header = true, all_varchar = true)"
         ' AS d LEFT JOIN Process AS p ON p.id = TRY_CAST(d."PID" AS INTEGER)'
         ' WHERE module_key(d."ModuleName") = CAST(? AS VARCHAR)'
         ' AND TRY_CAST(d."Offset" AS BIGINT) IN (SELECT * FROM unnest(?))'
@@ -750,7 +750,7 @@ def ibs_rows(connection: object, module_name: str, rvas: list[int]) -> dict[int,
         " AND image_matches(p.name, getvariable('uprof_image'))"
         " GROUP BY rva"
     )
-    rows = connection.execute(sql, [module_name, addresses]).fetchall()
+    rows = connection.execute(sql, [pattern, module_name, addresses]).fetchall()
     names = [str(column[0]) for column in connection.description]
     return {int(row[0]): ibs_summary(dict(zip(names, row)), fields) for row in rows}
 

@@ -1048,8 +1048,7 @@ _CONTEXT_HELP_OMISSIONS: Final = {
     ),
     "metadata_incomplete": (
         "the PE headers lack ImageBase, TimeDateStamp, CheckSum or Magic "
-        "(for example an ELF module); remedy: use a PE/COFF module, ELF "
-        "modules are not supported for this block"
+        "(for example an ELF module); only PE/COFF modules get this block"
     ),
     "no_code_section": (
         "the row's rva is not inside an executable PE section; remedy: use the "
@@ -1077,18 +1076,15 @@ _CONTEXT_HELP_OMISSIONS: Final = {
         "llvm-symbolizer sits beside the other LLVM tools or on PATH"
     ),
     "symbolizer_failed": (
-        "llvm-symbolizer exited nonzero or resolved no address and the detail "
-        "names its exit status, JSON Error and any stderr; remedy: pass profile "
-        "--symbol-path <file|dir> for a symbol or debug file or a search root, "
-        "or --image-path <file|dir> when the module image is not at its "
-        "recorded path; llvm-symbolizer ignores _NT_SYMBOL_PATH, so only an "
-        "adjacent PDB, the recorded CodeView path or the skill's local srv* "
-        "cache scan is searched"
+        "llvm-symbolizer exited nonzero or resolved no address; the detail names "
+        "its exit status, JSON Error and stderr; remedy: pass profile "
+        "--symbol-path <file|dir> naming a symbol or debug file or search root, "
+        "or --image-path <file|dir> when the image is not at its recorded path "
+        "(llvm-symbolizer ignores _NT_SYMBOL_PATH)"
     ),
     "pdb_unverified": (
-        "the image records a PDB, but symbolization accepted none whose GUID "
-        "and age match; remedy: pass profile --symbol-path <file|dir> naming "
-        "the captured build's PDB"
+        "no PDB matching the image's recorded GUID and age was accepted; remedy: "
+        "pass profile --symbol-path <file|dir> naming the captured build's PDB"
     ),
     "imports_failed": (
         "llvm-readobj could not read the import table; remedy: check the module "

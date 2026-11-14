@@ -132,11 +132,15 @@ class TranslateStallTest(unittest.TestCase):
         )
         session, _ = uprof_shell.path_arg(self.session, "<SESSION_DIR>")
         out, _ = uprof_shell.path_arg(self.out, "<OUT_DIR>")
-        self.assertIn(f"translate --session {session} --out-dir {out} --force", alternative)
+        cache, _ = uprof_shell.path_arg("c:\\sym", "<SYMBOL_CACHE>")
+        self.assertIn(
+            f"translate --session {session} --out-dir {out} --symbol-cache {cache} --force",
+            alternative,
+        )
         self.assertTrue(alternative.split(": ", 2)[2].startswith("python "), alternative)
         # An unset _NT_SYMBOL_PATH falls back to the Microsoft server, so only a variable set to
         # local folders runs the translate without a network symbol source.
-        self.assertIn("run it with _NT_SYMBOL_PATH set to a local folder only", message)
+        self.assertIn(f"_NT_SYMBOL_PATH={cache}", alternative.split(": ", 2)[1])
         self.assertNotIn("unset or set", message)
 
     def test_a_stalled_translate_names_the_stall_and_the_alternative(self):
@@ -152,6 +156,54 @@ class TranslateStallTest(unittest.TestCase):
         minutes = uprof_native.TRANSLATE_CEILING // 60
         self.assertIn(f"translate did not finish within {minutes} min", message)
         self.assert_alternative(message)
+
+    def test_the_alternative_keeps_the_call_and_drops_only_network_sources(self):
+        root = self.session.parent
+        pdbs = root / "pdbs"
+        cache = root / "symcache"
+        with (
+            mock.patch.object(uprof_native, "require_uprof", return_value=Path("AMDuProfCLI")),
+            mock.patch.object(
+                uprof_native, "run_watched", side_effect=uprof_native.ToolStalled("stalled")
+            ),
+            mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": ""}),
+            redirect_stdout(io.StringIO()),
+            self.assertRaises(UprofError) as raised,
+        ):
+            uprof_native.translate(
+                self.session,
+                self.out,
+                symbol_paths=[pdbs],
+                symbol_cache=cache,
+                symbol_servers=["https://symbols.example.com"],
+                time_filter="10:15",
+                ascii_kind="ibsop-event-dump",
+            )
+        message = str(raised.exception)
+        alternative = next(
+            line for line in message.splitlines() if line.startswith("ALTERNATIVE: ")
+        )
+        arg = {
+            name: uprof_shell.path_arg(path, "<X>")[0]
+            for name, path in (
+                ("session", self.session),
+                ("out", self.out),
+                ("pdbs", pdbs),
+                ("cache", cache),
+            )
+        }
+        self.assertIn(
+            f"translate --session {arg['session']} --out-dir {arg['out']} --symbol-path "
+            f"{arg['pdbs']} --symbol-cache {arg['cache']} --time-filter 10:15 --ascii "
+            "ibsop-event-dump --force",
+            alternative,
+        )
+        self.assertNotIn("--symbol-server", alternative)
+        # Without a set _NT_SYMBOL_PATH translate adds the Microsoft server again, so the
+        # alternative is local-only only when its label names the local value to set first.
+        label, command = alternative.split(": ", 2)[1:]
+        self.assertIn(f"_NT_SYMBOL_PATH={arg['cache']}", label)
+        self.assertTrue(command.startswith("python "), command)
 
 
 if __name__ == "__main__":

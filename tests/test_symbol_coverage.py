@@ -43,6 +43,10 @@ NO_NAMED_STOP = (
     "exports, PDB publics) with LLVM; do not write a PE parser, map .pdata by hand "
     "or disassemble"
 )
+PROCESS_STOP = (
+    "missing source names do not block the NEXT call, profile --by module, which attributes "
+    "these samples to their module; do not write a PE parser, map .pdata by hand or disassemble"
+)
 UNRESOLVED_STOP = (
     "unresolved samples are covered by derived function ranges: use profile --by "
     "function, which derives boundaries from the binary (.pdata, PE exports, PDB "
@@ -215,6 +219,12 @@ class SymbolCoverageTest(unittest.TestCase):
         self.assertIn(
             "SYMBOL_COVERAGE: 6/12 samples (50.0%) resolve to a named function;", result.stdout
         )
+        self.assertIn(f"without source names by module: {NO_STRINGS} 3/3 (100.0%)", result.stdout)
+        self.assertIn(f"{PARTIAL} 1/3 (33.3%)", result.stdout)
+        self.assertIn(PROCESS_STOP, result.stdout)
+        coverage_line = result.stdout.split("SYMBOL_COVERAGE:")[1].splitlines()[0]
+        self.assertNotIn("unresolved", coverage_line)
+        self.assertNotIn("use profile --by function", result.stdout)
 
     def test_coverage_is_deterministic(self):
         self.assertEqual(self.coverage(), self.coverage())
@@ -536,6 +546,33 @@ class FailingSymbolizerTest(unittest.TestCase):
                 self.assertIn("llvm-symbolizer exited 1", line)
                 self.assertIn(NO_NAMED_STOP, line)
                 self.assertIn("remedy: pass profile --symbol-path", line)
+
+
+class ProcessCoverageStopTest(unittest.TestCase):
+    """In process scope the stop names the NEXT call, profile --by module, not --by function."""
+
+    def field(self, named, by):
+        rows = [_unresolved_row("a.dll", 10, named)]
+        return uprof_query._coverage_field(
+            None, {}, None, False, [], _coverage(rows, 10, named), by
+        )
+
+    def test_process_scope_points_at_the_module_call(self):
+        for named in (0, 5):
+            with self.subTest(named=named):
+                text = self.field(named, "process")[0][1]
+                share = f"{100.0 * (10 - named) / 10:.1f}"
+                self.assertIn(
+                    f"without source names by module: a.dll {10 - named}/10 ({share}%)", text
+                )
+                self.assertTrue(text.endswith(PROCESS_STOP), text)
+                self.assertNotIn("unresolved", text)
+
+    def test_module_scope_keeps_the_function_stop(self):
+        text = self.field(0, "module")[0][1]
+        self.assertIn("a.dll 10/10 (100.0% unresolved, no source names)", text)
+        self.assertIn(NO_NAMED_STOP, text)
+        self.assertIn(UNRESOLVED_STOP, self.field(5, "module")[0][1])
 
 
 if __name__ == "__main__":

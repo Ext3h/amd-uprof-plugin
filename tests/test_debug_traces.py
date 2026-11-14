@@ -113,3 +113,20 @@ class GoldenSemanticsTest(unittest.TestCase):
                         if line.startswith("WARNING: no symbols resolved")
                     ]
                     self.assertEqual(warnings, [], name)
+
+    def test_a_module_whose_rows_all_stay_unresolved_names_a_cause(self):
+        for path in sorted((F.DEBUG / "traces").glob("*/*.txt")):
+            sections = _sections(path.read_text(encoding="utf-8"))
+            frames = [line for line in sections.get("production", []) if line.startswith("0x")]
+            if not frames or any(line.split()[1] != "<none>" for line in frames):
+                continue
+            with self.subTest(trace=f"{path.parent.name}/{path.name}"):
+                outcome = [line for line in sections["production"] if line.startswith("outcome=")]
+                self.assertNotEqual(outcome, ["outcome=resolved"])
+                for name in ("profile.line", "profile.function"):
+                    coverage = [
+                        line
+                        for line in sections.get(name, [])
+                        if line.startswith("symbol_coverage=")
+                    ]
+                    self.assertIn("cause by module:", coverage[0], name)

@@ -100,7 +100,7 @@ messages are the tool's own text.
 - `plugin/` — the plugin source: `.claude-plugin/plugin.json` and `skills/amd-uprof/` (the
   skill and its tools).
 - `tests/` — maintainer-only test suite and fixtures; run with `python tests/run_tests.py`.
-- `bench/` — maintainer-only timing harness (added by #40).
+- `bench/` — maintainer-only timing harness for the #19 baseline; see `bench/README.md`.
 - `examples/` — recorded trial scenarios (prompt, input, expected answer, reference metrics);
   not part of the installed plugin.
 - `.claude-plugin/` — marketplace entry and the icon (`icon.svg` master, `icon.png` raster).

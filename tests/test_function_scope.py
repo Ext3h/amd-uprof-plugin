@@ -261,6 +261,38 @@ class FunctionScopeProfileTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertIn(expected, result.stderr)
 
+    def test_an_unmatched_function_names_the_call_that_lists_the_rows(self):
+        derived = self.derived_session()
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(derived),
+                "--by",
+                "instruction",
+                "--function",
+                "nope",
+                "--module",
+                MODULE,
+                "--time-filter",
+                "0:9",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("no function row matches", result.stderr)
+        # The call that lists the candidate rows keeps the caller's scope and drops the filter;
+        # the caller picks the row, so no row value is printed.
+        self.assertRegex(
+            result.stderr,
+            r"python \S+ profile --session \S+ --by function --time-filter 0:9 and copy ",
+        )
+
     def test_an_ambiguous_name_without_ranges_cannot_be_resolved_by_start(self):
         session = Session(self.root, "ambiguous")
         session.module(1, FIXTURE, False).function(10, 1, "dup").function(11, 1, "dup")

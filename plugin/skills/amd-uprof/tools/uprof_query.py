@@ -1483,7 +1483,7 @@ def _legend(
     elif args.by in ("line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
         if args.by == "instruction":
-            columns["instruction"] = "decode at rva; NULL where omitted"
+            columns["instruction"] = "decode at rva; empty where omitted"
         if function_scope is not None:
             columns["parent_sample_share"] = (
                 "row samples as a share of the selected parent function's samples, not the capture"
@@ -2775,8 +2775,11 @@ def _write_profile(
         rva_at = columns.index("rva") + 1
         columns = [*columns[:rva_at], "instruction", *columns[rva_at:]]
         types = [*types[:rva_at], "VARCHAR", *types[rva_at:]]
+        # Empty in Markdown where the context omits; JSON keeps null (SPEC-87).
+        missing = None if args.json else ""
         rows = [
-            (*row[:rva_at], uprof_context.row_instruction(context, row[rva_at - 1]), *row[rva_at:])
+            (*row[:rva_at], uprof_context.row_instruction(context, row[rva_at - 1]) or missing)
+            + tuple(row[rva_at:])
             for row, context in zip(rows, contexts)
         ]
         if not args.json:

@@ -168,7 +168,7 @@ SKILL_PARTS = {
         "with no `ls` or preflight before it",
         "| which process, a system-wide capture, kernel time | `process` |",
         (
-            "then only the view asked for: `line` or `instruction --json --top 1`, with "
+            "then the view asked for: `--by line` or `--by instruction --top 1`, with "
             "`--function`/`--module` from its row"
         ),
     ),
@@ -220,6 +220,12 @@ class SkillTest(unittest.TestCase):
             for phrase in phrases:
                 with self.subTest(part=part, phrase=phrase):
                     self.assertIn(phrase, skill)
+
+    def test_skill_recommends_no_json_call(self):
+        # A small model copies a recommended `--json` call, and the instruction document then
+        # overflows the harness output limit (#430, #339). SKILL.md names `--json` only to forbid it.
+        self.assertEqual(SKILL.count("--json"), 1)
+        self.assertIn("do not re-run a view with `--json`", SKILL)
 
     def test_skill_self_contained(self):
         for pattern in (r"https?://", r"(?<![\w&])#\d+", r"[\w./-]+\.md\b"):

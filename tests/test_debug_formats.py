@@ -732,6 +732,15 @@ class ElfNoSymbolsTest(FixtureTestCase):
         self.assertFalse(frame.get("FileName"))
         self.assertEqual(frame.get("Line"), 0)
 
+    @unittest.skipIf(os.name == "nt", HOST_SKIP + "Windows takes the PDB discovery path")
+    def test_production_reports_no_debug_info_with_its_evidence(self):
+        module, _records, _stream = F.production(F.ELF / "fixture_nosym", [F.ELF_HELPER])
+        self.assertEqual(module.evidence.outcome, "no_debug_info")
+        stream = io.StringIO()
+        uprof_symbols._evidence_line(module.evidence, stream)
+        self.assertIn("WARNING: no symbols resolved", stream.getvalue())
+        self.assertIn("resolved no address", stream.getvalue())
+
 
 @unittest.skipIf(F.tool_skip(), F.tool_skip() or "")
 class CompressedAndSplitDwarfTest(FixtureTestCase):

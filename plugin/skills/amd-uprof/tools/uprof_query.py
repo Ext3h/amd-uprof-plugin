@@ -960,7 +960,7 @@ _PROCESS_COVERAGE_STOP: Final = (
     f"these samples to their module; {_NO_PE_WORK}"
 )
 _RANGE_UNRESOLVED_STOP: Final = (
-    "no named or derived range covers these samples; function_reason and "
+    "no named or derived range covers these samples; no_range_reason and "
     "legend.function_ranges.absent_by_module name why, and --by region is the page fallback "
     "where no boundary source exists"
 )
@@ -1242,8 +1242,8 @@ def _function_scope_json(
         "module": scope["module"],
         "function": scope["function"],
         "range_kind": "derived_range" if start is not None else "uprof_function_id",
-        "function_start": None if start is None else f"0x{start:X}",
-        "function_end": None if end is None else f"0x{end:X}",
+        "range_start": None if start is None else f"0x{start:X}",
+        "range_end_exclusive": None if end is None else f"0x{end:X}",
         "filter": scope["filter"],
         "parent": {
             "samples": int(scope["samples"] or 0),
@@ -1305,7 +1305,7 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
     )
     if not rows:
         raise util.UprofError(
-            f"no function row matches {wanted}; copy the function, module and function_start "
+            f"no function row matches {wanted}; copy the function, module and range_start "
             "cells from a --by function row (the filter uses the same --pid/--image/"
             "--time-filter scope)"
         )
@@ -1314,11 +1314,11 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
         if not starts:
             raise util.UprofError(
                 f"{wanted} matches {len(rows)} function rows with no derived range; neither row "
-                "has a function_start, so --function-start cannot separate them"
+                "has a range_start, so --function-start cannot separate them"
             )
         raise util.UprofError(
             f"{wanted} matches {len(rows)} function rows; add --function-start <RVA> to choose "
-            f"one (function_start: {', '.join(starts)})"
+            f"one (range_start: {', '.join(starts)})"
         )
     (
         module_name,
@@ -1467,32 +1467,19 @@ def _legend(
             "unique / shared (folded names) / derived (synthetic binary "
             "range) / unresolved (no symbol)"
         )
-        columns["function_start"] = (
-            "first RVA of the derived function range (inclusive); NULL when no range was derived"
-        )
-        columns["function_end"] = "address after the function range (exclusive)"
+        columns["range_start"] = "NULL when no range was derived"
         columns["function_source"] = (
             "boundary source of the range: pdb_public, export, pdata "
             "or none (no boundary source; the row falls back to uProf "
             "Function.id or is unresolved)"
         )
-        columns["function_derived"] = (
-            "true when the displayed name is synthetic "
-            "(sub_<rva>/pdata_<start>), not a source symbol"
-        )
+        columns["synthetic_name"] = "sub_<rva>/pdata_<start>, not a source symbol"
         attribution = _hot_rva_attribution(sampler, "range")
         columns["hot_rva"] = (
             f"highest-sample RVA in the function; ties pick the lowest RVA; {attribution}"
         )
-        columns["hot_samples"] = "samples at hot_rva"
-        columns["other_samples"] = (
-            "samples outside hot_rva: samples - hot_samples; the rest of "
-            "the function, not a second hot address"
-        )
-        columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
-        columns["function_reason"] = (
-            "why this row has no derived range (function_start/function_end are NULL)"
-        )
+        columns["samples_outside_hot_rva"] = "not a second hot address"
+        columns["hot_rva_share"] = "of the scoped capture total"
     elif args.by in ("line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
         if function_scope is not None:
@@ -1523,12 +1510,11 @@ def _legend(
         columns["hot_rva"] = (
             f"highest-sample RVA in the page; ties pick the lowest RVA; {attribution}"
         )
-        columns["hot_samples"] = "samples at hot_rva"
-        columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
+        columns["hot_rva_share"] = "of the scoped capture total"
         columns["function_source"] = (
             "hot_rva's boundary source: pdb_public, export, pdata or none (no range covers hot_rva)"
         )
-        columns["function_derived"] = (
+        columns["synthetic_name"] = (
             "true when the hot function name is synthetic "
             "(sub_<rva>/pdata_<start>), not a source symbol"
         )
@@ -1608,12 +1594,8 @@ def _legend(
             columns["hot_rva"] = (
                 f"highest-sample RVA in the module; ties pick the lowest RVA; {attribution}"
             )
-            columns["hot_samples"] = "samples at hot_rva"
-            columns["other_samples"] = (
-                "samples outside hot_rva: samples - hot_samples; the "
-                "rest of the module, not a second hot address"
-            )
-            columns["hot_sample_share"] = "hot_rva's samples as a share of the scoped capture total"
+            columns["samples_outside_hot_rva"] = "not a second hot address"
+            columns["hot_rva_share"] = "of the scoped capture total"
         if has_system_module:
             columns["isSystemModule"] = _SYSTEM_MODULE_MEANING
         else:
@@ -1681,7 +1663,7 @@ def _legend(
             result["impact"]["sample_hot"] = (
                 "this instruction table is time_share-ordered, not sample-hot: do not read its "
                 "first row as the sample-hot RVA or claim that no single instruction exceeds a "
-                "sample threshold; the function or region hot_rva and hot_samples are the "
+                "sample threshold; the function or region hot_rva and hot_rva_samples are the "
                 "sample-hot attribution"
             )
         else:
@@ -1702,8 +1684,8 @@ def _legend(
             "absent_by_module": info.get("absent_by_module") or {},
             "fallback": (
                 "a fully named module is not read, so its rows keep the uProf Function.id "
-                "grouping and function_reason says derivation was skipped; a module with "
-                "no derived range groups by Function.id and function_reason says why no "
+                "grouping and no_range_reason says derivation was skipped; a module with "
+                "no derived range groups by Function.id and no_range_reason says why no "
                 "range exists"
             ),
             "meaning": (
@@ -1722,15 +1704,13 @@ def _legend(
             "page_end": "address after the page (exclusive)",
             "sampled_addresses": "distinct RVAs with samples in the page",
             "hot_rva": "highest-sample RVA in the page; ties pick the lowest RVA",
-            "hot_samples": "samples at hot_rva",
-            "hot_sample_share": "hot_samples / total_samples",
+            "hot_rva_samples": "samples at hot_rva",
+            "hot_rva_share": "hot_rva_samples / total_samples",
             "function_source": (
                 "hot_rva's boundary source: pdb_public, export, pdata or none "
                 "(no range covers hot_rva)"
             ),
-            "function_derived": (
-                "true when the hot function name is synthetic, not a source symbol"
-            ),
+            "synthetic_name": ("true when the hot function name is synthetic, not a source symbol"),
             "symbol_reason": "why function/file/line are NULL for the hot RVA",
             "derived_function": (
                 "the hot RVA carries its derived function when a range covers "
@@ -1890,15 +1870,12 @@ def _legend_fields(
             )
     if "function_ranges" in legend:
         for key in (
-            "function_start",
-            "function_end",
+            "range_start",
             "function_source",
-            "function_derived",
+            "synthetic_name",
             "hot_rva",
-            "hot_samples",
-            "other_samples",
-            "hot_sample_share",
-            "function_reason",
+            "samples_outside_hot_rva",
+            "hot_rva_share",
         ):
             if key in legend["columns"]:
                 parts.append(f"{key} = {legend['columns'][key]}")
@@ -1907,10 +1884,9 @@ def _legend_fields(
             "region",
             "sampled_addresses",
             "hot_rva",
-            "hot_samples",
-            "hot_sample_share",
+            "hot_rva_share",
             "function_source",
-            "function_derived",
+            "synthetic_name",
             "symbol_reason",
         ):
             parts.append(f"{key} = {legend['columns'][key]}")
@@ -1919,7 +1895,7 @@ def _legend_fields(
         and "attribution" not in legend["columns"]
         and "region" not in legend["columns"]
     ):
-        for key in ("hot_rva", "hot_samples", "other_samples", "hot_sample_share"):
+        for key in ("hot_rva", "samples_outside_hot_rva", "hot_rva_share"):
             parts.append(f"{key} = {legend['columns'][key]}")
     if "isSystemModule" in legend["columns"]:
         parts.append(f"isSystemModule = {legend['columns']['isSystemModule']}")
@@ -2691,8 +2667,8 @@ def _hot_rva_field(connection: object) -> list[tuple[str, str]]:
             (
                 f"{module or '<unknown module>'} {function or '<unresolved>'} at "
                 f"{hot_rva} with {hot} samples ({share} of the scoped capture); "
-                f"other_samples {other} = the function's {int(samples or 0)} samples "
-                f"minus hot_samples {hot}; the highest-sample address across the "
+                f"samples_outside_hot_rva {other} = the function's {int(samples or 0)} samples "
+                f"minus hot_rva_samples {hot}; the highest-sample address across the "
                 "function rows, not the top function row's hot_rva"
             ),
         )

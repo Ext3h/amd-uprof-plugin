@@ -92,6 +92,12 @@ def cache_root() -> Path:
     return Path(base) / "amd-uprof" / "uprof-dump-cache"
 
 
+def _other_root_step() -> str:
+    """The non-destructive next step for an unusable cache root: point the root elsewhere."""
+    variable = "TMPDIR" if os.name == "nt" else "XDG_CACHE_HOME"
+    return f"re-run with {variable} set to a new directory you own"
+
+
 def cache_dir(session_dir: Path | str) -> Path:
     full = os.path.normcase(os.path.abspath(os.fspath(session_dir))).rstrip("\\/")
     digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:16]
@@ -125,9 +131,9 @@ def _require_private(path: Path) -> None:
         problem = f"its mode is {stat.S_IMODE(info.st_mode):o}, not 700"
     if problem:
         raise UprofError(
-            f"the dump cache {path} is not private to this user ({problem}); "
-            "remove it, or if you own it and it is a directory run chmod 700 on "
-            "it, then re-run"
+            f"the dump cache {path} is not private to this user ({problem}), so it is not "
+            "used; if you own it and it is a directory run chmod 700 on it and re-run, or "
+            f"{_other_root_step()}"
         )
 
 
@@ -138,8 +144,8 @@ def _private_cache(cache: Path) -> Path:
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
     except OSError as exc:
         raise UprofError(
-            f"cannot create the dump cache {root}: {exc}; free the path or fix its "
-            "permissions and re-run"
+            f"cannot create the dump cache {root}: {exc}; fix its permissions and re-run, "
+            f"or {_other_root_step()}"
         ) from exc
     _require_private(root)
     if os.path.lexists(cache):
@@ -549,8 +555,9 @@ def _make_dump(
             )
             if not current:
                 raise UprofError(
-                    f"cannot install the dump cache at {cache}: {exc}; remove the "
-                    "path or fix its permissions and retry"
+                    f"cannot install the dump cache at {cache}: {exc}; the path is possibly "
+                    f"in use or incompatible; fix its permissions and retry, or "
+                    f"{_other_root_step()}"
                 ) from exc
             shutil.rmtree(staging, ignore_errors=True)
         return final_dump

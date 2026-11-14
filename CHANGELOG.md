@@ -51,6 +51,12 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- `SKILL.md` is cut from about 8,500 to fewer than 500 words: the entry point, the first call per
+  question, the capture pipeline, the permissions and how to read the output. The meaning of each
+  share, the next call and every cause come from the tool output; `--help` does not grow. A
+  question now runs only the one view it asks for, and every `instruction` view runs with
+  `--top 1` (issue #118).
+
 - A PDB is used only when `llvm-pdbutil` verifies that its GUID and age match the image. Without
   `llvm-pdbutil` or an image GUID no PDB is used, and llvm-symbolizer runs without a PDB only
   for an image `llvm-readobj` shows to record none, so it cannot load a stale PDB by name. The

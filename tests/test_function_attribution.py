@@ -23,22 +23,33 @@ TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-upr
 MODULE = "c:/bin/a.dll"
 
 
-def query(sql, *, ranges=(), functions=(), samples=(), aliases=(), symbols=None, **overrides):
+def query(sql, *, ranges=(), functions=(), samples=(), aliases=(), frames=(), **overrides):
     """Run views.sql over an in-memory capture of c:\\bin\\a.dll and return sql's rows.
 
     functions are (id, name) rows of the uProf Function table; samples are (function_id, rva,
-    count) rows; aliases are (rva, names) folded public starts; symbols is a path to a symbol
-    Parquet or None.
+    count) rows; aliases are (rva, name_count, names) public starts; frames are (rva, function,
+    function_short, containing_function) symbolizer frames.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
+        symbols = root / "symbols.parquet"
+        with duckdb.connect(":memory:") as writer:
+            writer.execute(
+                "CREATE TABLE frames(module_name VARCHAR, address VARCHAR, function VARCHAR, "
+                "function_short VARCHAR, containing_function VARCHAR, file VARCHAR, "
+                "line INTEGER)"
+            )
+            for rva, function, short, containing in frames:
+                writer.execute(
+                    "INSERT INTO frames VALUES (?, ?, ?, ?, ?, 'a.cpp', ?)",
+                    [MODULE, str(rva), function, short, containing, rva],
+                )
+            writer.execute("COPY frames TO ? (FORMAT parquet)", [str(symbols)])
         functions_csv = uprof_functions.write_ranges_csv(root / "functions.csv", list(ranges))
         aliases_csv = root / "aliases.csv"
         aliases_csv.write_text(
             "module_name,rva,name_count,names\n"
-            + "".join(
-                f"{MODULE},{rva},{len(names)},{' | '.join(names)}\n" for rva, names in aliases
-            ),
+            + "".join(f"{MODULE},{rva},{count},{names}\n" for rva, count, names in aliases),
             encoding="utf-8",
         )
         connection = duckdb.connect(":memory:")
@@ -69,7 +80,7 @@ def query(sql, *, ranges=(), functions=(), samples=(), aliases=(), symbols=None,
             variables = {
                 "uprof_ibs_dump": "",
                 "uprof_ibs_parquet": "",
-                "uprof_symbols": str(symbols) if symbols else "",
+                "uprof_symbols": str(symbols) if frames else "",
                 "uprof_aliases": str(aliases_csv) if aliases else "",
                 "uprof_pdbs": "",
                 "uprof_functions": str(functions_csv) if ranges else "",
@@ -144,6 +155,115 @@ class DerivedRangeNameTest(unittest.TestCase):
         )
 
         self.assertEqual(rows, [("F", "unique", False, 7), ("E", "unique", False, 4)])
+
+
+INSTRUCTION_ROWS = (
+    'SELECT rva, "function", attribution FROM v_instruction_rows '
+    "WHERE module IS NOT NULL ORDER BY rva"
+)
+LINE_ROWS = 'SELECT "function", attribution FROM v_line_rows WHERE module IS NOT NULL ORDER BY 1'
+
+
+class FoldLabelBoundTest(unittest.TestCase):
+    """A folded public start labels only its own body `shared` (#79).
+
+    The public start is ASOF-joined, so every address up to the next public start matches it.
+    Code past the folded body (a static function without a public name) is not folded: a derived
+    range starting after the fold start, or a symbolizer frame that names a function outside the
+    fold, ends the folded body.
+    """
+
+    def test_a_range_after_the_fold_start_ends_the_folded_body(self):
+        rows = query(
+            INSTRUCTION_ROWS,
+            ranges=[
+                FunctionRange(MODULE, 0x1000, 0x1040, "pdb_public", "fa"),
+                FunctionRange(MODULE, 0x1040, 0x1080, "pdata", None),
+            ],
+            aliases=[(0x1000, 2, "fa | fb")],
+            samples=[(None, 0x1010, 3), (None, 0x1050, 2)],
+            uprof_by="instruction",
+        )
+
+        self.assertEqual(
+            rows,
+            [("0x1010", "shared: fa | fb", "shared"), ("0x1050", "<no symbol>", "unresolved")],
+        )
+
+    def test_a_frame_outside_the_fold_keeps_its_name(self):
+        rows = query(
+            INSTRUCTION_ROWS,
+            aliases=[(0x1000, 2, "fa | fb"), (0x1030, 2, "?ca@@YAHH@Z | ?cb@@YAHH@Z")],
+            frames=[
+                (0x1004, "fb", "fa", "fb"),
+                (0x1034, "cb(int)", "ca", "cb(int)"),
+                (0x1090, "slow", "slow", "slow"),
+            ],
+            samples=[(None, 0x1004, 1), (None, 0x1034, 1), (None, 0x1038, 1), (None, 0x1090, 1)],
+            uprof_by="instruction",
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                ("0x1004", "shared: fa | fb", "shared"),
+                ("0x1034", "shared: ?ca@@YAHH@Z | ?cb@@YAHH@Z", "shared"),
+                ("0x1038", "shared: ?ca@@YAHH@Z | ?cb@@YAHH@Z", "shared"),
+                ("0x1090", "slow", "unique"),
+            ],
+        )
+
+    def test_a_method_template_or_truncated_fold_stays_shared(self):
+        method = "?m1@K@ns@@QEAAHH@Z | ?m2@K@ns@@QEAAHH@Z"
+        template = "??$f@H@@YAHH@Z | ??$f@M@@YAHH@Z"
+        member = "?push_back@?$vector@H@std@@QEAAXH@Z | ?push_back@?$vector@M@std@@QEAAXM@Z"
+        truncated = "a | b | c | d | ... (+1 more)"
+        rows = query(
+            INSTRUCTION_ROWS,
+            aliases=[
+                (0x1000, 2, method),
+                (0x1100, 2, template),
+                (0x1200, 2, member),
+                (0x1300, 5, truncated),
+            ],
+            frames=[
+                (0x1004, "ns::K::m2(int)", "ns::K::m1", "ns::K::m2(int)"),
+                (0x1104, "int __cdecl f<float>(int)", "f<float>", "int __cdecl f<float>(int)"),
+                (
+                    0x1204,
+                    "std::vector<int>::push_back(int)",
+                    "std::vector<int>::push_back",
+                    "std::vector<int>::push_back(int)",
+                ),
+                (0x1304, "e", "e", "e"),
+            ],
+            samples=[(None, rva, 1) for rva in (0x1004, 0x1104, 0x1204, 0x1304)],
+            uprof_by="instruction",
+        )
+
+        self.assertEqual([row[2] for row in rows], ["shared"] * 4, rows)
+
+    def test_a_cpp_frame_outside_the_fold_keeps_its_name(self):
+        rows = query(
+            INSTRUCTION_ROWS,
+            aliases=[(0x1000, 2, "?m1@K@ns@@QEAAHH@Z | ?m2@K@ns@@QEAAHH@Z")],
+            frames=[(0x1090, "ns::K::other(int)", "ns::K::other", "ns::K::other(int)")],
+            samples=[(None, 0x1090, 1)],
+            uprof_by="instruction",
+        )
+
+        self.assertEqual(rows, [("0x1090", "ns::K::other(int)", "unique")])
+
+    def test_the_line_view_keeps_the_name_outside_the_fold(self):
+        rows = query(
+            LINE_ROWS,
+            aliases=[(0x1000, 2, "fa | fb")],
+            frames=[(0x1004, "fb", "fa", "fb"), (0x1090, "slow", "slow", "slow")],
+            samples=[(None, 0x1004, 1), (None, 0x1090, 1)],
+            uprof_by="line",
+        )
+
+        self.assertEqual(rows, [("shared: fa | fb", "shared"), ("slow", "unique")])
 
 
 if __name__ == "__main__":

@@ -421,11 +421,34 @@ class CommittedCaptureTest(unittest.TestCase):
                     self.prepare(session)
                 self.assertIn(message, str(caught.exception))
 
+    def scratch_repository(self) -> Path:
+        """A repository of two commits without captures, so no test needs this clone's history.
+
+        CI clones one commit deep; HEAD~1 and older revisions are not there.
+        """
+        import subprocess
+        from unittest import mock
+
+        repo = self.run_dir / "repo"
+        repo.mkdir()
+        config = ["-c", "user.name=trial", "-c", "user.email=trial@example.invalid"]
+        config += ["-c", "commit.gpgsign=false"]
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        for text in ("one", "two"):
+            (repo / "file.txt").write_text(text, encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "file.txt"], check=True)
+            subprocess.run(
+                ["git", "-C", str(repo), *config, "commit", "-q", "-m", text], check=True
+            )
+        patch = mock.patch.object(run_trials, "REPO", repo)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return repo
+
     def test_a_revision_without_captures_is_refused(self):
-        added = git("log", "--diff-filter=A", "--format=%H", "-1", "--", f"{run_trials.CAPTURES}/")
-        before = added.decode().strip() + "~1"
+        self.scratch_repository()
         with self.assertRaises(ValueError) as caught:
-            self.prepare("`defect_lab/lock.timer`", before)
+            self.prepare("`defect_lab/lock.timer`")
         self.assertIn("no platform folder", str(caught.exception))
 
     def test_several_platforms_need_an_explicit_name(self):
@@ -438,11 +461,14 @@ class CommittedCaptureTest(unittest.TestCase):
 
     def test_captures_come_from_the_plugin_revision_or_head(self):
         self.assertEqual(run_trials.capture_revision("HEAD", None), self.head)
-        self.assertEqual(
-            run_trials.capture_revision("HEAD~1", None), git("rev-parse", "HEAD~1").decode().strip()
+        repo = self.scratch_repository()
+        head, parent = (
+            run_trials.git("rev-parse", rev).decode().strip() for rev in ("HEAD", "HEAD~1")
         )
+        self.assertNotEqual(head, parent)
+        self.assertEqual(run_trials.capture_revision("HEAD~1", None), parent)
         # A plugin folder is not a revision; the captures still come from a commit.
-        self.assertEqual(run_trials.capture_revision("HEAD~1", REPO / "plugin"), self.head)
+        self.assertEqual(run_trials.capture_revision("HEAD~1", repo / "plugin"), head)
 
     def run_main(self, catalogue: dict[str, dict[str, str]]):
         from unittest import mock

@@ -942,15 +942,19 @@ _NEXT_BY: Final = {
 }
 # Rollups whose unscoped system-wide rows mix every process, so NEXT names --by process first.
 _PROCESS_STEERED: Final = ("module", "function", "region")
-_NO_NAMED_FUNCTION_STOP: Final = (
-    "a module with no source names is covered by derived function ranges: use profile --by "
-    "function, which derives boundaries from the binary (.pdata, PE exports, PDB publics) with "
-    "LLVM; do not write a PE parser, map .pdata by hand or disassemble"
+_NO_PE_WORK: Final = "do not write a PE parser, map .pdata by hand or disassemble"
+_DERIVED_RANGES: Final = (
+    "covered by derived function ranges: use profile --by function, which derives boundaries "
+    "from the binary (.pdata, PE exports, PDB publics) with LLVM"
 )
-_UNRESOLVED_FUNCTION_STOP: Final = (
-    "unresolved samples are covered by derived function ranges: use profile --by function, which "
-    "derives boundaries from the binary (.pdata, PE exports, PDB publics) with LLVM; do not write "
-    "a PE parser, map .pdata by hand or disassemble"
+_NO_NAMED_FUNCTION_STOP: Final = (
+    f"a module with no source names is {_DERIVED_RANGES}; {_NO_PE_WORK}"
+)
+_UNRESOLVED_FUNCTION_STOP: Final = f"unresolved samples are {_DERIVED_RANGES}; {_NO_PE_WORK}"
+# The process view's NEXT is the module call, so its stop names that call, not a later one.
+_PROCESS_COVERAGE_STOP: Final = (
+    "missing source names do not block the NEXT call, profile --by module, which attributes "
+    f"these samples to their module; {_NO_PE_WORK}"
 )
 _RANGE_UNRESOLVED_STOP: Final = (
     "no named or derived range covers these samples; function_reason and "
@@ -2590,28 +2594,31 @@ def _coverage_field(
     unresolved = [value for value in values if int(value["samples"]) > int(value["named_samples"])]
     if not unresolved:
         return [("SYMBOL_COVERAGE", f"{db_text}; no module has unresolved samples")]
+    process = by == "process"
     parts = []
     for value in unresolved:
         samples = int(value["samples"])
         named_samples = int(value["named_samples"])
-        kind = "partial" if named_samples else "no source names"
+        kind = "" if process else (", partial" if named_samples else ", no source names")
         share = 100.0 * (samples - named_samples) / samples
         cause = (causes or {}).get(value["module_name"])
         reason = f"; cause: {cause}" if cause else ""
         parts.append(
             f"{value['module_name']} {samples - named_samples}/{samples} "
-            f"({share:.1f}% unresolved, {kind}{reason})"
+            f"({share:.1f}%{'' if process else ' unresolved'}{kind}{reason})"
         )
-    # A module with no names at all is the case that provokes a manual PE/.pdata mapping.
-    stop = (
-        _NO_NAMED_FUNCTION_STOP
-        if any(int(value["named_samples"]) == 0 for value in unresolved)
-        else _UNRESOLVED_FUNCTION_STOP
-    )
+    if process:
+        heading, stop = "without source names by module", _PROCESS_COVERAGE_STOP
+    else:
+        # A module with no names at all is the case that provokes a manual PE/.pdata mapping.
+        heading = "unresolved by module"
+        stop = (
+            _NO_NAMED_FUNCTION_STOP
+            if any(int(value["named_samples"]) == 0 for value in unresolved)
+            else _UNRESOLVED_FUNCTION_STOP
+        )
     remedy = _coverage_remedy(causes) if causes else ""
-    return [
-        ("SYMBOL_COVERAGE", f"{db_text}; unresolved by module: {'; '.join(parts)}; {stop}{remedy}")
-    ]
+    return [("SYMBOL_COVERAGE", f"{db_text}; {heading}: {'; '.join(parts)}; {stop}{remedy}")]
 
 
 def _tag_nonzero(connection: object) -> int:

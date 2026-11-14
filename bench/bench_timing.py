@@ -7,12 +7,18 @@ Two modes per case:
 * instrumented: DuckDB's own JSON profiler and a subprocess probe, plus cProfile over
   the Python frames. Used for the stage table, not for the budget.
 
+Profile cases run once per session-cache mode: cold gives every timed run an empty session
+cache, warm shares one cache that a warmup fills. The tools' caches and temp directories live
+below the harness's work root for the whole run, so a measurement never reads or fills the
+caller's caches.
+
 Requires the `duckdb` package (the skill already does). No other dependency.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import cProfile
 import hashlib
 import io
@@ -31,9 +37,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from typing_extensions import Self
 
-SCHEMA = 1
+SCHEMA = 2
+REPO = Path(__file__).resolve().parents[1]
+DEFAULT_TOOLS = REPO / "plugin" / "skills" / "amd-uprof" / "tools"
+CACHE_ENV = "UPROF_SESSION_CACHE_ROOT"
+# Every variable that places a cache or temp directory of the tools or their children. The
+# symbol search path is not among them: symbol search is part of what a user's run costs.
+ISOLATED_VARS = (CACHE_ENV, "TEMP", "TMP", "TMPDIR", "XDG_CACHE_HOME")
+SYMBOL_PATH_VARS = ("_NT_SYMBOL_PATH", "_NT_ALT_SYMBOL_PATH", "DEBUGINFOD_URLS")
+SESSION_CACHE_MODES = ("cold", "warm")
+# Native-tool runners of uprof_native; tool modules import them by name.
+RUNNERS = ("run", "run_watched")
 PROFILE_CASES = (
     "profile-process",
     "profile-module",
@@ -88,6 +106,12 @@ STAGE_FUNCTIONS: tuple[tuple[str, str | None, str], ...] = (
     ("translate", "uprof_native.py", "python: translate"),
     ("collect", "uprof_collect.py", "python: collect"),
     ("run", "subprocess.py", "subprocess: all children"),
+    ("run_watched", "uprof_native.py", "subprocess: watched children (translate)"),
+    ("_build_samples", "uprof_dump.py", "dump: samples Parquet"),
+    ("build_symbols_key", "uprof_cache.py", "cache: symbols key"),
+    ("symbols_valid", "uprof_cache.py", "cache: symbols lookup"),
+    ("store_symbols", "uprof_cache.py", "cache: store symbols"),
+    ("store_ranges", "uprof_cache.py", "cache: store ranges"),
     ("read_meta", "uprof_session.py", "python: session.uprof read"),
     ("derive_sampler", "uprof_session.py", "python: session.uprof read"),
     ("recorded_time_filter", "uprof_dump.py", "python: session.uprof read"),
@@ -283,42 +307,37 @@ def _host_snapshot() -> dict[str, Any]:
             memory_bytes = status.total_phys
     except (AttributeError, OSError, ValueError):
         pass
-    load = None
-    if os.name == "nt":
-        load_text = _run_version(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                (
-                    "((Get-Counter '\\Processor(_Total)\\% Processor Time').CounterSamples[0]"
-                    ".CookedValue).ToString([System.Globalization.CultureInfo]::InvariantCulture)"
-                ),
-            ]
-        )
-        try:
-            load = float(load_text.replace(",", ".")) if load_text else None
-        except ValueError:
-            load = None
     return {
         "platform": sys.platform,
         "machine": os.environ.get("PROCESSOR_IDENTIFIER"),
         "logical_cpus": os.cpu_count(),
         "total_ram_bytes": memory_bytes,
-        "cpu_load_percent_at_start": load,
+        "cpu_load_percent_at_start": _cpu_load_percent(),
     }
 
 
+def _cpu_load_percent(
+    sample: Callable[[], tuple[int, int, int] | None] = _cpu_times,
+    sleep: Callable[[float], object] = time.sleep,
+    interval_s: float = 1.0,
+) -> float | None:
+    """Busy share of all processors over interval_s, from two system-time samples."""
+    before = sample()
+    if before is None:
+        return None
+    sleep(interval_s)
+    return _system_cpu_percent(before, sample())
+
+
 def _session_identity(session: Path) -> dict[str, Any]:
+    import uprof_dump
+
     cpu_db = session / "cpu.db"
     uprof_meta = session / "session.uprof"
     dump = session / "IbsOpDump.csv"
     if not dump.is_file():
-        # Same key the tool uses (uprof_dump.cache_dir), but never generate a dump here.
-        digest = hashlib.sha256(
-            os.path.normcase(os.path.abspath(session)).encode("utf-8")
-        ).hexdigest()[:16]
-        cache_dump = Path(tempfile.gettempdir()) / "uprof-dump-cache" / digest / "IbsOpDump.csv"
+        # The dump the tools generated into their own cache; never generate one here.
+        cache_dump = uprof_dump.cache_dir(session) / "IbsOpDump.csv"
         if cache_dump.is_file():
             dump = cache_dump
     found_dump = dump if dump.is_file() else None
@@ -334,6 +353,54 @@ def _session_identity(session: Path) -> dict[str, Any]:
         "dump_sha256": _sha256_file(found_dump) if found_dump else None,
         "dump_beside_session": bool(found_dump and found_dump.parent == session),
     }
+
+
+# ---------------------------------------------------------------- isolation
+
+
+@contextlib.contextmanager
+def _environment(values: dict[str, str]) -> Iterator[None]:
+    """Set the environment variables in values; restore their previous state afterwards."""
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+@contextlib.contextmanager
+def isolated_environment(root: Path) -> Iterator[None]:
+    """Point the session cache, the dump cache and every temp directory below root.
+
+    The tools key their caches by session, so a run against the caller's caches would measure
+    whatever earlier runs left there and leave its own results behind.
+    """
+    cache, temp, user_cache = root / "session-cache", root / "tmp", root / "user-cache"
+    for directory in (cache, temp, user_cache):
+        directory.mkdir(parents=True, exist_ok=True)
+    values = {CACHE_ENV: str(cache), "XDG_CACHE_HOME": str(user_cache)}
+    values.update(dict.fromkeys(("TEMP", "TMP", "TMPDIR"), str(temp)))
+    previous_tempdir = tempfile.tempdir
+    with _environment(values):
+        # The dump cache root follows tempfile.gettempdir(), which caches its first answer.
+        tempfile.tempdir = str(temp)
+        try:
+            yield
+        finally:
+            tempfile.tempdir = previous_tempdir
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------- output capture
@@ -714,54 +781,47 @@ def install_duckdb_proxy(recorder: Recorder) -> Callable[[], None]:
 
 
 def install_run_probe(recorder: Recorder) -> Callable[[], None]:
+    """Time every native child started through uprof_native's runners.
+
+    The tool modules bind the runners with `from uprof_native import run`, so the probe replaces
+    each binding of the original function in every loaded uprof_* module, not only the defining
+    one.
+    """
     import uprof_native
 
-    original = uprof_native.run
+    replaced: list[tuple[Any, str, Any]] = []
+    for runner in RUNNERS:
+        original = getattr(uprof_native, runner)
+        probe = _timed_runner(original, recorder)
+        for name, module in list(sys.modules.items()):
+            if name.startswith("uprof_") and getattr(module, runner, None) is original:
+                setattr(module, runner, probe)
+                replaced.append((module, runner, original))
 
-    # Modules loaded by the plain repetitions already bound `run` with
-    # `from uprof_native import run`, so patching the defining module alone would miss them.
-    rebound = [
-        module
-        for name, module in list(sys.modules.items())
-        if name.startswith("uprof_") and getattr(module, "run", None) is original
-    ]
+    def restore() -> None:
+        for module, runner, original in replaced:
+            setattr(module, runner, original)
 
+    return restore
+
+
+def _timed_runner(original: Callable[..., Any], recorder: Recorder) -> Callable[..., Any]:
     def run(command: Any, *args: Any, **kwargs: Any) -> Any:
-        label = _command_label(command)
+        record = {"label": _command_label(command), "argv0": str(command[0])}
         started = time.perf_counter()
         try:
             completed = original(command, *args, **kwargs)
         except BaseException as exc:
-            recorder.subprocesses.append(
-                {
-                    "label": label,
-                    "argv0": str(command[0]),
-                    "elapsed_s": time.perf_counter() - started,
-                    "returncode": None,
-                    "error": type(exc).__name__,
-                }
-            )
+            record.update(returncode=None, error=type(exc).__name__)
             raise
-        recorder.subprocesses.append(
-            {
-                "label": label,
-                "argv0": str(command[0]),
-                "elapsed_s": time.perf_counter() - started,
-                "returncode": completed.returncode,
-            }
-        )
+        else:
+            record["returncode"] = completed.returncode
+        finally:
+            record["elapsed_s"] = time.perf_counter() - started
+            recorder.subprocesses.append(record)
         return completed
 
-    uprof_native.run = run
-    for module in rebound:
-        module.run = run
-
-    def restore() -> None:
-        uprof_native.run = original
-        for module in rebound:
-            module.run = original
-
-    return restore
+    return run
 
 
 # ---------------------------------------------------------------- stage extraction
@@ -864,26 +924,37 @@ def _build_argv(
 
 
 def _execute_once(
-    argv: list[str], instrumented: bool, recorder: Recorder | None, prof_path: Path | None
+    argv: list[str],
+    cache_root: Path,
+    console: Path,
+    recorder: Recorder | None = None,
+    prof_path: Path | None = None,
 ) -> dict[str, Any]:
+    """Run the tools once in-process with the given session cache root.
+
+    The run's stdout and stderr are written to console with the suffixes .stdout and .stderr.
+    An instrumented run (recorder and prof_path given) also profiles DuckDB, the native children
+    and the Python frames.
+    """
     sink_out, sink_err = _Sink(), _Sink()
     old_out, old_err = sys.stdout, sys.stderr
     restores: list[Callable[[], None]] = []
     profiler: cProfile.Profile | None = None
+    cache_root.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     cpu_before = _cpu_times()
     process_before = time.process_time()
     wall = 0.0
     try:
         sys.stdout, sys.stderr = sink_out, sink_err
-        if instrumented:
-            assert recorder is not None
+        if recorder is not None:
             restores.append(install_duckdb_proxy(recorder))
             restores.append(install_run_probe(recorder))
             profiler = cProfile.Profile()
             profiler.enable()
         try:
-            code, failure = _call_main(argv)
+            with _environment({CACHE_ENV: str(cache_root)}):
+                code, failure = _call_main(argv)
         finally:
             if profiler is not None:
                 profiler.disable()
@@ -896,6 +967,9 @@ def _execute_once(
     process_cpu = time.process_time() - process_before
     stdout_bytes = sink_out.bytes_value()
     stderr_bytes = sink_err.bytes_value()
+    console.parent.mkdir(parents=True, exist_ok=True)
+    console.with_name(console.name + ".stdout").write_bytes(stdout_bytes)
+    console.with_name(console.name + ".stderr").write_bytes(stderr_bytes)
     result: dict[str, Any] = {
         "wall_s": wall,
         "exit_code": code,
@@ -908,7 +982,7 @@ def _execute_once(
         "stderr_sha256": _sha256_bytes(stderr_bytes),
         "stderr_tail": stderr_bytes.decode("utf-8", "replace")[-4000:],
     }
-    if prof_path is not None:
+    if profiler is not None and prof_path is not None:
         profiler.dump_stats(str(prof_path))
         result["prof_file"] = str(prof_path)
     return result
@@ -940,36 +1014,71 @@ def _rep_output(result: dict[str, Any], out_file: Path) -> None:
     )
 
 
+def case_key(case: str, mode: str | None) -> str:
+    """The results key of a case: profile cases carry their session-cache mode."""
+    return f"{case}/{mode}" if mode else case
+
+
 def run_case(
-    case: str, args: argparse.Namespace, work_root: Path, tools_dir: Path, session: Path
+    case: str, mode: str | None, args: argparse.Namespace, work_root: Path, session: Path
 ) -> dict[str, Any]:
-    case_work = work_root / case
+    """Time one case: warmups, plain reps, then instrumented reps.
+
+    mode is the session-cache mode of a profile case (None for the others). cold gives every
+    run its own empty session cache; warm shares one, filled by at least one warmup.
+    """
+    case_work = work_root / case / (mode or "")
     case_work.mkdir(parents=True, exist_ok=True)
+    caches = case_work / "session-cache"
 
-    # Warmups are plain runs excluded from the statistics. Only profile cases take them: the
-    # first one generates the cache dump, while a translate warmup would cost another full copy.
-    warmup_reps: list[dict[str, Any]] = []
-    for rep in range(args.warmup if case in CASE_BY_SCOPE else 0):
-        out_file = case_work / f"warmup-{rep}.out"
-        argv = _build_argv(case, session, out_file, case_work, rep, args.seconds)
-        result = _execute_once(argv, instrumented=False, recorder=None, prof_path=None)
-        result["rep"] = rep
-        _rep_output(result, out_file)
-        warmup_reps.append(result)
+    def cache_root(label: str, rep: int) -> Path:
+        return caches / f"{label}-{rep}" if mode == "cold" else caches / "shared"
 
-    plain_reps: list[dict[str, Any]] = []
-    dump_outputs: list[dict[str, Any]] = []
-    reduced = False
-    for rep in range(args.reps):
-        out_file = case_work / f"plain-{rep}.out"
+    def execute(label: str, rep: int, instrumented: bool = False) -> dict[str, Any]:
+        out_file = case_work / f"{label}-{rep}.out"
         argv = _build_argv(case, session, out_file, case_work, rep, args.seconds)
-        result = _execute_once(argv, instrumented=False, recorder=None, prof_path=None)
+        recorder = prof_path = None
+        if instrumented:
+            recorder = Recorder(case_work / f"rec-{rep}", keep_profiles=args.keep_prof)
+            prof_path = case_work / f"{label}-{rep}.prof"
+        result = _execute_once(
+            argv, cache_root(label, rep), case_work / f"{label}-{rep}", recorder, prof_path
+        )
         result["rep"] = rep
         if case == "translate-ascii":
             result["dump_output"] = _dump_identity(case_work / "translate-ascii")
             if result["dump_output"]:
                 dump_outputs.append(result["dump_output"])
         _rep_output(result, out_file)
+        if recorder is not None and prof_path is not None:
+            result["stages"], result["top_functions"] = _stage_entries(prof_path)
+            result["duckdb"] = _duckdb_summary(recorder.statements)
+            result["subprocesses"] = _subprocess_summary(recorder.subprocesses)
+            if args.keep_prof:
+                name = case_key(case, mode).replace("/", "-")
+                destination = Path(args.out).with_suffix(".prof")
+                destination.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(prof_path, destination / f"{name}-instr-{rep}.prof")
+                shutil.copytree(
+                    recorder.profile_dir,
+                    destination / f"duckprof-{name}-{rep}",
+                    dirs_exist_ok=True,
+                )
+        return result
+
+    # Warmups are plain runs excluded from the statistics. Only profile cases take them: the
+    # first one generates the cache dump, while a translate warmup would cost another full copy.
+    # A warm session cache needs one to fill it.
+    warmups = 0
+    if case in CASE_BY_SCOPE:
+        warmups = max(args.warmup, 1) if mode == "warm" else args.warmup
+    dump_outputs: list[dict[str, Any]] = []
+    warmup_reps = [execute("warmup", rep) for rep in range(warmups)]
+
+    plain_reps: list[dict[str, Any]] = []
+    reduced = False
+    for rep in range(args.reps):
+        result = execute("plain", rep)
         plain_reps.append(result)
         if result["wall_s"] > args.per_rep_stop_seconds:
             reduced = True
@@ -992,32 +1101,9 @@ def run_case(
         ),
     }
 
-    instrumented_reps: list[dict[str, Any]] = []
-    for rep in range(args.instrumented_reps):
-        out_file = case_work / f"instrumented-{rep}.out"
-        argv = _build_argv(case, session, out_file, case_work, rep, args.seconds)
-        recorder = Recorder(case_work / f"rec-{rep}", keep_profiles=args.keep_prof)
-        prof_path = case_work / f"instrumented-{rep}.prof"
-        result = _execute_once(argv, instrumented=True, recorder=recorder, prof_path=prof_path)
-        result["rep"] = rep
-        if case == "translate-ascii":
-            result["dump_output"] = _dump_identity(case_work / "translate-ascii")
-            if result["dump_output"]:
-                dump_outputs.append(result["dump_output"])
-        _rep_output(result, out_file)
-        stages, top = _stage_entries(prof_path)
-        result["stages"] = stages
-        result["top_functions"] = top
-        result["duckdb"] = _duckdb_summary(recorder.statements)
-        result["subprocesses"] = _subprocess_summary(recorder.subprocesses)
-        instrumented_reps.append(result)
-        if args.keep_prof:
-            destination = Path(args.out).with_suffix(".prof")
-            destination.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(prof_path, destination / f"{case}-instr-{rep}.prof")
-            shutil.copytree(
-                recorder.profile_dir, destination / f"duckprof-{case}-{rep}", dirs_exist_ok=True
-            )
+    instrumented_reps = [
+        execute("instrumented", rep, instrumented=True) for rep in range(args.instrumented_reps)
+    ]
 
     matches_plain = None
     if identity_asserted:
@@ -1028,6 +1114,7 @@ def run_case(
         )
     return {
         "case": case,
+        "session_cache": mode,
         "warmup": warmup_reps,
         "plain": plain,
         "instrumented": instrumented_reps,
@@ -1237,12 +1324,26 @@ def _write_outputs(results: dict[str, Any], out_path: Path) -> None:
     out_path.with_suffix(".md").write_text(_markdown(results), encoding="utf-8")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--session", required=True, help="session directory to profile")
-    parser.add_argument("--out", required=True, help="results JSON path")
     parser.add_argument(
-        "--cases", default=DEFAULT_CASES, help=f"comma-separated cases; default {DEFAULT_CASES}"
+        "--out",
+        required=True,
+        help="results JSON path, outside the repository; the Markdown summary goes beside it",
+    )
+    parser.add_argument(
+        "--cases",
+        default=DEFAULT_CASES,
+        help=f"comma-separated cases out of {', '.join(ALL_CASES)}; default {DEFAULT_CASES}",
+    )
+    parser.add_argument(
+        "--session-cache",
+        default=",".join(SESSION_CACHE_MODES),
+        help="comma-separated session-cache modes each profile case runs in: cold (an empty "
+        "cache per run) and warm (one cache a warmup fills); default cold,warm",
     )
     parser.add_argument("--reps", type=int, default=5, help="plain repetitions (default 5)")
     parser.add_argument(
@@ -1254,8 +1355,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--warmup",
         type=int,
-        default=0,
-        help="extra plain reps per profile case before the timed ones (default 0)",
+        default=1,
+        help="untimed plain runs per profile case before the timed ones; the first one "
+        "generates a missing dump; warm runs at least one (default 1)",
     )
     parser.add_argument(
         "--per-rep-stop-seconds",
@@ -1279,32 +1381,78 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="keep DuckDB JSON profiles and copy cProfile dumps beside --out",
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--keep-work",
+        metavar="DIR",
+        help="new directory, outside the repository, to run in and keep: every run's console "
+        "output (*.stdout, *.stderr), outputs and caches; default: a temp directory, removed",
+    )
+    return parser
+
+
+def _error(message: str) -> int:
+    print(f"error: {message}", file=sys.stderr)
+    return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     session = Path(args.session).resolve()
     if not (session / "session.uprof").is_file():
-        print(f"error: {session} has no session.uprof", file=sys.stderr)
-        return 2
+        return _error(f"{session} has no session.uprof")
     if not (session / "cpu.db").is_file():
-        print(f"error: {session} has no cpu.db", file=sys.stderr)
-        return 2
+        return _error(f"{session} has no cpu.db")
     cases = [case.strip() for case in args.cases.split(",") if case.strip()]
     unknown = [case for case in cases if case not in ALL_CASES]
     if unknown:
-        print(f"error: unknown case(s): {', '.join(unknown)}", file=sys.stderr)
-        return 2
+        return _error(f"unknown case(s): {', '.join(unknown)}")
+    modes = [mode.strip() for mode in args.session_cache.split(",") if mode.strip()]
+    if not modes or any(mode not in SESSION_CACHE_MODES for mode in modes):
+        return _error(f"--session-cache takes {' and/or '.join(SESSION_CACHE_MODES)}")
+    # Measurement snapshots go stale with the next change; they belong in the PR or issue
+    # record, never in the repository.
+    out_path = Path(args.out).resolve()
+    if _inside(out_path, REPO):
+        return _error(f"--out {out_path} is inside the repository; write results outside it")
+    if args.keep_work and _inside(Path(args.keep_work), REPO):
+        return _error(f"--keep-work {args.keep_work} is inside the repository")
 
-    repo = Path(__file__).resolve().parents[1]
-    tools_dir = (
-        Path(args.tools_dir).resolve()
-        if args.tools_dir
-        else repo / "plugin" / "skills" / "amd-uprof" / "tools"
-    )
+    tools_dir = Path(args.tools_dir).resolve() if args.tools_dir else DEFAULT_TOOLS
     if not (tools_dir / "uprof.py").is_file():
-        print(f"error: {tools_dir} has no uprof.py", file=sys.stderr)
-        return 2
-    sys.path.insert(0, str(tools_dir))
-    import uprof  # noqa: F401  (imports the sibling modules from tools_dir)
+        return _error(f"{tools_dir} has no uprof.py")
+    if str(tools_dir) not in sys.path:
+        sys.path.insert(0, str(tools_dir))
+    import uprof  # noqa: F401 - loads the tool modules the probes patch
+
+    if args.keep_work:
+        work_root = Path(args.keep_work).resolve()
+        try:
+            work_root.mkdir(parents=True)
+        except FileExistsError:
+            return _error(f"--keep-work {work_root} already exists")
+    else:
+        work_root = Path(tempfile.mkdtemp(prefix="uprof-timing-"))
+    try:
+        with isolated_environment(work_root / "env"):
+            return _measure(args, session, cases, modes, tools_dir, work_root, out_path)
+    finally:
+        if args.keep_work:
+            print(f"[timing] kept the work directory {work_root}", file=sys.stderr)
+        else:
+            shutil.rmtree(work_root, ignore_errors=True)
+
+
+def _measure(
+    args: argparse.Namespace,
+    session: Path,
+    cases: list[str],
+    modes: list[str],
+    tools_dir: Path,
+    work_root: Path,
+    out_path: Path,
+) -> int:
+    import uprof_cache
     import uprof_native
 
     results: dict[str, Any] = {
@@ -1315,20 +1463,23 @@ def main(argv: list[str] | None = None) -> int:
             "python": sys.version.split()[0],
             "duckdb": __import__("duckdb").__version__,
             "uprof_cli": _run_version(
-                [str(path)] + ["--version"] if (path := uprof_native.find_uprof()) else None
+                [str(path), "--version"] if (path := uprof_native.find_uprof()) else None
             ),
             "llvm": _run_version(
                 [str(path), "--version"] if (path := uprof_native.find_symbolizer()) else None
             ),
         },
         "git": {
-            "head": _git(repo, "rev-parse", "HEAD"),
-            "branch": _git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+            "head": _git(REPO, "rev-parse", "HEAD"),
+            "branch": _git(REPO, "rev-parse", "--abbrev-ref", "HEAD"),
         },
         "session": _session_identity(session),
         "config": {
             "tools_dir": str(tools_dir),
             "cases": cases,
+            "session_cache_modes": modes,
+            "session_cache_disabled": uprof_cache.DISABLE,
+            "symbol_path_vars_set": [name for name in SYMBOL_PATH_VARS if os.environ.get(name)],
             "reps": args.reps,
             "instrumented_reps": args.instrumented_reps,
             "warmup": args.warmup,
@@ -1340,42 +1491,38 @@ def main(argv: list[str] | None = None) -> int:
         "cases": {},
     }
 
-    out_path = Path(args.out)
+    runs = [(case, mode) for case in cases for mode in (modes if case in CASE_BY_SCOPE else [None])]
     started = time.perf_counter()
-    work_root = Path(tempfile.mkdtemp(prefix="uprof-timing-"))
-    try:
-        for case in cases:
-            elapsed_minutes = (time.perf_counter() - started) / 60.0
-            if args.max_total_minutes and elapsed_minutes >= args.max_total_minutes:
-                results["stopped_early"] = {
-                    "case": case,
-                    "elapsed_minutes": elapsed_minutes,
-                    "reason": f"max-total-minutes {args.max_total_minutes}",
-                }
-                print(
-                    f"[timing] stopping before {case}: {results['stopped_early']['reason']}",
-                    file=sys.stderr,
-                )
-                break
+    for case, mode in runs:
+        key = case_key(case, mode)
+        elapsed_minutes = (time.perf_counter() - started) / 60.0
+        if args.max_total_minutes and elapsed_minutes >= args.max_total_minutes:
+            results["stopped_early"] = {
+                "case": key,
+                "elapsed_minutes": elapsed_minutes,
+                "reason": f"max-total-minutes {args.max_total_minutes}",
+            }
             print(
-                f"[timing] {case}: {args.reps} plain, {args.instrumented_reps} instrumented, "
-                f"{args.warmup if case in CASE_BY_SCOPE else 0} warmup",
+                f"[timing] stopping before {key}: {results['stopped_early']['reason']}",
                 file=sys.stderr,
             )
-            results["cases"][case] = run_case(case, args, work_root, tools_dir, session)
-            _refresh_session(results, session)
-            _write_outputs(results, out_path)
-            case_result = results["cases"][case]
-            print(
-                f"[timing] {case}: median {case_result['plain']['wall'].get('median_s', 0):.3f}s "
-                f"p95 {case_result['plain']['wall'].get('p95_s', 0):.3f}s "
-                f"identical={case_result['plain']['identical']} "
-                f"all_zero_exit={case_result['plain']['all_zero_exit']} "
-                f"elapsed={elapsed_minutes:.1f}min",
-                file=sys.stderr,
-            )
-    finally:
-        shutil.rmtree(work_root, ignore_errors=True)
+            break
+        print(
+            f"[timing] {key}: {args.reps} plain, {args.instrumented_reps} instrumented",
+            file=sys.stderr,
+        )
+        results["cases"][key] = case_result = run_case(case, mode, args, work_root, session)
+        _refresh_session(results, session)
+        _write_outputs(results, out_path)
+        wall = case_result["plain"]["wall"]
+        print(
+            f"[timing] {key}: median {wall.get('median_s', 0):.3f}s "
+            f"p95 {wall.get('p95_s', 0):.3f}s "
+            f"identical={case_result['plain']['identical']} "
+            f"all_zero_exit={case_result['plain']['all_zero_exit']} "
+            f"elapsed={elapsed_minutes:.1f}min",
+            file=sys.stderr,
+        )
 
     _refresh_session(results, session, force=True)
     _write_outputs(results, out_path)

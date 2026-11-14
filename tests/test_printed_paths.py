@@ -36,16 +36,30 @@ def command_lines(text):
 
 class RecaptureTest(unittest.TestCase):
     def test_a_hostile_session_gives_a_placeholder_and_a_data_line(self):
-        cycles, ibs, data = uprof_native.recapture_commands(Path(HOSTILE))
-        for command in (cycles, ibs):
+        *commands, data = uprof_native.recapture_commands(Path(HOSTILE))
+        for command in commands:
             self.assertNotIn("$(calc)", command)
             self.assertIn("--out-dir <NEW_OUT_DIR>", command)
         self.assertEqual(data, "NEW_OUT_DIR=" + repr(HOSTILE + "-recapture"))
 
     def test_a_plain_session_with_a_quote_stays_runnable(self):
-        cycles, _ibs, data = uprof_native.recapture_commands(Path(QUOTED))
+        cycles, _ibs, _timer, data = uprof_native.recapture_commands(Path(QUOTED))
         self.assertIn(f'--out-dir "{QUOTED}-recapture"', cycles)
         self.assertIsNone(data)
+
+    def test_the_recapture_offers_a_timer_capture_into_a_new_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "s"
+            for taken in ("s-recapture", "s-recapture-2"):
+                (Path(tmp) / taken).mkdir()
+            cycles, ibs, timer, _ = uprof_native.recapture_commands(session)
+        # On a host where IBS is unavailable and cycle sampling is rejected, the timer capture
+        # is the one that can still succeed; no command writes into an existing directory.
+        self.assertTrue(timer.endswith(" --event timer"), timer)
+        self.assertTrue(cycles.endswith(" --seconds 60"), cycles)
+        self.assertTrue(ibs.endswith(" --event ibs-op"), ibs)
+        for command in (cycles, ibs, timer):
+            self.assertIn("s-recapture-3", command)
 
     def test_the_translate_failure_puts_the_path_on_its_own_line(self):
         completed = subprocess.CompletedProcess(["x"], -1073741819, "Translation started\n", "")

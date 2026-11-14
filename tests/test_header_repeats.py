@@ -29,6 +29,10 @@ SKIPPED = ("NEXT", "VERSION")
 PHRASE = 6
 # One synthetic capture per sampler: IBS OP cycle and op count, system-wide IBS, PMC, timer.
 SESSIONS = ("attached", "opcount", "pmc", "systemwide", "timer")
+OLD_NAMES = re.compile(
+    r"\b(function_start|function_end|function_derived|function_reason|hot_samples|"
+    r"other_samples|hot_sample_share)\b"
+)
 
 
 def repeats(output: str) -> list[str]:
@@ -86,6 +90,22 @@ class HeaderRepeatsTest(unittest.TestCase):
 
     def test_the_rollup_headers_state_each_fact_once(self):
         self.check(["process", "module"])
+
+    def test_a_pmc_header_leaves_the_absent_columns_to_columns(self):
+        output = self.run_profile("pmc", "--by", "module")
+        self.assertNotIn("\nTIME_SHARE: ", output)
+        self.assertNotIn("\nTAG_TO_RETIRE_SHARE: ", output)
+        self.assertIn("time_share absent (", output)
+        self.assertIn("tag_to_retire_share absent (", output)
+
+    def test_no_output_names_a_renamed_column(self):
+        # The seven columns renamed for #389 appear under their new names only, in the text,
+        # the JSON rows and the JSON legend.
+        for session in SESSIONS:
+            for args in (["--by", "module"], ["--by", "module", "--json"]):
+                with self.subTest(session=session, args=args):
+                    output = self.run_profile(session, *args)
+                    self.assertEqual(OLD_NAMES.findall(output), [])
 
     @unittest.skipIf(os.name != "nt", "host: the symbolizing fixtures run on Windows")
     @unittest.skipIf(F.READOBJ is None, "missing llvm-readobj; install LLVM")

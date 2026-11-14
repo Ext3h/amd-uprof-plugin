@@ -248,6 +248,13 @@ class SkillTest(unittest.TestCase):
 
 
 class ValidationQuoteTest(unittest.TestCase):
+    def test_the_pmc_row_describes_the_printed_header(self):
+        # A PMC capture prints no TIME_SHARE or TAG_TO_RETIRE_SHARE line; COLUMNS states both
+        # columns as absent with their cause (#389).
+        row = next(line for line in VALIDATION.splitlines() if line.startswith("| `pmc-session`"))
+        self.assertNotIn("not applicable", row)
+        self.assertIn("`COLUMNS` names `time_share` and `tag_to_retire_share` absent", row)
+
     def test_agreement_quotes_use_the_printed_field_syntax(self):
         # The AGREEMENT line prints `mismatch_rate=<p>%`, `name_mismatches=<n> addresses of <m>
         # compared` and `unresolved=<u> addresses`; a quote of it may abbreviate but not respell.

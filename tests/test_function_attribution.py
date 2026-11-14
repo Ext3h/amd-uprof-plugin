@@ -316,5 +316,53 @@ class FunctionIdParentTest(unittest.TestCase):
         self.assertEqual(rows, [("0x1010", 2, 3), ("0x1020", 1, 3)])
 
 
+REGION_ROWS = (
+    "SELECT hot_function, attribution, symbol_reason, function_source FROM v_region_rows "
+    "WHERE module IS NOT NULL ORDER BY page_start"
+)
+
+RANGE_REASON = (
+    "no source line: the derived function range names hot_rva but there is no symbolizer file/line"
+)
+
+
+class RegionSymbolReasonTest(unittest.TestCase):
+    """The region symbol_reason names only a source that exists (#86)."""
+
+    def test_a_folded_hot_rva_without_a_range_names_the_fold(self):
+        rows = query(
+            REGION_ROWS,
+            aliases=[(0x1000, 2, "fa | fb")],
+            samples=[(None, 0x1010, 1)],
+            uprof_by="region",
+        )
+
+        self.assertEqual(len(rows), 1)
+        function, attribution, reason, source = rows[0]
+        self.assertEqual((function, attribution, source), ("shared: fa | fb", "shared", "none"))
+        self.assertNotIn("derived function range", reason)
+        self.assertIn("folded", reason)
+
+    def test_a_derived_range_without_a_frame_names_the_range(self):
+        rows = query(
+            REGION_ROWS,
+            ranges=[FunctionRange(MODULE, 0x1000, 0x1080, "pdata", None)],
+            samples=[(None, 0x1010, 1)],
+            uprof_by="region",
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                (
+                    "pdata_0x1000",
+                    "derived",
+                    RANGE_REASON,
+                    "pdata",
+                )
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

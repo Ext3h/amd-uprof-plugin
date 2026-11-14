@@ -64,8 +64,8 @@ class BarePythonTest(unittest.TestCase):
             line for line in message.splitlines() if line.startswith("ALTERNATIVE: whole capture: ")
         )
         self.assertTrue(whole.split(": ", 2)[2].startswith(f"python {TOOL} "), whole)
-        cycles, ibs, _ = uprof_native.recapture_commands(Path(SESSION))
-        for command in (cycles, ibs):
+        *commands, _ = uprof_native.recapture_commands(Path(SESSION))
+        for command in commands:
             self.assertTrue(command.startswith(f"python {TOOL} "), command)
 
 

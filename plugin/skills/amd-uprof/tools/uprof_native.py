@@ -33,6 +33,7 @@ from uprof_util import (
     copy_session,
     inline,
     parse_time_filter,
+    redact_credentials,
     skill_identity,
     tail_lines,
 )
@@ -553,16 +554,16 @@ def run_watched(
 
 
 def print_output(completed: subprocess.CompletedProcess[str]) -> None:
-    if completed.stdout:
-        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
-    if completed.stderr:
-        print(
-            completed.stderr, end="" if completed.stderr.endswith("\n") else "\n", file=sys.stderr
-        )
+    """Echo a tool's output; AMDuProfCLI can echo symbol-server URLs, so credentials are cut."""
+    for text, stream in ((completed.stdout, sys.stdout), (completed.stderr, sys.stderr)):
+        if text:
+            print(redact_credentials(text), end="" if text.endswith("\n") else "\n", file=stream)
 
 
 def failure_detail(completed: subprocess.CompletedProcess[str]) -> str:
-    return tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
+    return redact_credentials(
+        tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
+    )
 
 
 # Windows NTSTATUS of an access violation, as a signed and an unsigned process exit code.
@@ -649,7 +650,7 @@ def translate_stopped(
     )
     session_arg, session_data = uprof_shell.path_arg(session, "<SESSION_DIR>")
     out_arg, out_data = uprof_shell.path_arg(out, "<OUT_DIR>")
-    sources = " | ".join(servers) or "none passed"
+    sources = " | ".join(map(redact_credentials, servers)) or "none passed"
     stop = (
         f"translate made no progress for {TRANSLATE_STALL // 60} min (AMDuProfCLI's log, "
         "the out-dir and the symbol cache stopped changing)"
@@ -1199,9 +1200,9 @@ def translate(
     servers = list(dict.fromkeys([*base, *(symbol_servers or [])]))
     print(f"VERSION={skill_identity()}")
     print(f"SYMBOL_CACHE={cache}")
-    print(f"SYMBOL_SERVERS={' | '.join(servers)}")
+    print(f"SYMBOL_SERVERS={' | '.join(map(redact_credentials, servers))}")
     for server in servers:
-        upstream = server.split("*")[-1].strip()
+        upstream = redact_credentials(server.split("*")[-1].strip())
         if upstream.lower().startswith("http://"):
             # Downloaded PDBs are parsed; over plain http anyone on the path can replace them.
             print(

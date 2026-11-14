@@ -6,8 +6,8 @@ Detail behind `SKILL.md`. The tools and `tools/views.sql` are the authority.
 
 Header fields are emitted in this fixed order, with optional fields omitted when they do not apply:
 `VERSION`, `METRIC`, optional `FILTER` and `PARENT`, `COLUMNS`, `READ`, optional `NEXT`, `DUMP`,
-optional `DB`, `TIME_SHARE`, `TAG_TO_RETIRE_SHARE`, `WEIGHTS`, optional `SANITY`, `ACHIEVED`,
-`KERNEL_COVERAGE`, `HOT_RVA`, `SYMBOL_COVERAGE`, `WARNING`, `AGREEMENT`.
+optional `DB`, `TIME_SHARE` and `TAG_TO_RETIRE_SHARE` (IBS dump captures), `WEIGHTS`, optional
+`SANITY`, `ACHIEVED`, `KERNEL_COVERAGE`, `HOT_RVA`, `SYMBOL_COVERAGE`, `WARNING`, `AGREEMENT`.
 
 ## Granularities
 

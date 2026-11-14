@@ -208,7 +208,9 @@ class AttachedTimeShareTest(unittest.TestCase):
         self.assertNotIn("busiest TID covers", sanity)
         self.assertIn("1 active TID (46/46 samples in the busiest)", sanity)
         self.assertIn("2 CPU(s) visited", sanity)
-        self.assertIn("partitions gaps by (PID, TID)", sanity)
+        # TIME_SHARE states the (PID, TID) partition; SANITY does not repeat it.
+        self.assertIn("the partition is (PID, TID)", document["TIME_SHARE"])
+        self.assertNotIn("partitions gaps", sanity)
         # A single thread cannot have 2 CPUs' worth of capacity.
         self.assertNotIn("x 2 CPUs", sanity)
 
@@ -281,10 +283,8 @@ class AttachedTimeShareTest(unittest.TestCase):
     def test_headers_state_the_thread_partition(self):
         output = self._run_profile()
 
-        self.assertIn(
-            "time_share = per-thread time share (off-CPU gaps are charged to the ending sample)",
-            output,
-        )
+        self.assertIn("time_share = per-thread time share;", output)
+        self.assertIn("idle/wait, including off-CPU time, is charged to the ending sample", output)
         self.assertIn("sample_share orders the functions", output)
         self.assertIn("the partition is (PID, TID)", output)
         self.assertIn("exact DeltaTick-gap weights per (PID, TID)", output)

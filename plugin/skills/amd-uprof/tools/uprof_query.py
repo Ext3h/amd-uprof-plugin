@@ -1753,17 +1753,9 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         if measure == "time_share":
             read = f"time_share orders the functions: {reason}; sample_share is not a per-op cost"
         elif measure == "sample_share":
-            read = f"sample_share orders the functions: {reason}"
+            read = "sample_share orders the functions"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
-        read += (
-            "; hot_rva is the highest-sample RVA inside the function; function_start and "
-            "function_end delimit the derived range; a name with function_derived=true is "
-            "synthetic (sub_/pdata_), derived from the binary, not a source symbol; "
-            "function_reason explains a row with no derived range"
-        )
-        if "tag_to_retire_share" in legend["columns"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
         read += "; the <other functions> row is last, not ranked"
@@ -1774,7 +1766,7 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         if measure == "time_share":
             read = f"time_share orders the pages: {reason}; sample_share is not a per-op cost"
         elif measure == "sample_share":
-            read = f"sample_share orders the pages: {reason}"
+            read = "sample_share orders the pages"
         else:
             read = f"rows are ordered by raw sample count: {reason}"
         hot_desc = (
@@ -1783,13 +1775,9 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         )
         read += (
             f"; {hot_desc} and sampled_addresses "
-            "shows whether the page is a tight cluster or a diffuse bucket; hot_rva's "
-            "function_source names the boundary source and function_derived=true marks a "
-            "synthetic binary name; a page may span unrelated code, so do not read it as a "
-            "contiguous region, hot path or basic block"
+            "shows whether the page is a tight cluster or a diffuse bucket; a page may span "
+            "unrelated code, so do not read it as a contiguous region, hot path or basic block"
         )
-        if "tag_to_retire_share" in legend["columns"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
         read += "; the <other regions> row is last, not ranked"
@@ -1803,8 +1791,6 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
                 "time_share ranks where each thread's elapsed time went (PID, TID partition, "
                 "so a migrating thread is counted once); sample_share is not a per-op cost"
             )
-        if "tag_to_retire_share" in legend["columns"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
     elif measure == "sample_share":
@@ -1814,13 +1800,11 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
                 "cycles were spent"
             )
         else:
-            read = f"sample_share orders the rows: {sample}"
+            read = "sample_share orders the rows"
             if sample.startswith(("dispatched-op", "fetch-sample")):
                 read += f"; {_SAMPLE_CAVEAT}"
-        if "tag_to_retire_share" in legend["columns"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
     elif sample == _TIMER_SHARE_MEANING:
-        read = f"sample_share orders the rows: {sample}"
+        read = "sample_share orders the rows"
     elif sample.startswith("not established"):
         read = (
             "sample_share is not established for this event; rows are ordered by raw sample "
@@ -1848,6 +1832,14 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
     return read
 
 
+def _causes_by_module(causes: dict[str, str]) -> str:
+    """Each cause once, after the modules it applies to, in module order."""
+    modules: dict[str, list[str]] = {}
+    for module, cause in sorted(causes.items()):
+        modules.setdefault(cause, []).append(module)
+    return "; ".join(f"{', '.join(names)}: {cause}" for cause, names in modules.items())
+
+
 def _next_text(calls: list[str]) -> str:
     """Full runnable calls joined by && so the Markdown line can be pasted as one command."""
     return " && ".join(calls)
@@ -1863,20 +1855,20 @@ def _legend_fields(
 ) -> list[tuple[str, str]]:
     """The short legend: columns and unit, what to read, and runnable next calls.
 
-    A timer capture states its missing measures once, in METRIC, so COLUMNS does not repeat them.
-    top_row is the precision clause READ carries for the first row.
+    A header states each fact once. A timer capture states its missing measures once, in METRIC,
+    so COLUMNS does not repeat them; METRIC also states the sample_share meaning when it carries
+    it, and TIME_SHARE how gaps are charged. top_row is the precision clause READ carries for the
+    first row.
     """
     parts = []
     if "attribution" in legend["columns"]:
         parts.append(f"attribution = {legend['columns']['attribution']}")
-    parts += ["samples = raw count", f"sample_share = {legend['columns']['sample_share']}"]
+    sample = legend["columns"]["sample_share"]
+    if sample.rstrip(")") in sampler.metric:
+        sample = "the METRIC sample share"
+    parts += ["samples = raw count", f"sample_share = {sample}"]
     if "time_share" in legend["columns"]:
-        if system_wide:
-            parts.append("time_share = time share")
-        else:
-            parts.append(
-                "time_share = per-thread time share (off-CPU gaps are charged to the ending sample)"
-            )
+        parts.append(f"time_share = {'time share' if system_wide else 'per-thread time share'}")
     elif not timer:
         parts.append(f"time_share absent ({legend['absent']['time_share']})")
     if "tag_to_retire_share" in legend["columns"]:
@@ -1884,9 +1876,18 @@ def _legend_fields(
     elif not timer:
         parts.append(f"tag_to_retire_share absent ({legend['absent']['tag_to_retire_share']})")
     if "function_scope" in legend:
-        for key in ("parent_sample_share", "parent_time_share", "parent_tag_to_retire_share"):
-            if key in legend["columns"]:
-                parts.append(f"{key} = {legend['columns'][key]}")
+        # One sentence for the parent shares: each is the row's measure over the parent's.
+        measures = {
+            "parent_sample_share": "samples",
+            "parent_time_share": "gap weight",
+            "parent_tag_to_retire_share": "tag-to-retire cycles",
+        }
+        present = [key for key in measures if key in legend["columns"]]
+        if present:
+            parts.append(
+                f"{', '.join(present)} = the row's {', '.join(measures[k] for k in present)} as "
+                "a share of the selected parent function's, not the capture"
+            )
     if "function_ranges" in legend:
         for key in (
             "function_start",
@@ -1969,41 +1970,13 @@ def _header_fields(
             )
         )
     elif dump is None:
-        if sampler.pmc_cycle_shares:
-            share = (
-                "sample_share is the busy core-cycle share (fixed cycles per sample; "
-                "halted excluded)"
-            )
-        else:
-            share = (
-                "sample_share is not established for this PMC event; capture --event cycles "
-                "(CYCLES_NOT_IN_HALT, hwId 118) to make it a core-cycle share"
-            )
+        # COLUMNS states the share and both absent columns with their cause.
         fields.append(
             (
                 "DUMP",
                 (
                     "none; this PMC capture has no IBS ASCII dump, so samples are the "
-                    f"UnifiedSampleSeries event-column counts; {share}"
-                ),
-            )
-        )
-        fields.append(
-            (
-                "TIME_SHARE",
-                (
-                    "not applicable; this export aggregates PMC samples per "
-                    "window, so time_share is omitted; capture with --event "
-                    "ibs-op (IBS OP with per-sample timestamps) to get it"
-                ),
-            )
-        )
-        fields.append(
-            (
-                "TAG_TO_RETIRE_SHARE",
-                (
-                    "not applicable; this export has no tag-to-retire "
-                    "counter, so tag_to_retire_share is omitted"
+                    "UnifiedSampleSeries event-column counts"
                 ),
             )
         )
@@ -2076,20 +2049,17 @@ def _header_fields(
                     )
                 )
             elif tag_available:
-                fields.append(
-                    (
-                        "TAG_TO_RETIRE_SHARE",
-                        (
-                            "share of tag-to-retire cycles summed "
-                            "over sampled ops (AMD tag at dispatch to "
-                            "retirement, queue/stalls included; 16-bit "
-                            "counter clipped at 65535); a total, not "
-                            "per-op latency: a higher share means more "
-                            "total tag-to-retire cycles, not a higher "
-                            "per-op cost"
-                        ),
-                    )
+                total = (
+                    "a total, not per-op latency: a higher share means more total "
+                    "tag-to-retire cycles, not a higher per-op cost"
                 )
+                if "tag-to-retire: " not in sampler.metric:
+                    total = (
+                        "share of tag-to-retire cycles summed over sampled ops (AMD tag at "
+                        "dispatch to retirement, queue/stalls included; 16-bit counter clipped "
+                        f"at 65535); {total}"
+                    )
+                fields.append(("TAG_TO_RETIRE_SHARE", total))
             else:
                 fields.append(
                     (
@@ -2117,48 +2087,14 @@ def _header_fields(
                 )
             )
     if sampler.timer:
-        weights = (
-            "timer sample counts from UnifiedSampleSeries; sample_share is the on-CPU time share"
-        )
+        weights = "timer sample counts from UnifiedSampleSeries"
     elif dump is None:
-        if sampler.pmc_cycle_shares:
-            weights = (
-                "PMC sample counts from UnifiedSampleSeries; sample_share is the busy "
-                "core-cycle share"
-            )
-        else:
-            weights = (
-                "PMC sample counts from UnifiedSampleSeries; sample_share is not "
-                "established for this event"
-            )
+        weights = "PMC sample counts from UnifiedSampleSeries"
     else:
-        if system_wide:
-            window = (
-                "whole capture"
-                if args.time_filter is None
-                else f"time filter {args.time_filter} (first sample per CPU inside the "
-                "window excluded)"
-            )
-            weights = (
-                "exact DeltaTick-gap weights per CPU_Number (the first sample per CPU is "
-                "ignored, no gap before it; gap time is charged to the later sample); "
-                f"{window}; sample_share is the dump's raw sample share and time_share "
-                "weights the same rows by gap"
-            )
-        else:
-            window = (
-                "whole capture"
-                if args.time_filter is None
-                else f"time filter {args.time_filter} (first sample per thread inside the "
-                "window excluded)"
-            )
-            weights = (
-                "exact DeltaTick-gap weights per (PID, TID) (the first sample per thread "
-                "is ignored, no gap before it; gap time, including off-CPU time, is charged "
-                "to the later sample); "
-                f"{window}; sample_share is the dump's raw sample share and time_share "
-                "weights the same rows by gap"
-            )
+        # TIME_SHARE states how gaps are charged and that the first sample has none.
+        window = "whole capture" if args.time_filter is None else f"time filter {args.time_filter}"
+        context = "CPU_Number" if system_wide else "(PID, TID)"
+        weights = f"exact DeltaTick-gap weights per {context}; {window}"
     fields.append(("WEIGHTS", f"{weights}; --by {args.by}: {GRANULARITY_LABELS[args.by]}"))
     return fields
 
@@ -2570,9 +2506,8 @@ def _coverage_field(
                     ),
                 )
             ]
-        reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
-        if reasons:
-            text += f"; cause by module: {'; '.join(reasons)}"
+        if causes:
+            text += f"; cause by module: {_causes_by_module(causes)}"
         return [("SYMBOL_COVERAGE", f"{text}; {_RANGE_UNRESOLVED_STOP}{_coverage_remedy(causes)}")]
     scoped = (
         int(symbolizer["scoped_samples"])
@@ -2599,9 +2534,8 @@ def _coverage_field(
                     ),
                 )
             ]
-        reasons = [f"{module}: {cause}" for module, cause in sorted((causes or {}).items())]
-        if reasons:
-            text += f"; cause by module: {'; '.join(reasons)}"
+        if causes:
+            text += f"; cause by module: {_causes_by_module(causes)}"
         stop = _NO_NAMED_FUNCTION_STOP if resolved == 0 else _UNRESOLVED_FUNCTION_STOP
         return [("SYMBOL_COVERAGE", f"{text}; {stop}{_coverage_remedy(causes)}")]
     unresolved = [value for value in values if int(value["samples"]) > int(value["named_samples"])]

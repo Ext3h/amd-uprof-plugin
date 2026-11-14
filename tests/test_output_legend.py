@@ -168,9 +168,13 @@ MODES = {
 }
 
 
-def expected_columns(mode):
+def expected_columns(mode, metric):
+    """COLUMNS names METRIC's sample share instead of restating it."""
     spec = MODES[mode]
-    parts = ["samples = raw count", f"sample_share = {spec['sample']}"]
+    sample = spec["sample"]
+    if sample.rstrip(")") in metric:
+        sample = "the METRIC sample share"
+    parts = ["samples = raw count", f"sample_share = {sample}"]
     if spec["time"]:
         parts.append("time_share = time share")
     else:
@@ -187,8 +191,6 @@ def expected_read(mode):
     spec = MODES[mode]
     if spec["order_by"][0] == "time_share":
         read = "time_share ranks where time went; sample_share is not a per-op cost"
-        if spec["tag"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
         if spec["sample"].startswith(("dispatched-op", "fetch-sample")):
             read += f"; {CAVEAT}"
     elif spec["sample"].startswith("not established"):
@@ -202,11 +204,9 @@ def expected_read(mode):
             "cycles were spent"
         )
     else:
-        read = f"sample_share orders the rows: {spec['sample']}"
+        read = "sample_share orders the rows"
         if spec["sample"].startswith(("dispatched-op", "fetch-sample")):
             read += f"; {CAVEAT}"
-        if spec["tag"]:
-            read += "; tag_to_retire_share is total tag-to-retire cycles (higher = more wait)"
     return f"READ: {read}; {READ_TAIL}"
 
 
@@ -468,7 +468,8 @@ class OutputLegendTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 output = self.profile(self.session(mode))
                 lines = output.splitlines()
-                self.assertIn(expected_columns(mode), lines)
+                metric = next(line for line in lines if line.startswith("METRIC: "))
+                self.assertIn(expected_columns(mode, metric), lines)
                 self.assertIn(expected_read(mode), lines)
                 next_line = next(line for line in lines if line.startswith("NEXT: "))
                 self.assertIn("--session", next_line)

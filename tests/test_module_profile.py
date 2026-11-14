@@ -302,11 +302,12 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertIn("--pid 100", scoped_calls[0])
 
         # The function call decides whether region is needed; module does not pre-empt it. This
-        # unscoped view of a system-wide capture names the process ranking first.
+        # unscoped view of a system-wide capture names its form scoped to the user's process
+        # first and the process ranking second.
         module_calls = self.document(session)["legend"]["next"]
         self.assertEqual(len(module_calls), 2)
-        self.assertIn("--by process", module_calls[0])
-        self.assertIn("--by function", module_calls[1])
+        self.assertIn("--by module --image %<EXE>", module_calls[0])
+        self.assertIn("--by process", module_calls[1])
         self.assertFalse(
             any("--by region" in call or "--by instruction" in call for call in module_calls)
         )

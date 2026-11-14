@@ -1172,6 +1172,31 @@ def _next_calls(
     return calls
 
 
+def _empty_scope_calls(args: argparse.Namespace, data: dict[str, str]) -> list[str]:
+    """NEXT for a scope that matched no sample: never the same filter, which is certain to be empty.
+
+    An empty --image or --pid scope offers the same view with the process left to the caller
+    (%<EXE> matches the full image path) and the process ranking that lists them; an empty
+    --time-filter window alone offers the same view without the window.
+    """
+    if args.image in (None, "%") and args.pid is None:
+        unwindowed = argparse.Namespace(**vars(args))
+        unwindowed.time_filter = None
+        return [_profile_command(unwindowed, args.by, data=data)]
+    chosen = argparse.Namespace(**vars(args))
+    if args.pid is not None:
+        chosen.pid = "<PID>"
+    else:
+        chosen.image = _IMAGE_PLACEHOLDER
+    ranking = argparse.Namespace(**vars(args))
+    ranking.pid = ranking.image = ranking.function = ranking.module = None
+    ranking.function_start = ranking.symbol_path = ranking.image_path = None
+    return [
+        _profile_command(chosen, args.by, data=data),
+        _profile_command(ranking, "process", data=data),
+    ]
+
+
 def _cpu_seconds_absent(sampler: uprof_session.Sampler) -> str:
     """Why cpu_seconds is not emitted for this capture."""
     if sampler.timer:
@@ -1461,6 +1486,7 @@ def _legend(
     range_info: dict[str, Any] | None = None,
     row_attribution: dict[str, int] | None = None,
     function_scope: dict[str, Any] | None = None,
+    empty_scope: bool = False,
 ) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
@@ -1647,7 +1673,11 @@ def _legend(
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution, system_wide, next_data),
+        "next": (
+            _empty_scope_calls(args, next_data)
+            if empty_scope
+            else _next_calls(args, row_attribution, system_wide, next_data)
+        ),
     }
     if next_data:
         result["next_data"] = next_data
@@ -2676,15 +2706,22 @@ def _looks_like_module(pattern: str) -> bool:
     return name.endswith(_MODULE_SUFFIXES)
 
 
-def _scope_warning(connection: object, image_pattern: str | None = None) -> list[tuple[str, str]]:
+def _scope_empty(connection: object) -> bool:
+    """True when the --pid/--image/--time-filter scope holds no sample."""
+    totals = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
+    return bool(totals) and totals[0][0] == 0
+
+
+def _scope_warning(
+    connection: object, image_pattern: str | None = None, empty: bool | None = None
+) -> list[tuple[str, str]]:
     """Say that the scope matched nothing, and for --image name what the filter selects.
 
     The text also goes to stderr: with --json or --out-file the WARNING field alone leaves a
     successful-looking file whose scope is empty.
     """
     fields: list[tuple[str, str]] = []
-    empty = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
-    if empty and empty[0][0] == 0:
+    if _scope_empty(connection) if empty is None else empty:
         message = "no samples in the selected scope; the process or time filter matched nothing"
         if image_pattern not in (None, "%"):
             message = (
@@ -3254,6 +3291,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 connection, {"uprof_tag_available": "true" if tag_available else "false"}
             )
             timer_contexts = _timer_contexts(connection, sampler) if sampler.timer else None
+            empty_scope = _scope_empty(connection)
             legend = _legend(
                 sampler,
                 dump,
@@ -3266,6 +3304,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 range_info,
                 row_attribution,
                 function_scope,
+                empty_scope=empty_scope,
             )
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             top_row = _top_row_precision(connection, args.by) if sampler.timer else None
@@ -3314,7 +3353,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                     by=args.by,
                     row_attribution=row_attribution,
                 )
-            fields.extend(_scope_warning(connection, args.image))
+            fields.extend(_scope_warning(connection, args.image, empty_scope))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(
                     connection, symbolizer, by=args.by, row_attribution=row_attribution

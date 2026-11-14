@@ -28,6 +28,7 @@ from uprof_native import (
     TRANSLATE_TIMEOUT,
     CliLog,
     failure,
+    failure_detail,
     require_uprof,
     run,
     translate_command,
@@ -44,7 +45,6 @@ from uprof_util import (
     read_text,
     same_capture,
     sha256_file,
-    tail_lines,
 )
 
 _TIME_FILTER = re.compile(r"--time-filter[ =]+(\d+(?:\.\d+)?:\d+(?:\.\d+)?)")
@@ -501,7 +501,8 @@ def _make_dump(
         command = translate_command(uprof, staging, time_filter=time_filter, ascii_kind=kind)
         log = CliLog()
         completed = run(command, timeout=TRANSLATE_TIMEOUT)
-        detail = tail_lines((completed.stdout or "") + "\n" + (completed.stderr or ""))
+        # The same tool output failure_detail redacts: AMDuProfCLI can echo symbol-server URLs.
+        detail = failure_detail(completed)
         if completed.returncode != 0:
             raise translate_failure(
                 f"AMDuProfCLI translate --ascii {kind} on the cache copy {staging}",

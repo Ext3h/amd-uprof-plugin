@@ -214,7 +214,7 @@ class CacheTest(unittest.TestCase):
             self.publics,
             self.pdbs,
             {"a.dll": "cause"},
-            "symbol text\n",
+            "symbol text https://user:secret@s.example/x\n",
             False,
             self.pdb_identity(),
             [],
@@ -260,7 +260,7 @@ class CacheTest(unittest.TestCase):
         )
         evidence, symbol_text = replay.symbol_meta("k1")
         self.assertEqual(evidence, {"a.dll": "cause"})
-        self.assertEqual(symbol_text, "symbol text\n")
+        self.assertEqual(symbol_text, "symbol text https://***@s.example/x\n")
         info, range_text = replay.range_meta("k1")
         self.assertEqual(info["attempted"], ["a.dll"])
         self.assertEqual(range_text, "range text\n")

@@ -2608,7 +2608,7 @@ def _coverage_field(
             f"({share:.1f}%{'' if process else ' unresolved'}{kind}{reason})"
         )
     if process:
-        heading, stop = "without source names by module", _PROCESS_COVERAGE_STOP
+        heading, stop = "unnamed samples by module", _PROCESS_COVERAGE_STOP
     else:
         # A module with no names at all is the case that provokes a manual PE/.pdata mapping.
         heading = "unresolved by module"

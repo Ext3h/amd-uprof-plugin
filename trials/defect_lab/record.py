@@ -16,14 +16,17 @@ the capture with uprof.py (an IBS capture with its ASCII dump). Modes:
          recorded system-wide on Windows), plus <name>.notes.txt: defect_lab's ns per
          iteration without and with the call graph.
          They need an elevated shell and uProf's capture driver; without elevation record.py
-         stops before the first capture. Not verified on a machine with both.
+         stops before the first capture. On the reference host (elevated, with the driver), the
+         stacks land in cpu.db (CallstackFrame); callstack.db stays empty.
 A mode the CPU or driver cannot record is reported and skipped. Two plain captures (ibs and pmc,
 no workload) show the session.uprof key names. Each capture also gets <name>.keys.txt: the
 session.uprof key paths with value types and no values, safe to hand over as they are.
 
-The defaults keep each capture small (about 1-2 MB with its dump, estimated) while the class's
-own module still gets a few hundred samples: 2 s, IBS every 16,000,000 ops, timer and PMC every
-4 ms, 15 stressors.
+The defaults keep each capture small: 2 s, IBS every 16,000,000 ops, timer and PMC every 4 ms,
+15 stressors. On the 16-thread reference host a system-wide IBS capture then holds about
+11,000-13,000 samples in 2.4-2.9 MB with its dump; lab_core.dll gets 430-1,600 of them in
+branch and efficient, 120-280 in chain, lock, memory and wait, and under 60 in os and vendor,
+whose cost lies outside it.
 
 --anonymize <out_dir> runs trials/anonymize_capture.py on every translated capture into
 <out_dir>/<name>, keeping defect_lab and the stressors. The raw and translated captures hold

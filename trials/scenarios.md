@@ -356,7 +356,7 @@ A trial run passes when both hold:
 
 ## SCN-21: what can I improve (memory class)
 
-- **Session:** `defect_lab/memory.timer`. Note: the cause needs memory.ibs, the system-wide IBS capture, which SANITY refuses (#358)
+- **Session:** `defect_lab/memory.timer`. Note: the cause is in IBS data; memory.ibs, the system-wide IBS capture, is refused by SANITY (#358), but the attached memory.ibs-cg passes and shows IbsDcMiss set on 14 of 14 samples at the load at RVA 0x10B7 (lab_core.c:40), and 498 tag-to-retire cycles per sampled op in the lab_memory window against 27.4 in the lab_efficient window of efficient.ibs-cg
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
 - **Answer:**
   - **Location:** `lab_memory` in `lab_core.dll`; its hot instruction is RVA 0x10BB in the inlined `xorshift` at `lab_core.c:23`, 277 samples.
@@ -371,7 +371,7 @@ A trial run passes when both hold:
 
 ## SCN-22: what can I improve (lock class)
 
-- **Session:** `defect_lab/lock.timer`. Note: the cause needs lock.ibs, the system-wide IBS capture, which SANITY refuses (#358)
+- **Session:** `defect_lab/lock.timer`. Note: the cause is in IBS data; lock.ibs, the system-wide IBS capture, is refused by SANITY (#358), but the attached lock.ibs-cg passes and shows IbsDcLockedOp set on 6 of 39 samples at the lock cmpxchg at RVA 0x11A2 in the inlined spin_lock (lab_core.c:54), with a pause at 0x11D0 in the same window
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
 - **Answer:**
   - **Location:** `lock_thread` and `lab_lock` in `lab_core.dll`; the hot instruction is RVA 0x125A in the inlined `spin_lock` at `lab_core.c:54`, 235 samples.
@@ -386,7 +386,7 @@ A trial run passes when both hold:
 
 ## SCN-23: what can I improve (branch class)
 
-- **Session:** `defect_lab/branch.timer`. Note: the cause needs branch.ibs, the system-wide IBS capture, which SANITY passes with a WARN
+- **Session:** `defect_lab/branch.timer`. Note: the cause is in branch.ibs, the system-wide IBS capture, which SANITY passes with a WARN; it shows IbsOpBrnMisp set on 19 of 36 samples at the branch at RVA 0x1376 (lab_core.c:107), the only mispredicts in the lab_branch window
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
 - **Answer:**
   - **Location:** `lab_branch` in `lab_core.dll`; its hot instruction is RVA 0x1353 at `lab_core.c:105`, 142 samples. `taken` is the second function.
@@ -445,7 +445,7 @@ A trial run passes when both hold:
 
 ## SCN-27: what can I improve (chain class)
 
-- **Session:** `defect_lab/chain.timer`. Note: the cause needs chain.ibs, the system-wide IBS capture, which SANITY passes with a WARN
+- **Session:** `defect_lab/chain.timer`. Note: the cause is in chain.ibs, the system-wide IBS capture, which SANITY passes with a WARN; it shows IbsDcMiss set on 0 of 277 samples, and 201 tag-to-retire cycles per sampled op in the lab_chain window (203 at the divq at RVA 0x1676) against 27.5 in the lab_efficient window of efficient.ibs
 - **Question:** "lab_core.dll is my module, in my program defect_lab.exe. Here is an AMD uProf capture: `<CAPTURE>`; the exe, its DLLs and their PDBs are in `<IMAGE_DIR>`. What can I improve?"
 - **Answer:**
   - **Location:** `lab_chain` in `lab_core.dll`; its hot instruction is RVA 0x1679 at `lab_core.c:179`, 384 samples.

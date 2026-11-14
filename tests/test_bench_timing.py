@@ -8,6 +8,7 @@ defect-lab capture.
 Run from the repository root: python tests/run_tests.py test_bench_timing
 """
 
+import argparse
 import contextlib
 import io
 import json
@@ -77,6 +78,22 @@ class StatisticsTest(unittest.TestCase):
         load = bench_timing._cpu_load_percent(sample=lambda: next(samples), sleep=lambda s: None)
         self.assertAlmostEqual(load, 25.0)
         self.assertIsNone(bench_timing._cpu_load_percent(sample=lambda: None, sleep=lambda s: None))
+
+
+class CaseTest(unittest.TestCase):
+    def test_default_cases_cover_every_profile_scope_of_the_tools(self):
+        import uprof
+
+        commands = next(
+            action
+            for action in uprof.build_parser()._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        by = next(a for a in commands.choices["profile"]._actions if a.dest == "by")
+        self.assertEqual(sorted(bench_timing.CASE_BY_SCOPE.values()), sorted(by.choices))
+        self.assertEqual(
+            sorted(bench_timing.DEFAULT_CASES.split(",")), sorted(bench_timing.CASE_BY_SCOPE)
+        )
 
 
 class CommandLabelTest(unittest.TestCase):

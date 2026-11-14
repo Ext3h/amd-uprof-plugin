@@ -38,7 +38,7 @@ UTF-8 JSON (a BOM is tolerated). A file that is not readable JSON is read as emp
 
 - **Event-column mapping.** `auxiliary.eventColumnIds` maps registered names to `event#0x<encodedId>`. The PMC sample column is the `CYCLES_NOT_IN_HALT` mapping; the hwId 118 `pmcEventList` entry's `encodedEventId` must equal it, or `derive_sampler` errors as inconsistent metadata. Without a mapping, the entry's `encodedEventId` is used. IBS names: `IBS_ALL_OPS` → `event#0x100000000f100`, `IBS_FETCH` → `event#0x100000000f000`.
 - **PMC versus IBS.** IBS when `auxiliary.ibsOpSampling` is true, or `ibsEvents.op`/`fetch` is set; otherwise a non-empty `pmcEventList` is a PMC capture. `opCycleCount` true means a cycle-controlled interval and false an op-count interval.
-- **Verified by `collect`:** PMC `hwId` 118, the converted `interval`, `isSampling` true, `auxiliary.ibsOpSampling` false; IBS `ibsEvents.op`, `ibsOpSampling`, `opInterval`, `opCycleCount` against `--ibs-count-control`; `collection.target.systemWide` against the mode, and every requested PID in `attachedProcesses`. A mismatch exits 2.
+- **Verified by `collect`:** PMC `hwId` 118, the converted `interval`, `isSampling` true, `auxiliary.ibsOpSampling` false; IBS `ibsEvents.op`, `ibsOpSampling`, `opInterval`, `opCycleCount` against `--ibs-count-control`, `opOs` true; `collection.target.systemWide` against the mode, and every requested PID in `attachedProcesses`. A mismatch exits 2.
 
 ## Estimator: exact DeltaTick gaps
 

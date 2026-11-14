@@ -307,6 +307,7 @@ class CollectModeParseTest(unittest.TestCase):
                         "op": {"interval": 4_700_000},
                         "opInterval": 4_700_000,
                         "opCycleCount": True,
+                        "opOs": True,
                     }
                 },
                 "target": {"systemWide": value, "attachedProcesses": [{"processId": 100}]},

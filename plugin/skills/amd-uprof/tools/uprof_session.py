@@ -481,6 +481,10 @@ def verify_collect(
                 f"IBS count control is opCycleCount={ibs.get('opCycleCount')}, "
                 f"expected {count_control == 'cycles'} ({count_control})"
             )
+        # The ibs-op event samples user and OS mode; without OS mode KERNEL_COVERAGE would
+        # silently describe a user-only capture.
+        if not records_true(ibs.get("opOs")):
+            raise UprofError(f"IBS OP sampler records opOs={ibs.get('opOs')}, expected true")
     if records_true(target.get("systemWide")) != system_wide:
         raise UprofError(
             f"capture target mode is systemWide={target.get('systemWide')}, "

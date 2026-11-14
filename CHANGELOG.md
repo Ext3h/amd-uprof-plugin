@@ -59,7 +59,7 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 - An unscoped module, function or region view of a system-wide capture names the same view
   scoped with `--image %<EXE>` first in `NEXT`, then `--by process`, instead of the process
-  ranking and an unscoped drill-down; SKILL.md names `--image %<exe>`/`--pid N` for the process
+  ranking and an unscoped drill-down; SKILL.md names `--image %<EXE>`/`--pid N` for the process
   the question names (issue #384).
 
 - A PDB is used only when `llvm-pdbutil` verifies that its GUID and age match the image. Without

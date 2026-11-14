@@ -1136,8 +1136,8 @@ def _next_calls(
     not a default drill-down. A function-scoped instruction or line view was asked for, so it
     offers the sibling view with the same --function/--module scope; the unscoped views keep
     their old stops. An unscoped module, function or region rollup of a system-wide capture mixes
-    every process, so it names the process ranking first; line and instruction views are asked-for
-    drill-downs and keep their calls. The first call itself is chosen by the question. The
+    every process (see below); line and instruction views are asked-for drill-downs and keep their
+    calls. The first call itself is chosen by the question. The
     system-wide process ranking scopes its module call to --pid <PID>: which process to drill into
     is the caller's choice from the rows, so NEXT never fills in a row value (only the caller's own
     session, scope, filter and paths are carried), and following it never returns to the ranking.

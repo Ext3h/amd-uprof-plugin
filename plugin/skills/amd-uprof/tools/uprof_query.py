@@ -2390,16 +2390,27 @@ def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: st
 
 
 def _dump_sanity(
-    connection: object, has_dump: bool, scope_filtered: bool, system_wide: bool
+    connection: object,
+    has_dump: bool,
+    scope_filtered: bool,
+    system_wide: bool,
+    session: Path | None = None,
 ) -> tuple[str | None, int]:
     """The sanity message and the dump's non-null IbsTagToRetCtr value count.
 
     v_scope_sanity is only read for a system-wide capture: an attached one yields no scoped
-    verdict, and querying it would scan the dump for nothing.
+    verdict, and querying it would scan the dump for nothing. A dump that disagrees with
+    session.uprof is refused with a fresh dump written beside a new translation as the
+    alternative, which leaves the refused dump and its cache in place.
     """
     if not has_dump:
         return None, 0
-    rows = connection.sql("SELECT message, tag_values FROM v_dump_sanity").fetchall()
+    try:
+        rows = connection.sql("SELECT message, tag_values FROM v_dump_sanity").fetchall()
+    except uprof_db._duckdb().Error as exc:
+        if "disagrees with session.uprof" not in str(exc):
+            raise
+        raise uprof_native.failure(util.one_line(exc), ["fresh dump"], session=session) from exc
     if not rows:
         return None, 0
     message = rows[0][0] or None
@@ -3202,6 +3213,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 dump is not None,
                 _scope_filter_active(args, time_start, time_end),
                 system_wide,
+                session,
             )
             tag_rows = connection.sql("SELECT getvariable('has_tag')").fetchall()
             has_tag = bool(tag_rows and tag_rows[0][0])

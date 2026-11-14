@@ -310,6 +310,10 @@ def failure(
             f"{tool} translate --session {known} --out-dir <NEW_TR_DIR>; "
             f"{tool} profile --session <NEW_TR_DIR> --by process"
         ),
+        "fresh dump": (
+            f"{tool} translate --session {known} --out-dir <NEW_TR_DIR> --ascii "
+            f"ibsop-event-dump; {tool} profile --session <NEW_TR_DIR> --by process"
+        ),
         "whole capture": f"{tool} profile --session {known} --by process",
         "Zen host": (
             f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> --process <PID> "

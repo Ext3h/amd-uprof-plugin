@@ -107,6 +107,40 @@ class NoRemoteTouchTest(unittest.TestCase):
         with _no_remote_touch():
             uprof_cache.search_identity(None, None, list(REMOTE))
 
+    def test_the_cache_keys_stat_no_remote_module_path(self):
+        rows = [("app.exe", path, "0x1000") for path in REMOTE]
+        recorded = {}
+
+        def fetch(_connection, sql):
+            if sql.name == "profile-rvas.sql":
+                return None, rows
+            return None, [(name, path) for name, path, _rva in rows]
+
+        with (
+            mock.patch.object(uprof_cache.uprof_db, "fetch", side_effect=fetch),
+            mock.patch.object(uprof_cache, "version_identity_verifiable", return_value=True),
+            mock.patch.object(uprof_cache, "ambiguous_modules", return_value=[]),
+            mock.patch.object(uprof_cache, "module_identity_rows", return_value=[]),
+            mock.patch.object(uprof_cache, "tool_identities", return_value={"readobj": []}),
+            mock.patch.object(uprof_cache, "search_identity", return_value={}),
+            mock.patch.object(uprof_cache.uprof_symbols, "symbol_stores", return_value=[]),
+            mock.patch.object(
+                uprof_cache,
+                "symbol_key",
+                side_effect=lambda *a: recorded.setdefault("symbols", a[2]) and "key",
+            ),
+            mock.patch.object(
+                uprof_cache,
+                "ranges_key",
+                side_effect=lambda *a: recorded.setdefault("ranges", a[2]) and "key",
+            ),
+            _no_remote_touch(),
+        ):
+            uprof_cache.build_symbols_key(None, None)
+            uprof_cache.build_ranges_key(None, "key")
+        expected = [[path, None, None, None] for path in sorted(REMOTE)]
+        self.assertEqual(recorded, {"symbols": expected, "ranges": expected})
+
     def test_translate_command_names_no_symbol_store(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = Path(tmp) / "store"

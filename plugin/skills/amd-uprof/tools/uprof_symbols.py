@@ -37,6 +37,7 @@ from uprof_util import (
     is_remote_path,
     one_line,
     read_text,
+    redact_credentials,
     require_file,
     same_path,
     tail_lines,
@@ -1268,7 +1269,10 @@ def _evidence_line(evidence: ModuleEvidence, stream: TextIO) -> None:
                 "searched: " + "; ".join(_probe_text(probe) for probe in evidence.search.probes)
             )
         if evidence.search.urls:
-            facts.append("symbol-server URLs not consulted: " + ", ".join(evidence.search.urls))
+            facts.append(
+                "symbol-server URLs not consulted: "
+                + ", ".join(map(redact_credentials, evidence.search.urls))
+            )
     if evidence.outcome == "no_pdb" and evidence.image_guid and evidence.search:
         # The searched paths are concrete targets; the module's identity names the file needed.
         remedy = (

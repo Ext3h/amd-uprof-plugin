@@ -35,7 +35,7 @@ from uprof_native import (
     find_symbolizer,
     parse_nt_symbol_path,
 )
-from uprof_util import contains, is_remote_path, one_line, same_path
+from uprof_util import contains, is_remote_path, one_line, redact_credentials, same_path
 
 TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 
@@ -61,7 +61,6 @@ DISABLE = os.environ.get("UPROF_SESSION_CACHE_DISABLE", "").strip().lower() in (
     "yes",
     "on",
 )
-_CREDENTIALS = re.compile(r"(?i)([a-z]+://)[^@\s/]+@")
 _CLEANED = False
 
 
@@ -816,11 +815,6 @@ class SessionCache:
 
     # ------------------------------------------------------------------ stores
 
-    @staticmethod
-    def _redact(text: str) -> str:
-        """Drop credentials from symbol-server URLs before persisting/replaying evidence."""
-        return _CREDENTIALS.sub(r"\1***@", text)
-
     def _over_cap(self) -> bool:
         try:
             size = self.path.stat().st_size
@@ -846,7 +840,7 @@ class SessionCache:
         if not self.ensure_write() or self._over_cap():
             return
         created = time.strftime("%Y-%m-%dT%H:%M:%S")
-        clean_stderr = self._redact(stderr)
+        clean_stderr = redact_credentials(stderr)
         try:
             self.connection.execute("BEGIN TRANSACTION")
             for table in ("symbols", "publics", "pdbs"):
@@ -903,7 +897,7 @@ class SessionCache:
         if not self.ensure_write() or self._over_cap():
             return
         created = time.strftime("%Y-%m-%dT%H:%M:%S")
-        clean_stderr = self._redact(stderr)
+        clean_stderr = redact_credentials(stderr)
         try:
             self.connection.execute("BEGIN TRANSACTION")
             self.connection.execute(

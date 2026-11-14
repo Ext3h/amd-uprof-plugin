@@ -102,6 +102,17 @@ def escape_controls(text: str, keep: str = "") -> str:
     return "".join(parts)
 
 
+# The userinfo of a URL: after "scheme://", everything up to the "@" that ends it, stopping at "/"
+# or whitespace so an "@" later in a path or in prose is not taken for one.
+_CREDENTIALS: Final = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^@\s/]+@")
+
+
+def redact_credentials(text: str) -> str:
+    """text with the user and password of every URL replaced by ***, before it is printed or
+    stored; symbol-server URLs can carry credentials."""
+    return _CREDENTIALS.sub(r"\1***@", text)
+
+
 def one_line(text: object) -> str:
     """text escaped onto one line, for a prose line that embeds capture or tool text."""
     return escape_controls(str(text))

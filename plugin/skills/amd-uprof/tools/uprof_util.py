@@ -201,9 +201,9 @@ def is_remote_path(path: os.PathLike[str] | str) -> bool:
     checked.
     """
     text = os.fspath(path)
-    if text.startswith(("\\\\", "//")):
-        return True
-    if text.replace("/", "\\").upper().startswith(_NT_PREFIXES):
+    # Win32 accepts either slash in each separator, so /\host\share is UNC too.
+    spelled = text.replace("/", "\\").upper()
+    if spelled.startswith(("\\\\", *_NT_PREFIXES)):
         return True
     if os.name == "nt" and len(text) >= 2 and text[1] == ":":
         import ctypes

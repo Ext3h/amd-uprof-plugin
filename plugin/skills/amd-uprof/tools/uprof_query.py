@@ -1483,7 +1483,7 @@ def _legend(
     elif args.by in ("line", "instruction"):
         columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
         if args.by == "instruction":
-            columns["instruction"] = "llvm-objdump's decode at rva; NULL where its context omits"
+            columns["instruction"] = "decode at rva; NULL where omitted"
         if function_scope is not None:
             columns["parent_sample_share"] = (
                 "row samples as a share of the selected parent function's samples, not the capture"

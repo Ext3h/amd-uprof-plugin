@@ -325,6 +325,20 @@ class CoverageChannelsTest(unittest.TestCase):
         self.assertIn(UNRESOLVED_STOP, text)
         self.assertIn("remedy: pass profile --symbol-path", text)
 
+    def test_an_image_without_readable_debug_info_is_not_blamed_on_the_capture(self):
+        evidence = uprof_symbols.ModuleEvidence(
+            "libnosym.so",
+            "/opt/lib/libnosym.so",
+            outcome="no_debug_info",
+            note=uprof_symbols.NO_DEBUG_INFO_NOTE,
+        )
+        cause = uprof_query._evidence_cause(evidence)
+        self.assertEqual(cause, uprof_symbols.NO_DEBUG_INFO_NOTE)
+        evidence.found_debug_info = False
+        self.assertIn(
+            "recorded for this module in the capture", uprof_query._evidence_cause(evidence)
+        )
+
     def no_pdb_cause(self):
         evidence = uprof_symbols.ModuleEvidence(
             "driver.dll",

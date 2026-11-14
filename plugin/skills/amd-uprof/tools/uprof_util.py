@@ -187,16 +187,23 @@ def canonical(path: os.PathLike[str] | str) -> Path:
 # GetDriveTypeW's value for a mapped network drive.
 _DRIVE_REMOTE: Final = 4
 
+# Upper-case prefixes that Win32 resolves in the NT object namespace (\??\UNC\host\share,
+# \Device\Mup\host\share), where a path may name a share or a device.
+_NT_PREFIXES: Final = ("\\??\\", "\\GLOBAL??\\", "\\DEVICE\\")
+
 
 def is_remote_path(path: os.PathLike[str] | str) -> bool:
-    """Whether path is a UNC, device or mapped network path.
+    """Whether path is a UNC, NT-namespace, device or mapped network path.
 
     Paths from capture data are never opened when this holds: opening a UNC path makes Windows
-    authenticate to that host with the user's credentials. The user's own --image-path and
-    --symbol-path arguments are not checked.
+    authenticate to that host with the user's credentials. NT-namespace paths count even when
+    they name a local drive. The user's own --image-path and --symbol-path arguments are not
+    checked.
     """
     text = os.fspath(path)
     if text.startswith(("\\\\", "//")):
+        return True
+    if text.replace("/", "\\").upper().startswith(_NT_PREFIXES):
         return True
     if os.name == "nt" and len(text) >= 2 and text[1] == ":":
         import ctypes

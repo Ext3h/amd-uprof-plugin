@@ -413,11 +413,11 @@ SELECT CASE
     ' first-per-' || context_label ||
     ' samples excluded; session.uprof has no usable duration; total weight was not checked against the capture span'
   WHEN NOT getvariable('attached') AND total_weight > expected_core_ns THEN
-    error(printf('dump %s disagrees with session.uprof: %.3f s of core time over %d CPUs exceeds %s %.3f s x %d CPUs = %.3f s implied; delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
+    error(printf('dump %s disagrees with session.uprof: %.3f s of core time over %d CPUs exceeds %s %.3f s x %d CPUs = %.3f s implied; the dump is possibly incompatible with this session',
                  getvariable('uprof_ibs_dump'), total_weight / 1e9, dump_cpus,
                  span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9))
   WHEN beyond_contexts > 0 THEN
-    error(printf('dump %s disagrees with session.uprof: %d %s(s) hold samples outside the recorded %s [%.3f, %.3f) s (sample DeltaTick range %.3f..%.3f s); delete the dump (or its cache directory) and re-run profile so it is regenerated on a copy of the session',
+    error(printf('dump %s disagrees with session.uprof: %d %s(s) hold samples outside the recorded %s [%.3f, %.3f) s (sample DeltaTick range %.3f..%.3f s); the dump is possibly incompatible with this session',
                  getvariable('uprof_ibs_dump'), beyond_contexts, context_label,
                  span_label, start_ns / 1e9, end_ns / 1e9,
                  first_sample_ns / 1e9, max_last_ns / 1e9))

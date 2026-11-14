@@ -436,8 +436,8 @@ def _refuse_links(source: Path) -> None:
 def _link_error(link: Path) -> None:
     raise UprofError(
         f"the capture contains a link: {link}; copying would follow it out of the "
-        "capture. Replace the link with the files it points to, or remove it, and "
-        "re-run"
+        "capture, so it is not copied. Copy the capture into a new directory with the "
+        "files the link points to in its place, and re-run on that copy"
     )
 
 

@@ -97,5 +97,37 @@ class ScopeWarningTest(unittest.TestCase):
         )
 
 
+class EmptyScopeNextTest(unittest.TestCase):
+    """NEXT on an empty scope offers alternatives, never the same empty filter again."""
+
+    setUp = ScopeWarningTest.setUp
+    empty_session = ScopeWarningTest.empty_session
+    run_profile = ScopeWarningTest.run_profile
+
+    def next_line(self, *extra):
+        result = self.run_profile(*extra)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING: no samples in the selected scope", result.stderr)
+        return next(line for line in result.stdout.splitlines() if line.startswith("NEXT: "))
+
+    def test_an_empty_image_scope_offers_the_image_placeholder_and_the_process_ranking(self):
+        line = self.next_line("--image", "other.exe", "--time-filter", "0:60")
+        self.assertNotIn("other.exe", line)
+        self.assertIn("--by module --image %<EXE> --time-filter 0:60", line)
+        self.assertIn("--by process --time-filter 0:60", line)
+
+    def test_an_empty_pid_scope_offers_the_pid_placeholder_and_the_process_ranking(self):
+        line = self.next_line("--pid", "999")
+        self.assertNotIn("999", line)
+        self.assertIn("--by module --pid <PID>", line)
+        self.assertRegex(line, r"--by process$")
+
+    def test_an_empty_time_window_offers_the_call_without_it(self):
+        line = self.next_line("--time-filter", "50:60")
+        self.assertNotIn("50:60", line)
+        self.assertNotIn(" && ", line)
+        self.assertRegex(line, r"--by module$")
+
+
 if __name__ == "__main__":
     unittest.main()

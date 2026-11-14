@@ -302,6 +302,11 @@ _PLAIN_PDB_NAME = re.compile(r"[^\\\\/:*?\"<>|\[\]]+\.pdb", re.IGNORECASE)
 
 # The note for a PE image whose debug directory llvm-readobj read and found without a PDB.
 NO_PDB_NOTE: Final = "the PE image's debug directory records no PDB"
+# The note for an image whose PDB-less symbolizer pass named no address.
+NO_DEBUG_INFO_NOTE: Final = (
+    "llvm-symbolizer resolved no address: neither the image nor a debug file it found "
+    "carries DWARF or a symbol table"
+)
 
 
 def _is_pe(path: str) -> bool:
@@ -1143,6 +1148,10 @@ def symbolize_module(
         # A wrong-build PDB is not reported by the exit status; keep its evidence on the outcome.
         evidence.outcome = "failed"
         evidence.note = evidence.symbolizer.errors[0][1]
+    elif pdb is None and not _resolved_records(evidence.symbolizer):
+        # Off Windows no PDB is looked for, so this pass alone decides the outcome.
+        evidence.outcome = "no_debug_info"
+        evidence.note = NO_DEBUG_INFO_NOTE
     short_file = out_path / "symbols.short.jsonl"
     try:
         _run_symbolizer(

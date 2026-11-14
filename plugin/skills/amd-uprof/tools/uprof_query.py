@@ -530,6 +530,9 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
     if evidence.note == uprof_symbols.NO_PDB_NOTE:
         return _NO_PDB_CAUSE
     if evidence.outcome == "no_debug_info":
+        if evidence.found_debug_info is not False and evidence.note:
+            # The symbolizer found nothing in the image; the capture recorded no verdict.
+            return evidence.note
         return "no debug information is recorded for this module in the capture"
     if evidence.outcome == "no_pdb" and evidence.remedy:
         return evidence.note or "no PDB could be GUID-verified"

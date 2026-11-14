@@ -125,9 +125,10 @@ class MultiLineErrorTest(unittest.TestCase):
             session = Path(tmp) / "$(calc)"
             session.mkdir()
             lines = self.run_main(["profile", "--session", str(session), "--by", "process"])
-        self.assertEqual(len(lines), 2, lines)
+        self.assertEqual(len(lines), 3, lines)
         self.assertTrue(lines[0].startswith("error: cpu.db not found"), lines)
         self.assertEqual(lines[1], "SESSION_DIR=" + repr(str(session)))
+        self.assertEqual(lines[2], "NEW_TR_DIR=" + repr(f"{session}-translated"))
 
     def test_a_translate_without_samples_keeps_its_data_line(self):
         with tempfile.TemporaryDirectory() as tmp:

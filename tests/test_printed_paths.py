@@ -104,10 +104,14 @@ class TranslateRemedyTest(unittest.TestCase):
 
     def test_a_hostile_session_is_a_placeholder(self):
         message, session = self.remedy("$(calc)")
-        self.assertIn("--session <SESSION_DIR>", message)
-        self.assertEqual(message.splitlines()[-1], "SESSION_DIR=" + repr(session))
-        command = message.split("run translate", 1)[1].split(" first", 1)[0]
-        self.assertNotIn("$(calc)", command)
+        self.assertIn("--session <SESSION_DIR> --out-dir <NEW_TR_DIR>", message)
+        self.assertIn("profile --session <NEW_TR_DIR> --by module", message)
+        self.assertEqual(
+            message.splitlines()[-2:],
+            ["SESSION_DIR=" + repr(session), "NEW_TR_DIR=" + repr(session + "-translated")],
+        )
+        commands = message.splitlines()[0].split("translated copy: ", 1)[1]
+        self.assertNotIn("$(calc)", commands)
 
     def test_a_plain_session_is_double_quoted(self):
         message, session = self.remedy("it's run")

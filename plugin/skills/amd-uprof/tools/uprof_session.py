@@ -72,15 +72,79 @@ _RUN_GAP_FACTOR = 10.0
 
 
 def read_meta(session_dir: Path | str) -> dict[str, Any] | None:
+    """The session.uprof object: None when the file is missing, {} when it is not readable JSON.
+
+    Unreadable JSON stays {} so callers can report the metric basis as not established. JSON that
+    parses to anything but an object is a malformed file and raises UprofError.
+    """
     path = Path(session_dir) / "session.uprof"
     check_session_meta_size(path)
     try:
         with open(path, "r", encoding="utf-8-sig") as handle:
-            return json.load(handle)
+            data = json.load(handle)
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError):
         return {}
+    if not isinstance(data, dict):
+        raise UprofError(f"session.uprof in {session_dir} is not a JSON object")
+    return data
+
+
+def _shown(value: Any) -> str:
+    """The repr of a session.uprof value for an error message, cut to 60 characters."""
+    text = repr(value)
+    return text if len(text) <= 60 else text[:57] + "..."
+
+
+def meta_section(parent: dict[str, Any], key: str, path: str) -> dict[str, Any]:
+    """The object parent[key]; {} when absent or null. Any other type raises UprofError.
+
+    path is the dotted name of the key, for the error message.
+    """
+    value = parent.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise UprofError(f"session.uprof {path} is not an object: {_shown(value)}")
+    return value
+
+
+def _meta_entries(parent: dict[str, Any], key: str, path: str) -> list[dict[str, Any]]:
+    """The objects in the list parent[key]; [] when absent or null, null entries skipped.
+
+    A non-list value or a non-object entry raises UprofError.
+    """
+    value = parent.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise UprofError(f"session.uprof {path} is not a list: {_shown(value)}")
+    for entry in value:
+        if entry is not None and not isinstance(entry, dict):
+            raise UprofError(f"session.uprof {path} has a non-object entry: {_shown(entry)}")
+    return [entry for entry in value if entry is not None]
+
+
+def meta_int(value: Any, name: str) -> int:
+    """An integer recorded in session.uprof: a JSON integer, decimal text or 0x-prefixed hex text.
+
+    Decimal text keeps base 10 ("010" is 10). Booleans, floats and other values raise UprofError.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"0[xX][0-9a-fA-F]+", text):
+            return int(text, 16)
+        if re.fullmatch(r"[0-9]+", text):
+            return int(text, 10)
+    raise UprofError(f"session.uprof has a non-integer {name}: {_shown(value)}")
+
+
+def _collection(meta: dict[str, Any], key: str) -> dict[str, Any]:
+    """The object collection.<key> of session.uprof; {} when absent."""
+    return meta_section(meta_section(meta, "collection", "collection"), key, f"collection.{key}")
 
 
 def records_true(value: Any) -> bool:
@@ -95,28 +159,51 @@ def system_wide(session_dir: Path | str) -> bool:
     non-boolean value cannot make the Python legend and the SQL weighting disagree.
     """
     meta = read_meta(session_dir) or {}
-    return records_true(((meta.get("collection") or {}).get("target") or {}).get("systemWide"))
+    return records_true(_collection(meta, "target").get("systemWide"))
+
+
+def _column_events(meta: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every event entry of auxiliary.eventColumnIds, in recorded order."""
+    auxiliary = meta_section(meta, "auxiliary", "auxiliary")
+    return [
+        event
+        for category in _meta_entries(auxiliary, "eventColumnIds", "auxiliary.eventColumnIds")
+        for event in _meta_entries(category, "events", "auxiliary.eventColumnIds[].events")
+    ]
 
 
 def _registered_columns(meta: dict[str, Any]) -> dict[str, str]:
     columns: dict[str, str] = {}
-    for category in (meta.get("auxiliary") or {}).get("eventColumnIds") or []:
-        for event in category.get("events") or []:
-            name = event.get("name")
-            encoded = event.get("encodedId")
-            if name and encoded is not None:
-                columns.setdefault(str(name), f"event#0x{int(encoded):x}")
+    for event in _column_events(meta):
+        name = event.get("name")
+        encoded = event.get("encodedId")
+        if name and encoded is not None:
+            columns.setdefault(str(name), f"event#0x{meta_int(encoded, 'encodedId'):x}")
     return columns
 
 
 def _encoded_name(event: dict[str, Any]) -> str | None:
     """The event#0x... spelling of the entry's encodedEventId; None when it has none."""
     encoded = event.get("encodedEventId")
-    return f"event#0x{int(encoded):x}" if encoded is not None else None
+    if encoded is None:
+        return None
+    return f"event#0x{meta_int(encoded, 'encodedEventId'):x}"
+
+
+def _pmc_events(meta: dict[str, Any]) -> list[dict[str, Any]]:
+    """The non-empty entries of collection.events.pmcEvents.pmcEventList."""
+    pmc = meta_section(_collection(meta, "events"), "pmcEvents", "collection.events.pmcEvents")
+    path = "collection.events.pmcEvents.pmcEventList"
+    return [event for event in _meta_entries(pmc, "pmcEventList", path) if event]
 
 
 def _event_from_command(meta: dict[str, Any]) -> str | None:
-    match = re.search(r"event=([^,\s]+)", str(meta.get("collectCommand") or ""))
+    command = meta.get("collectCommand")
+    if command is None:
+        return None
+    if not isinstance(command, str):
+        raise UprofError(f"session.uprof collectCommand is not text: {_shown(command)}")
+    match = re.search(r"event=([^,\s]+)", command)
     return match.group(1) if match else None
 
 
@@ -146,8 +233,8 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
 
     columns = _registered_columns(meta)
     from_command = _event_from_command(meta)
-    ibs = (meta.get("collection") or {}).get("events", {}).get("ibsEvents")
-    is_ibs = bool((meta.get("auxiliary") or {}).get("ibsOpSampling")) or bool(
+    ibs = meta_section(_collection(meta, "events"), "ibsEvents", "collection.events.ibsEvents")
+    is_ibs = bool(meta_section(meta, "auxiliary", "auxiliary").get("ibsOpSampling")) or bool(
         ibs and (ibs.get("op") or ibs.get("fetch"))
     )
 
@@ -204,14 +291,7 @@ def derive_sampler(session_dir: Path | str) -> Sampler:
             os_mode=os_mode,
         )
 
-    pmc = [
-        event
-        for event in ((meta.get("collection") or {}).get("events", {}).get("pmcEvents") or {}).get(
-            "pmcEventList"
-        )
-        or []
-        if event
-    ]
+    pmc = _pmc_events(meta)
     if pmc:
         mapped = columns.get("CYCLES_NOT_IN_HALT")
         event = next((entry for entry in pmc if entry.get("hwId") == 118), None)
@@ -284,28 +364,26 @@ def _timer_sampler(meta: dict[str, Any]) -> Sampler | None:
     name differs between --config tbp and -e event=timer, so it is not used. The OS/user mode bits
     of the CPU_TIME entry do not describe the capture, so no OS-mode request is derived from them.
     """
-    events = (meta.get("collection") or {}).get("events") or {}
+    events = _collection(meta, "events")
     try:
         interval_ms = float(events.get("timerInterval"))
     except (TypeError, ValueError):
         return None
     if not interval_ms > 0:
         return None
-    column = None
-    for category in (meta.get("auxiliary") or {}).get("eventColumnIds") or []:
-        for event in category.get("events") or []:
-            if (
-                event.get("name") == TIMER_EVENT_NAME
-                and event.get("hwEventId") == TIMER_HW_EVENT_ID
-                and event.get("encodedId") is not None
-            ):
-                column = f"event#0x{int(event['encodedId']):x}"
-                break
-        if column:
-            break
+    column = next(
+        (
+            f"event#0x{meta_int(event['encodedId'], 'encodedId'):x}"
+            for event in _column_events(meta)
+            if event.get("name") == TIMER_EVENT_NAME
+            and event.get("hwEventId") == TIMER_HW_EVENT_ID
+            and event.get("encodedId") is not None
+        ),
+        None,
+    )
     if column is None:
         return None
-    wide = records_true(((meta.get("collection") or {}).get("target") or {}).get("systemWide"))
+    wide = records_true(_collection(meta, "target").get("systemWide"))
     unverified = "; system-wide denominator and idle handling unverified" if wide else ""
     metric = (
         f"METRIC: timer sampling ({TIMER_EVENT_NAME}, interval {interval_ms:g} ms) -- sample "
@@ -364,10 +442,11 @@ def verify_collect(
     meta = read_meta(session_dir)
     if not meta:
         raise UprofError(f"session.uprof is missing or unreadable in {session_dir}")
-    target = (meta.get("collection") or {}).get("target") or {}
-    collection_event = (meta.get("collection") or {}).get("events") or {}
+    target = _collection(meta, "target")
+    collection_event = _collection(meta, "events")
+    auxiliary = meta_section(meta, "auxiliary", "auxiliary")
     if event == "cycles":
-        pmc = (collection_event.get("pmcEvents") or {}).get("pmcEventList") or []
+        pmc = _pmc_events(meta)
         if not pmc:
             raise UprofError("no PMC event recorded; this is not a cycle capture")
         applied = pmc[0]
@@ -377,7 +456,7 @@ def verify_collect(
             raise UprofError(f"interval is {applied.get('interval')}, expected {interval}")
         if not applied.get("isSampling"):
             raise UprofError("PMC event is not sampling")
-        if (meta.get("auxiliary") or {}).get("ibsOpSampling"):
+        if auxiliary.get("ibsOpSampling"):
             raise UprofError("capture is IBS, not PMC cycle counting")
     elif event == "timer":
         if _timer_sampler(meta) is None:
@@ -390,10 +469,10 @@ def verify_collect(
                 f"expected {interval} ms"
             )
     else:
-        ibs = collection_event.get("ibsEvents") or {}
+        ibs = meta_section(collection_event, "ibsEvents", "collection.events.ibsEvents")
         if not ibs.get("op"):
             raise UprofError("no IBS OP event recorded; this is not an IBS OP capture")
-        if not (meta.get("auxiliary") or {}).get("ibsOpSampling"):
+        if not auxiliary.get("ibsOpSampling"):
             raise UprofError("capture metadata says IBS OP sampling is off")
         if ibs.get("opInterval") != interval:
             raise UprofError(f"IBS interval is {ibs.get('opInterval')}, expected {interval}")
@@ -408,9 +487,10 @@ def verify_collect(
             f"expected {system_wide} (use -a or --process)"
         )
     if not system_wide:
+        path = "collection.target.attachedProcesses"
         attached = {
-            int(entry.get("processId"))
-            for entry in target.get("attachedProcesses") or []
+            meta_int(entry["processId"], "processId")
+            for entry in _meta_entries(target, "attachedProcesses", path)
             if entry.get("processId") is not None
         }
         missing = [pid for pid in pids if pid not in attached]
@@ -420,11 +500,11 @@ def verify_collect(
 
 
 def collect_summary(meta: dict[str, Any], event: str) -> str:
-    collection_event = (meta.get("collection") or {}).get("events") or {}
-    target = (meta.get("collection") or {}).get("target") or {}
-    auxiliary = meta.get("auxiliary") or {}
+    collection_event = _collection(meta, "events")
+    target = _collection(meta, "target")
+    auxiliary = meta_section(meta, "auxiliary", "auxiliary")
     if event == "cycles":
-        applied = (((collection_event.get("pmcEvents") or {}).get("pmcEventList")) or [{}])[0]
+        applied = (_pmc_events(meta) or [{}])[0]
         return (
             f"hwId={applied.get('hwId')} interval={applied.get('interval')} "
             f"isSampling={applied.get('isSampling')} systemWide={target.get('systemWide')} "
@@ -435,7 +515,7 @@ def collect_summary(meta: dict[str, Any], event: str) -> str:
             f"timerInterval={collection_event.get('timerInterval'):g} ms "
             f"systemWide={target.get('systemWide')}"
         )
-    ibs = collection_event.get("ibsEvents") or {}
+    ibs = meta_section(collection_event, "ibsEvents", "collection.events.ibsEvents")
     return (
         f"ibsOpSampling={auxiliary.get('ibsOpSampling')} ibsOp={ibs.get('op')} "
         f"opInterval={ibs.get('opInterval')} opCycleCount={ibs.get('opCycleCount')} "
@@ -630,17 +710,17 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
     meta = read_meta(session_dir)
     if not meta:
         raise UprofError(f"session.uprof is missing or unreadable in {session_dir}")
-    schedule = (meta.get("collection") or {}).get("schedule") or {}
-    start = schedule.get("start")
-    if start is None:
+    schedule = _collection(meta, "schedule")
+    if schedule.get("start") is None:
         raise UprofError("session.uprof records no collection.schedule.start; cannot anchor")
+    start = meta_int(schedule["start"], "collection.schedule.start")
 
     hertz = freq or 10_000_000
     source = "argument" if freq else "default (10 MHz; the session records no QPC frequency)"
-    relative = (qpc * 1e9 / hertz - int(start)) / 1e9
+    relative = (qpc * 1e9 / hertz - start) / 1e9
     lines = [
         f"QPC={qpc} HZ={hertz} HZ_SOURCE={source}",
-        f"START_NS={int(start)}",
+        f"START_NS={start}",
         f"RELATIVE_S={relative:.9f}",
     ]
     stamp = schedule.get("startTs")

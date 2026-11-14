@@ -73,6 +73,29 @@ class SessionMetaShapeTest(unittest.TestCase):
         self._write_meta({"collection": {"events": 5}})
         self._assert_raises("collection.events", uprof_session.derive_sampler, self.session)
 
+    def test_wrong_typed_sections_raise_uprof_error(self):
+        cases = (
+            ("collection.events.ibsEvents", {"collection": {"events": {"ibsEvents": [1]}}}),
+            ("auxiliary", {"auxiliary": "x"}),
+            (
+                "collection.events.pmcEvents.pmcEventList",
+                {"collection": {"events": {"pmcEvents": {"pmcEventList": {"hwId": 118}}}}},
+            ),
+            ("auxiliary.eventColumnIds", {"auxiliary": {"eventColumnIds": {"events": []}}}),
+            (
+                "auxiliary.eventColumnIds[].events",
+                {"auxiliary": {"eventColumnIds": [{"events": 3}]}},
+            ),
+            (
+                "pmcEventList has a non-object entry",
+                {"collection": {"events": {"pmcEvents": {"pmcEventList": [5]}}}},
+            ),
+        )
+        for path, meta in cases:
+            with self.subTest(path=path):
+                self._write_meta(meta)
+                self._assert_raises(path, uprof_session.derive_sampler, self.session)
+
     def test_system_wide_with_target_not_an_object_raises_uprof_error(self):
         self._write_meta({"collection": {"target": "yes"}})
         self._assert_raises("collection.target", uprof_session.system_wide, self.session)

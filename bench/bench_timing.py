@@ -26,8 +26,12 @@ import sys
 import tempfile
 import time
 import traceback
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 SCHEMA = 1
 PROFILE_CASES = (
@@ -92,6 +96,7 @@ STAGE_FUNCTIONS: tuple[tuple[str, str | None, str], ...] = (
 
 
 # ---------------------------------------------------------------- small helpers
+
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -160,20 +165,22 @@ def _cpu_times() -> tuple[int, int, int] | None:
         class FileTime(ctypes.Structure):
             _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
 
-        def ticks(value: "FileTime") -> int:
+        def ticks(value: FileTime) -> int:
             return (value.high << 32) | value.low
 
         idle, kernel, user = FileTime(), FileTime(), FileTime()
         if not ctypes.windll.kernel32.GetSystemTimes(
-                ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+            ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)
+        ):
             return None
         return ticks(idle), ticks(kernel), ticks(user)
     except (AttributeError, OSError, ValueError):
         return None
 
 
-def _system_cpu_percent(before: tuple[int, int, int] | None,
-                        after: tuple[int, int, int] | None) -> float | None:
+def _system_cpu_percent(
+    before: tuple[int, int, int] | None, after: tuple[int, int, int] | None
+) -> float | None:
     """Busy share of all processors during the rep; kernel time includes idle time."""
     if before is None or after is None:
         return None
@@ -191,11 +198,24 @@ def _command_label(command: Iterable[str]) -> str:
     name = Path(parts[0]).name
     markers: list[str] = []
     for part in parts[1:]:
-        if part in ("translate", "collect", "report", "--ascii", "ibsop-event-dump",
-                    "--version", "-version"):
-            markers.append(part)
-        elif part in ("--coff-unwind", "--coff-exports", "--coff-imports", "--unwind",
-                      "--exports", "--publics", "--summary", "dump"):
+        if part in (
+            "translate",
+            "collect",
+            "report",
+            "--ascii",
+            "ibsop-event-dump",
+            "--version",
+            "-version",
+        ) or part in (
+            "--coff-unwind",
+            "--coff-exports",
+            "--coff-imports",
+            "--unwind",
+            "--exports",
+            "--publics",
+            "--summary",
+            "dump",
+        ):
             markers.append(part)
         if len(markers) >= 2:
             break
@@ -207,8 +227,16 @@ def _run_version(command: list[str] | None) -> str | None:
         return None
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     try:
-        done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=15, creationflags=flags)
+        done = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            creationflags=flags,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     text = (done.stdout or done.stderr or "").strip().splitlines()
@@ -217,8 +245,15 @@ def _run_version(command: list[str] | None) -> str | None:
 
 def _git(repo: Path, *args: str) -> str | None:
     try:
-        done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=15)
+        done = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout.strip() if done.returncode == 0 else None
@@ -230,12 +265,17 @@ def _host_snapshot() -> dict[str, Any]:
         import ctypes
 
         class MemoryStatus(ctypes.Structure):
-            _fields_ = [("length", ctypes.c_ulong), ("memory_load", ctypes.c_ulong),
-                        ("total_phys", ctypes.c_ulonglong), ("avail_phys", ctypes.c_ulonglong),
-                        ("total_page", ctypes.c_ulonglong), ("avail_page", ctypes.c_ulonglong),
-                        ("total_virtual", ctypes.c_ulonglong),
-                        ("avail_virtual", ctypes.c_ulonglong),
-                        ("avail_extended", ctypes.c_ulonglong)]
+            _fields_ = [
+                ("length", ctypes.c_ulong),
+                ("memory_load", ctypes.c_ulong),
+                ("total_phys", ctypes.c_ulonglong),
+                ("avail_phys", ctypes.c_ulonglong),
+                ("total_page", ctypes.c_ulonglong),
+                ("avail_page", ctypes.c_ulonglong),
+                ("total_virtual", ctypes.c_ulonglong),
+                ("avail_virtual", ctypes.c_ulonglong),
+                ("avail_extended", ctypes.c_ulonglong),
+            ]
 
         status = MemoryStatus()
         status.length = ctypes.sizeof(MemoryStatus)
@@ -245,10 +285,17 @@ def _host_snapshot() -> dict[str, Any]:
         pass
     load = None
     if os.name == "nt":
-        load_text = _run_version([
-            "powershell", "-NoProfile", "-Command",
-            "((Get-Counter '\\Processor(_Total)\\% Processor Time').CounterSamples[0].CookedValue)"
-            ".ToString([System.Globalization.CultureInfo]::InvariantCulture)"])
+        load_text = _run_version(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                (
+                    "((Get-Counter '\\Processor(_Total)\\% Processor Time').CounterSamples[0]"
+                    ".CookedValue).ToString([System.Globalization.CultureInfo]::InvariantCulture)"
+                ),
+            ]
+        )
         try:
             load = float(load_text.replace(",", ".")) if load_text else None
         except ValueError:
@@ -268,8 +315,9 @@ def _session_identity(session: Path) -> dict[str, Any]:
     dump = session / "IbsOpDump.csv"
     if not dump.is_file():
         # Same key the tool uses (uprof_dump.cache_dir), but never generate a dump here.
-        digest = hashlib.sha256(os.path.normcase(os.path.abspath(session))
-                                .encode("utf-8")).hexdigest()[:16]
+        digest = hashlib.sha256(
+            os.path.normcase(os.path.abspath(session)).encode("utf-8")
+        ).hexdigest()[:16]
         cache_dump = Path(tempfile.gettempdir()) / "uprof-dump-cache" / digest / "IbsOpDump.csv"
         if cache_dump.is_file():
             dump = cache_dump
@@ -290,14 +338,16 @@ def _session_identity(session: Path) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- output capture
 
+
 class _Sink(io.TextIOBase):
     """stdout/stderr replacement that keeps both text and the `.buffer` byte path."""
 
     def __init__(self) -> None:
         super().__init__()
         self._bytes = io.BytesIO()
-        self._text = io.TextIOWrapper(self._bytes, encoding="utf-8", errors="replace",
-                                      newline="", write_through=True)
+        self._text = io.TextIOWrapper(
+            self._bytes, encoding="utf-8", errors="replace", newline="", write_through=True
+        )
 
     @property
     def buffer(self) -> io.BytesIO:
@@ -322,8 +372,10 @@ class _Sink(io.TextIOBase):
 
 # ---------------------------------------------------------------- DuckDB proxy
 
+
 def _duckdb_module() -> Any:
     import duckdb
+
     return duckdb
 
 
@@ -389,13 +441,15 @@ def _profile_summary(document: dict[str, Any]) -> dict[str, Any]:
         extra = node.get("extra_info") or {}
         function = extra.get("Function", "")
         if node.get("type") == "TABLE_SCAN" and str(function).startswith(PROCESS_SCAN_FUNCTIONS):
-            scans.append({
-                "function": function,
-                "timing_s": node.get("timing"),
-                "rows_scanned": node.get("rows_scanned"),
-                "intermediate_rows": node.get("intermediate_rows"),
-                "files": extra.get("Filename(s)"),
-            })
+            scans.append(
+                {
+                    "function": function,
+                    "timing_s": node.get("timing"),
+                    "rows_scanned": node.get("rows_scanned"),
+                    "intermediate_rows": node.get("intermediate_rows"),
+                    "files": extra.get("Filename(s)"),
+                }
+            )
     return {
         "query_total_s": query.get("total_time"),
         "query_cpu_s": query.get("cpu_time"),
@@ -409,8 +463,14 @@ def _profile_summary(document: dict[str, Any]) -> dict[str, Any]:
 
 
 class RelationProxy:
-    def __init__(self, relation: Any, connection: "ConnectionProxy", path: Path | None,
-                 sql: str, statement_type: str) -> None:
+    def __init__(
+        self,
+        relation: Any,
+        connection: ConnectionProxy,
+        path: Path | None,
+        sql: str,
+        statement_type: str,
+    ) -> None:
         object.__setattr__(self, "_relation", relation)
         object.__setattr__(self, "_connection", connection)
         object.__setattr__(self, "_path", path)
@@ -425,8 +485,9 @@ class RelationProxy:
         if self._finished:
             return
         object.__setattr__(self, "_finished", True)
-        self._connection._record(self._sql, self._statement_type, "sql", 0.0, fetch_wall,
-                                 self._path)
+        self._connection._record(
+            self._sql, self._statement_type, "sql", 0.0, fetch_wall, self._path
+        )
 
     def fetchall(self) -> list[Any]:
         started = time.perf_counter()
@@ -452,6 +513,7 @@ class RelationProxy:
                 yield from self._relation
             finally:
                 self._finish(time.perf_counter() - started)
+
         return generate()
 
     def arrow(self) -> Any:
@@ -495,19 +557,16 @@ class ConnectionProxy:
         object.__setattr__(self, "_recorder", recorder)
         object.__setattr__(self, "_pending", None)
         object.__setattr__(self, "_closed", False)
-        try:
-            connection.execute("PRAGMA enable_profiling='json'")
-        except Exception:
-            pass
+        connection.execute("PRAGMA enable_profiling='json'")
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._connection, name)
 
-    def __enter__(self) -> "ConnectionProxy":
+    def __enter__(self) -> Self:
         self._connection.__enter__()
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> Any:
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> Any:
         self._finish_pending(None)
         return self._connection.__exit__(exc_type, exc, tb)
 
@@ -516,14 +575,15 @@ class ConnectionProxy:
         object.__setattr__(self, "_closed", True)
         self._connection.close()
 
-    def cursor(self) -> "ConnectionProxy":
+    def cursor(self) -> ConnectionProxy:
         return ConnectionProxy(self._connection.cursor(), self._recorder)
 
     def _rotate_profile(self) -> Path | None:
+        duckdb = _duckdb_module()
         path = self._recorder.next_profile_path()
         try:
             self._connection.execute("PRAGMA profiling_output=" + _sql_literal(path))
-        except Exception:
+        except duckdb.Error:
             return None
         return path
 
@@ -532,7 +592,7 @@ class ConnectionProxy:
         if isinstance(query, str):
             try:
                 statements = self._connection.extract_statements(query)
-            except Exception:
+            except duckdb.Error:
                 statements = []
             if len(statements) == 1:
                 kind = getattr(statements[0].type, "name", str(statements[0].type))
@@ -543,45 +603,66 @@ class ConnectionProxy:
         kind = getattr(kind_value, "name", str(kind_value))
         return sql, kind, kind_value == duckdb.StatementType.SELECT
 
-    def _record(self, sql: str, statement_type: str, source: str, execute_wall: float,
-                fetch_wall: float | None, path: Path | None) -> None:
+    def _record(
+        self,
+        sql: str,
+        statement_type: str,
+        source: str,
+        execute_wall: float,
+        fetch_wall: float | None,
+        path: Path | None,
+    ) -> None:
         document = self._recorder.read_profile(path)
         head = " ".join(sql.split())
-        self._recorder.record_statement({
-            "source": source,
-            "statement_type": statement_type,
-            "sql_head": head[:200],
-            "sql_sha1": hashlib.sha1(sql.encode("utf-8", "replace")).hexdigest(),
-            "wall_execute_s": execute_wall,
-            "wall_fetch_s": fetch_wall,
-            "wall_total_s": execute_wall + (fetch_wall or 0.0),
-            "profile": _profile_summary(document) if document else None,
-        })
+        self._recorder.record_statement(
+            {
+                "source": source,
+                "statement_type": statement_type,
+                "sql_head": head[:200],
+                "sql_sha1": hashlib.sha1(sql.encode("utf-8", "replace")).hexdigest(),
+                "wall_execute_s": execute_wall,
+                "wall_fetch_s": fetch_wall,
+                "wall_total_s": execute_wall + (fetch_wall or 0.0),
+                "profile": _profile_summary(document) if document else None,
+            }
+        )
 
     def _finish_pending(self, fetch_wall: float | None) -> None:
         pending = self._pending
         if pending is None:
             return
         object.__setattr__(self, "_pending", None)
-        self._record(pending["sql"], pending["statement_type"], pending["source"],
-                     pending["execute_wall"], fetch_wall, pending["path"])
+        self._record(
+            pending["sql"],
+            pending["statement_type"],
+            pending["source"],
+            pending["execute_wall"],
+            fetch_wall,
+            pending["path"],
+        )
 
-    def execute(self, query: Any, *args: Any, **kwargs: Any) -> "ConnectionProxy":
+    def execute(self, query: Any, *args: Any, **kwargs: Any) -> ConnectionProxy:
         sql, statement_type, is_select = self._describe(query)
         path = self._rotate_profile()
         started = time.perf_counter()
         try:
             self._connection.execute(query, *args, **kwargs)
         except BaseException:
-            self._record(sql, statement_type, "execute", time.perf_counter() - started,
-                         None, path)
+            self._record(sql, statement_type, "execute", time.perf_counter() - started, None, path)
             raise
         wall = time.perf_counter() - started
         if is_select:
-            object.__setattr__(self, "_pending", {
-                "sql": sql, "statement_type": statement_type, "source": "execute",
-                "execute_wall": wall, "path": path,
-            })
+            object.__setattr__(
+                self,
+                "_pending",
+                {
+                    "sql": sql,
+                    "statement_type": statement_type,
+                    "source": "execute",
+                    "execute_wall": wall,
+                    "path": path,
+                },
+            )
         else:
             # SET VARIABLE is profiled; CREATE VIEW and plain CREATE are not.
             self._record(sql, statement_type, "execute", wall, None, path)
@@ -611,6 +692,7 @@ class ConnectionProxy:
                 yield from self._connection
             finally:
                 self._finish_pending(time.perf_counter() - started)
+
         return generate()
 
     def sql(self, query: Any, *args: Any, **kwargs: Any) -> RelationProxy:
@@ -638,8 +720,11 @@ def install_run_probe(recorder: Recorder) -> Callable[[], None]:
 
     # Modules loaded by the plain repetitions already bound `run` with
     # `from uprof_native import run`, so patching the defining module alone would miss them.
-    rebound = [module for name, module in list(sys.modules.items())
-               if name.startswith("uprof_") and getattr(module, "run", None) is original]
+    rebound = [
+        module
+        for name, module in list(sys.modules.items())
+        if name.startswith("uprof_") and getattr(module, "run", None) is original
+    ]
 
     def run(command: Any, *args: Any, **kwargs: Any) -> Any:
         label = _command_label(command)
@@ -647,15 +732,24 @@ def install_run_probe(recorder: Recorder) -> Callable[[], None]:
         try:
             completed = original(command, *args, **kwargs)
         except BaseException as exc:
-            recorder.subprocesses.append({
-                "label": label, "argv0": str(command[0]), "elapsed_s": time.perf_counter() - started,
-                "returncode": None, "error": type(exc).__name__,
-            })
+            recorder.subprocesses.append(
+                {
+                    "label": label,
+                    "argv0": str(command[0]),
+                    "elapsed_s": time.perf_counter() - started,
+                    "returncode": None,
+                    "error": type(exc).__name__,
+                }
+            )
             raise
-        recorder.subprocesses.append({
-            "label": label, "argv0": str(command[0]), "elapsed_s": time.perf_counter() - started,
-            "returncode": completed.returncode,
-        })
+        recorder.subprocesses.append(
+            {
+                "label": label,
+                "argv0": str(command[0]),
+                "elapsed_s": time.perf_counter() - started,
+                "returncode": completed.returncode,
+            }
+        )
         return completed
 
     uprof_native.run = run
@@ -672,26 +766,40 @@ def install_run_probe(recorder: Recorder) -> Callable[[], None]:
 
 # ---------------------------------------------------------------- stage extraction
 
+
 def _stage_entries(prof_path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     stats = pstats.Stats(str(prof_path))
     entries: list[dict[str, Any]] = []
     for (file_name, line, func), (_cc, ncalls, tottime, cumtime, _callers) in stats.stats.items():
-        entries.append({
-            "func": func, "file": os.path.basename(file_name), "line": line,
-            "ncalls": ncalls, "tottime_s": tottime, "cumtime_s": cumtime,
-        })
+        entries.append(
+            {
+                "func": func,
+                "file": os.path.basename(file_name),
+                "line": line,
+                "ncalls": ncalls,
+                "tottime_s": tottime,
+                "cumtime_s": cumtime,
+            }
+        )
     entries.sort(key=lambda entry: entry["cumtime_s"], reverse=True)
-    top = [entry for entry in entries
-           if not entry["file"].startswith(("profile.py", "pstats.py"))][:20]
+    top = [entry for entry in entries if not entry["file"].startswith(("profile.py", "pstats.py"))][
+        :20
+    ]
     grouped: dict[str, dict[str, Any]] = {}
     for func, file_part, label in STAGE_FUNCTIONS:
         for entry in entries:
             if entry["func"] != func or (file_part and file_part not in entry["file"]):
                 continue
-            bucket = grouped.setdefault(label, {
-                "stage": label, "funcs": [], "ncalls": 0, "tottime_s": 0.0,
-                "cumtime_s": 0.0,
-            })
+            bucket = grouped.setdefault(
+                label,
+                {
+                    "stage": label,
+                    "funcs": [],
+                    "ncalls": 0,
+                    "tottime_s": 0.0,
+                    "cumtime_s": 0.0,
+                },
+            )
             if func not in bucket["funcs"]:
                 bucket["funcs"].append(func)
             bucket["ncalls"] += entry["ncalls"]
@@ -704,37 +812,60 @@ def _stage_entries(prof_path: Path) -> tuple[list[dict[str, Any]], list[dict[str
 
 # ---------------------------------------------------------------- running cases
 
+
 def _call_main(argv: list[str]) -> tuple[int | None, str | None]:
     import uprof
+
     try:
         return int(uprof.main(argv) or 0), None
     except SystemExit as exc:
         return (int(exc.code) if isinstance(exc.code, int) else 1), "SystemExit"
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - a failed rep is recorded, the next case still runs
         return None, traceback.format_exc()
 
 
-def _build_argv(case: str, session: Path, out_file: Path | None, work_dir: Path,
-                rep: int, seconds: int) -> list[str]:
+def _build_argv(
+    case: str, session: Path, out_file: Path | None, work_dir: Path, rep: int, seconds: int
+) -> list[str]:
     if case in CASE_BY_SCOPE:
         assert out_file is not None
-        return ["profile", "--session", str(session), "--by", CASE_BY_SCOPE[case],
-                "--out-file", str(out_file)]
+        return [
+            "profile",
+            "--session",
+            str(session),
+            "--by",
+            CASE_BY_SCOPE[case],
+            "--out-file",
+            str(out_file),
+        ]
     if case == "translate":
-        return ["translate", "--session", str(session), "--out-dir", str(work_dir / "translate"),
-                "--force"]
+        return [
+            "translate",
+            "--session",
+            str(session),
+            "--out-dir",
+            str(work_dir / "translate"),
+            "--force",
+        ]
     if case == "translate-ascii":
-        return ["translate", "--session", str(session),
-                "--out-dir", str(work_dir / "translate-ascii"),
-                "--ascii", "ibsop-event-dump", "--force"]
+        return [
+            "translate",
+            "--session",
+            str(session),
+            "--out-dir",
+            str(work_dir / "translate-ascii"),
+            "--ascii",
+            "ibsop-event-dump",
+            "--force",
+        ]
     if case == "collect":
-        return ["collect", "--out-dir", str(work_dir / f"collect-{rep}"),
-                "--seconds", str(seconds)]
+        return ["collect", "--out-dir", str(work_dir / f"collect-{rep}"), "--seconds", str(seconds)]
     raise ValueError(f"unknown case {case}")
 
 
-def _execute_once(argv: list[str], instrumented: bool, recorder: Recorder | None,
-                  prof_path: Path | None) -> dict[str, Any]:
+def _execute_once(
+    argv: list[str], instrumented: bool, recorder: Recorder | None, prof_path: Path | None
+) -> dict[str, Any]:
     sink_out, sink_err = _Sink(), _Sink()
     old_out, old_err = sys.stdout, sys.stderr
     restores: list[Callable[[], None]] = []
@@ -786,24 +917,32 @@ def _execute_once(argv: list[str], instrumented: bool, recorder: Recorder | None
 def _dump_identity(root: Path) -> dict[str, Any] | None:
     if not root.exists():
         return None
-    candidates = sorted(root.rglob("IbsOpDump.csv"),
-                        key=lambda path: path.stat().st_mtime, reverse=True)
+    candidates = sorted(
+        root.rglob("IbsOpDump.csv"), key=lambda path: path.stat().st_mtime, reverse=True
+    )
     if not candidates:
         return None
     path = candidates[0]
-    return {"path": str(path), "bytes": path.stat().st_size, "rows": _row_count(path),
-            "sha256": _sha256_file(path)}
+    return {
+        "path": str(path),
+        "bytes": path.stat().st_size,
+        "rows": _row_count(path),
+        "sha256": _sha256_file(path),
+    }
 
 
 def _rep_output(result: dict[str, Any], out_file: Path) -> None:
-    result["output_sha256"] = _sha256_file(out_file) if out_file.is_file() else \
-        result["stdout_sha256"]
-    result["output_bytes"] = out_file.stat().st_size if out_file.is_file() else \
-        result["stdout_bytes"]
+    result["output_sha256"] = (
+        _sha256_file(out_file) if out_file.is_file() else result["stdout_sha256"]
+    )
+    result["output_bytes"] = (
+        out_file.stat().st_size if out_file.is_file() else result["stdout_bytes"]
+    )
 
 
-def run_case(case: str, args: argparse.Namespace, work_root: Path, tools_dir: Path,
-             session: Path) -> dict[str, Any]:
+def run_case(
+    case: str, args: argparse.Namespace, work_root: Path, tools_dir: Path, session: Path
+) -> dict[str, Any]:
     case_work = work_root / case
     case_work.mkdir(parents=True, exist_ok=True)
 
@@ -848,8 +987,9 @@ def run_case(case: str, args: argparse.Namespace, work_root: Path, tools_dir: Pa
         "all_zero_exit": all(rep["exit_code"] == 0 for rep in plain_reps),
         "requested_reps": args.reps,
         "reduced_reps": reduced,
-        "reduced_reason": ("a plain rep exceeded the per-rep stop; the case was cut to 3 reps"
-                           if reduced else None),
+        "reduced_reason": (
+            "a plain rep exceeded the per-rep stop; the case was cut to 3 reps" if reduced else None
+        ),
     }
 
     instrumented_reps: list[dict[str, Any]] = []
@@ -875,14 +1015,17 @@ def run_case(case: str, args: argparse.Namespace, work_root: Path, tools_dir: Pa
             destination = Path(args.out).with_suffix(".prof")
             destination.mkdir(parents=True, exist_ok=True)
             shutil.copy2(prof_path, destination / f"{case}-instr-{rep}.prof")
-            shutil.copytree(recorder.profile_dir,
-                            destination / f"duckprof-{case}-{rep}", dirs_exist_ok=True)
+            shutil.copytree(
+                recorder.profile_dir, destination / f"duckprof-{case}-{rep}", dirs_exist_ok=True
+            )
 
     matches_plain = None
     if identity_asserted:
-        matches_plain = bool(instrumented_reps and plain["identical"] and
-                             all(rep["output_sha256"] == plain["output_hashes"][0]
-                                 for rep in instrumented_reps))
+        matches_plain = bool(
+            instrumented_reps
+            and plain["identical"]
+            and all(rep["output_sha256"] == plain["output_hashes"][0] for rep in instrumented_reps)
+        )
     return {
         "case": case,
         "warmup": warmup_reps,
@@ -890,8 +1033,8 @@ def run_case(case: str, args: argparse.Namespace, work_root: Path, tools_dir: Pa
         "instrumented": instrumented_reps,
         "instrumented_matches_plain": matches_plain,
         "dump_outputs": dump_outputs,
-        "dump_outputs_identical": bool(dump_outputs) and
-                                  len({entry["sha256"] for entry in dump_outputs}) == 1,
+        "dump_outputs_identical": bool(dump_outputs)
+        and len({entry["sha256"] for entry in dump_outputs}) == 1,
     }
 
 
@@ -902,14 +1045,16 @@ def _duckdb_summary(statements: list[dict[str, Any]]) -> dict[str, Any]:
         bucket = by_type.setdefault(record["statement_type"], {"count": 0, "wall_s": 0.0})
         bucket["count"] += 1
         bucket["wall_s"] += record["wall_total_s"]
-    csv_scan_s = sum(scan.get("timing_s") or 0.0
-                     for record in profiled for scan in record["profile"]["csv_scans"])
+    csv_scan_s = sum(
+        scan.get("timing_s") or 0.0
+        for record in profiled
+        for scan in record["profile"]["csv_scans"]
+    )
     return {
         "statements": len(statements),
         "profiled_statements": len(profiled),
         "wall_s_sum": sum(record["wall_total_s"] for record in statements),
-        "query_total_s_sum": sum(record["profile"]["query_total_s"] or 0.0
-                                 for record in profiled),
+        "query_total_s_sum": sum(record["profile"]["query_total_s"] or 0.0 for record in profiled),
         "query_cpu_s_sum": sum(record["profile"]["query_cpu_s"] or 0.0 for record in profiled),
         "bytes_read_sum": sum(record["profile"]["bytes_read"] or 0 for record in profiled),
         "rows_scanned_sum": sum(record["profile"]["rows_scanned"] or 0 for record in profiled),
@@ -927,8 +1072,11 @@ def _subprocess_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
         "count": len(records),
         "wall_s_sum": sum(record["elapsed_s"] for record in records),
         "by_label": {
-            label: {"count": len(values), "wall_s_sum": sum(values),
-                    "wall_s_median": statistics.median(values)}
+            label: {
+                "count": len(values),
+                "wall_s_sum": sum(values),
+                "wall_s_median": statistics.median(values),
+            }
             for label, values in sorted(by_label.items())
         },
         "records": records,
@@ -937,6 +1085,7 @@ def _subprocess_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- report
 
+
 def _present_median(records: Iterable[dict[str, Any]], key: str) -> float | None:
     values = [record.get(key) for record in records if record.get(key) is not None]
     return statistics.median(values) if values else None
@@ -944,15 +1093,20 @@ def _present_median(records: Iterable[dict[str, Any]], key: str) -> float | None
 
 def _markdown(results: dict[str, Any]) -> str:
     identity = results.get("session_after") or results["session"]
-    dump_text = (f"{identity['dump_rows']} rows, {identity['dump_bytes']} bytes"
-                 if identity.get("dump_rows") is not None else "no dump at start")
+    dump_text = (
+        f"{identity['dump_rows']} rows, {identity['dump_bytes']} bytes"
+        if identity.get("dump_rows") is not None
+        else "no dump at start"
+    )
     lines = [
         f"# Baseline timing ({results['git']['head']})",
         "",
         f"Session: `{identity['session']}` — {dump_text}",
         "",
-        "| case | reps | median s | p95 s | min s | max s | sys CPU % med | proc/wall med "
-        "| identical |",
+        (
+            "| case | reps | median s | p95 s | min s | max s | sys CPU % med | proc/wall med "
+            "| identical |"
+        ),
         "|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for name, case in results["cases"].items():
@@ -967,38 +1121,57 @@ def _markdown(results: dict[str, Any]) -> str:
             f"{wall['min_s']:.3f} | {wall['max_s']:.3f} | "
             f"{f'{cpu:.1f}' if cpu is not None else 'n/a'} | "
             f"{f'{ratio:.2f}' if ratio is not None else 'n/a'} | "
-            f"{case['plain']['identical']} |")
+            f"{case['plain']['identical']} |"
+        )
 
     for name, case in results["cases"].items():
         if name == "collect" and case["plain"]["wall"].get("count"):
             median = case["plain"]["wall"]["median_s"]
-            lines += ["", f"collect includes the requested {results['config']['seconds']} s "
-                          f"capture; median overhead {median - results['config']['seconds']:.3f} s."]
+            lines += [
+                "",
+                (
+                    f"collect includes the requested {results['config']['seconds']} s "
+                    f"capture; median overhead {median - results['config']['seconds']:.3f} s."
+                ),
+            ]
 
     session_after = results.get("session_after") or {}
     if results.get("dump_generated") and session_after.get("dump"):
-        lines += ["", "## Cold dump generation", "",
-                  f"- dump: `{session_after['dump']}`",
-                  f"- rows: {session_after['dump_rows']}",
-                  f"- bytes: {session_after['dump_bytes']}",
-                  f"- sha256: `{session_after['dump_sha256']}`"]
+        lines += [
+            "",
+            "## Cold dump generation",
+            "",
+            f"- dump: `{session_after['dump']}`",
+            f"- rows: {session_after['dump_rows']}",
+            f"- bytes: {session_after['dump_bytes']}",
+            f"- sha256: `{session_after['dump_sha256']}`",
+        ]
         for name, case in results["cases"].items():
             for rep in case.get("warmup", []):
-                lines.append(f"- warmup {name} rep {rep['rep']}: {rep['wall_s']:.3f} s "
-                             "(includes the profile run)")
+                lines.append(
+                    f"- warmup {name} rep {rep['rep']}: {rep['wall_s']:.3f} s "
+                    "(includes the profile run)"
+                )
 
     for name, case in results["cases"].items():
         outputs = case.get("dump_outputs") or []
         if outputs:
             first = outputs[0]
-            lines += ["", f"### {name} dump output", "",
-                      f"- identical across reps: {case['dump_outputs_identical']}",
-                      f"- rows: {first['rows']}",
-                      f"- bytes: {first['bytes']}",
-                      f"- sha256: `{first['sha256']}`"]
+            lines += [
+                "",
+                f"### {name} dump output",
+                "",
+                f"- identical across reps: {case['dump_outputs_identical']}",
+                f"- rows: {first['rows']}",
+                f"- bytes: {first['bytes']}",
+                f"- sha256: `{first['sha256']}`",
+            ]
 
-    instrumented = [(name, case["instrumented"][0]) for name, case in results["cases"].items()
-                    if case["instrumented"]]
+    instrumented = [
+        (name, case["instrumented"][0])
+        for name, case in results["cases"].items()
+        if case["instrumented"]
+    ]
     if instrumented:
         lines += ["", "## Instrumented stage totals", ""]
         for name, record in instrumented:
@@ -1006,18 +1179,22 @@ def _markdown(results: dict[str, Any]) -> str:
             sub = record["subprocesses"]
             lines.append(f"### {name}")
             lines.append("")
-            lines.append(f"wall {record['wall_s']:.3f} s; DuckDB statements "
-                         f"{duck['statements']} ({duck['profiled_statements']} profiled), "
-                         f"query total {duck['query_total_s_sum']:.3f} s, "
-                         f"CSV scans {duck['csv_scan_s_sum']:.3f} s, "
-                         f"{duck['bytes_read_sum']} bytes read; "
-                         f"children {sub['count']} totalling {sub['wall_s_sum']:.3f} s")
+            lines.append(
+                f"wall {record['wall_s']:.3f} s; DuckDB statements "
+                f"{duck['statements']} ({duck['profiled_statements']} profiled), "
+                f"query total {duck['query_total_s_sum']:.3f} s, "
+                f"CSV scans {duck['csv_scan_s_sum']:.3f} s, "
+                f"{duck['bytes_read_sum']} bytes read; "
+                f"children {sub['count']} totalling {sub['wall_s_sum']:.3f} s"
+            )
             lines.append("")
             lines.append("| stage | calls | tottime s | cumtime s |")
             lines.append("|---|---:|---:|---:|")
             for stage in record["stages"]:
-                lines.append(f"| {stage['stage']} | {stage['ncalls']} | "
-                             f"{stage['tottime_s']:.3f} | {stage['cumtime_s']:.3f} |")
+                lines.append(
+                    f"| {stage['stage']} | {stage['ncalls']} | "
+                    f"{stage['tottime_s']:.3f} | {stage['cumtime_s']:.3f} |"
+                )
             lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -1034,22 +1211,29 @@ def _cold_dump(results: dict[str, Any]) -> dict[str, Any] | None:
     if not results.get("dump_generated"):
         return None
     after = results["session_after"]
-    base = {"dump": after["dump"], "dump_rows": after["dump_rows"],
-            "dump_bytes": after["dump_bytes"], "dump_sha256": after["dump_sha256"],
-            "note": "the warmup wall includes the profile run that triggered generation"}
+    base = {
+        "dump": after["dump"],
+        "dump_rows": after["dump_rows"],
+        "dump_bytes": after["dump_bytes"],
+        "dump_sha256": after["dump_sha256"],
+        "note": "the warmup wall includes the profile run that triggered generation",
+    }
     for name, case in results["cases"].items():
         warmup = case.get("warmup") or []
         if warmup:
-            return {"case": name, "warmup_wall_s": warmup[0]["wall_s"],
-                    "warmup_reps": warmup, **base}
+            return {
+                "case": name,
+                "warmup_wall_s": warmup[0]["wall_s"],
+                "warmup_reps": warmup,
+                **base,
+            }
     return {"case": None, **base}
 
 
 def _write_outputs(results: dict[str, Any], out_path: Path) -> None:
     results["cold_dump"] = _cold_dump(results)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n",
-                        encoding="utf-8")
+    out_path.write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     out_path.with_suffix(".md").write_text(_markdown(results), encoding="utf-8")
 
 
@@ -1057,24 +1241,44 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session", required=True, help="session directory to profile")
     parser.add_argument("--out", required=True, help="results JSON path")
-    parser.add_argument("--cases", default=DEFAULT_CASES,
-                        help=f"comma-separated cases; default {DEFAULT_CASES}")
+    parser.add_argument(
+        "--cases", default=DEFAULT_CASES, help=f"comma-separated cases; default {DEFAULT_CASES}"
+    )
     parser.add_argument("--reps", type=int, default=5, help="plain repetitions (default 5)")
-    parser.add_argument("--instrumented-reps", type=int, default=1,
-                        help="instrumented repetitions (default 1)")
-    parser.add_argument("--seconds", type=int, default=60,
-                        help="collect capture duration (default 60)")
-    parser.add_argument("--warmup", type=int, default=0,
-                        help="extra plain reps per profile case before the timed ones (default 0)")
-    parser.add_argument("--per-rep-stop-seconds", type=float, default=480.0,
-                        help="a plain rep longer than this cuts its case to 3 reps (default 480)")
-    parser.add_argument("--max-total-minutes", type=float, default=0.0,
-                        help="stop before the next case after this many minutes (default: no cap)")
-    parser.add_argument("--tools-dir", default=None,
-                        help="directory holding uprof.py; default "
-                             "plugin/skills/amd-uprof/tools")
-    parser.add_argument("--keep-prof", action="store_true",
-                        help="keep DuckDB JSON profiles and copy cProfile dumps beside --out")
+    parser.add_argument(
+        "--instrumented-reps", type=int, default=1, help="instrumented repetitions (default 1)"
+    )
+    parser.add_argument(
+        "--seconds", type=int, default=60, help="collect capture duration (default 60)"
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=0,
+        help="extra plain reps per profile case before the timed ones (default 0)",
+    )
+    parser.add_argument(
+        "--per-rep-stop-seconds",
+        type=float,
+        default=480.0,
+        help="a plain rep longer than this cuts its case to 3 reps (default 480)",
+    )
+    parser.add_argument(
+        "--max-total-minutes",
+        type=float,
+        default=0.0,
+        help="stop before the next case after this many minutes (default: no cap)",
+    )
+    parser.add_argument(
+        "--tools-dir",
+        default=None,
+        help="directory holding uprof.py; default plugin/skills/amd-uprof/tools",
+    )
+    parser.add_argument(
+        "--keep-prof",
+        action="store_true",
+        help="keep DuckDB JSON profiles and copy cProfile dumps beside --out",
+    )
     args = parser.parse_args(argv)
 
     session = Path(args.session).resolve()
@@ -1091,15 +1295,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     repo = Path(__file__).resolve().parents[1]
-    tools_dir = (Path(args.tools_dir).resolve() if args.tools_dir
-                 else repo / "plugin" / "skills" / "amd-uprof" / "tools")
+    tools_dir = (
+        Path(args.tools_dir).resolve()
+        if args.tools_dir
+        else repo / "plugin" / "skills" / "amd-uprof" / "tools"
+    )
     if not (tools_dir / "uprof.py").is_file():
         print(f"error: {tools_dir} has no uprof.py", file=sys.stderr)
         return 2
     sys.path.insert(0, str(tools_dir))
     import uprof  # noqa: F401  (imports the sibling modules from tools_dir)
-
     import uprof_native
+
     results: dict[str, Any] = {
         "schema": SCHEMA,
         "generated_utc": _utc_now(),
@@ -1107,10 +1314,12 @@ def main(argv: list[str] | None = None) -> int:
         "versions": {
             "python": sys.version.split()[0],
             "duckdb": __import__("duckdb").__version__,
-            "uprof_cli": _run_version([str(path)] + ["--version"]
-                                      if (path := uprof_native.find_uprof()) else None),
-            "llvm": _run_version([str(path), "--version"]
-                                 if (path := uprof_native.find_symbolizer()) else None),
+            "uprof_cli": _run_version(
+                [str(path)] + ["--version"] if (path := uprof_native.find_uprof()) else None
+            ),
+            "llvm": _run_version(
+                [str(path), "--version"] if (path := uprof_native.find_symbolizer()) else None
+            ),
         },
         "git": {
             "head": _git(repo, "rev-parse", "HEAD"),
@@ -1118,9 +1327,13 @@ def main(argv: list[str] | None = None) -> int:
         },
         "session": _session_identity(session),
         "config": {
-            "tools_dir": str(tools_dir), "cases": cases, "reps": args.reps,
-            "instrumented_reps": args.instrumented_reps, "warmup": args.warmup,
-            "seconds": args.seconds, "per_rep_stop_seconds": args.per_rep_stop_seconds,
+            "tools_dir": str(tools_dir),
+            "cases": cases,
+            "reps": args.reps,
+            "instrumented_reps": args.instrumented_reps,
+            "warmup": args.warmup,
+            "seconds": args.seconds,
+            "per_rep_stop_seconds": args.per_rep_stop_seconds,
             "max_total_minutes": args.max_total_minutes,
         },
         "stopped_early": None,
@@ -1135,23 +1348,32 @@ def main(argv: list[str] | None = None) -> int:
             elapsed_minutes = (time.perf_counter() - started) / 60.0
             if args.max_total_minutes and elapsed_minutes >= args.max_total_minutes:
                 results["stopped_early"] = {
-                    "case": case, "elapsed_minutes": elapsed_minutes,
+                    "case": case,
+                    "elapsed_minutes": elapsed_minutes,
                     "reason": f"max-total-minutes {args.max_total_minutes}",
                 }
-                print(f"[timing] stopping before {case}: {results['stopped_early']['reason']}",
-                      file=sys.stderr)
+                print(
+                    f"[timing] stopping before {case}: {results['stopped_early']['reason']}",
+                    file=sys.stderr,
+                )
                 break
-            print(f"[timing] {case}: {args.reps} plain, {args.instrumented_reps} instrumented, "
-                  f"{args.warmup if case in CASE_BY_SCOPE else 0} warmup", file=sys.stderr)
+            print(
+                f"[timing] {case}: {args.reps} plain, {args.instrumented_reps} instrumented, "
+                f"{args.warmup if case in CASE_BY_SCOPE else 0} warmup",
+                file=sys.stderr,
+            )
             results["cases"][case] = run_case(case, args, work_root, tools_dir, session)
             _refresh_session(results, session)
             _write_outputs(results, out_path)
             case_result = results["cases"][case]
-            print(f"[timing] {case}: median {case_result['plain']['wall'].get('median_s', 0):.3f}s "
-                  f"p95 {case_result['plain']['wall'].get('p95_s', 0):.3f}s "
-                  f"identical={case_result['plain']['identical']} "
-                  f"all_zero_exit={case_result['plain']['all_zero_exit']} "
-                  f"elapsed={elapsed_minutes:.1f}min", file=sys.stderr)
+            print(
+                f"[timing] {case}: median {case_result['plain']['wall'].get('median_s', 0):.3f}s "
+                f"p95 {case_result['plain']['wall'].get('p95_s', 0):.3f}s "
+                f"identical={case_result['plain']['identical']} "
+                f"all_zero_exit={case_result['plain']['all_zero_exit']} "
+                f"elapsed={elapsed_minutes:.1f}min",
+                file=sys.stderr,
+            )
     finally:
         shutil.rmtree(work_root, ignore_errors=True)
 
@@ -1160,8 +1382,9 @@ def main(argv: list[str] | None = None) -> int:
     print(_markdown(results))
     print(f"[timing] wrote {out_path} and {out_path.with_suffix('.md')}", file=sys.stderr)
 
-    failures = [name for name, case in results["cases"].items()
-                if not case["plain"]["all_zero_exit"]]
+    failures = [
+        name for name, case in results["cases"].items() if not case["plain"]["all_zero_exit"]
+    ]
     return 2 if failures else 0
 
 

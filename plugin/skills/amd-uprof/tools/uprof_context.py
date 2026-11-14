@@ -219,10 +219,14 @@ class ParsedImage:
     sections: list[PeSection]
     unwind_starts: list[tuple[int, str | None]]
     exports: list[tuple[int, str | None]]
+    # The debug directory records a CodeView PDB (PDBGUID), which llvm-symbolizer loads unchecked
+    # unless --pdb names one.
+    records_pdb: bool = False
 
 
 def parse_image(text: str) -> ParsedImage:
-    """File headers, sections, .pdata starts and exports from one llvm-readobj text.
+    """File headers, sections, .pdata starts, exports and the CodeView PDB record from one
+    llvm-readobj text.
 
     Raises ContextOmission("metadata_incomplete") when the file headers lack ImageBase,
     TimeDateStamp, CheckSum or Magic.
@@ -235,6 +239,7 @@ def parse_image(text: str) -> ParsedImage:
     in_section = in_export = False
     rva: int | None = None
     name: str | None = None
+    records_pdb = False
     for line in text.splitlines():
         bare = line.strip()
         # The base parser scans StartAddress globally, so record it before the block state can
@@ -294,6 +299,8 @@ def parse_image(text: str) -> ParsedImage:
             and (match := _DATE_STAMP.match(line))
         ):
             date_stamp = int(match.group(1), 16)
+        elif bare.startswith("PDBGUID:"):
+            records_pdb = True
     missing = [
         name
         for name, value in (
@@ -324,6 +331,7 @@ def parse_image(text: str) -> ParsedImage:
         sections,
         unwind_starts,
         exports,
+        records_pdb,
     )
 
 
@@ -1077,6 +1085,14 @@ _CONTEXT_HELP_OMISSIONS: Final = {
         "adjacent PDB, the recorded CodeView path or the skill's local srv* "
         "cache scan is searched"
     ),
+    "pdb_unverified": (
+        "the image records a PDB, but symbolization accepted none whose GUID "
+        "and age match (another build's PDB, none found, or no llvm-pdbutil), "
+        "and llvm-symbolizer would read one unchecked; remedy: pass profile "
+        "--symbol-path <file|dir> naming the captured build's PDB, or install "
+        "LLVM with llvm-pdbutil beside llvm-symbolizer, then re-run; the table "
+        "row remains valid"
+    ),
     "imports_failed": (
         "llvm-readobj could not read the import table; remedy: check the module "
         "file is readable; the block is omitted rather than showing calls "
@@ -1163,6 +1179,7 @@ class _ModuleState:
     pdata_starts: list[tuple[int, str | None]]
     export_starts: list[tuple[int, str | None]]
     pdb: str | None
+    records_pdb: bool
     symbols: dict[int, SymbolInfo] = field(default_factory=dict)
     symbol_attempted: set[int] = field(default_factory=set)
     ibs: dict[int, dict[str, object]] = field(default_factory=dict)
@@ -1258,6 +1275,7 @@ class _ContextBuilder:
                 "--sections",
                 "--unwind",
                 "--coff-exports",
+                "--coff-debug-directory",
                 tool_operand(module_path),
             ],
             timeout=CONTEXT_TOOL_TIMEOUT,
@@ -1314,6 +1332,7 @@ class _ContextBuilder:
             image.unwind_starts,
             image.exports,
             str(pdb) if pdb else None,
+            image.records_pdb,
         )
 
     def _samples(self, module_name: str, rvas: list[int]) -> dict[int, int]:
@@ -1328,6 +1347,14 @@ class _ContextBuilder:
         return {int(rva): int(count or 0) for rva, count in rows}
 
     def _symbols(self, state: _ModuleState, rvas: list[int]) -> dict[int, SymbolInfo]:
+        if state.records_pdb and state.pdb is None:
+            # Without --pdb, llvm-symbolizer loads the PDB the CodeView entry names, or the one
+            # beside the image, with no GUID check; symbolization accepted none of them.
+            raise ContextOmission(
+                "pdb_unverified",
+                f"{state.path} records a PDB, but symbolization accepted none whose GUID and "
+                "age match the image",
+            )
         missing = [rva for rva in rvas if rva not in state.symbol_attempted]
         if missing:
             state.symbol_attempted.update(missing)

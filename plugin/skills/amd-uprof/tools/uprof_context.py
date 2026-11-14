@@ -1087,11 +1087,8 @@ _CONTEXT_HELP_OMISSIONS: Final = {
     ),
     "pdb_unverified": (
         "the image records a PDB, but symbolization accepted none whose GUID "
-        "and age match (another build's PDB, none found, or no llvm-pdbutil), "
-        "and llvm-symbolizer would read one unchecked; remedy: pass profile "
-        "--symbol-path <file|dir> naming the captured build's PDB, or install "
-        "LLVM with llvm-pdbutil beside llvm-symbolizer, then re-run; the table "
-        "row remains valid"
+        "and age match; remedy: pass profile --symbol-path <file|dir> naming "
+        "the captured build's PDB"
     ),
     "imports_failed": (
         "llvm-readobj could not read the import table; remedy: check the module "
@@ -1526,8 +1523,16 @@ def instruction_contexts(
     return contexts
 
 
+# The missing-symbol reasons context_omission_summary states once, with the detail it prints
+# when the rows' details differ.
+_SUMMARY_FALLBACK: Final = {
+    "symbolizer_failed": "llvm-symbolizer resolved no symbol for the instruction rows",
+    "pdb_unverified": "symbolization accepted no PDB the images record",
+}
+
+
 def context_omission_summary(contexts: Sequence[object | None]) -> str | None:
-    """One stated fact when every emitted context omitted for the same symbolizer failure.
+    """One stated fact when every emitted context omitted for the same missing-symbol reason.
 
     A symbol-less module fails every row for one reason. Repeating that as N omission objects
     invites N investigations; the caller prints this once on stderr instead.
@@ -1535,16 +1540,14 @@ def context_omission_summary(contexts: Sequence[object | None]) -> str | None:
     omissions = [item for item in contexts if isinstance(item, dict) and item.get("omitted")]
     if not omissions or len(omissions) != len(contexts):
         return None
-    if any(item.get("reason") != "symbolizer_failed" for item in omissions):
+    reasons = {item.get("reason") for item in omissions}
+    if len(reasons) != 1 or not reasons <= set(_SUMMARY_FALLBACK):
         return None
+    reason = str(reasons.pop())
     details = sorted({str(item.get("detail")) for item in omissions if item.get("detail")})
-    detail = (
-        details[0]
-        if len(details) == 1
-        else ("llvm-symbolizer resolved no symbol for the instruction rows")
-    )
+    detail = details[0] if len(details) == 1 else _SUMMARY_FALLBACK[reason]
     return (
-        f"all {len(omissions)} instruction contexts omitted with symbolizer_failed: {detail}; "
+        f"all {len(omissions)} instruction contexts omitted with {reason}: {detail}; "
         "this is one missing-symbol finding, not one failure per row; the instruction "
         "context is optional, so report the module as symbol-less or pass profile "
         "--symbol-path <file|dir> and re-run"

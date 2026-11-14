@@ -73,7 +73,8 @@ class InstructionColumnTest(unittest.TestCase):
         for line in table[2:]:
             cells = [cell.strip() for cell in line.strip("|").split("|")]
             if cells[0].startswith("&lt;other"):
-                self.assertEqual(cells[2], "NULL")
+                # SPEC-87: the cell is empty where the row's context omits; JSON holds null.
+                self.assertEqual(cells[2], "")
 
     def test_the_json_row_carries_the_same_instruction_as_its_context(self):
         document = json.loads(

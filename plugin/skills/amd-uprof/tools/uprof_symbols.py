@@ -223,7 +223,8 @@ class ModuleEvidence:
     search: PdbSearch | None = None
     symbolizer: SymbolizerRun | None = None
     pdb: str | None = None
-    # resolved, no_debug_info, no_pdb, readobj_failed, module_missing, wrong_build, failed
+    # resolved, no_debug_info, no_pdb, no_pdb_record (the image records no PDB and the pass
+    # resolved nothing), readobj_failed, module_missing, wrong_build, failed
     outcome: str = "resolved"
     note: str | None = None
     # A toolchain cause carries its own remedy in note; the symbol-path remedy would mislead.
@@ -560,6 +561,11 @@ def _symbol_record_stats(text: str) -> tuple[int, int]:
         ):
             empty += 1
     return records, empty
+
+
+def _resolved_records(run_result: SymbolizerRun) -> int:
+    """Addresses the pass resolved to a function name or a source line."""
+    return run_result.records - run_result.empty_records
 
 
 def _run_symbolizer(
@@ -1028,7 +1034,12 @@ def symbolize_module(
                 # Not a PE image: a separate debug file can still serve it, so the default
                 # debug-file remedy stays.
                 evidence.note = "the image's debug directory records no PDB"
-            evidence.outcome = "no_debug_info" if found_debug_info is False else "readobj_failed"
+            if found_debug_info is False:
+                evidence.outcome = "no_debug_info"
+            elif readobj is None or readobj_error:
+                evidence.outcome = "readobj_failed"
+            else:
+                evidence.outcome = "no_pdb_record"
             if pdb_files:
                 shown = ", ".join(os.fspath(path) for path in pdb_files)
                 evidence.outcome = "no_pdb"
@@ -1101,6 +1112,9 @@ def symbolize_module(
                     fallback_paths=fallback_paths,
                     stream=stream,
                 )
+                if _resolved_records(evidence.symbolizer):
+                    # DWARF or a symbol table named the addresses; the missing PDB is moot.
+                    evidence.outcome = "resolved"
             else:
                 jsonl_file.write_text("", encoding="utf-8")
             print("PDB=none", file=stream)

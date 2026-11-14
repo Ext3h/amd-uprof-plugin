@@ -540,6 +540,8 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
             "no PDB found beside the module, at the recorded CodeView path or in a local "
             "srv* cache; _NT_SYMBOL_PATH is not read by llvm-symbolizer"
         )
+    if evidence.outcome == "no_pdb_record":
+        return evidence.note or "the image's debug directory records no PDB"
     if evidence.outcome == "readobj_failed":
         return f"llvm-readobj could not read the debug directory: {evidence.note or 'unknown'}"
     if evidence.outcome == "module_missing":
@@ -547,6 +549,16 @@ def _evidence_cause(evidence: uprof_symbols.ModuleEvidence) -> str:
     if evidence.outcome == "wrong_build":
         return evidence.note or "the image is a different build than the capture recorded"
     return f"symbolization failed: {evidence.note or evidence.outcome}"
+
+
+def _transient_outcome(evidence: uprof_symbols.ModuleEvidence) -> bool:
+    """Whether the outcome may change on a re-run with the same inputs, so it is not cached."""
+    if evidence.outcome in ("module_missing", "readobj_failed"):
+        return True
+    if evidence.outcome == "failed":
+        note = (evidence.note or "").lower()
+        return not ("another build" in note or "resolved no address" in note)
+    return False
 
 
 def _artifact_dir(stream: TextIO) -> Path:
@@ -647,16 +659,7 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO, args: 
             "image version is ambiguous in the capture; the IBS dump rows carry "
             "the module name, not Module.id, so it was not symbolized"
         )
-
-    def transient(item) -> bool:
-        if item.outcome in ("module_missing", "readobj_failed"):
-            return True
-        if item.outcome == "failed":
-            note = (item.note or "").lower()
-            return not ("another build" in note or "resolved no address" in note)
-        return False
-
-    transient_failure = any(transient(item) for item in evidence)
+    transient_failure = any(_transient_outcome(item) for item in evidence)
     probes: dict[str, dict[str, object]] = {}
     for item in evidence:
         search = getattr(item, "search", None)

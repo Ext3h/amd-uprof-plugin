@@ -833,6 +833,28 @@ FROM flagged
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
 
+-- Every scoped sample with the function row it belongs to: the derived range that covers its RVA,
+-- else its uProf Function.id, else its module. The function rows group by group_key, and a
+-- function-scoped instruction or line view selects its samples by the parent row's group_key, so
+-- a parent's children are exactly the samples its measurement holds.
+CREATE OR REPLACE TEMP VIEW v_scoped_keyed AS
+SELECT w.*,
+       COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module_label,
+       r.function_start, r.function_end, r.function_source,
+       r.function_name AS range_name,
+       CASE WHEN r.function_start IS NOT NULL
+            THEN 'r:' || COALESCE(NULLIF(w.module_name, ''), '<unknown module>') || chr(2)
+                 || CAST(r.function_start AS VARCHAR)
+            WHEN w.function_id IS NOT NULL THEN 'f:' || CAST(w.function_id AS VARCHAR)
+            ELSE 'u:' || COALESCE(NULLIF(w.module_name, ''), '<unknown module>') END AS group_key,
+       CASE WHEN r.function_start IS NOT NULL THEN 'range'
+            WHEN w.function_id IS NOT NULL THEN 'uprof_db'
+            ELSE 'none' END AS range_kind
+FROM v_scoped w
+LEFT JOIN v_function_ranges r
+  ON w.module_name = r.module_name
+ AND w.rva >= r.function_start AND w.rva < r.function_end;
+
 -- Function shares. A sample is grouped by the derived function range that covers its RVA (from
 -- v_function_ranges) when one exists; the range name, else the uProf Function.name, else a visibly
 -- synthetic pdata_0x<start>/sub_0x<start> names the row, and a name names it only when the
@@ -844,28 +866,13 @@ HAVING count(*) > 0;
 -- parent lookup of a function-scoped instruction or line view is not hidden by --top; the public
 -- v_function_rows adds the cap and the <other functions> remainder.
 CREATE OR REPLACE TEMP VIEW v_function_measured AS
-WITH placed AS (
-  SELECT COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module_name,
-         w.rva, w.function_id, w.samples, w.weight, w.tag_cycles,
-         COALESCE(NULLIF(f.name, ''), '') AS db_name,
-         r.function_start, r.function_end, r.function_source,
-         r.function_name AS range_name
-  FROM v_scoped w
+WITH keyed AS (
+  SELECT w.module_label AS module_name, w.rva, w.function_id, w.samples, w.weight,
+         w.tag_cycles, COALESCE(NULLIF(f.name, ''), '') AS db_name,
+         w.function_start, w.function_end, w.function_source, w.range_name,
+         w.group_key, w.range_kind
+  FROM v_scoped_keyed w
   LEFT JOIN Function f ON f.id = w.function_id
-  LEFT JOIN v_function_ranges r
-    ON w.module_name = r.module_name
-   AND w.rva >= r.function_start AND w.rva < r.function_end
-), keyed AS (
-  SELECT module_name, rva, function_id, samples, weight, tag_cycles, db_name,
-         function_start, function_end, function_source, range_name,
-         CASE WHEN function_start IS NOT NULL
-              THEN 'r:' || module_name || chr(2) || CAST(function_start AS VARCHAR)
-              WHEN function_id IS NOT NULL THEN 'f:' || CAST(function_id AS VARCHAR)
-              ELSE 'u:' || module_name END AS group_key,
-         CASE WHEN function_start IS NOT NULL THEN 'range'
-              WHEN function_id IS NOT NULL THEN 'uprof_db'
-              ELSE 'none' END AS range_kind
-  FROM placed
 ), rva_samples AS (
   SELECT group_key, rva, CAST(sum(samples) AS BIGINT) AS samples
   FROM keyed
@@ -975,8 +982,9 @@ HAVING count(*) > 0;
 -- The parent function selected by --function/--module/--function-start. Empty unless a
 -- function-scoped instruction or line view was requested. It reads the same uncapped aggregated
 -- rows as v_function_rows, so the parent measurement is a sum/join of the capture, never a second
--- measurement. A derived range is selected by its RVA interval; a uProf Function.id row (no
--- derived range) by its function id. --module is normalized like every module key, so
+-- measurement. Its children are the scoped samples with its group_key (v_scoped_keyed), so a
+-- uProf Function.id row holds only the samples outside every derived range. --module is
+-- normalized like every module key, so
 -- Module.path or a Windows path in any case selects the same module.
 CREATE OR REPLACE TEMP VIEW v_function_scope AS
 SELECT * FROM v_function_measured
@@ -1024,14 +1032,9 @@ fs_one AS MATERIALIZED (
 ),
 scoped AS (
   SELECT w.*
-  FROM v_scoped w
+  FROM v_scoped_keyed w
   WHERE COALESCE(getvariable('uprof_function'), '') = ''
-     OR EXISTS (
-       SELECT 1 FROM fs
-       WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
-         AND ((fs.function_start IS NOT NULL
-               AND w.rva >= fs.function_start AND w.rva < fs.function_end)
-              OR (fs.function_start IS NULL AND w.function_id = fs.function_id)))
+     OR EXISTS (SELECT 1 FROM fs WHERE fs.group_key = w.group_key)
 ), placed AS (
   SELECT w.module_name, w.samples, w.weight, w.tag_cycles,
          s.function AS sym_function, s.function_short AS sym_short,
@@ -1039,16 +1042,13 @@ scoped AS (
          s.file AS sym_file, s.line AS sym_line,
          a.names,
          fold_holds(a.name_count, a.names, s.containing_function)
-           AND COALESCE(r.function_start <= a.rva, true) AS folded
+           -- A derived range that starts after the folded public start ends the folded body.
+           AND COALESCE(w.function_start <= a.rva, true) AS folded
   FROM scoped w
   LEFT JOIN v_symbols s
     ON w.module_name = s.module_name AND w.rva = s.rva
   ASOF LEFT JOIN v_public_starts a
     ON w.module_name = a.module_name AND w.rva >= a.rva
-  -- A derived range that starts after the folded public start ends the folded body.
-  LEFT JOIN v_function_ranges r
-    ON w.module_name = r.module_name
-   AND w.rva >= r.function_start AND w.rva < r.function_end
 ), spellings AS (
   SELECT module_name AS spelling_module, sym_short AS spelling_short,
          count(DISTINCT sym_containing) FILTER (
@@ -1153,29 +1153,21 @@ fs_one AS MATERIALIZED (
 ),
 scoped AS (
   SELECT w.*
-  FROM v_scoped w
+  FROM v_scoped_keyed w
   WHERE COALESCE(getvariable('uprof_function'), '') = ''
-     OR EXISTS (
-       SELECT 1 FROM fs
-       WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
-         AND ((fs.function_start IS NOT NULL
-               AND w.rva >= fs.function_start AND w.rva < fs.function_end)
-              OR (fs.function_start IS NULL AND w.function_id = fs.function_id)))
+     OR EXISTS (SELECT 1 FROM fs WHERE fs.group_key = w.group_key)
 ), placed AS (
   SELECT w.module_name, w.rva, w.samples, w.weight, w.tag_cycles,
          s.function AS sym_function, s.file AS sym_file, s.line AS sym_line,
          a.names,
          fold_holds(a.name_count, a.names, s.containing_function)
-           AND COALESCE(r.function_start <= a.rva, true) AS folded
+           -- A derived range that starts after the folded public start ends the folded body.
+           AND COALESCE(w.function_start <= a.rva, true) AS folded
   FROM scoped w
   LEFT JOIN v_symbols s
     ON w.module_name = s.module_name AND w.rva = s.rva
   ASOF LEFT JOIN v_public_starts a
     ON w.module_name = a.module_name AND w.rva >= a.rva
-  -- A derived range that starts after the folded public start ends the folded body.
-  LEFT JOIN v_function_ranges r
-    ON w.module_name = r.module_name
-   AND w.rva >= r.function_start AND w.rva < r.function_end
 ), normalized AS (
   SELECT COALESCE(NULLIF(module_name, ''), '<unknown module>') AS module_name,
          rva,

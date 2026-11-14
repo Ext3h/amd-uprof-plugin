@@ -41,11 +41,16 @@ because their output carries paths and timestamps.
 
 ## Isolation
 
-For the whole run, the session cache, the dump cache, the user cache directory and every temp
-directory of the tools and their children point below the harness's work directory, so a
-measurement never reads results an earlier run left in the caller's caches and leaves none
-behind. The symbol search path (`_NT_SYMBOL_PATH`, `DEBUGINFOD_URLS`) stays as configured: symbol
-search is part of what a user's run costs. The results record which of those variables were set.
+For the whole run, the session cache, the dump cache, `XDG_CACHE_HOME` and every temp directory
+of the tools and their children point below the harness's work directory, so a measurement never
+reads results an earlier run left in the caller's caches and leaves none behind. The symbol search
+path (`_NT_SYMBOL_PATH`, `DEBUGINFOD_URLS`) stays as configured: symbol search is part of what a
+user's run costs. The results record which of those variables were set. On Windows the downloaded
+symbol cache (`%LOCALAPPDATA%\Symbols`) stays the caller's too, so symbols an earlier run
+downloaded are not downloaded again; on Linux it lies below `XDG_CACHE_HOME` and starts empty.
+
+With `UPROF_SESSION_CACHE_DISABLE` set the tools skip the session cache, so warm runs measure the
+same work as cold ones; the harness warns at the start and records it in the results.
 
 ## Running it
 

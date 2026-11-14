@@ -61,7 +61,7 @@ class _Case(unittest.TestCase):
     def assert_refused(self, call):
         with self.assertRaisesRegex(uprof_util.UprofError, NOT_PRIVATE) as raised:
             call()
-        self.assertIn("remove", str(raised.exception))
+        self.assertIn("set to a new directory you own", str(raised.exception))
         self.assertEqual(sorted(p.name for p in self.victim.iterdir()), ["keep.txt"])
 
 

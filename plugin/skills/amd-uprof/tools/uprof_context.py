@@ -618,7 +618,8 @@ def symbolize_rvas(
     found = symbolizer if symbolizer else find_symbolizer()
     if not found:
         raise ContextOmission("symbolizer_missing", "llvm-symbolizer not found")
-    command = [str(found), f"--obj={module_path}"]
+    # --no-debuginfod: profile never contacts a symbol URL, even when DEBUGINFOD_URLS is set.
+    command = [str(found), "--no-debuginfod", f"--obj={module_path}"]
     if pdb:
         command.append(f"--pdb={pdb}")
     command += [f"--debug-file-directory={directory}" for directory in debug_dirs]

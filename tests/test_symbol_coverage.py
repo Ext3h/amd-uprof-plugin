@@ -219,7 +219,7 @@ class SymbolCoverageTest(unittest.TestCase):
         self.assertIn(
             "SYMBOL_COVERAGE: 6/12 samples (50.0%) resolve to a named function;", result.stdout
         )
-        self.assertIn(f"without source names by module: {NO_STRINGS} 3/3 (100.0%)", result.stdout)
+        self.assertIn(f"unnamed samples by module: {NO_STRINGS} 3/3 (100.0%)", result.stdout)
         self.assertIn(f"{PARTIAL} 1/3 (33.3%)", result.stdout)
         self.assertIn(PROCESS_STOP, result.stdout)
         coverage_line = result.stdout.split("SYMBOL_COVERAGE:")[1].splitlines()[0]
@@ -562,9 +562,7 @@ class ProcessCoverageStopTest(unittest.TestCase):
             with self.subTest(named=named):
                 text = self.field(named, "process")[0][1]
                 share = f"{100.0 * (10 - named) / 10:.1f}"
-                self.assertIn(
-                    f"without source names by module: a.dll {10 - named}/10 ({share}%)", text
-                )
+                self.assertIn(f"unnamed samples by module: a.dll {10 - named}/10 ({share}%)", text)
                 self.assertTrue(text.endswith(PROCESS_STOP), text)
                 self.assertNotIn("unresolved", text)
 

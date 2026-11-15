@@ -124,10 +124,13 @@ class DumpIdentityTest(unittest.TestCase):
             json.dumps({"kind": KIND, "timeFilter": "", "capture": []}), encoding="utf-8"
         )
 
-        # Not reused: generation runs, and the fake translates no raw file into an empty dump.
-        with self.assertRaisesRegex(UprofError, "empty"):
+        # Not reused: fails immediately with the no-raw-files cause and never starts translation.
+        with self.assertRaisesRegex(
+            UprofError,
+            "this session has no raw profile files and no IBS dump; the dump can't be generated here",
+        ):
             self.resolve()
-        self.assertEqual(self.translations, 1)
+        self.assertEqual(self.translations, 0)
 
 
 if __name__ == "__main__":

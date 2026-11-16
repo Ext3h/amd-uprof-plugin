@@ -91,3 +91,9 @@ Push a `trace-capture-<date>` tag or run the workflow manually, download the art
 `gh run download <run-id>`, copy `debug-traces-windows/windows/*.txt` to `windows/` and
 `debug-traces-linux/linux/*.txt` to `linux/`, update the table above with the run ID and tool
 versions, then run `python tests/run_tests.py test_debug_traces` on each OS.
+
+Name the run's commit as a branch commit, together with its subject. Main merges by rebase, so
+that commit never reaches main with its hash and is not the parent of the commit that adds the
+files; once merged, name its main counterpart and the commit that committed the traces. State
+that the files equal the run's artifacts only after comparing them, and say what changed
+against the previous run from a diff of the two runs' artifacts.

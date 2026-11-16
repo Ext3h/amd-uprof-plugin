@@ -258,7 +258,8 @@ class FunctionRangeProfileTest(unittest.TestCase):
 
         self.assertIn(
             "rows named 6/9 samples (66.7%), derived 3/9 samples (33.3%) from a "
-            "synthetic binary range, unresolved 0/9 samples (0.0%) (<no symbol>)",
+            "synthetic binary range or a nearest-symbol name, unresolved 0/9 samples (0.0%) "
+            "(<no symbol>)",
             result.stdout,
         )
         self.assertIn("every scoped sample is attributed below module/RVA", result.stdout)

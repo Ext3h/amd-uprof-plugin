@@ -265,10 +265,8 @@ class CachedRunTest(unittest.TestCase):
                         ).fetchall()
                     }
                     if identity:
-                        row = connection.execute(
-                            "SELECT size, checksum, is32Bit FROM Module"
-                        ).fetchone()
-                        self.assertEqual(row, expected)
+                        query = "SELECT size, checksum, is32Bit FROM Module"
+                        self.assertEqual(connection.execute(query).fetchone(), expected)
                 finally:
                     connection.close()
                 self.assertEqual({"size", "checksum", "is32bit"} <= columns, identity)

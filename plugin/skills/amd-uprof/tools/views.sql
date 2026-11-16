@@ -71,6 +71,13 @@ CREATE OR REPLACE TEMP MACRO name_identifier(n) AS CASE
 -- body matches the start too, because the start is joined ASOF. The frame is outside only when
 -- every folded name and the frame have an identifier and none agrees; a truncated name list
 -- ('... (+N more)') cannot show that.
+-- The name a derived range gives a row: its export or public name, else the visibly synthetic
+-- pdata_0x<start>/sub_0x<start>; NULL outside every range.
+CREATE OR REPLACE TEMP MACRO range_label(range_name, source, start) AS
+  CASE WHEN start IS NULL THEN NULL
+       WHEN range_name IS NOT NULL THEN range_name
+       WHEN source = 'pdata' THEN printf('pdata_0x%X', start)
+       ELSE printf('sub_0x%X', start) END;
 CREATE OR REPLACE TEMP MACRO fold_holds(name_count, names, frame) AS COALESCE(
   COALESCE(name_count, 1) > 1
   AND (COALESCE(frame, '') = ''
@@ -549,6 +556,20 @@ FROM query(CASE WHEN getvariable('uprof_pdbs') <> ''
               FROM uprof_pdbs_source$pdbs$
   ELSE $pdbs$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS pdb WHERE false$pdbs$ END);
 
+-- Symbolizer frames with their provenance. A frame that names a function but carries no source
+-- line, from a module with no accepted PDB, is a nearest-symbol name: without debug info
+-- llvm-symbolizer returns the nearest preceding export or symbol-table entry, which may belong
+-- to another function. Such a name is derived, not a source symbol, and a derived range that
+-- covers the address names the row instead.
+CREATE OR REPLACE TEMP VIEW v_symbol_frames AS
+SELECT s.*,
+       COALESCE(s.function, '') <> '' AND COALESCE(s.file, '') = ''
+         AND COALESCE(s.line, 0) = 0
+         AND NOT EXISTS (SELECT 1 FROM v_pdbs p
+                         WHERE p.module_name = s.module_name AND p.pdb IS NOT NULL)
+         AS nearest_symbol
+FROM v_symbols s;
+
 -- Scope is every process image matching --image and, when given, the one PID named by --pid.
 -- With a dump, samples are the DeltaTick-weighted ASCII rows and weight is the exact time; without
 -- one (PMC), samples are the UnifiedSampleSeries event-column counts (fixed cycles; one row may
@@ -844,6 +865,7 @@ SELECT w.*,
        r.function_start, r.function_end, r.function_source,
        r.function_name AS range_name,
        NULLIF(s.containing_function, '') AS sym_name,
+       COALESCE(s.nearest_symbol, false) AS sym_nearest,
        CASE WHEN r.function_start IS NOT NULL
             THEN 'r:' || COALESCE(NULLIF(w.module_name, ''), '<unknown module>') || chr(2)
                  || CAST(r.function_start AS VARCHAR)
@@ -864,7 +886,7 @@ LEFT JOIN v_function_ranges r
   ON w.module_name = r.module_name
  AND w.rva >= r.function_start AND w.rva < r.function_end
 LEFT JOIN Function f ON f.id = w.function_id
-LEFT JOIN v_symbols s ON s.module_name = w.module_name AND s.rva = w.rva;
+LEFT JOIN v_symbol_frames s ON s.module_name = w.module_name AND s.rva = w.rva;
 
 -- Function shares. A sample is grouped by the derived function range that covers its RVA (from
 -- v_function_ranges) when one exists; the range name, else the uProf Function.name, else a visibly
@@ -881,6 +903,7 @@ WITH keyed AS (
   SELECT w.module_label AS module_name, w.rva, w.function_id, w.samples, w.weight,
          w.tag_cycles, COALESCE(NULLIF(f.name, ''), '') AS db_name,
          w.function_start, w.function_end, w.function_source, w.range_name, w.sym_name,
+         w.sym_nearest,
          w.group_key, w.range_kind
   FROM v_scoped_keyed w
   LEFT JOIN Function f ON f.id = w.function_id
@@ -911,6 +934,7 @@ WITH keyed AS (
          CASE WHEN count(DISTINCT NULLIF(db_name, '')) = 1 AND bool_and(db_name <> '')
               THEN max(db_name) ELSE '' END AS db_name,
          max(sym_name) AS sym_name,
+         bool_or(sym_nearest) AS sym_nearest,
          CAST(sum(samples) AS BIGINT) AS samples,
          sum(weight) AS weight,
          sum(tag_cycles) AS tag_cycles
@@ -935,9 +959,12 @@ WITH keyed AS (
               WHEN a.range_kind = 'range' AND COALESCE(p.name_count, 1) > 1 THEN 'shared'
               WHEN a.range_kind = 'range' THEN 'unique'
               WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN 'unique'
+              WHEN a.range_kind = 'symbolizer' AND a.sym_nearest THEN 'derived'
               WHEN a.range_kind = 'symbolizer' THEN 'unique'
               ELSE 'unresolved' END AS attribution,
          CASE WHEN a.range_kind = 'range' THEN NULL
+              WHEN a.range_kind = 'symbolizer' AND a.sym_nearest
+                THEN 'named by the nearest preceding symbol llvm-symbolizer found without a PDB or debug info, so the name is derived; no boundary source (export, PDB public or .pdata) covers these samples, so the row has no range'
               WHEN a.range_kind = 'symbolizer'
                 THEN 'named by the llvm-symbolizer containing function; no boundary source (export, PDB public or .pdata) covers these samples, so the row has no range'
               WHEN a.range_kind = 'uprof_db' AND NOT COALESCE(list_contains(
@@ -1056,6 +1083,9 @@ scoped AS (
          s.function AS sym_function, s.function_short AS sym_short,
          s.containing_function AS sym_containing,
          s.file AS sym_file, s.line AS sym_line,
+         COALESCE(s.nearest_symbol, false) AS nearest,
+         range_label(w.range_name, w.function_source, w.function_start) AS range_label,
+         w.range_name,
          a.names,
          fold_holds(a.name_count, a.names, s.containing_function)
            -- A derived range that starts after the folded public start ends the folded body.
@@ -1064,7 +1094,7 @@ scoped AS (
            -- names, so the line and instruction views both leave it unresolved.
            AND COALESCE(s.function, '') <> '' AS folded
   FROM scoped w
-  LEFT JOIN v_symbols s
+  LEFT JOIN v_symbol_frames s
     ON w.module_name = s.module_name AND w.rva = s.rva
   ASOF LEFT JOIN v_public_starts a
     ON w.module_name = a.module_name AND w.rva >= a.rva
@@ -1084,15 +1114,19 @@ scoped AS (
          CASE WHEN COALESCE(sym_function, '') = '' THEN 0 ELSE COALESCE(sym_line, 0) END AS line_number,
          CASE WHEN folded THEN 'shared: ' || names
               WHEN COALESCE(sym_function, '') = '' THEN '<no symbol>'
+              WHEN nearest AND range_label IS NOT NULL THEN range_label
               ELSE sym_function END AS function_label,
          CASE WHEN folded THEN 'shared: ' || names
               WHEN COALESCE(sym_function, '') = '' THEN '<no symbol>'
+              WHEN nearest AND range_label IS NOT NULL THEN range_label
               WHEN COALESCE(sp.overload_count, 0) > 1 THEN sym_function
               WHEN COALESCE(placed.sym_short, '') <> '' THEN placed.sym_short
               ELSE sym_function END AS function_key,
          COALESCE(NULLIF(module_name, ''), '<unknown module>') AS module_label,
          CASE WHEN folded THEN 'shared'
               WHEN COALESCE(sym_function, '') = '' THEN 'unresolved'
+              WHEN nearest AND range_name IS NOT NULL THEN 'unique'
+              WHEN nearest THEN 'derived'
               ELSE 'unique' END AS address_attribution,
          samples, weight, tag_cycles
   FROM placed
@@ -1108,6 +1142,7 @@ scoped AS (
               ELSE '<multiple>' END AS module_name,
          CASE WHEN min(file_name) = '<no symbol>' THEN 'unresolved'
               WHEN count(*) FILTER (WHERE address_attribution = 'shared') > 0 THEN 'shared'
+              WHEN count(*) FILTER (WHERE address_attribution = 'derived') > 0 THEN 'derived'
               ELSE 'unique' END AS attribution,
          CAST(sum(samples) AS BIGINT) AS samples,
          sum(weight) AS weight,
@@ -1178,6 +1213,9 @@ scoped AS (
 ), placed AS (
   SELECT w.module_name, w.rva, w.samples, w.weight, w.tag_cycles,
          s.function AS sym_function, s.file AS sym_file, s.line AS sym_line,
+         COALESCE(s.nearest_symbol, false) AS nearest,
+         range_label(w.range_name, w.function_source, w.function_start) AS range_label,
+         w.range_name,
          a.names,
          fold_holds(a.name_count, a.names, s.containing_function)
            -- A derived range that starts after the folded public start ends the folded body.
@@ -1186,7 +1224,7 @@ scoped AS (
            -- names, so the line and instruction views both leave it unresolved.
            AND COALESCE(s.function, '') <> '' AS folded
   FROM scoped w
-  LEFT JOIN v_symbols s
+  LEFT JOIN v_symbol_frames s
     ON w.module_name = s.module_name AND w.rva = s.rva
   ASOF LEFT JOIN v_public_starts a
     ON w.module_name = a.module_name AND w.rva >= a.rva
@@ -1195,6 +1233,7 @@ scoped AS (
          rva,
          CASE WHEN folded THEN 'shared: ' || names
               WHEN COALESCE(sym_function, '') = '' THEN '<no symbol>'
+              WHEN nearest AND range_label IS NOT NULL THEN range_label
               ELSE sym_function END AS function_name,
          CASE WHEN COALESCE(sym_function, '') = '' THEN '<no symbol>'
               WHEN COALESCE(sym_file, '') = '' THEN '<no source line>'
@@ -1202,6 +1241,8 @@ scoped AS (
          CASE WHEN COALESCE(sym_function, '') = '' THEN 0 ELSE COALESCE(sym_line, 0) END AS line_number,
          CASE WHEN folded THEN 'shared'
               WHEN COALESCE(sym_function, '') = '' THEN 'unresolved'
+              WHEN nearest AND range_name IS NOT NULL THEN 'unique'
+              WHEN nearest THEN 'derived'
               ELSE 'unique' END AS attribution,
          samples, weight, tag_cycles
   FROM placed
@@ -1291,6 +1332,7 @@ WITH paged AS (
 ), placed AS (
   SELECT p.*, h.hot_rva, h.hot_samples,
          s.function AS sym_function, s.file AS hot_file, s.line AS hot_line,
+         COALESCE(s.nearest_symbol, false) AS nearest,
          a.names,
          fold_holds(a.name_count, a.names, s.containing_function)
            AND COALESCE(r.function_start <= a.rva, true) AS folded,
@@ -1299,7 +1341,7 @@ WITH paged AS (
          r.function_name AS hot_range_name
   FROM page_totals p
   JOIN hot h USING (module_name, page_start)
-  LEFT JOIN v_symbols s
+  LEFT JOIN v_symbol_frames s
     ON s.module_name = p.module_name AND s.rva = h.hot_rva
   ASOF LEFT JOIN v_public_starts a
     ON a.module_name = p.module_name AND h.hot_rva >= a.rva
@@ -1309,18 +1351,24 @@ WITH paged AS (
 ), labelled AS (
   SELECT *,
          CASE WHEN folded THEN 'shared: ' || names
-              WHEN COALESCE(sym_function, '') <> '' THEN sym_function
+              WHEN COALESCE(sym_function, '') <> ''
+                   AND NOT (nearest AND hot_function_start IS NOT NULL) THEN sym_function
               WHEN hot_range_name IS NOT NULL THEN hot_range_name
               WHEN hot_function_start IS NOT NULL AND ranged_source = 'pdata'
                 THEN printf('pdata_0x%X', hot_function_start)
               WHEN hot_function_start IS NOT NULL THEN printf('sub_0x%X', hot_function_start)
               ELSE NULL END AS hot_function,
          CASE WHEN folded THEN 'shared'
-              WHEN COALESCE(sym_function, '') <> '' THEN 'unique'
+              WHEN COALESCE(sym_function, '') <> '' AND NOT nearest THEN 'unique'
+              WHEN nearest AND hot_function_start IS NULL THEN 'derived'
               WHEN hot_range_name IS NOT NULL THEN 'unique'
               WHEN hot_function_start IS NOT NULL THEN 'derived'
               ELSE 'unresolved' END AS attribution,
-         CASE WHEN NOT folded AND COALESCE(sym_function, '') = ''
+         CASE WHEN NOT folded AND nearest AND hot_function_start IS NOT NULL
+              THEN 'no source line: without a PDB or debug info llvm-symbolizer returned the nearest preceding symbol, so the derived function range covering hot_rva names it'
+              WHEN NOT folded AND nearest
+              THEN 'no source line: without a PDB or debug info llvm-symbolizer returned the nearest preceding symbol, so the name is derived'
+              WHEN NOT folded AND COALESCE(sym_function, '') = ''
                    AND hot_function_start IS NULL
               THEN 'no symbolizer frame and no derived function range cover hot_rva; the page is the coarse bucket'
               WHEN folded AND COALESCE(sym_function, '') = ''
@@ -1333,7 +1381,8 @@ WITH paged AS (
               ELSE NULL END AS symbol_reason,
          CASE WHEN hot_function_start IS NULL THEN 'none' ELSE ranged_source END
            AS function_source,
-         CASE WHEN hot_function_start IS NOT NULL AND COALESCE(sym_function, '') = ''
+         CASE WHEN hot_function_start IS NOT NULL
+                   AND (COALESCE(sym_function, '') = '' OR nearest)
                    AND hot_range_name IS NULL
               THEN true ELSE false END AS function_derived
   FROM placed

@@ -383,9 +383,7 @@ class RegionSymbolReasonTest(unittest.TestCase):
         )
 
 
-REGION_HOT = (
-    "SELECT hot_rva, hot_function, attribution FROM v_region_rows WHERE module IS NOT NULL"
-)
+REGION_HOT = "SELECT hot_rva, hot_function, attribution FROM v_region_rows WHERE module IS NOT NULL"
 # Without a PDB or debug info llvm-symbolizer names the nearest preceding export: 0x1050 lies in
 # its own .pdata function, yet the frame says "second" and carries no source line.
 NEAREST = {

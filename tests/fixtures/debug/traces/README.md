@@ -10,8 +10,8 @@ its `SYMBOL_COVERAGE` line, its stderr `WARNING:` lines and its rows.
 
 The tool output was captured by
 [capture-debug-traces.yml](../../../../.github/workflows/capture-debug-traces.yml) in
-[run 43833713311](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43833713311) at
-commit `db7ff27`:
+[run 43836866209](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43836866209) at
+commit `cb5e315`:
 
 | directory | runner | Python | LLVM | DuckDB |
 | --- | --- | --- | --- | --- |
@@ -19,10 +19,10 @@ commit `db7ff27`:
 | `linux/` | ubuntu-latest | 3.12.16 | 23.1.4 (release tarball) | 2.0.0 |
 
 Both jobs succeeded, and both downloaded artifacts are byte-identical to the committed files.
-Compared with run 43826808166 at `6f7e952`, only the `profile.*` sections of modules
-whose frames carry no source line and no accepted PDB changed (symbol-table, dynsym and COFF
-symbol names; on Linux also `pe_fixture_public.txt`): those names are now `derived`, not
-`unique`.
+Compared with run 43833713311 at `db7ff27`, only the `elf_fixture_buildid`,
+`elf_fixture_dynsym_so` and `elf_fixture_symtab` profile rows changed: an ELF symbol-table
+function with a nonzero size is a source symbol again, so its rows are `unique`; PE export and
+COFF names stay `derived`.
 The capture commit is the parent of the commit that adds these files.
 Run 43216136838 differed from run 43214725994 at `c3e42a7` only in the PDB GUIDs of the PE fixtures,
 because they were relinked with `/release`.

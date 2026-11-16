@@ -98,7 +98,7 @@ when the workload's clock differs. `HZ_SOURCE=argument` means `--freq` supplied 
 
 1. A dump beside the session (preferred).
 2. A current cached dump under `<user cache>/uprof-dump-cache/<sha256(normcase(abspath(session)))[:16]>/` (`%TEMP%`, Linux `~/.cache/amd-uprof`; a cache directory that is a link or open to other users is refused). It is reused only when `cache.json` records the same kind and the same `translateCommand --time-filter`, and the same name, size and SHA-256 of every raw `cpu/*.prd` (a digest is kept unhashed while file ID, size and mtime match).
-3. Otherwise a copy of the raw session is translated with `--ascii` in a unique staging directory, renamed into place when complete; `GENERATING DUMP:` precedes it.
+3. Otherwise a copy of the raw session is translated with `--ascii` in a unique staging directory, renamed into place when complete; `GENERATING DUMP:` precedes it. A session without readable raw `cpu/*.prd` fails before AMDuProfCLI starts, with the cause and `ALTERNATIVE` lines (place the dump beside `session.uprof`, or profile the session that holds the raw files).
 
 The cache holds no database: every `.db`/`.duckdb` (and its WAL/SHM) is removed before a cached dump is handed back, because a dump-only translate writes a degraded `cpu.db` with far fewer `Function` rows; if the removal fails it prints `WARNING: could not remove <path>: <reason>; the cache copy still contains a database`. `cpu.db` must always come from the original session.
 

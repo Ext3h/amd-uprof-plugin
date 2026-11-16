@@ -124,10 +124,48 @@ class DumpIdentityTest(unittest.TestCase):
             json.dumps({"kind": KIND, "timeFilter": "", "capture": []}), encoding="utf-8"
         )
 
-        # Not reused: generation runs, and the fake translates no raw file into an empty dump.
-        with self.assertRaisesRegex(UprofError, "empty"):
+        # Not reused, and not generated either: there is nothing to translate.
+        with self.assertRaisesRegex(UprofError, "no raw profile files"):
             self.resolve()
-        self.assertEqual(self.translations, 1)
+        self.assertEqual(self.translations, 0)
+
+    def fail_without_raw_files(self):
+        with (
+            contextlib.redirect_stderr(io.StringIO()) as stderr,
+            self.assertRaises(UprofError) as raised,
+        ):
+            uprof_dump.resolve_dump(self.session, Sampler(ibs_dump_kind=KIND))
+        self.assertEqual(self.translations, 0)
+        self.assertNotIn("GENERATING DUMP", stderr.getvalue())
+        return str(raised.exception).splitlines()
+
+    def test_a_session_with_only_its_database_fails_before_calling_uprof(self):
+        self.session.mkdir()
+        (self.session / "session.uprof").write_text("{}", encoding="utf-8")
+        (self.session / "cpu.db").write_bytes(b"")
+        lines = self.fail_without_raw_files()
+        self.assertEqual(
+            lines[0],
+            "this session has no raw profile files (cpu/*.prd) and no IbsOpDump.csv beside "
+            "session.uprof; the dump cannot be generated here",
+        )
+        self.assertEqual(
+            [line.split(": ", 2)[1] for line in lines[1:3]],
+            ["dump beside the session", "session with raw files"],
+        )
+        self.assertIn("IbsOpDump.csv", lines[1])
+        self.assertIn(" profile --session ", lines[1])
+        self.assertNotIn("<SESSION_DIR>", lines[1])
+
+    def test_unreadable_raw_files_fail_before_calling_uprof(self):
+        self.make_capture(self.session, b"capture A")
+        with mock.patch.object(uprof_dump, "capture_identity", return_value=None):
+            lines = self.fail_without_raw_files()
+        self.assertEqual(
+            lines[0],
+            "this session's raw profile files (cpu/*.prd) cannot be read and no IbsOpDump.csv "
+            "is beside session.uprof; the dump cannot be generated here",
+        )
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,6 +43,7 @@ class Case:
     symbol_dirs: tuple[Path, ...] = ()
     symbol_files: tuple[Path, ...] = ()
     function_profile: bool = True
+    cached_run: bool = False
     notes: tuple[str, ...] = field(default=())
 
 
@@ -85,7 +87,14 @@ CASES = (
         notes=("PE image carrying DWARF and no PDB record",),
     ),
     Case(
-        "elf_fixture_dwarf", F.ELF / "fixture_dwarf", (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY)
+        "elf_fixture_dwarf",
+        F.ELF / "fixture_dwarf",
+        (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY),
+        cached_run=True,
+        notes=(
+            "the session records image size, checksum and bitness, so a second profile run"
+            " is served from the session cache",
+        ),
     ),
     Case(
         "elf_fixture_shared_so",
@@ -355,17 +364,56 @@ def production_section(case: Case) -> list[str]:
 
 
 def profile_section(case: Case, by: str) -> list[str]:
-    """The cold run's facts, then a second run of the same session, which reads the session
-    cache. A cache hit replays the cold run's output, so the cached run gets its own section
-    only where it differs."""
+    """The profile run's facts. A cached_run case profiles the same session a second time,
+    which must be served from the session cache; its cached section starts with what the
+    cache tables show about that."""
     with tempfile.TemporaryDirectory(prefix="uprof-trace-session-") as root:
-        session = F.write_session(root, case.image, list(case.addresses))
-        cold = _profile_facts(root, *F.profile_with_stderr(session, by), by)
-        cached = _profile_facts(root, *F.profile_with_stderr(session, by), by)
-    facts = [f"## profile.{by}", *cold]
-    if cached != cold:
-        facts += [f"## profile.{by} cached", *cached]
+        session = F.write_session(root, case.image, list(case.addresses), identity=case.cached_run)
+        cache = Path(root) / "cache"
+        env = {"UPROF_SESSION_CACHE_ROOT": str(cache)}
+        document, stderr = F.profile_with_stderr(session, by, env=env)
+        facts = [f"## profile.{by}", *_profile_facts(root, document, stderr, by)]
+        if case.cached_run:
+            stored = cache_runs(cache)
+            # A run stamps created_at to the second; waiting past it makes a re-store visible.
+            time.sleep(1.1)
+            document, stderr = F.profile_with_stderr(session, by, env=env)
+            facts += [
+                f"## profile.{by} cached",
+                cache_fact(stored, cache_runs(cache)),
+                *_profile_facts(root, document, stderr, by),
+            ]
     return facts
+
+
+def cache_runs(cache: Path) -> dict[str, list[tuple]] | None:
+    """(run_key, created_at) of every stored symbol and range run, or None without a cache."""
+    import duckdb
+
+    files = sorted(cache.glob("*.duckdb")) if cache.is_dir() else []
+    if len(files) != 1:
+        return None
+    connection = duckdb.connect(str(files[0]), read_only=True)
+    try:
+        return {
+            table: sorted(
+                connection.execute(f"SELECT run_key, created_at FROM {table}").fetchall()
+            )
+            for table in ("symbol_runs", "range_runs")
+        }
+    finally:
+        connection.close()
+
+
+def cache_fact(stored: dict | None, after: dict | None) -> str:
+    """A hit reads the stored symbol run and leaves every stored run untouched."""
+    if stored is None or after is None:
+        return "session_cache=none"
+    state = "hit" if stored["symbol_runs"] and after == stored else "miss"
+    return (
+        f"session_cache={state} symbol_runs={len(after['symbol_runs'])}"
+        f" range_runs={len(after['range_runs'])}"
+    )
 
 
 def _profile_facts(root: str, document: dict, stderr: str, by: str) -> list[str]:

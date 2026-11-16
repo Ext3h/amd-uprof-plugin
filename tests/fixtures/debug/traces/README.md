@@ -6,6 +6,13 @@ Goldens for `tests/test_debug_traces.py`. Each file records one fixture from
 probe evidence, and a `profile --by line` / `--by function` render over a synthetic session:
 its `SYMBOL_COVERAGE` line, its stderr `WARNING:` lines and its rows.
 
+Only `elf_fixture_dwarf` covers the session cache: its synthetic session alone records the image
+size, checksum and bitness the cache needs, and each of its profile sections is followed by a
+`cached` section from a second run of the same session. That section starts with a
+`session_cache=` line: `hit` when the second run left the stored symbol run untouched, `miss`
+when it stored one again, `none` when no cache file exists. The other sessions lack those
+columns, so their runs warn that the session cache is disabled.
+
 ## Provenance
 
 The committed files are the artifacts of

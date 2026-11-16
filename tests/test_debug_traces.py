@@ -245,7 +245,9 @@ class CachedRunTest(unittest.TestCase):
 
         for identity in (False, True):
             with self.subTest(identity=identity), tempfile.TemporaryDirectory() as root:
-                session = F.write_session(root, F.ELF / "fixture_dwarf", [F.ELF_HELPER], identity=identity)
+                session = F.write_session(
+                    root, F.ELF / "fixture_dwarf", [F.ELF_HELPER], identity=identity
+                )
                 connection = duckdb.connect(str(session / "cpu.db"), read_only=True)
                 try:
                     columns = {

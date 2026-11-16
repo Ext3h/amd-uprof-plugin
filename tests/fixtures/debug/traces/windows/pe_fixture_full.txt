@@ -1,4 +1,5 @@
 # fixture: pe/fixture_full.exe
+# the session records the image's CheckSum, SizeOfImage and bitness, so a second profile run is served from the session cache
 ## readobj
 format=COFF-x86-64
 pointer_to_symbol_table=0x0
@@ -49,13 +50,22 @@ folds=0 shared starts of 2
 ## profile.line
 symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; profile symbolizer 3/3 samples (100.0%) resolve below module/RVA; every scoped sample is drillable below module/RVA; the uProf DB share reflects only what translate recorded, and profile's symbol paths affect the rows, not that share
 WARNING: cannot build the Parquet dump copy for <SESSION_ROOT>\session\IbsOpDump.csv; reading the CSV
-WARNING: session cache: disabled (the capture records no image size/checksum/bitness columns, so module version identity cannot be verified and the session cache is disabled); profiling without the cache
+line module=fixture_full.exe function=fixture_entry file=/build/fixture_debug.c line=6 samples=1 attribution=unique
+line module=fixture_full.exe function=fixture_entry file=/build/fixture_debug.c line=7 samples=1 attribution=unique
+line module=fixture_full.exe function=fixture_helper file=/build/fixture_debug.c line=2 samples=1 attribution=unique
+## profile.line cached
+session_cache=hit symbol_runs=1 range_runs=0
+symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; profile symbolizer 3/3 samples (100.0%) resolve below module/RVA; every scoped sample is drillable below module/RVA; the uProf DB share reflects only what translate recorded, and profile's symbol paths affect the rows, not that share
 line module=fixture_full.exe function=fixture_entry file=/build/fixture_debug.c line=6 samples=1 attribution=unique
 line module=fixture_full.exe function=fixture_entry file=/build/fixture_debug.c line=7 samples=1 attribution=unique
 line module=fixture_full.exe function=fixture_helper file=/build/fixture_debug.c line=2 samples=1 attribution=unique
 ## profile.function
 symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; rows named 3/3 samples (100.0%), derived 0/3 samples (0.0%) from a synthetic binary range, unresolved 0/3 samples (0.0%) (<no symbol>); every scoped sample is attributed below module/RVA; a derived row is actionable at its hot RVA
 WARNING: cannot build the Parquet dump copy for <SESSION_ROOT>\session\IbsOpDump.csv; reading the CSV
-WARNING: session cache: disabled (the capture records no image size/checksum/bitness columns, so module version identity cannot be verified and the session cache is disabled); profiling without the cache
+function module=fixture_full.exe function=fixture_entry start=0x1010 end=0x1030 source=pdb_public samples=2 attribution=unique
+function module=fixture_full.exe function=fixture_helper start=0x1000 end=0x1010 source=pdb_public samples=1 attribution=unique
+## profile.function cached
+session_cache=hit symbol_runs=1 range_runs=1
+symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; rows named 3/3 samples (100.0%), derived 0/3 samples (0.0%) from a synthetic binary range, unresolved 0/3 samples (0.0%) (<no symbol>); every scoped sample is attributed below module/RVA; a derived row is actionable at its hot RVA
 function module=fixture_full.exe function=fixture_entry start=0x1010 end=0x1030 source=pdb_public samples=2 attribution=unique
 function module=fixture_full.exe function=fixture_helper start=0x1000 end=0x1010 source=pdb_public samples=1 attribution=unique

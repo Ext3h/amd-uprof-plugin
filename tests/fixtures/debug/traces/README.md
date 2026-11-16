@@ -32,6 +32,14 @@ Compared with run 43833713311, only the profile rows and `symbol_coverage=` line
 symbol-table function with a nonzero size is a source symbol again, so its rows are `unique`;
 PE export and COFF names stay `derived`.
 
+`pe_fixture_full.txt` is the exception: it comes from
+[run 43841653092](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43841653092) at branch
+commit `178ef87` ("Drop the readobj_failed reason for the PE cached-run case"), whose base is
+main's `9aa4d6e`. Its session records the image identity, so its runs no longer warn that the
+session cache is disabled, and each profile section is followed by a `cached` section reporting
+`session_cache=hit`. Main's later captures, runs 43833713311 and 43836866209, left
+`pe_fixture_full.txt` as run 43826808166 had it.
+
 Earlier captures, at commits not in main's history:
 
 - Run 43833713311 at `db7ff27` (on main as `5bf1fc0`, whose child `f305823` committed that run's

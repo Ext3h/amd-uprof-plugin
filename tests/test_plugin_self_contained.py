@@ -45,6 +45,14 @@ class PluginSelfContainedTest(unittest.TestCase):
     def test_no_references_directory_ships(self):
         self.assertFalse((SKILL_DIR / "references").exists())
 
+    def test_license_ships_with_the_plugin(self):
+        # Only plugin/ is installed, and the MIT license requires its notice in every copy (#123).
+        shipped = PLUGIN / "LICENSE"
+        self.assertTrue(shipped.is_file())
+        self.assertEqual(
+            shipped.read_text(encoding="utf-8"), (ROOT / "LICENSE").read_text(encoding="utf-8")
+        )
+
     def test_maintainer_documents_live_in_docs(self):
         for name in ("reference.md", "spec.md", "validation.md"):
             with self.subTest(document=name):

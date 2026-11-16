@@ -62,8 +62,10 @@ CASES = (
         direct_pdb=F.PE / "fixture_full.pdb",
         cached_run=True,
         notes=(
-            "the session records the image's CheckSum, SizeOfImage and bitness, so a second"
-            " profile run is served from the session cache",
+            (
+                "the session records the image's CheckSum, SizeOfImage and bitness, so a second"
+                " profile run is served from the session cache"
+            ),
         ),
     ),
     Case(
@@ -394,9 +396,7 @@ def cache_runs(cache: Path) -> dict[str, list[tuple]] | None:
     connection = duckdb.connect(str(files[0]), read_only=True)
     try:
         return {
-            table: sorted(
-                connection.execute(f"SELECT run_key, created_at FROM {table}").fetchall()
-            )
+            table: sorted(connection.execute(f"SELECT run_key, created_at FROM {table}").fetchall())
             for table in ("symbol_runs", "range_runs")
         }
     finally:

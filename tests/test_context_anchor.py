@@ -296,13 +296,14 @@ class BuildIdentityTest(unittest.TestCase):
         self.assertEqual(identity.identity, "size")
         self.assertEqual(identity.capture_size, 8192)
 
-    def test_zero_capture_checksum_with_different_size_is_unverified(self):
-        identity = uprof_context.verify_build(self.build, 0, capture_size=8193)
+    def test_zero_capture_checksum_with_different_size_is_a_build_mismatch(self):
+        # Without a CheckSum pair a differing SizeOfImage proves another build, as it does for
+        # symbolization and range derivation.
+        with self.assertRaises(uprof_context.ContextOmission) as caught:
+            uprof_context.verify_build(self.build, 0, capture_size=8193)
 
-        self.assertFalse(identity.verified)
-        self.assertEqual(identity.identity, "unverified")
-        self.assertIn("SizeOfImage", identity.warning)
-        self.assertEqual(identity.capture_size, 8193)
+        self.assertEqual(caught.exception.reason, "build_mismatch")
+        self.assertIn("SizeOfImage", caught.exception.detail)
 
     def test_zero_module_checksum_with_capture_checksum_is_unverified(self):
         build = uprof_context.parse_image(FILE_HEADERS.replace("0x1234ABCD", "0x0")).build

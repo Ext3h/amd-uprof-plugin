@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -50,6 +49,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 UPROF = REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"
 ANONYMIZE = REPO / "trials" / "anonymize_capture.py"
+TOOLS = UPROF.parent
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
+from uprof_native import is_admin
+
 CLASSES = ("memory", "lock", "branch", "os", "vendor", "wait", "chain", "efficient")
 MODES = ("timer", "ibs", "pmc", "timer-cg", "ibs-cg")
 CALL_GRAPH_MODES = ("timer-cg", "ibs-cg")
@@ -74,15 +78,6 @@ class Settings:
         if mode in CALL_GRAPH_MODES:
             return ["defect_lab.exe"]
         return ["defect_lab.exe"] + [f"busy_{n:02d}.exe" for n in range(1, self.stressors + 1)]
-
-
-def is_elevated() -> bool:
-    """Whether this process runs with administrator rights (on Windows; elsewhere as root)."""
-    if sys.platform == "win32":
-        import ctypes
-
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    return os.geteuid() == 0
 
 
 def bundle_files(bin_dir: Path) -> list[str]:
@@ -396,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
     raw_dir.mkdir(parents=True, exist_ok=True)
     modes = [mode for mode in args.modes.split(",") if mode]
     graph_modes = [mode for mode in modes if mode in CALL_GRAPH_MODES]
-    if graph_modes and not is_elevated():
+    if graph_modes and not is_admin():
         print(
             f"error: {', '.join(graph_modes)} record call stacks, which need an elevated shell "
             "and uProf's capture driver installed; run from an elevated prompt, or leave "

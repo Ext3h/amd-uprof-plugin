@@ -19,12 +19,16 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+TRIALS = REPO / "trials"
+if str(TRIALS) not in sys.path:
+    sys.path.insert(0, str(TRIALS))
+from anonymize_capture import pe_identity
+
 FIXTURES = REPO / "tests" / "fixtures"
 OWN_IMAGE = FIXTURES / "debug" / "pe" / "fixture_full.exe"
 OWN_PDB = FIXTURES / "debug" / "pe" / "fixture_full.pdb"
@@ -56,15 +60,6 @@ PMC = {
     }
 }
 PMC_COLUMN = "event#0x3000076"
-
-
-def pe_identity(path: Path) -> tuple[int, int]:
-    """(CheckSum, SizeOfImage) from a PE optional header."""
-    data = path.read_bytes()
-    optional = struct.unpack_from("<I", data, 0x3C)[0] + 24
-    size_of_image = struct.unpack_from("<I", data, optional + 56)[0]
-    checksum = struct.unpack_from("<I", data, optional + 64)[0]
-    return checksum, size_of_image
 
 
 @dataclass(frozen=True)
@@ -232,14 +227,11 @@ class Builder:
                     sample.tid % 4,
                 ]
                 if pmc:
-                    connection.execute(
-                        "INSERT INTO UnifiedSampleSeries VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        row + [sample.count],
-                    )
-                else:
-                    connection.execute(
-                        "INSERT INTO UnifiedSampleSeries VALUES (?, ?, ?, ?, ?, ?)", row
-                    )
+                    row.append(sample.count)
+                connection.execute(
+                    f"INSERT INTO UnifiedSampleSeries VALUES ({', '.join('?' * len(row))})",
+                    row,
+                )
         finally:
             connection.close()
 
@@ -268,14 +260,7 @@ def _attached(b: Builder) -> Path:
 
 def _attached_after(b: Builder) -> Path:
     # The fix cut the own module's samples to a third; everything else is unchanged.
-    after = [
-        Sample(
-            s.pid, s.tid, s.module, s.rva, max(1, s.count // 3), s.data_src, s.dc_miss, s.tag_to_ret
-        )
-        if s.module == 1
-        else s
-        for s in BASE
-    ]
+    after = [replace(s, count=max(1, s.count // 3)) if s.module == 1 else s for s in BASE]
     return b.write("attached_after", b.modules, after)
 
 
@@ -357,10 +342,7 @@ def _load(b: Builder) -> tuple[list[Module], list[Sample], list[tuple[int, str]]
 def _systemwide_loaded(b: Builder) -> Path:
     """systemwide under desktop load: the target is 2-10 % and not the top process."""
     modules, samples, processes = _load(b)
-    target = [
-        Sample(s.pid, s.tid, s.module, s.rva, 2 * s.count, s.data_src, s.dc_miss, s.tag_to_ret)
-        for s in BASE
-    ]
+    target = [replace(s, count=2 * s.count) for s in BASE]
     # A second instance of the same image, briefly busy.
     target.append(Sample(SECOND_PID, 21, 1, 0x1000, 10))
     return b.write(

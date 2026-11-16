@@ -7,6 +7,7 @@ is a different build: its names would be attached to the captured build's addres
 
 import os
 import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,19 +15,15 @@ from pathlib import Path
 import debug_fixtures as F
 from run_tests import HOST_SKIP
 
+REPO = Path(__file__).resolve().parents[1]
+TRIALS = REPO / "trials"
+if str(TRIALS) not in sys.path:
+    sys.path.insert(0, str(TRIALS))
+from anonymize_capture import pe_identity
+
 SKIP = F.tool_skip() or F.duckdb_skip() or F.llvm_version_skip()
 NT_ONLY = HOST_SKIP + "PE symbolization of the production path runs only on Windows"
 IMAGE = F.PE / "fixture_full.exe"
-
-
-def _pe_identity(path: Path) -> tuple[int, int]:
-    """The PE CheckSum and SizeOfImage from the optional header."""
-    data = path.read_bytes()
-    pe = int.from_bytes(data[0x3C:0x40], "little")
-    optional = pe + 24
-    size_of_image = int.from_bytes(data[optional + 56 : optional + 60], "little")
-    checksum = int.from_bytes(data[optional + 64 : optional + 68], "little")
-    return checksum, size_of_image
 
 
 def _names(document: dict) -> set[str]:
@@ -58,7 +55,7 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
             return F.profile_with_stderr(session, by)
 
     def test_the_captured_build_is_symbolized(self):
-        checksum, size = _pe_identity(IMAGE)
+        checksum, size = pe_identity(IMAGE)
         document, _ = self.profile(checksum, size)
         self.assertIn("fixture_entry", _names(document))
 
@@ -73,11 +70,11 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
         self.assertRegex(lines[0], re.compile(r"--by module", re.IGNORECASE))
 
     def test_a_different_checksum_gives_no_names(self):
-        checksum, size = _pe_identity(IMAGE)
+        checksum, size = pe_identity(IMAGE)
         self.assert_wrong_build(*self.profile(checksum + 1, size))
 
     def test_a_different_size_of_image_without_a_checksum_gives_no_names(self):
-        _, size = _pe_identity(IMAGE)
+        _, size = pe_identity(IMAGE)
         self.assert_wrong_build(*self.profile(0, size + 0x1000))
 
     def test_missing_identity_evidence_keeps_the_names(self):
@@ -85,13 +82,13 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
         self.assertIn("fixture_entry", _names(document))
 
     def test_the_captured_build_derives_function_ranges(self):
-        checksum, size = _pe_identity(IMAGE)
+        checksum, size = pe_identity(IMAGE)
         document, _ = self.profile(checksum, size, by="function")
         self.assertIn("fixture_entry", _names(document))
         self.assertEqual(document["legend"]["function_ranges"]["absent_by_module"], {})
 
     def test_a_different_build_derives_no_function_ranges(self):
-        checksum, size = _pe_identity(IMAGE)
+        checksum, size = pe_identity(IMAGE)
         document, stderr = self.profile(checksum + 1, size, by="function")
         sources = {row.get("function_source") for row in document["rows"]}
         self.assertFalse(sources & {"pdata", "export", "pdb_public"}, document["rows"])
@@ -108,7 +105,7 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
         self.assertIn("--by module", lines[0])
 
     def test_a_different_size_of_image_derives_no_function_ranges(self):
-        _, size = _pe_identity(IMAGE)
+        _, size = pe_identity(IMAGE)
         document, _ = self.profile(0, size + 0x1000, by="function")
         absent = document["legend"]["function_ranges"]["absent_by_module"]
         self.assertTrue(next(iter(absent.values()), "").startswith("wrong_build: "), absent)

@@ -125,6 +125,11 @@ class DisagreeingDumpTest(unittest.TestCase):
                 "session"
             )
 
+    def test_both_views_sql_refusals_carry_the_text_profile_recognizes(self):
+        # profile turns the SQL error into the fresh-dump alternative by this text alone.
+        views = (TOOLS / "views.sql").read_text(encoding="utf-8")
+        self.assertEqual(views.count(uprof_query.DUMP_DISAGREES), 2)
+
     @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip())
     def test_the_refusal_offers_a_fresh_dump_beside_a_new_translation(self):
         session = Path(__file__).resolve().parent / "capture"

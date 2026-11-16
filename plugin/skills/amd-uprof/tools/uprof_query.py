@@ -1461,6 +1461,7 @@ def _legend(
     range_info: dict[str, Any] | None = None,
     row_attribution: dict[str, int] | None = None,
     function_scope: dict[str, Any] | None = None,
+    empty_scope: bool = False,
 ) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
@@ -1630,7 +1631,8 @@ def _legend(
         "absent": absent,
         "impact": {"order_by": order_by, "gap_weighted": gap_weighted, "estimate": estimate},
         "remainder_last": True,
-        "next": _next_calls(args, row_attribution, system_wide, next_data),
+        # An empty scope has no rows to descend from; its WARNING names the scope instead.
+        "next": [] if empty_scope else _next_calls(args, row_attribution, system_wide, next_data),
     }
     if next_data:
         result["next_data"] = next_data
@@ -2593,15 +2595,22 @@ def _looks_like_module(pattern: str) -> bool:
     return name.endswith(_MODULE_SUFFIXES)
 
 
-def _scope_warning(connection: object, image_pattern: str | None = None) -> list[tuple[str, str]]:
+def _scope_empty(connection: object) -> bool:
+    """True when the --pid/--image/--time-filter scope holds no sample."""
+    totals = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
+    return bool(totals) and totals[0][0] == 0
+
+
+def _scope_warning(
+    connection: object, image_pattern: str | None = None, empty: bool | None = None
+) -> list[tuple[str, str]]:
     """Say that the scope matched nothing, and for --image name what the filter selects.
 
     The text also goes to stderr: with --json or --out-file the WARNING field alone leaves a
     successful-looking file whose scope is empty.
     """
     fields: list[tuple[str, str]] = []
-    empty = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
-    if empty and empty[0][0] == 0:
+    if _scope_empty(connection) if empty is None else empty:
         message = "no samples in the selected scope; the process or time filter matched nothing"
         if image_pattern not in (None, "%"):
             message = (
@@ -3187,6 +3196,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 connection, {"uprof_tag_available": "true" if tag_available else "false"}
             )
             timer_contexts = _timer_contexts(connection, sampler) if sampler.timer else None
+            empty_scope = _scope_empty(connection)
             legend = _legend(
                 sampler,
                 dump,
@@ -3199,6 +3209,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 range_info,
                 row_attribution,
                 function_scope,
+                empty_scope=empty_scope,
             )
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             top_row = _top_row_precision(connection, args.by) if sampler.timer else None
@@ -3247,7 +3258,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                     by=args.by,
                     row_attribution=row_attribution,
                 )
-            fields.extend(_scope_warning(connection, args.image))
+            fields.extend(_scope_warning(connection, args.image, empty_scope))
             if args.by in SYMBOLIZED:
                 agreement = _agreement_text(
                     connection, symbolizer, by=args.by, row_attribution=row_attribution

@@ -98,35 +98,23 @@ class ScopeWarningTest(unittest.TestCase):
 
 
 class EmptyScopeNextTest(unittest.TestCase):
-    """NEXT on an empty scope offers alternatives, never the same empty filter again."""
+    """An empty scope has no rows to descend from, so neither output offers a NEXT call."""
 
     setUp = ScopeWarningTest.setUp
     empty_session = ScopeWarningTest.empty_session
     run_profile = ScopeWarningTest.run_profile
 
-    def next_line(self, *extra):
-        result = self.run_profile(*extra)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("WARNING: no samples in the selected scope", result.stderr)
-        return next(line for line in result.stdout.splitlines() if line.startswith("NEXT: "))
-
-    def test_an_empty_image_scope_offers_the_image_placeholder_and_the_process_ranking(self):
-        line = self.next_line("--image", "other.exe", "--time-filter", "0:60")
-        self.assertNotIn("other.exe", line)
-        self.assertIn("--by module --image %<EXE> --time-filter 0:60", line)
-        self.assertIn("--by process --time-filter 0:60", line)
-
-    def test_an_empty_pid_scope_offers_the_pid_placeholder_and_the_process_ranking(self):
-        line = self.next_line("--pid", "999")
-        self.assertNotIn("999", line)
-        self.assertIn("--by module --pid <PID>", line)
-        self.assertRegex(line, r"--by process$")
-
-    def test_an_empty_time_window_offers_the_call_without_it(self):
-        line = self.next_line("--time-filter", "50:60")
-        self.assertNotIn("50:60", line)
-        self.assertNotIn(" && ", line)
-        self.assertRegex(line, r"--by module$")
+    def test_an_empty_scope_prints_no_next_in_text_or_json(self):
+        for scope in (["--image", "other.exe"], ["--pid", "999"], ["--time-filter", "50:60"]):
+            with self.subTest(scope=scope):
+                text = self.run_profile(*scope)
+                self.assertEqual(text.returncode, 0, text.stderr)
+                self.assertIn("WARNING: no samples in the selected scope", text.stderr)
+                self.assertNotIn("NEXT: ", text.stdout)
+                document = json.loads(self.run_profile(*scope, "--json").stdout)
+                self.assertIn("no samples in the selected scope", document["WARNING"])
+                self.assertNotIn("NEXT", document)
+                self.assertEqual(document["legend"]["next"], [])
 
 
 if __name__ == "__main__":

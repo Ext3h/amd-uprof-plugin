@@ -294,6 +294,8 @@ def failure(
         f"{tool} profile --session <NEW_TR_DIR> --by process"
     )
     chains = {
+        "dump beside session": f"{tool} profile --session {known} --by process",
+        "original session": f"{tool} profile --session <ORIGINAL_SESSION_DIR> --by process",
         "timer capture": (
             f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer" + then
         ),

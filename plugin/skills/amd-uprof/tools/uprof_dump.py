@@ -628,6 +628,19 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
             time_filter=time_filter,
         )
 
+    if capture is None:
+        raise failure(
+            "the session's raw cpu/*.prd cannot be read; the dump can't be generated here",
+            ["dump beside session", "original session"],
+            session=session_dir,
+        )
+    if not capture:
+        raise failure(
+            "this session has no raw profile files and no IBS dump; the dump can't be generated here",
+            ["dump beside session", "original session"],
+            session=session_dir,
+        )
+
     dump = _make_dump(session_dir, sampler.ibs_dump_kind, time_filter, cache, capture)
     return DumpInfo(
         absolute(dump), "generated", cache_dir=cache, reason=reason, time_filter=time_filter

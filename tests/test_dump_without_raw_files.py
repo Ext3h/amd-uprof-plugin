@@ -9,8 +9,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import uprof
 import uprof_dump
-import uprof_native
+import uprof_query
 from uprof_session import Sampler
 from uprof_util import UprofError
 
@@ -47,9 +48,8 @@ class DumpWithoutRawFilesTest(unittest.TestCase):
 
     def test_session_without_raw_files_fails_before_generating_dump(self):
         stderr = io.StringIO()
-        with mock.patch("sys.stderr", stderr):
-            with self.assertRaises(UprofError) as caught:
-                uprof_dump.resolve_dump(self.session, Sampler(ibs_dump_kind=KIND))
+        with mock.patch("sys.stderr", stderr), self.assertRaises(UprofError) as caught:
+            uprof_dump.resolve_dump(self.session, Sampler(ibs_dump_kind=KIND))
 
         self.assertEqual(self.translations, 0)
         self.assertNotIn("GENERATING DUMP:", stderr.getvalue())
@@ -90,6 +90,34 @@ class DumpWithoutRawFilesTest(unittest.TestCase):
         info = uprof_dump.resolve_dump(self.session, Sampler(ibs_dump_kind=KIND))
         self.assertEqual(info.source, "beside")
         self.assertEqual(self.translations, 0)
+
+    def test_hostile_session_path_uses_placeholder_and_data_line(self):
+        hostile_session = self.root / "bad$(calc)"
+        hostile_session.mkdir()
+        (hostile_session / "session.uprof").write_text("{}", encoding="utf-8")
+        with self.assertRaises(UprofError) as caught:
+            uprof_dump.resolve_dump(hostile_session, Sampler(ibs_dump_kind=KIND))
+
+        text = str(caught.exception)
+        self.assertIn("profile --session <SESSION_DIR> --by process", text)
+        self.assertIn("SESSION_DIR=", text)
+
+    def test_end_to_end_profile_refusal_for_ibs_session_without_raw_files(self):
+        ibs_meta = '{"auxiliary": {"ibsOpSampling": true}, "collection": {"events": {"ibsEvents": {"op": true}}}}'
+        (self.session / "session.uprof").write_text(ibs_meta, encoding="utf-8")
+        args = uprof.build_parser().parse_args(
+            ["profile", "--session", str(self.session), "--by", "process"]
+        )
+        with self.assertRaises(UprofError) as caught:
+            uprof_query.run_query_command(args)
+
+        lines = str(caught.exception).splitlines()
+        self.assertEqual(
+            lines[0],
+            "this session has no raw profile files and no IBS dump; the dump can't be generated here",
+        )
+        self.assertIn("ALTERNATIVE: dump beside session: python ", lines[1])
+        self.assertIn("ALTERNATIVE: original session: python ", lines[2])
 
 
 if __name__ == "__main__":

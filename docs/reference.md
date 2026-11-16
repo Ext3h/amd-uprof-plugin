@@ -98,7 +98,7 @@ when the workload's clock differs. `HZ_SOURCE=argument` means `--freq` supplied 
 
 1. A dump beside the session (preferred).
 2. A current cached dump under `<user cache>/uprof-dump-cache/<sha256(normcase(abspath(session)))[:16]>/` (`%TEMP%`, Linux `~/.cache/amd-uprof`; a cache directory that is a link or open to other users is refused). It is reused only when `cache.json` records the same kind and the same `translateCommand --time-filter`, and the same name, size and SHA-256 of every raw `cpu/*.prd` (a digest is kept unhashed while file ID, size and mtime match).
-3. Otherwise a copy of the raw session is translated with `--ascii` in a unique staging directory, renamed into place when complete; `GENERATING DUMP:` precedes it.
+3. Otherwise, if raw `cpu/*.prd` files exist, a copy of the raw session is translated with `--ascii` in a unique staging directory, renamed into place when complete; `GENERATING DUMP:` precedes it. When the session has no raw files and no dump, or its raw files cannot be read, dump generation fails before translation with the cause and runnable alternatives.
 
 The cache holds no database: every `.db`/`.duckdb` (and its WAL/SHM) is removed before a cached dump is handed back, because a dump-only translate writes a degraded `cpu.db` with far fewer `Function` rows; if the removal fails it prints `WARNING: could not remove <path>: <reason>; the cache copy still contains a database`. `cpu.db` must always come from the original session.
 
@@ -501,5 +501,6 @@ Dump sanity, missing `session.uprof`/`cpu.db`, PDB misses, empty scope, and outp
 | `translate failed ...: the session has no translatable sample category` | the session holds no samples; AMDuProfCLI crashes (0xC0000005) instead of failing cleanly | run one of the two `collect` commands the error prints, then translate that session |
 | `translate failed ... (AMDuProfCLI crashed: access violation (0xC0000005))` without a named cause | AMDuProfCLI crashed for a reason the skill does not recognise | its last lines are in the AMDuProfCLI log the error names |
 | `--out-dir already holds a previous translation` | a reused output directory still has files translate copied or generated | pass `--force` to replace the generated files and copied inputs, or choose another `--out-dir` |
+| `this session has no raw profile files and no IBS dump; the dump can't be generated here` | an IBS session has neither raw `cpu/*.prd` nor an IBS dump | point `--session` at the original translated session, or supply the dump beside it |
 | `SAMPLER: falling back ...` | VBS or hypervisor blocks IBS counters | accept the cycle capture, or ask the user whether to turn off VBS/Hyper-V, a security change they make themselves |
 | `WARNING: running elevated; only collect needs elevation ...` | `translate` or `profile` runs with administrator or root rights | run them from a normal shell; only `collect` needs elevation |

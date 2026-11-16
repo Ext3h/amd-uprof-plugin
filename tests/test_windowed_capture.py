@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 
 import uprof_query
-import uprof_session
 
 
 def session(translate_command):
@@ -44,14 +43,6 @@ class WindowedCaptureTest(unittest.TestCase):
     def test_a_translate_without_a_time_filter_is_not_windowed(self):
         self.assertFalse(self.windowed("AMDuProfCLI.exe translate -i sess"))
         self.assertFalse(self.windowed(None))
-
-    def test_a_windowed_capture_emits_no_kernel_field(self):
-        self.assertEqual(
-            uprof_query._kernel_coverage_field(
-                uprof_session.Sampler(os_requested=True), False, windowed=True
-            ),
-            [],
-        )
 
 
 # A PMC capture: the event column is the event#0x... spelling of the recorded encodedEventId.

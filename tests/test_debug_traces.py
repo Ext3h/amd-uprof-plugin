@@ -164,36 +164,52 @@ class PdbSectionAddressTest(unittest.TestCase):
 
 
 class ProfileSectionCacheTest(unittest.TestCase):
-    """A profile section also runs the session-cache path, not only the cold run (#136)."""
+    """Exactly one trace case runs its profile a second time, through the session cache (#136).
 
-    def _section(self, outputs):
+    Only that case's synthetic session records the image identity columns the cache needs, so
+    the other goldens keep a single, uncached run.
+    """
+
+    CACHED = "elf_fixture_dwarf"
+
+    def _section(self, name, outputs, snapshots=()):
         import capture_debug_traces as C
 
-        case = next(case for case in C.CASES if case.name == "elf_fixture_nosym")
+        case = next(case for case in C.CASES if case.name == name)
         sessions = []
+        snapshots = list(snapshots)
 
-        def fake_profile(session, by):
-            sessions.append(session)
+        def fake_profile(session, by, extra=(), env=None):
+            sessions.append((session, env))
             return outputs[len(sessions) - 1]
 
         with (
-            mock.patch.object(F, "write_session", lambda root, *_: Path(root) / "session"),
+            mock.patch.object(F, "write_session", lambda root, *_a, **_k: Path(root) / "session"),
             mock.patch.object(F, "profile_with_stderr", fake_profile),
+            mock.patch.object(C, "cache_runs", lambda _root: snapshots.pop(0)),
+            mock.patch.object(C.time, "sleep", lambda _seconds: None),
         ):
             lines = C.profile_section(case, "line")
         return sessions, lines
 
-    def test_the_cached_run_reads_the_same_session(self):
+    def test_exactly_one_case_runs_the_cache(self):
+        import capture_debug_traces as C
+
+        self.assertEqual([case.name for case in C.CASES if case.cached_run], [self.CACHED])
+
+    def test_an_uncached_case_profiles_once(self):
         cold = ({"SYMBOL_COVERAGE": "cov", "rows": []}, "WARNING: cold\n")
-        sessions, lines = self._section([cold, cold])
-        self.assertEqual(len(sessions), 2)
-        self.assertEqual(sessions[0], sessions[1])
+        sessions, lines = self._section("elf_fixture_nosym", [cold])
+        self.assertEqual(len(sessions), 1)
         self.assertEqual(lines, ["## profile.line", "symbol_coverage=cov", "WARNING: cold"])
 
-    def test_a_differing_cached_run_gets_its_own_section(self):
+    def test_the_cached_case_reruns_the_same_session_and_reports_the_hit(self):
         cold = ({"SYMBOL_COVERAGE": "cov", "rows": []}, "WARNING: cold\n")
-        warm = ({"SYMBOL_COVERAGE": "cov", "rows": []}, "")
-        _, lines = self._section([cold, warm])
+        stored = {"symbol_runs": [("key", "t0")], "range_runs": []}
+        sessions, lines = self._section(self.CACHED, [cold, cold], [stored, dict(stored)])
+        self.assertEqual(len(sessions), 2)
+        self.assertEqual(sessions[0], sessions[1])
+        self.assertIn("UPROF_SESSION_CACHE_ROOT", sessions[0][1])
         self.assertEqual(
             lines,
             [
@@ -201,6 +217,55 @@ class ProfileSectionCacheTest(unittest.TestCase):
                 "symbol_coverage=cov",
                 "WARNING: cold",
                 "## profile.line cached",
+                "session_cache=hit symbol_runs=1 range_runs=0",
                 "symbol_coverage=cov",
+                "WARNING: cold",
             ],
         )
+
+    def test_a_restored_entry_is_a_miss(self):
+        cold = ({"SYMBOL_COVERAGE": "cov", "rows": []}, "")
+        first = {"symbol_runs": [("key", "t0")], "range_runs": []}
+        again = {"symbol_runs": [("key", "t1")], "range_runs": []}
+        _, lines = self._section(self.CACHED, [cold, cold], [first, again])
+        self.assertIn("session_cache=miss symbol_runs=1 range_runs=0", lines)
+
+    def test_no_cache_file_is_reported(self):
+        cold = ({"SYMBOL_COVERAGE": "cov", "rows": []}, "")
+        _, lines = self._section(self.CACHED, [cold, cold], [None, None])
+        self.assertIn("session_cache=none", lines)
+
+
+@unittest.skipIf(SKIP, SKIP or "")
+class CachedRunTest(unittest.TestCase):
+    """The cached case reaches the session cache for real and is served from it."""
+
+    def test_identity_columns_only_on_request(self):
+        import duckdb
+
+        for identity in (False, True):
+            with self.subTest(identity=identity), tempfile.TemporaryDirectory() as root:
+                session = F.write_session(root, F.ELF / "fixture_dwarf", [F.ELF_HELPER], identity=identity)
+                connection = duckdb.connect(str(session / "cpu.db"), read_only=True)
+                try:
+                    columns = {
+                        row[0].lower()
+                        for row in connection.execute(
+                            "SELECT column_name FROM duckdb_columns() WHERE table_name = 'Module'"
+                        ).fetchall()
+                    }
+                finally:
+                    connection.close()
+                self.assertEqual({"size", "checksum", "is32bit"} <= columns, identity)
+
+    def test_the_cached_section_is_a_cache_hit(self):
+        import capture_debug_traces as C
+
+        case = next(case for case in C.CASES if case.cached_run)
+        for by in ("line", "function"):
+            with self.subTest(by=by):
+                lines = C.profile_section(case, by)
+                text = "\n".join(lines)
+                self.assertNotIn("session cache: disabled", text)
+                cached = lines.index(f"## profile.{by} cached")
+                self.assertTrue(lines[cached + 1].startswith("session_cache=hit "), text)

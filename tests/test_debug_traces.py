@@ -170,7 +170,9 @@ class ProfileSectionCacheTest(unittest.TestCase):
     the other goldens keep a single, uncached run.
     """
 
-    CACHED = "elf_fixture_dwarf"
+    # A PE image resolves on both runners; on Windows an ELF image ends in readobj_failed,
+    # which the profile treats as transient and never stores in the cache.
+    CACHED = "pe_fixture_full"
 
     def _section(self, name, outputs, snapshots=()):
         import capture_debug_traces as C
@@ -243,11 +245,17 @@ class CachedRunTest(unittest.TestCase):
     def test_identity_columns_only_on_request(self):
         import duckdb
 
+        image = F.PE / "fixture_full.exe"
+        data = image.read_bytes()
+        optional = int.from_bytes(data[0x3C:0x40], "little") + 24
+        expected = (
+            int.from_bytes(data[optional + 56 : optional + 60], "little"),
+            int.from_bytes(data[optional + 64 : optional + 68], "little"),
+            int.from_bytes(data[optional : optional + 2], "little") == 0x10B,
+        )
         for identity in (False, True):
             with self.subTest(identity=identity), tempfile.TemporaryDirectory() as root:
-                session = F.write_session(
-                    root, F.ELF / "fixture_dwarf", [F.ELF_HELPER], identity=identity
-                )
+                session = F.write_session(root, image, [F.PE_HELPER], identity=identity)
                 connection = duckdb.connect(str(session / "cpu.db"), read_only=True)
                 try:
                     columns = {
@@ -256,6 +264,11 @@ class CachedRunTest(unittest.TestCase):
                             "SELECT column_name FROM duckdb_columns() WHERE table_name = 'Module'"
                         ).fetchall()
                     }
+                    if identity:
+                        row = connection.execute(
+                            "SELECT size, checksum, is32Bit FROM Module"
+                        ).fetchone()
+                        self.assertEqual(row, expected)
                 finally:
                     connection.close()
                 self.assertEqual({"size", "checksum", "is32bit"} <= columns, identity)

@@ -706,9 +706,90 @@ def _jsonl_row_count(path: Path) -> int:
     return rows + (0 if last == b"\n" else 1)
 
 
+def _sized_function_starts(exe: str, readobj: Path | None) -> set[int]:
+    """Starts of the ELF function symbols with a nonzero size (llvm-readobj JSON).
+
+    llvm-symbolizer honours such a size, so a frame starting there names the function that
+    contains the address. A PE image yields none: its exports and COFF symbols carry no size,
+    so llvm-symbolizer returns the nearest preceding one. Without llvm-readobj or readable
+    symbols nothing is proven.
+    """
+    if readobj is None or _is_pe(exe):
+        return set()
+    try:
+        completed = run(
+            [
+                str(readobj),
+                "--elf-output-style=JSON",
+                "--symbols",
+                "--dyn-syms",
+                tool_operand(exe),
+            ],
+            timeout=PDB_PROBE_TIMEOUT,
+        )
+    except (UprofError, OSError):
+        return set()
+    if completed.returncode != 0:
+        return set()
+    try:
+        files = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError:
+        return set()
+    starts: set[int] = set()
+    for entry in files if isinstance(files, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("Symbols", "DynamicSymbols"):
+            for item in entry.get(key) or []:
+                symbol = item.get("Symbol") if isinstance(item, dict) else None
+                if not isinstance(symbol, dict) or not symbol.get("Size"):
+                    continue
+                kind = symbol.get("Type")
+                if isinstance(kind, dict) and kind.get("Name") == "Function":
+                    value = _as_int(symbol.get("Value"))
+                    if value is not None:
+                        starts.add(value)
+    return starts
+
+
+def _nearest_addresses(jsonl_file: Path, sized_starts: set[int]) -> list[str]:
+    """Addresses whose innermost frame is a nearest-symbol name: a function name with no
+    source line whose start is not a sized function symbol, so the image does not prove
+    that the named function contains the address."""
+    addresses: list[str] = []
+    try:
+        lines = read_text(jsonl_file).splitlines()
+    except (UprofError, OSError):
+        return addresses
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        frames = record.get("Symbol") if isinstance(record, dict) else None
+        if not isinstance(frames, list) or not frames or not isinstance(frames[0], dict):
+            continue
+        frame = frames[0]
+        if not (frame.get("FunctionName") or "").strip():
+            continue
+        if (frame.get("FileName") or "").strip() or frame.get("Line"):
+            continue
+        start = _as_int(frame.get("StartAddress") or "")
+        if start is None or start not in sized_starts:
+            addresses.append(str(record.get("Address")))
+    return addresses
+
+
 def _write_parquet(
-    out_file: Path, parquet_file: Path, short_file: Path | None = None, stream: TextIO | None = None
+    out_file: Path,
+    parquet_file: Path,
+    short_file: Path | None = None,
+    stream: TextIO | None = None,
+    nearest: Iterable[str] = (),
 ) -> Path | None:
+    """Write the symbol parquet; nearest lists the addresses _nearest_addresses flagged."""
     if stream is None:
         stream = sys.stderr
     try:
@@ -738,7 +819,8 @@ COPY (
          CASE WHEN json_type(sym.Symbol) = 'ARRAY' THEN
               CAST(json_extract_string(sym.Symbol, '$[0].Line') AS INTEGER) END AS line,
          CASE WHEN json_type(sym.Symbol) = 'ARRAY' THEN
-              json_extract_string(sym.Symbol, '$[' || (json_array_length(sym.Symbol) - 1) || '].FunctionName') END AS containing_function
+              json_extract_string(sym.Symbol, '$[' || (json_array_length(sym.Symbol) - 1) || '].FunctionName') END AS containing_function,
+         sym.Address IN (SELECT address FROM nearest_addresses) AS nearest_symbol
   FROM read_json(?, columns = {'Address': 'VARCHAR', 'Symbol': 'JSON'}, format = 'newline_delimited') AS sym
   LEFT JOIN (
     SELECT Address,
@@ -761,7 +843,8 @@ COPY (
          CASE WHEN json_type(Symbol) = 'ARRAY' THEN
               CAST(json_extract_string(Symbol, '$[0].Line') AS INTEGER) END AS line,
          CASE WHEN json_type(Symbol) = 'ARRAY' THEN
-              json_extract_string(Symbol, '$[' || (json_array_length(Symbol) - 1) || '].FunctionName') END AS containing_function
+              json_extract_string(Symbol, '$[' || (json_array_length(Symbol) - 1) || '].FunctionName') END AS containing_function,
+         Address IN (SELECT address FROM nearest_addresses) AS nearest_symbol
   FROM read_json(?, columns = {'Address': 'VARCHAR', 'Symbol': 'JSON'}, format = 'newline_delimited')
 ) TO ? (FORMAT parquet);
 """
@@ -776,6 +859,10 @@ COPY (
                 small = False
             if small:
                 connection.execute("SET threads = 1")
+            connection.execute("CREATE TEMP TABLE nearest_addresses(address VARCHAR)")
+            nearest = [[address] for address in nearest]
+            if nearest:
+                connection.executemany("INSERT INTO nearest_addresses VALUES (?)", nearest)
             connection.execute(sql, parameters)
         os.replace(temp_file, parquet_file)
         return parquet_file
@@ -1201,7 +1288,12 @@ def _symbolize_module(
             else:
                 jsonl_file.write_text("", encoding="utf-8")
             print("PDB=none", file=stream)
-            parquet = _write_parquet(jsonl_file, parquet_file, stream=stream)
+            nearest = (
+                _nearest_addresses(jsonl_file, _sized_function_starts(exe_input, readobj))
+                if evidence.symbolizer is not None
+                else []
+            )
+            parquet = _write_parquet(jsonl_file, parquet_file, stream=stream, nearest=nearest)
             print("FOLDS: skipped (no PDB; no public symbols to enumerate)", file=stream)
             return SymbolizedModule(parquet, None, None, evidence)
         print("PDB_MATCH=yes", file=stream)
@@ -1251,7 +1343,15 @@ def _symbolize_module(
             file=stream,
         )
         short_file = None
-    parquet = _write_parquet(jsonl_file, parquet_file, short_file, stream=stream)
+    nearest = (
+        _nearest_addresses(
+            jsonl_file,
+            _sized_function_starts(exe_input, find_sibling(symbolizer_path, "llvm-readobj")),
+        )
+        if pdb is None
+        else []
+    )
+    parquet = _write_parquet(jsonl_file, parquet_file, short_file, stream=stream, nearest=nearest)
     if os.name == "nt" and pdb:
         publics = _publics(pdb, jsonl_file, symbolizer_path, stream)
     else:
@@ -1290,12 +1390,13 @@ def _combine_artifacts(
             connection.execute(
                 "CREATE TEMP TABLE combined(module_name VARCHAR, address VARCHAR, "
                 "function VARCHAR, function_short VARCHAR, "
-                "file VARCHAR, line INTEGER, containing_function VARCHAR)"
+                "file VARCHAR, line INTEGER, containing_function VARCHAR, "
+                "nearest_symbol BOOLEAN)"
             )
             for module_name, parquet in parquet_inputs:
                 connection.execute(
                     "INSERT INTO combined SELECT CAST(? AS VARCHAR), address, function, "
-                    "function_short, file, line, containing_function "
+                    "function_short, file, line, containing_function, nearest_symbol "
                     "FROM read_parquet(?)",
                     [module_name, str(parquet)],
                 )

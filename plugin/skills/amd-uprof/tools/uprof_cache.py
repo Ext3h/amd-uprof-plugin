@@ -41,7 +41,7 @@ TOOLS_DIR: Final = Path(os.path.abspath(__file__)).parent
 
 CACHE_ALIAS = "uprof_cache"
 # Raised when a stored result's meaning changes, so a run never replays an older rule's result.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 # The only files the cache owns in its root: cache_db_path names and their quarantined copies.
 _CACHE_NAME = re.compile(r"[0-9a-f]{32}\.duckdb")
 _CORRUPT_NAME = re.compile(r"[0-9a-f]{32}\.duckdb\.corrupt")
@@ -701,7 +701,8 @@ class SessionCache:
                 "pdb_identity VARCHAR, probe_identity VARCHAR",
                 "symbols": "run_key VARCHAR, module_name VARCHAR, address VARCHAR, "
                 "function VARCHAR, function_short VARCHAR, "
-                "containing_function VARCHAR, file VARCHAR, line INTEGER",
+                "containing_function VARCHAR, file VARCHAR, line INTEGER, "
+                "nearest_symbol BOOLEAN",
                 "publics": "run_key VARCHAR, module_name VARCHAR, rva VARCHAR, "
                 "name_count INTEGER, names VARCHAR",
                 "pdbs": "run_key VARCHAR, module_name VARCHAR, pdb VARCHAR",
@@ -882,7 +883,7 @@ class SessionCache:
                     f"INSERT INTO {CACHE_ALIAS}.symbols "
                     "SELECT ?, module_name, address, function, function_short, "
                     "containing_function, CAST(file AS VARCHAR), "
-                    "CAST(line AS INTEGER) FROM read_parquet(?)",
+                    "CAST(line AS INTEGER), nearest_symbol FROM read_parquet(?)",
                     [run_key, str(symbols)],
                 )
             if publics is not None:
@@ -952,7 +953,7 @@ class SessionCache:
                 "symbols",
                 (
                     "SELECT module_name, address, function, function_short, containing_function, "
-                    "file, line"
+                    "file, line, nearest_symbol"
                 ),
             ),
             (

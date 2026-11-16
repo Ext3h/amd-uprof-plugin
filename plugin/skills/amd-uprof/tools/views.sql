@@ -481,7 +481,7 @@ SELECT * FROM query(CASE WHEN getvariable('uprof_symbols') <> ''
   ELSE $s1$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS address,
                    NULL::VARCHAR AS function, NULL::VARCHAR AS function_short,
                    NULL::VARCHAR AS containing_function, NULL::VARCHAR AS file,
-                   NULL::INTEGER AS line WHERE false$s1$ END);
+                   NULL::INTEGER AS line, NULL::BOOLEAN AS nearest_symbol WHERE false$s1$ END);
 
 CREATE OR REPLACE TEMP VIEW uprof_aliases_source AS
 SELECT * FROM query(CASE WHEN getvariable('uprof_aliases') <> ''
@@ -512,15 +512,15 @@ SELECT * FROM query(CASE WHEN getvariable('uprof_pdbs') <> ''
 -- uprof_symbols may be bound after this view is created.
 CREATE OR REPLACE TEMP VIEW v_symbols AS
 SELECT module_name, CAST(address AS BIGINT) AS rva, function, function_short,
-       containing_function, file, line
+       containing_function, file, line, nearest_symbol
 FROM query(CASE WHEN getvariable('uprof_symbols') <> ''
   THEN $sym$SELECT module_name, address, function, function_short,
-                   containing_function, file, line
+                   containing_function, file, line, nearest_symbol
             FROM uprof_symbols_source$sym$
   ELSE $sym$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS address,
                    NULL::VARCHAR AS function, NULL::VARCHAR AS function_short,
                    NULL::VARCHAR AS containing_function, NULL::VARCHAR AS file,
-                   NULL::INTEGER AS line WHERE false$sym$ END);
+                   NULL::INTEGER AS line, NULL::BOOLEAN AS nearest_symbol WHERE false$sym$ END);
 
 -- Public-symbol cache: module_name, rva, name_count, names. Empty when absent, so every address
 -- stays 'unique' and no shared label is emitted.
@@ -556,19 +556,16 @@ FROM query(CASE WHEN getvariable('uprof_pdbs') <> ''
               FROM uprof_pdbs_source$pdbs$
   ELSE $pdbs$SELECT NULL::VARCHAR AS module_name, NULL::VARCHAR AS pdb WHERE false$pdbs$ END);
 
--- Symbolizer frames with their provenance. A frame that names a function but carries no source
--- line, from a module with no accepted PDB, is a nearest-symbol name: without debug info
--- llvm-symbolizer returns the nearest preceding export or symbol-table entry, which may belong
--- to another function. Such a name is derived, not a source symbol, and a derived range that
--- covers the address names the row instead.
+-- Symbolizer frames with their provenance. nearest_symbol, recorded by symbolization, marks a
+-- frame that names a function without a source line, from a module with no accepted PDB, whose
+-- extent the image does not prove: a PE export or COFF symbol (they carry no size) or an ELF
+-- symbol of size 0. llvm-symbolizer then returns the nearest preceding name, which may belong
+-- to another function, so the name is derived, not a source symbol, and a derived range that
+-- covers the address names the row instead. A sized ELF symbol-table function stays named.
 CREATE OR REPLACE TEMP VIEW v_symbol_frames AS
-SELECT s.*,
-       COALESCE(s.function, '') <> '' AND COALESCE(s.file, '') = ''
-         AND COALESCE(s.line, 0) = 0
-         AND NOT EXISTS (SELECT 1 FROM v_pdbs p
-                         WHERE p.module_name = s.module_name AND p.pdb IS NOT NULL)
-         AS nearest_symbol
-FROM v_symbols s;
+SELECT module_name, rva, function, function_short, containing_function, file, line,
+       COALESCE(nearest_symbol, false) AS nearest_symbol
+FROM v_symbols;
 
 -- Scope is every process image matching --image and, when given, the one PID named by --pid.
 -- With a dump, samples are the DeltaTick-weighted ASCII rows and weight is the exact time; without

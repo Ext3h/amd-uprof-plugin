@@ -195,14 +195,26 @@ def production(exe, addresses, **kwargs):
     return module, records, stream.getvalue()
 
 
+def pe_identity(path) -> tuple[int, int, bool]:
+    """SizeOfImage, CheckSum and whether the image is 32-bit, from the PE optional header."""
+    data = Path(path).read_bytes()
+    optional = int.from_bytes(data[0x3C:0x40], "little") + 24
+    return (
+        int.from_bytes(data[optional + 56 : optional + 60], "little"),
+        int.from_bytes(data[optional + 64 : optional + 68], "little"),
+        int.from_bytes(data[optional : optional + 2], "little") == 0x10B,
+    )
+
+
 _SESSION_EVENTS = {"op": {"interval": 4_700_000}, "opInterval": 4_700_000, "opCycleCount": True}
 
 
 def write_session(root, module_path, addresses, function_name="", identity=False) -> Path:
     """A synthetic translated session with one module and one sample per address.
 
-    With identity, the Module table also records the image size, checksum and bitness that
-    the session cache needs to verify a module version; without them the cache is disabled.
+    With identity, the Module table also records the PE image's SizeOfImage, CheckSum and
+    bitness, which the session cache needs to verify a module version; without them the cache
+    is disabled.
     """
     import duckdb
 
@@ -238,8 +250,8 @@ def write_session(root, module_path, addresses, function_name="", identity=False
         connection.execute("INSERT INTO Process VALUES (100, 'c:\\capture\\workload.exe')")
         if identity:
             connection.execute(
-                "INSERT INTO Module VALUES (1, ?, false, ?, 0, false)",
-                [str(module_path), Path(module_path).stat().st_size],
+                "INSERT INTO Module VALUES (1, ?, false, ?, ?, ?)",
+                [str(module_path), *pe_identity(module_path)],
             )
         else:
             connection.execute("INSERT INTO Module VALUES (1, ?, false)", [str(module_path)])

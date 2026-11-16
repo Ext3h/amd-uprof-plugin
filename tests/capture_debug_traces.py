@@ -60,6 +60,11 @@ CASES = (
         (F.PE_HELPER, F.PE_ENTRY, F.PE_ENTRY_BODY),
         pdb=F.PE / "fixture_full.pdb",
         direct_pdb=F.PE / "fixture_full.pdb",
+        cached_run=True,
+        notes=(
+            "the session records the image's CheckSum, SizeOfImage and bitness, so a second"
+            " profile run is served from the session cache",
+        ),
     ),
     Case(
         "pe_fixture_public",
@@ -87,14 +92,7 @@ CASES = (
         notes=("PE image carrying DWARF and no PDB record",),
     ),
     Case(
-        "elf_fixture_dwarf",
-        F.ELF / "fixture_dwarf",
-        (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY),
-        cached_run=True,
-        notes=(
-            "the session records image size, checksum and bitness, so a second profile run"
-            " is served from the session cache",
-        ),
+        "elf_fixture_dwarf", F.ELF / "fixture_dwarf", (F.ELF_HELPER, F.ELF_ENTRY, F.ELF_ENTRY_BODY)
     ),
     Case(
         "elf_fixture_shared_so",

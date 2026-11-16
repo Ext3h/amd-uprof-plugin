@@ -87,8 +87,8 @@ Only `collect` needs administrator or root rights, and only for AMDuProfCLI's ca
 | AMDuProfCLI lookup and run | only the admin-writable installs: Program Files as HKLM records it, `/opt`, `/usr/local/bin`; `AMDUPROF_CLI` and `PATH` are ignored; `--version`, then `collect` (argument list, no shell) |
 | core frequency | `HKLM` registry, `/sys`, `/proc` (read only) |
 | elevation check, skill identity | read only |
-| IBS fallback cause (Windows) | PowerShell CIM query for VBS and hypervisor state |
-| output directory | uProf's `-o`; the IBS-to-cycles fallback creates a new `<out-dir>-cycles-*` directory and deletes nothing |
+| IBS-unavailable cause (Windows) | PowerShell CIM query for VBS and hypervisor state |
+| output directory | uProf's `-o`; collect deletes nothing |
 | session verification | reads the new `session.uprof` |
 
 An elevated `collect` loads no DuckDB, no LLVM tool and no cache, and makes no network access.

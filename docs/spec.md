@@ -35,7 +35,7 @@ reused.
 - **SPEC-19** OS mode is requested, but an unelevated capture has no kernel samples. **SPEC-20** `collect` says so;
   **SPEC-21** `profile` prints `KERNEL_COVERAGE` when OS mode was requested and no kernel sample exists,
   before any scope filter; **SPEC-22** a translate time filter suppresses the check.
-- **SPEC-23** An IBS capture the machine cannot perform falls back visibly, naming the cause; **SPEC-24** `--dry-run`
+- **SPEC-23** An IBS capture the machine cannot perform fails with one cause line and runnable alternatives (for example a timer capture); collect never switches to another sampling mode on its own; **SPEC-24** `--dry-run`
   validates without capturing, and the delivered rate is reported, not assumed.
 
 ## 2. Translation — `translate`

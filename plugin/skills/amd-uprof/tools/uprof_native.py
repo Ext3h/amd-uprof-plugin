@@ -853,7 +853,7 @@ _VIRTUALIZATION_QUERY: Final = (
 _WINDOWS_IBS_REMEDY: Final = (
     "remedy: ask the user whether to turn off Hyper-V and VBS, a security change they make "
     "themselves (as administrator: bcdedit /set hypervisorlaunchtype off, then disable Memory "
-    "integrity and reboot); otherwise use the cycle capture"
+    "integrity and reboot)"
 )
 
 

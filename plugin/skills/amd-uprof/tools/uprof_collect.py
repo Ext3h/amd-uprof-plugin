@@ -9,8 +9,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-import tempfile
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -27,7 +26,7 @@ from uprof_native import (
     run,
 )
 from uprof_session import collect_summary, verify_collect
-from uprof_util import UprofError, absolute, skill_identity
+from uprof_util import LinesError, UprofError, absolute, skill_identity
 
 _IBS_UNAVAILABLE = "ibs counters are not available"
 # AMDuProfCLI's message when the CPU has no CYCLES_NOT_IN_HALT event (for example a non-AMD CPU).
@@ -36,10 +35,6 @@ _CYCLE_DEFAULT = "1ms"
 _UPROF_PY = Path(__file__).resolve().with_name("uprof.py")
 _OP_DEFAULT = "1000000"
 _KERNEL_COVERAGE_NOTE = "kernel-mode (OS) samples are omitted without elevation"
-_FALLBACK_KERNEL_WARNING = (
-    "WARNING: unelevated: the fallback cycle capture omits kernel-mode "
-    "(OS) samples without elevation"
-)
 _TIME_UNITS = {
     "ns": Decimal("0.000000001"),
     "us": Decimal("0.000001"),
@@ -370,22 +365,26 @@ def _new_sessions(out_dir: Path, session_before: bool, children_before: set[Path
     return found
 
 
-def _fallback_dir(out_dir: Path) -> Path:
-    """A new directory beside out_dir for the cycle capture.
+def _ibs_unavailable(options: CollectOptions) -> UprofError:
+    """The cause, then the caller's own call with each runnable sampler in place of IBS.
 
-    collect runs elevated in a directory an unelevated process can change, so the failed IBS
-    attempt is never removed: a link swapped in for out_dir or a parent would turn that into an
-    elevated delete of the link's target. A directory the tool just created also holds no
-    session planted during the IBS run.
+    The out-dir may hold the failed attempt; uProf then writes into a new AMDuProf-* child. The
+    timer call is system-wide because a timer capture attached to PIDs records no samples on
+    Windows.
     """
-    try:
-        out_dir.parent.mkdir(parents=True, exist_ok=True)
-        return Path(tempfile.mkdtemp(prefix=f"{out_dir.name}-cycles-", dir=out_dir.parent))
-    except OSError as exc:
-        raise UprofError(
-            f"cannot create a directory beside {out_dir} for the cycle capture: "
-            f"{exc}; pass an --out-dir in a writable directory and re-run"
-        ) from exc
+    tool, tool_data = uprof_shell.path_arg(str(_UPROF_PY), "<UPROF_PY>")
+    out, out_data = uprof_shell.path_arg(options.out_dir, "<OUT_DIR>")
+    call = f"python {tool} collect --out-dir {out} --seconds {options.seconds}"
+    target = f" --process {','.join(str(pid) for pid in options.pids)}" if options.pids else ""
+    return LinesError(
+        [
+            f"IBS unavailable: {ibs_unavailable_reason()}",
+            f"ALTERNATIVE: cycle capture (same target): {call}{target} --event cycles",
+            f"ALTERNATIVE: timer capture (system-wide): {call} --event timer",
+            tool_data,
+            out_data,
+        ]
+    )
 
 
 def _one_session(out_dir: Path, session_before: bool, children_before: set[Path]) -> Path:
@@ -453,46 +452,15 @@ def collect(options: CollectOptions) -> None:
     uprof = require_uprof()
 
     session_before, children_before = _session_marker(out_dir)
-    effective_event = options.event
-    completed = _run_cli(
-        uprof, _event_args(options, effective_event, interval), target_args, options
-    )
+    completed = _run_cli(uprof, _event_args(options, options.event, interval), target_args, options)
     combined = ((completed.stdout or "") + "\n" + (completed.stderr or "")).lower()
     if completed.returncode != 0 and options.event == "ibs-op" and _IBS_UNAVAILABLE in combined:
-        reason = ibs_unavailable_reason()
-        print(f"SAMPLER: falling back to cycle sampling (time-based); IBS unavailable: {reason}")
-        out_dir = _fallback_dir(out_dir)
-        print(
-            f"NOTE: the failed IBS attempt is left in {options.out_dir}; the cycle capture "
-            f"goes to {out_dir}",
-            file=sys.stderr,
-        )
-        options = replace(options, out_dir=str(out_dir))
-        out_display, out_data = uprof_shell.path_arg(options.out_dir, "<OUT_DIR>")
-        command_data = [line for line in (uprof_data, out_data) if line]
-        session_before, children_before = _session_marker(out_dir)
-        effective_event = "cycles"
-        if mode != "cycles":
-            # An op count is not a time; the fallback uses the documented cycle default.
-            interval, interval_line = _resolve_interval(options, "cycles", text=_CYCLE_DEFAULT)
-            print(interval_line)
-        cycle_spec = _event_spec(options, effective_event, interval)
-        print(
-            f"COMMAND={uprof_display} collect -e {cycle_spec} {target_display} "
-            f"-d {options.seconds} -o {out_display}"
-        )
-        for line in command_data:
-            print(line)
-        # The fallback cycle capture always requests OS mode; only elevation decides the warning.
-        if not elevated:
-            print(_FALLBACK_KERNEL_WARNING, file=sys.stderr)
-        completed = _run_cli(
-            uprof, _event_args(options, effective_event, interval), target_args, options
-        )
+        # Another sampler answers another question, so the caller picks one; none starts here.
+        raise _ibs_unavailable(options)
     if completed.returncode != 0:
         detail = failure_detail(completed)
         if (
-            effective_event == "cycles"
+            options.event == "cycles"
             and _CYCLES_REJECTED in ((completed.stdout or "") + (completed.stderr or "")).lower()
         ):
             # No other sampler is started on this host's behalf; the caller picks one.
@@ -506,11 +474,11 @@ def collect(options: CollectOptions) -> None:
     print(f"SESSION={absolute(session)}")
     meta = verify_collect(
         session,
-        effective_event,
+        options.event,
         interval,
         options.ibs_count_control,
         not options.pids and options.launch is None,
         options.pids,
     )
     print(f"collectCommand={meta.get('collectCommand')}")
-    print(collect_summary(meta, effective_event))
+    print(collect_summary(meta, options.event))

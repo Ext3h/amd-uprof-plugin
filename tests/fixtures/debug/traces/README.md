@@ -10,8 +10,8 @@ its `SYMBOL_COVERAGE` line, its stderr `WARNING:` lines and its rows.
 
 The tool output was captured by
 [capture-debug-traces.yml](../../../../.github/workflows/capture-debug-traces.yml) in
-[run 43826808166](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43826808166) at
-commit `6f7e952`:
+[run 43833713311](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43833713311) at
+commit `db7ff27`:
 
 | directory | runner | Python | LLVM | DuckDB |
 | --- | --- | --- | --- | --- |
@@ -19,9 +19,10 @@ commit `6f7e952`:
 | `linux/` | ubuntu-latest | 3.12.16 | 23.1.4 (release tarball) | 2.0.0 |
 
 Both jobs succeeded, and both downloaded artifacts are byte-identical to the committed files.
-Compared with run 43826327821 at `578d371`, only the `profile.function` sections changed:
-a module with no derived range is named by the llvm-symbolizer containing function, so its
-rows are `unique` and its SYMBOL_COVERAGE line counts them as named.
+Compared with run 43826808166 at `6f7e952`, only the `profile.*` sections of modules
+whose frames carry no source line and no accepted PDB changed (symbol-table, dynsym and COFF
+symbol names; on Linux also `pe_fixture_public.txt`): those names are now `derived`, not
+`unique`.
 The capture commit is the parent of the commit that adds these files.
 Run 43216136838 differed from run 43214725994 at `c3e42a7` only in the PDB GUIDs of the PE fixtures,
 because they were relinked with `/release`.

@@ -172,7 +172,7 @@ class SymbolCoverageTest(unittest.TestCase):
         self.assertTrue(
             text.startswith(
                 "uProf DB 6/12 samples (50.0%) resolve to a named function; rows named 6/12 samples "
-                "(50.0%), derived 0/12 samples (0.0%) from a synthetic binary range, unresolved "
+                "(50.0%), derived 0/12 samples (0.0%) from a synthetic binary range or a nearest-symbol name, unresolved "
                 "6/12 samples (50.0%) (<no symbol>)"
             ),
             text,
@@ -193,7 +193,7 @@ class SymbolCoverageTest(unittest.TestCase):
         self.assertEqual(
             self.coverage("--pid", "100"),
             "uProf DB 4/4 samples (100.0%) resolve to a named function; rows named 4/4 "
-            "samples (100.0%), derived 0/4 samples (0.0%) from a synthetic binary range, "
+            "samples (100.0%), derived 0/4 samples (0.0%) from a synthetic binary range or a nearest-symbol name, "
             "unresolved 0/4 samples (0.0%) (<no symbol>); every scoped sample is attributed "
             "below module/RVA; a derived row is actionable at its hot RVA",
         )

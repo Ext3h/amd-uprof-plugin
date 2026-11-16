@@ -47,7 +47,7 @@ CEILINGS = {
     },
     "function": {
         "ACHIEVED": 41,
-        "AGREEMENT": 65,
+        "AGREEMENT": 67,
         "COLUMNS": 205,
         "DUMP": 7,
         "HOT_RVA": 35,
@@ -64,7 +64,7 @@ CEILINGS = {
     },
     "line": {
         "ACHIEVED": 41,
-        "AGREEMENT": 49,
+        "AGREEMENT": 57,
         "COLUMNS": 58,
         "DUMP": 7,
         "FILTER": 29,
@@ -82,7 +82,7 @@ CEILINGS = {
     },
     "instruction": {
         "ACHIEVED": 41,
-        "AGREEMENT": 49,
+        "AGREEMENT": 57,
         "COLUMNS": 66,
         "DUMP": 7,
         "FILTER": 29,

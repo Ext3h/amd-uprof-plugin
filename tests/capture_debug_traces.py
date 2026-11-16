@@ -355,21 +355,31 @@ def production_section(case: Case) -> list[str]:
 
 
 def profile_section(case: Case, by: str) -> list[str]:
+    """The cold run's facts, then a second run of the same session, which reads the session
+    cache. A cache hit replays the cold run's output, so the cached run gets its own section
+    only where it differs."""
     with tempfile.TemporaryDirectory(prefix="uprof-trace-session-") as root:
         session = F.write_session(root, case.image, list(case.addresses))
-        document, stderr = F.profile_with_stderr(session, by)
-        # The symbol-outcome evidence names the temporary session; only its role is stable.
-        evidence = [f"symbol_coverage={document.get('SYMBOL_COVERAGE') or 'none'}"]
-        evidence += [
-            line
-            for line in F.without_elevation_warning(stderr).splitlines()
-            if line.startswith("WARNING:")
-        ]
-        evidence = [
-            replace_spellings(line, (Path(root), Path(root).resolve()), "<SESSION_ROOT>")
-            for line in evidence
-        ]
-    facts = [f"## profile.{by}", *evidence]
+        cold = _profile_facts(root, *F.profile_with_stderr(session, by), by)
+        cached = _profile_facts(root, *F.profile_with_stderr(session, by), by)
+    facts = [f"## profile.{by}", *cold]
+    if cached != cold:
+        facts += [f"## profile.{by} cached", *cached]
+    return facts
+
+
+def _profile_facts(root: str, document: dict, stderr: str, by: str) -> list[str]:
+    # The symbol-outcome evidence names the temporary session; only its role is stable.
+    evidence = [f"symbol_coverage={document.get('SYMBOL_COVERAGE') or 'none'}"]
+    evidence += [
+        line
+        for line in F.without_elevation_warning(stderr).splitlines()
+        if line.startswith("WARNING:")
+    ]
+    facts = [
+        replace_spellings(line, (Path(root), Path(root).resolve()), "<SESSION_ROOT>")
+        for line in evidence
+    ]
     rows = document.get("rows") or []
     if by == "line":
         rows = sorted(

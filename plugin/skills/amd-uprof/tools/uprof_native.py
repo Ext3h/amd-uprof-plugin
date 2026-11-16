@@ -663,9 +663,8 @@ def translate_stopped(
         Path(__file__).resolve().with_name("uprof.py"), "<UPROF_PY>"
     )
     session_arg, session_data = uprof_shell.path_arg(session, "<SESSION_DIR>")
-    out_arg, out_data = uprof_shell.path_arg(out, "<OUT_DIR>")
     cache_arg, cache_data = uprof_shell.path_arg(cache or symbol_cache_dir(), "<SYMBOL_CACHE>")
-    data = [script_data, session_data, out_data, cache_data]
+    data = [script_data, session_data, cache_data]
     options = ""
     for index, path in enumerate(symbol_paths, 1):
         path_arg, path_data = uprof_shell.path_arg(path, f"<SYMBOL_PATH_{index}>")
@@ -691,8 +690,7 @@ def translate_stopped(
         ),
         (
             f"ALTERNATIVE: local symbols only, with _NT_SYMBOL_PATH={cache_arg} set first: "
-            f"python {script} translate --session {session_arg} --out-dir {out_arg}{options} "
-            "--force"
+            f"python {script} translate --session {session_arg} --out-dir <NEW_TR_DIR>{options}"
         ),
     ]
     lines += [line for line in data if line]

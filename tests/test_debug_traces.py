@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import debug_fixtures as F
 
@@ -130,3 +131,33 @@ class GoldenSemanticsTest(unittest.TestCase):
                         if line.startswith("symbol_coverage=")
                     ]
                     self.assertIn("cause by module:", coverage[0], name)
+
+
+class PdbSectionAddressTest(unittest.TestCase):
+    """A PDB public's RVA adds its section's virtual address, read as hex (#141)."""
+
+    HEADERS = "SECTION HEADER #1\n    1A000 virtual address\n"
+    PUBLICS = (
+        "   0 | S_PUB32 [size = 32] `fixture_hot`\n     flags = function, addr = {section}:16\n"
+    )
+
+    def _section(self, publics):
+        import capture_debug_traces as C
+
+        case = C.Case(name="pe_fixture", image=Path("fixture.exe"), addresses=(), pdb=Path("x.pdb"))
+        outputs = {"--summary": "", "--types": "", "--section-headers": self.HEADERS}
+
+        def fake_tool(tool, *args):
+            return outputs.get(args[1], publics)
+
+        with mock.patch.object(C, "run_tool", fake_tool):
+            return C.pdb_section(case)
+
+    def test_a_section_address_with_hex_letters_is_added(self):
+        lines = self._section(self.PUBLICS.format(section=1))
+        self.assertIn("public fixture_hot rva=0x1A010", lines)
+
+    def test_a_public_in_an_unknown_section_fails(self):
+        with self.assertRaises(SystemExit) as raised:
+            self._section(self.PUBLICS.format(section=2))
+        self.assertIn("fixture_hot", str(raised.exception))

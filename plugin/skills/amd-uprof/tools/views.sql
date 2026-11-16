@@ -1059,7 +1059,10 @@ scoped AS (
          a.names,
          fold_holds(a.name_count, a.names, s.containing_function)
            -- A derived range that starts after the folded public start ends the folded body.
-           AND COALESCE(w.function_start <= a.rva, true) AS folded
+           AND COALESCE(w.function_start <= a.rva, true)
+           -- Without a symbolizer frame no symbol evidence ties the address to the folded
+           -- names, so the line and instruction views both leave it unresolved.
+           AND COALESCE(s.function, '') <> '' AS folded
   FROM scoped w
   LEFT JOIN v_symbols s
     ON w.module_name = s.module_name AND w.rva = s.rva
@@ -1178,7 +1181,10 @@ scoped AS (
          a.names,
          fold_holds(a.name_count, a.names, s.containing_function)
            -- A derived range that starts after the folded public start ends the folded body.
-           AND COALESCE(w.function_start <= a.rva, true) AS folded
+           AND COALESCE(w.function_start <= a.rva, true)
+           -- Without a symbolizer frame no symbol evidence ties the address to the folded
+           -- names, so the line and instruction views both leave it unresolved.
+           AND COALESCE(s.function, '') <> '' AS folded
   FROM scoped w
   LEFT JOIN v_symbols s
     ON w.module_name = s.module_name AND w.rva = s.rva

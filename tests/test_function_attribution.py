@@ -223,7 +223,8 @@ class FoldLabelBoundTest(unittest.TestCase):
             [
                 ("0x1004", "shared: fa | fb", "shared"),
                 ("0x1034", "shared: ?ca@@YAHH@Z | ?cb@@YAHH@Z", "shared"),
-                ("0x1038", "shared: ?ca@@YAHH@Z | ?cb@@YAHH@Z", "shared"),
+                # No frame at 0x1038: nothing ties it to the folded names.
+                ("0x1038", "<no symbol>", "unresolved"),
                 ("0x1090", "slow", "unique"),
             ],
         )

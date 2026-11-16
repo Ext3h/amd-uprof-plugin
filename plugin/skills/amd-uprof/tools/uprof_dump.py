@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Final
 
 import uprof_db
+import uprof_shell
 from uprof_native import (
     TRANSLATE_TIMEOUT,
     CliLog,
@@ -37,6 +38,7 @@ from uprof_native import (
 from uprof_session import Sampler
 from uprof_util import (
     DUMP_FILENAMES,
+    LinesError,
     UprofError,
     absolute,
     capture_identity,
@@ -565,6 +567,38 @@ def _make_dump(
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _no_raw_files(session_dir: Path | str, dump_name: str, *, unreadable: bool) -> UprofError:
+    """The cause, then the two ways to a dump: place it beside the session, or profile a session
+    that still holds the raw files."""
+    state = (
+        "this session's raw profile files (cpu/*.prd) cannot be read and no"
+        if unreadable
+        else "this session has no raw profile files (cpu/*.prd) and no"
+    )
+    beside = "is beside" if unreadable else "beside"
+    cause = f"{state} {dump_name} {beside} session.uprof; the dump cannot be generated here"
+    tool, tool_data = uprof_shell.path_arg(
+        Path(__file__).resolve().with_name("uprof.py"), "<UPROF_PY>"
+    )
+    session, session_data = uprof_shell.path_arg(absolute(session_dir), "<SESSION_DIR>")
+    return LinesError(
+        [
+            cause,
+            (
+                f"ALTERNATIVE: dump beside the session: copy {dump_name} from the translated copy "
+                f"of this capture into {session}, then python {tool} profile --session {session} "
+                "--by process"
+            ),
+            (
+                "ALTERNATIVE: session with raw files: python "
+                f"{tool} profile --session <SESSION_WITH_RAW_FILES> --by process"
+            ),
+            tool_data,
+            session_data,
+        ]
+    )
+
+
 def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
     meta_path = Path(session_dir) / "session.uprof"
     if not meta_path.is_file():
@@ -635,6 +669,9 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
             time_filter=time_filter,
         )
 
+    if not capture:
+        # translate --ascii needs the raw files; without them uProf crashes after a long wait.
+        raise _no_raw_files(session_dir, dump_name, unreadable=capture is None)
     dump = _make_dump(session_dir, sampler.ibs_dump_kind, time_filter, cache, capture)
     return DumpInfo(
         absolute(dump), "generated", cache_dir=cache, reason=reason, time_filter=time_filter

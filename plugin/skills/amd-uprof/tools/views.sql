@@ -834,7 +834,8 @@ WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
 HAVING count(*) > 0;
 
 -- Every scoped sample with the function row it belongs to: the derived range that covers its RVA,
--- else its uProf Function.id, else its module. The function rows group by group_key, and a
+-- else its named uProf Function.id, else the llvm-symbolizer containing function (an ELF/DWARF
+-- image has no PE boundary source), else its unnamed Function.id, else its module. The function rows group by group_key, and a
 -- function-scoped instruction or line view selects its samples by the parent row's group_key, so
 -- a parent's children are exactly the samples its measurement holds.
 CREATE OR REPLACE TEMP VIEW v_scoped_keyed AS
@@ -842,18 +843,28 @@ SELECT w.*,
        COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module_label,
        r.function_start, r.function_end, r.function_source,
        r.function_name AS range_name,
+       NULLIF(s.containing_function, '') AS sym_name,
        CASE WHEN r.function_start IS NOT NULL
             THEN 'r:' || COALESCE(NULLIF(w.module_name, ''), '<unknown module>') || chr(2)
                  || CAST(r.function_start AS VARCHAR)
+            WHEN w.function_id IS NOT NULL AND COALESCE(f.name, '') <> ''
+              THEN 'f:' || CAST(w.function_id AS VARCHAR)
+            WHEN NULLIF(s.containing_function, '') IS NOT NULL
+              THEN 's:' || COALESCE(NULLIF(w.module_name, ''), '<unknown module>') || chr(2)
+                   || s.containing_function
             WHEN w.function_id IS NOT NULL THEN 'f:' || CAST(w.function_id AS VARCHAR)
             ELSE 'u:' || COALESCE(NULLIF(w.module_name, ''), '<unknown module>') END AS group_key,
        CASE WHEN r.function_start IS NOT NULL THEN 'range'
+            WHEN w.function_id IS NOT NULL AND COALESCE(f.name, '') <> '' THEN 'uprof_db'
+            WHEN NULLIF(s.containing_function, '') IS NOT NULL THEN 'symbolizer'
             WHEN w.function_id IS NOT NULL THEN 'uprof_db'
             ELSE 'none' END AS range_kind
 FROM v_scoped w
 LEFT JOIN v_function_ranges r
   ON w.module_name = r.module_name
- AND w.rva >= r.function_start AND w.rva < r.function_end;
+ AND w.rva >= r.function_start AND w.rva < r.function_end
+LEFT JOIN Function f ON f.id = w.function_id
+LEFT JOIN v_symbols s ON s.module_name = w.module_name AND s.rva = w.rva;
 
 -- Function shares. A sample is grouped by the derived function range that covers its RVA (from
 -- v_function_ranges) when one exists; the range name, else the uProf Function.name, else a visibly
@@ -869,7 +880,7 @@ CREATE OR REPLACE TEMP VIEW v_function_measured AS
 WITH keyed AS (
   SELECT w.module_label AS module_name, w.rva, w.function_id, w.samples, w.weight,
          w.tag_cycles, COALESCE(NULLIF(f.name, ''), '') AS db_name,
-         w.function_start, w.function_end, w.function_source, w.range_name,
+         w.function_start, w.function_end, w.function_source, w.range_name, w.sym_name,
          w.group_key, w.range_kind
   FROM v_scoped_keyed w
   LEFT JOIN Function f ON f.id = w.function_id
@@ -899,6 +910,7 @@ WITH keyed AS (
            AS range_name,
          CASE WHEN count(DISTINCT NULLIF(db_name, '')) = 1 AND bool_and(db_name <> '')
               THEN max(db_name) ELSE '' END AS db_name,
+         max(sym_name) AS sym_name,
          CAST(sum(samples) AS BIGINT) AS samples,
          sum(weight) AS weight,
          sum(tag_cycles) AS tag_cycles
@@ -913,6 +925,7 @@ WITH keyed AS (
              THEN printf('pdata_0x%X', a.function_start)
            WHEN a.range_kind = 'range' THEN printf('sub_0x%X', a.function_start)
            WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN a.db_name
+           WHEN a.range_kind = 'symbolizer' THEN a.sym_name
            ELSE '<unresolved>'
          END AS function_name,
          CASE WHEN a.range_kind = 'range' AND a.range_name IS NULL AND a.db_name = ''
@@ -922,8 +935,11 @@ WITH keyed AS (
               WHEN a.range_kind = 'range' AND COALESCE(p.name_count, 1) > 1 THEN 'shared'
               WHEN a.range_kind = 'range' THEN 'unique'
               WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN 'unique'
+              WHEN a.range_kind = 'symbolizer' THEN 'unique'
               ELSE 'unresolved' END AS attribution,
          CASE WHEN a.range_kind = 'range' THEN NULL
+              WHEN a.range_kind = 'symbolizer'
+                THEN 'named by the llvm-symbolizer containing function; no boundary source (export, PDB public or .pdata) covers these samples, so the row has no range'
               WHEN a.range_kind = 'uprof_db' AND NOT COALESCE(list_contains(
                      string_split(NULLIF(getvariable('uprof_range_attempted'), ''), chr(2)),
                      a.module_name), false)

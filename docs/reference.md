@@ -192,7 +192,7 @@ compares it with the end of the scope window — the recorded translate span cli
 busiest in-scope thread's sample count). The verdict says `WARN` and names the scope when the
 scope's late time is uncovered, and `OK` when the scope sampled near the end of its window.
 
-An empty scope prints one `WARNING: no samples in the selected scope` on stderr before the document is written; with `--image` it names the capture's `Process.name` values and states that `--image` filters on `Process.name`, not modules.
+An empty scope prints one `WARNING: no samples in the selected scope` on stderr before the document is written, and no `NEXT` (no rows to descend from); with `--image` it names the capture's `Process.name` values and states that `--image` filters on `Process.name`, not modules.
 
 ### Achieved sample rate
 

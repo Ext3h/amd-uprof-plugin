@@ -742,6 +742,45 @@ class ElfNoSymbolsTest(FixtureTestCase):
         self.assertIn("resolved no address", stream.getvalue())
 
 
+@unittest.skipIf(F.tool_skip() or F.duckdb_skip(), F.tool_skip() or F.duckdb_skip() or "")
+class NearestSymbolFlagTest(FixtureTestCase):
+    """Symbolization flags a name whose extent the image does not prove (#282)."""
+
+    def flags(self, exe, addresses):
+        import duckdb
+
+        with tempfile.TemporaryDirectory(prefix="uprof-nearest-") as root:
+            rva_file = Path(root) / "rvas.txt"
+            rva_file.write_text("\n".join(f"0x{a:X}" for a in addresses) + "\n", encoding="utf-8")
+            module = uprof_symbols.symbolize_module(
+                str(exe), str(rva_file), root, stream=io.StringIO()
+            )
+            with duckdb.connect() as connection:
+                rows = connection.execute(
+                    "SELECT address, function, nearest_symbol FROM read_parquet(?)",
+                    [str(module.parquet)],
+                ).fetchall()
+        return {int(address, 16): (function, nearest) for address, function, nearest in rows}
+
+    def test_a_sized_elf_symbol_table_function_stays_named(self):
+        flags = self.flags(F.ELF / "fixture_symtab", [F.ELF_HELPER, F.ELF_ENTRY])
+
+        self.assertEqual(flags[F.ELF_HELPER], ("fixture_helper", False))
+        self.assertEqual(flags[F.ELF_ENTRY], ("fixture_entry", False))
+
+    def test_a_pe_export_without_a_pdb_is_a_nearest_symbol(self):
+        # 0x1050 is fixture_internal's own .pdata function; the nearest export is fixture_second.
+        flags = self.flags(F.HERE / "fixtures" / "fixture.exe", [0x1030, 0x1050])
+
+        self.assertEqual(flags[0x1050], ("fixture_second", True))
+        self.assertEqual(flags[0x1030], ("fixture_second", True))
+
+    def test_a_dwarf_frame_with_a_line_is_not_flagged(self):
+        flags = self.flags(F.ELF / "fixture_dwarf", [F.ELF_ENTRY])
+
+        self.assertEqual(flags[F.ELF_ENTRY], ("fixture_entry", False))
+
+
 @unittest.skipIf(F.tool_skip(), F.tool_skip() or "")
 class CompressedAndSplitDwarfTest(FixtureTestCase):
     """Row 12: compressed DWARF and split DWARF from the same source."""

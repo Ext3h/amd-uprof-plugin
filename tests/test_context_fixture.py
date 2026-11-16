@@ -291,7 +291,7 @@ class FixtureTest(unittest.TestCase):
         self.assertEqual(context["reason"], "build_mismatch")
         self.assertFalse(context["build"]["verified"])
         self.assertEqual(context["build"]["identity"], "unverified")
-        self.assertIn("checksum", context["build"]["warning"])
+        self.assertIn("CheckSum", context["build"]["warning"])
 
     def test_instruction_contexts_omits_an_off_boundary_hot_rva(self):
         connection = FakeConnection(str(FIXTURE), self.build.checksum)

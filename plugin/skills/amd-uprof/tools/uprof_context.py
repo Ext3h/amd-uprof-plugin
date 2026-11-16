@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from uprof_native import find_sibling, find_symbolizer, run, tool_operand
-from uprof_symbols import resolve_image
+from uprof_symbols import HEADER_CHECKSUM, HEADER_SIZE_OF_IMAGE, build_verdict, resolve_image
 from uprof_util import UprofError, inline, literal_path, one_line, tail_lines
 
 ANCHOR_DISTANCE_CAP: Final = 1 << 20
@@ -43,8 +43,6 @@ IBS_TAG_MAX: Final = 65535
 _IBS_TAG_INT: Final = r"""regexp_full_match("IbsTagToRetCtr", '\s*[0-9]+\s*')"""
 
 _IMAGE_BASE = re.compile(r"^\s*ImageBase:\s*(0x[0-9A-Fa-f]+)\s*$")
-_CHECKSUM = re.compile(r"^\s*CheckSum:\s*(0x[0-9A-Fa-f]+)\s*$")
-_SIZE_OF_IMAGE = re.compile(r"^\s*SizeOfImage:\s*(\d+)\s*$")
 _MAGIC = re.compile(r"^\s*Magic:\s*(0x[0-9A-Fa-f]+)\s*$")
 _DATE_STAMP = re.compile(r"^\s*TimeDateStamp:.*\((0x[0-9A-Fa-f]+)\)\s*$")
 _UNWIND_START = re.compile(r"^\s*StartAddress:\s*\(?(0x[0-9A-Fa-f]+)\)?\s*$")
@@ -285,10 +283,10 @@ def parse_image(text: str) -> ParsedImage:
             if image_base is None and (match := _IMAGE_BASE.match(line)):
                 image_base = int(match.group(1), 16)
         elif bare.startswith("CheckSum:"):
-            if checksum is None and (match := _CHECKSUM.match(line)):
+            if checksum is None and (match := HEADER_CHECKSUM.match(line)):
                 checksum = int(match.group(1), 16)
         elif bare.startswith("SizeOfImage:"):
-            if size_of_image is None and (match := _SIZE_OF_IMAGE.match(line)):
+            if size_of_image is None and (match := HEADER_SIZE_OF_IMAGE.match(line)):
                 size_of_image = int(match.group(1), 10)
         elif bare.startswith("Magic:"):
             if magic is None and (match := _MAGIC.match(line)):
@@ -399,43 +397,23 @@ def verify_build(
 ) -> VerifiedBuild:
     """Compare the on-disk build with the checksum and SizeOfImage the capture recorded.
 
-    A nonzero checksum pair that disagrees is evidence of a different build and omits. When a
-    checksum is unavailable, an equal recorded SizeOfImage verifies the build. Without any
-    matching evidence the block is still emitted, marked unverified, so ordinary MSVC modules
-    with PE CheckSum 0 keep their context; the warning names what was missing or disagreed.
+    uprof_symbols.build_verdict decides, as it does for symbolization and range derivation: a
+    proven other build omits as build_mismatch. Without usable evidence the block is still
+    emitted, marked unverified, so ordinary MSVC modules with PE CheckSum 0 and no recorded
+    size keep their context; the warning names what was missing.
     """
     recorded = _as_int(capture_checksum)
     recorded_size = _as_int(capture_size)
-    if recorded and build.checksum:
-        if recorded != build.checksum:
-            raise ContextOmission(
-                "build_mismatch",
-                f"capture checksum 0x{recorded:X} differs from the on-disk module checksum "
-                f"0x{build.checksum:X}",
-            )
-        return VerifiedBuild(
-            pe=build, capture_checksum=recorded, identity="checksum", capture_size=recorded_size
-        )
-    warning = "no usable checksum or SizeOfImage evidence; build identity is unverified"
-    if recorded_size and build.size_of_image:
-        if recorded_size == build.size_of_image:
-            return VerifiedBuild(
-                pe=build,
-                capture_checksum=recorded or 0,
-                identity="size",
-                capture_size=recorded_size,
-            )
-        warning = (
-            f"capture SizeOfImage 0x{recorded_size:X} differs from the on-disk "
-            f"SizeOfImage 0x{build.size_of_image:X}; build identity is unverified"
-        )
+    verdict = build_verdict(capture_checksum, capture_size, build.checksum, build.size_of_image)
+    if verdict.identity == "mismatch":
+        raise ContextOmission("build_mismatch", verdict.detail or "")
     return VerifiedBuild(
         pe=build,
         capture_checksum=recorded or 0,
-        verified=False,
-        identity="unverified",
+        verified=verdict.identity != "unverified",
+        identity=verdict.identity,
         capture_size=recorded_size,
-        warning=warning,
+        warning=verdict.detail,
     )
 
 
@@ -1092,7 +1070,7 @@ _CONTEXT_HELP_OMISSIONS: Final = {
         "without IAT targets"
     ),
     "build_mismatch": (
-        "a nonzero on-disk CheckSum differs from the capture's Module.checksum; "
+        "the on-disk CheckSum, or without one the SizeOfImage, differs from the capture's; "
         "remedy: symbolicate against the exact binary recorded in the capture"
     ),
     "ambiguous_module_version": (

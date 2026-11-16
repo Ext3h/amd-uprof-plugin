@@ -254,22 +254,63 @@ def _as_int(value: object) -> int | None:
         return None
 
 
-_HEADER_CHECKSUM = re.compile(r"^\s*CheckSum:\s*(0x[0-9A-Fa-f]+)\s*$")
-_HEADER_SIZE_OF_IMAGE = re.compile(r"^\s*SizeOfImage:\s*(\d+)\s*$")
+# The llvm-readobj --file-headers lines every build-identity reader parses.
+HEADER_CHECKSUM: Final = re.compile(r"^\s*CheckSum:\s*(0x[0-9A-Fa-f]+)\s*$")
+HEADER_SIZE_OF_IMAGE: Final = re.compile(r"^\s*SizeOfImage:\s*(\d+)\s*$")
+
+
+@dataclass(frozen=True)
+class BuildVerdict:
+    """Whether the on-disk image is the build the capture recorded.
+
+    identity is checksum or size (verified by that pair), unverified (no usable pair) or
+    mismatch (another build); detail names the evidence for mismatch and unverified.
+    """
+
+    identity: str
+    detail: str | None = None
+
+
+def build_verdict(
+    capture_checksum: object, capture_size: object, checksum: object, size_of_image: object
+) -> BuildVerdict:
+    """The one build-identity rule shared by symbolization, ranges and the instruction context.
+
+    A nonzero PE CheckSum pair decides. Without one, a nonzero SizeOfImage pair decides. Missing
+    evidence (no Module column, CheckSum 0, no PE headers) leaves the build unverified, which is
+    not a mismatch.
+    """
+    recorded, recorded_size = _as_int(capture_checksum), _as_int(capture_size)
+    disk, disk_size = _as_int(checksum), _as_int(size_of_image)
+    if recorded and disk:
+        if recorded != disk:
+            return BuildVerdict(
+                "mismatch",
+                f"the image is a different build than the capture recorded: CheckSum "
+                f"0x{disk:X}, capture 0x{recorded:X}",
+            )
+        return BuildVerdict("checksum")
+    if recorded_size and disk_size:
+        if recorded_size != disk_size:
+            return BuildVerdict(
+                "mismatch",
+                f"the image is a different build than the capture recorded: SizeOfImage "
+                f"0x{disk_size:X}, capture 0x{recorded_size:X}",
+            )
+        return BuildVerdict("size")
+    return BuildVerdict(
+        "unverified", "no usable checksum or SizeOfImage evidence; build identity is unverified"
+    )
 
 
 def image_build_mismatch(
     image: str, capture_checksum: object, capture_size: object, readobj: Path | None
 ) -> str | None:
-    """Why the image on disk is not the build the capture recorded, or None.
+    """Why the image on disk is not the build the capture recorded (build_verdict), or None.
 
-    A nonzero PE CheckSum pair that differs proves another build; without that pair, a nonzero
-    SizeOfImage pair that differs does. Missing evidence (no Module column, CheckSum 0, an image
-    without PE headers, no llvm-readobj) is not a mismatch, so such modules are symbolized as
-    before.
+    Without llvm-readobj or readable headers there is no evidence, so no mismatch.
     """
-    recorded, recorded_size = _as_int(capture_checksum), _as_int(capture_size)
-    if not (recorded or recorded_size) or not readobj:
+    if not (_as_int(capture_checksum) or _as_int(capture_size)) or not readobj:
         return None
     completed = run(
         [str(readobj), "--file-headers", tool_operand(image)], timeout=PDB_PROBE_TIMEOUT
@@ -278,23 +319,12 @@ def image_build_mismatch(
         return None
     checksum = size = None
     for line in (completed.stdout or "").splitlines():
-        if checksum is None and (match := _HEADER_CHECKSUM.match(line)):
+        if checksum is None and (match := HEADER_CHECKSUM.match(line)):
             checksum = int(match.group(1), 16)
-        elif size is None and (match := _HEADER_SIZE_OF_IMAGE.match(line)):
+        elif size is None and (match := HEADER_SIZE_OF_IMAGE.match(line)):
             size = int(match.group(1), 10)
-    if recorded and checksum:
-        if recorded != checksum:
-            return (
-                f"the image is a different build than the capture recorded: CheckSum "
-                f"0x{checksum:X}, capture 0x{recorded:X}"
-            )
-        return None
-    if recorded_size and size and recorded_size != size:
-        return (
-            f"the image is a different build than the capture recorded: SizeOfImage "
-            f"0x{size:X}, capture 0x{recorded_size:X}"
-        )
-    return None
+    verdict = build_verdict(capture_checksum, capture_size, checksum, size)
+    return verdict.detail if verdict.identity == "mismatch" else None
 
 
 _PLAIN_PDB_NAME = re.compile(r"[^\\\\/:*?\"<>|\[\]]+\.pdb", re.IGNORECASE)

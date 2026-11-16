@@ -760,14 +760,23 @@ def _derive_candidates(
 
 
 def _derive_scope_ranges(
-    connection: object, artifacts: Path | None, stream: TextIO
+    connection: object,
+    artifacts: Path | None,
+    stream: TextIO,
+    image_path: list[str] | None = None,
 ) -> tuple[Path | None, dict[str, Any]]:
     """Derive function ranges for modules whose samples uProf did not name.
 
-    Only a module with at least one empty Function.name and an on-disk file is read; a fully
-    named module keeps its Function.id rows and pays no llvm-readobj run. The returned evidence
-    names each module that produced no range, so the function view's fallback is explained.
+    Only a module with at least one empty Function.name and an image on this host is read; the
+    image is resolved as symbolization resolves it (--image-path first, then the recorded path).
+    A fully named module keeps its Function.id rows and pays no llvm-readobj run. The returned
+    evidence names each module that produced no range, so the function view's fallback is
+    explained.
     """
+    paths = uprof_symbols.probe_paths(None, image_path)
+    image_note = (
+        "; no --image-path image matches it" if paths.image_files or paths.image_dirs else ""
+    )
     info: dict[str, Any] = {"modules": 0, "ranges": 0, "absent_by_module": {}, "attempted": []}
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
     ambiguous = set(uprof_cache.ambiguous_modules(connection, [str(row[0]) for row in rows]))
@@ -784,19 +793,23 @@ def _derive_scope_ranges(
                 "module name, not Module.id, so no range was derived"
             )
             continue
-        path = str(module_path or "")
-        if not path:
-            info["absent_by_module"][name] = "the capture records no module path"
+        recorded = str(module_path or "")
+        resolved, _source = uprof_symbols.resolve_image(
+            name, recorded or None, paths.image_files, paths.image_dirs
+        )
+        if resolved is None:
+            if not recorded:
+                reason = "the capture records no module path"
+            elif util.is_remote_path(recorded):
+                reason = (
+                    f"{util.inline(recorded)} is a network, device or NT-namespace path the "
+                    "capture names, which is never opened; pass --image-path with a local copy"
+                )
+            else:
+                reason = f"{util.inline(recorded)} is not on this host"
+            info["absent_by_module"][name] = reason + image_note
             continue
-        if util.is_remote_path(path):
-            info["absent_by_module"][name] = (
-                f"{util.inline(path)} is a network, device or NT-namespace path the capture "
-                "names, which is never opened; pass --image-path with a local copy"
-            )
-            continue
-        if not os.path.isfile(path):
-            info["absent_by_module"][name] = f"{util.inline(path)} is not on this host"
-            continue
+        path = os.fspath(resolved)
         identity = identities.get(name)
         if identity is not None and (identity[0] or identity[1]):
             # Ranges read from another build would regroup the captured build's RVAs.
@@ -3041,7 +3054,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                     if range_needed:
                         try:
                             cache_range_key = uprof_cache.build_ranges_key(
-                                connection, cache_symbol_key
+                                connection, cache_symbol_key, getattr(args, "image_path", None)
                             )
                         except Exception as exc:  # noqa: BLE001
                             cache.disable(exc)
@@ -3122,7 +3135,10 @@ def run_query_command(args: argparse.Namespace) -> None:
                     range_stream = _Tee(range_out)
                     try:
                         functions_path, range_info = _derive_scope_ranges(
-                            connection, artifacts, range_stream
+                            connection,
+                            artifacts,
+                            range_stream,
+                            getattr(args, "image_path", None),
                         )
                     finally:
                         range_out.flush()

@@ -435,11 +435,24 @@ def ranges_key(
     )
 
 
-def build_ranges_key(connection: object, symbols_key: str) -> str:
-    """The range-derivation cache key, bound to the symbolization state it consumes."""
+def build_ranges_key(
+    connection: object, symbols_key: str, image_path: list[str] | None = None
+) -> str:
+    """The range-derivation cache key, bound to the symbolization state it consumes.
+
+    The on-disk identity covers the image each module resolves to, so an --image-path image
+    that appears or changes misses.
+    """
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
     modules = [[str(row[0]), str(row[1] or "")] for row in rows]
-    paths = [path for _name, path in modules if path]
+    probed = uprof_symbols.probe_paths(None, image_path)
+    paths = []
+    for name, path in modules:
+        resolved, _source = uprof_symbols.resolve_image(
+            name, path or None, probed.image_files, probed.image_dirs
+        )
+        paths.append(os.fspath(resolved) if resolved is not None else path)
+    paths = [path for path in paths if path]
     return ranges_key(
         modules,
         module_identity_rows(connection, [name for name, _path in modules]),

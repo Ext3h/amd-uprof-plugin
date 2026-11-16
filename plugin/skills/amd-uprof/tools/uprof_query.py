@@ -2484,10 +2484,13 @@ def _symbol_coverage_legend(
     if (symbolized or by in FUNCTION_SCOPED) and symbolizer is not None:
         scoped = int(symbolizer["scoped_samples"])
         unresolved = int(symbolizer["unresolved_samples"])
+        derived = int(symbolizer.get("derived_samples") or 0)
         resolved = max(scoped - unresolved, 0)
         entry["profile_symbolizer"] = {
             "source": "llvm-symbolizer parquet (agreement.sql)",
             "resolved_samples": resolved,
+            "named_samples": max(resolved - derived, 0),
+            "derived_samples": derived,
             "unresolved_samples": unresolved,
             "scoped_samples": scoped,
         }
@@ -2541,7 +2544,8 @@ def _coverage_field(
         text = (
             f"uProf DB {db_text}; rows named {named_rows}/{scoped} samples "
             f"({percent(named_rows)}), derived {derived}/{scoped} samples "
-            f"({percent(derived)}) from a synthetic binary range, unresolved "
+            f"({percent(derived)}) from a synthetic binary range or a nearest-symbol name, "
+            f"unresolved "
             f"{unresolved}/{scoped} samples ({percent(unresolved)}) (<no symbol>){flag_text}"
         )
         if unresolved == 0:
@@ -2563,14 +2567,32 @@ def _coverage_field(
         else 0
     )
     unresolved_samples = int(symbolizer["unresolved_samples"]) if scoped else 0
+    derived = int(symbolizer.get("derived_samples") or 0) if scoped else 0
     resolved = max(scoped - unresolved_samples, 0)
     both = scoped > 0 and (bool(flags) or resolved != named or by in FUNCTION_SCOPED)
     if both:
+        source_named = max(resolved - derived, 0)
         text = (
-            f"uProf DB {db_text}; profile symbolizer {resolved}/{scoped} samples "
-            f"({100.0 * resolved / scoped:.1f}%) resolve below module/RVA"
+            f"uProf DB {db_text}; profile symbolizer {source_named}/{scoped} samples "
+            f"({100.0 * source_named / scoped:.1f}%) resolve below module/RVA"
+            + (
+                f", derived {derived}/{scoped} samples ({100.0 * derived / scoped:.1f}%) "
+                "carry only the nearest preceding symbol (no PDB or debug info)"
+                if derived
+                else ""
+            )
             + (f" (flags: {', '.join(flags)})" if flags else "")
         )
+        if resolved == scoped and derived:
+            return [
+                (
+                    "SYMBOL_COVERAGE",
+                    (
+                        f"{text}; every scoped sample is attributed below module/RVA, a derived "
+                        "name is not a source symbol"
+                    ),
+                )
+            ]
         if resolved == scoped:
             return [
                 (
@@ -2777,7 +2799,7 @@ def _agreement_text(
         text = (
             f"sample attribution from the emitted rows: named {row_attribution['named']} "
             f"samples (unique or shared; uProf Function.name or a named binary range), "
-            f"derived {row_attribution['derived']} samples (synthetic binary range), "
+            f"derived {row_attribution['derived']} samples (synthetic range or nearest symbol), "
             f"unresolved {row_attribution['unresolved']} samples (<no symbol>), of "
             f"{scoped} scoped"
             + (
@@ -2811,6 +2833,12 @@ def _agreement_text(
         f"{values['unresolved']} addresses, {values['unresolved_samples']} samples "
         f"(<no symbol>, {_percent_text(values, 'unresolved_pct')} of "
         f"{values['scoped_samples']} scoped)"
+        + (
+            f"; derived={values['derived']} addresses, {values['derived_samples']} samples "
+            "(nearest symbol, not compared)"
+            if values.get("derived_samples")
+            else ""
+        )
     )
 
 

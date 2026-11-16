@@ -57,10 +57,11 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   ad-hoc `cpu.db` SQL (issues #25, #26).
 - `SYMBOL_COVERAGE` header line in `profile` (and JSON): the scoped samples that resolve to a
   non-empty `Function.name`, each module with unresolved samples and its unresolved share, and
-  whether that module is `partial` or has `no named functions`. When a module has no names the
-  line says the samples cannot be attributed below module/RVA and names the supported path, so a
-  third-party module without a PDB is reported at module/RVA instead of sending the user into a
-  hand-written PE or `.pdata` mapping (issue #27).
+  whether that module is `partial` or has `no source names`. Unresolved samples are named as
+  covered by derived function ranges: the line points at `profile --by function`, which derives
+  boundaries from the binary (`.pdata`, PE exports, PDB publics), and the process view at its
+  `NEXT` call, `profile --by module`, instead of sending the user into a hand-written PE or
+  `.pdata` mapping (issue #27).
 - `VERSION` in `profile`, `collect` and `translate`: the version from the nearest
   `.claude-plugin/plugin.json` plus the skill directory that produced the output, falling back to
   a built-in version for a loose skill copy, so output can be matched to the right docs
@@ -108,18 +109,14 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   directory searched by module basename). `translate` replaces `--pdb-dir` with repeatable
   `--symbol-path`. Callers updating from 2.1.0 must rename the flags; the next release is a
   major version (issue #38).
-- `SKILL.md` has a worked "where did CPU time go?" example for an attached, cycle-controlled IBS
-  capture: confirm the mode and scope, rank processes by `sample_share`, roll modules up with
-  `profile --by module`, then read instructions with `profile --by instruction --json` (top 20)
-  only when the resolved hot RVA needs context, and stop at the symbol boundary when
-  `SYMBOL_COVERAGE` shows no named functions (issues #25, #26, #29). The reference gives the
-  module fields, the third-party rule and the absolute CPU-time conversion.
-- `NEXT` is the minimum path: from `process` it lists `module` and the instruction JSON call, and
-  from `module` only the instruction JSON call, instead of every granularity.
-- The worked example has an explicit deliverable and stop contract (module rollup with
-  `isSystemModule` and `cpu_seconds`, `SYMBOL_COVERAGE`, hot RVA), names `VERSION` as
-  authoritative, defines third-party as `Module.isSystemModule = false` and reports the dominant
-  non-workload dependency separately, and points the quickstart at `profile --by process` first.
+- `NEXT` is the minimum path instead of every granularity: `process` names `module` (scoped
+  with `--pid <PID>` on a system-wide capture), `module` names `function`, and the CPU-time path
+  ends at `function` and its `HOT_RVA` line; `function` adds `--by region` only while its rows
+  carry unresolved samples. Instruction context is asked for, not a default step
+  (issues #25, #26, #29).
+- The reference gives the module fields, the third-party rule (`Module.isSystemModule = false`,
+  with the dominant non-workload dependency reported separately) and the absolute CPU-time
+  conversion.
 - Repository layout: the plugin source is now `plugin/` (the marketplace entry points at it);
   maintainer-only tests, fixtures and the timing harness live under `tests/` and `bench/`,
   outside the plugin source. No runtime behavior changes (issue #42).

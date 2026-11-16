@@ -823,20 +823,29 @@ WITH placed AS (
          w.rva, w.function_id, w.samples, w.weight, w.tag_cycles,
          COALESCE(NULLIF(f.name, ''), '') AS db_name,
          r.function_start, r.function_end, r.function_source,
-         r.function_name AS range_name
+         r.function_name AS range_name,
+         NULLIF(s.containing_function, '') AS sym_name
   FROM v_scoped w
   LEFT JOIN Function f ON f.id = w.function_id
   LEFT JOIN v_function_ranges r
     ON w.module_name = r.module_name
    AND w.rva >= r.function_start AND w.rva < r.function_end
+  LEFT JOIN v_symbols s ON s.module_name = w.module_name AND s.rva = w.rva
 ), keyed AS (
+  -- A derived range wins, then the uProf name, then the symbolizer's containing function (an
+  -- ELF/DWARF image has no PE boundary source); a Function.id without a name comes last.
   SELECT module_name, rva, function_id, samples, weight, tag_cycles, db_name,
-         function_start, function_end, function_source, range_name,
+         function_start, function_end, function_source, range_name, sym_name,
          CASE WHEN function_start IS NOT NULL
               THEN 'r:' || module_name || chr(2) || CAST(function_start AS VARCHAR)
+              WHEN function_id IS NOT NULL AND db_name <> ''
+                THEN 'f:' || CAST(function_id AS VARCHAR)
+              WHEN sym_name IS NOT NULL THEN 's:' || module_name || chr(2) || sym_name
               WHEN function_id IS NOT NULL THEN 'f:' || CAST(function_id AS VARCHAR)
               ELSE 'u:' || module_name END AS group_key,
          CASE WHEN function_start IS NOT NULL THEN 'range'
+              WHEN function_id IS NOT NULL AND db_name <> '' THEN 'uprof_db'
+              WHEN sym_name IS NOT NULL THEN 'symbolizer'
               WHEN function_id IS NOT NULL THEN 'uprof_db'
               ELSE 'none' END AS range_kind
   FROM placed
@@ -860,6 +869,7 @@ WITH placed AS (
          max(function_source) AS function_source,
          max(range_name) AS range_name,
          max(db_name) AS db_name,
+         max(sym_name) AS sym_name,
          CAST(sum(samples) AS BIGINT) AS samples,
          sum(weight) AS weight,
          sum(tag_cycles) AS tag_cycles
@@ -874,6 +884,7 @@ WITH placed AS (
              THEN printf('pdata_0x%X', a.function_start)
            WHEN a.range_kind = 'range' THEN printf('sub_0x%X', a.function_start)
            WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN a.db_name
+           WHEN a.range_kind = 'symbolizer' THEN a.sym_name
            ELSE '<unresolved>'
          END AS function_name,
          CASE WHEN a.range_kind = 'range' AND a.range_name IS NULL AND a.db_name = ''
@@ -883,8 +894,11 @@ WITH placed AS (
               WHEN a.range_kind = 'range' AND COALESCE(p.name_count, 1) > 1 THEN 'shared'
               WHEN a.range_kind = 'range' THEN 'unique'
               WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN 'unique'
+              WHEN a.range_kind = 'symbolizer' THEN 'unique'
               ELSE 'unresolved' END AS attribution,
          CASE WHEN a.range_kind = 'range' THEN NULL
+              WHEN a.range_kind = 'symbolizer'
+                THEN 'named by the llvm-symbolizer containing function; no boundary source (export, PDB public or .pdata) covers these samples, so the row has no range'
               WHEN a.range_kind = 'uprof_db' AND NOT COALESCE(list_contains(
                      string_split(NULLIF(getvariable('uprof_range_attempted'), ''), chr(2)),
                      a.module_name), false)
@@ -997,7 +1011,20 @@ scoped AS (
        WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
          AND ((fs.function_start IS NOT NULL
                AND w.rva >= fs.function_start AND w.rva < fs.function_end)
-              OR (fs.function_start IS NULL AND w.function_id = fs.function_id)))
+              OR (fs.range_kind = 'uprof_db' AND w.function_id = fs.function_id)
+              -- The symbolizer row's samples, placed as v_function_measured places them.
+              OR (fs.range_kind = 'symbolizer'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM Function f
+                    WHERE f.id = w.function_id AND COALESCE(f.name, '') <> '')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM v_function_ranges r
+                    WHERE r.module_name = w.module_name
+                      AND w.rva >= r.function_start AND w.rva < r.function_end)
+                  AND EXISTS (
+                    SELECT 1 FROM v_symbols s
+                    WHERE s.module_name = w.module_name AND s.rva = w.rva
+                      AND s.containing_function = fs.function_name))))
 ), placed AS (
   SELECT w.module_name, w.samples, w.weight, w.tag_cycles,
          s.function AS sym_function, s.function_short AS sym_short,
@@ -1120,7 +1147,20 @@ scoped AS (
        WHERE fs.module_name = COALESCE(NULLIF(w.module_name, ''), '<unknown module>')
          AND ((fs.function_start IS NOT NULL
                AND w.rva >= fs.function_start AND w.rva < fs.function_end)
-              OR (fs.function_start IS NULL AND w.function_id = fs.function_id)))
+              OR (fs.range_kind = 'uprof_db' AND w.function_id = fs.function_id)
+              -- The symbolizer row's samples, placed as v_function_measured places them.
+              OR (fs.range_kind = 'symbolizer'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM Function f
+                    WHERE f.id = w.function_id AND COALESCE(f.name, '') <> '')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM v_function_ranges r
+                    WHERE r.module_name = w.module_name
+                      AND w.rva >= r.function_start AND w.rva < r.function_end)
+                  AND EXISTS (
+                    SELECT 1 FROM v_symbols s
+                    WHERE s.module_name = w.module_name AND s.rva = w.rva
+                      AND s.containing_function = fs.function_name))))
 ), placed AS (
   SELECT w.module_name, w.rva, w.samples, w.weight, w.tag_cycles,
          s.function AS sym_function, s.file AS sym_file, s.line AS sym_line,

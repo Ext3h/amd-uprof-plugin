@@ -1235,6 +1235,14 @@ def _share_value(part: Any, whole: Any) -> float | None:
     return float(part) / float(whole)
 
 
+# v_function_measured.range_kind -> the legend.function_scope.range_kind spelling.
+_SCOPE_RANGE_KINDS: Final = {
+    "range": "derived_range",
+    "symbolizer": "symbolizer_function",
+    "uprof_db": "uprof_function_id",
+}
+
+
 def _function_scope_json(
     scope: dict[str, Any],
     sample_interval_s: float | None,
@@ -1247,7 +1255,7 @@ def _function_scope_json(
     return {
         "module": scope["module"],
         "function": scope["function"],
-        "range_kind": "derived_range" if start is not None else "uprof_function_id",
+        "range_kind": _SCOPE_RANGE_KINDS[scope["range_kind"]],
         "range_start": None if start is None else f"0x{start:X}",
         "range_end_exclusive": None if end is None else f"0x{end:X}",
         "filter": scope["filter"],
@@ -1349,6 +1357,11 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
             f"function_source={source}"
             + (", synthetic derived name" if derived else ", source name")
         )
+    elif range_kind == "symbolizer":
+        scope_filter = (
+            f"module {module_name!r} + llvm-symbolizer containing function {function_name!r} "
+            "outside every derived range and uProf-named function (no derived range)"
+        )
     elif function_id is not None:
         scope_filter = (
             f"module {module_name!r} + uProf Function.id {function_id} (no derived range)"
@@ -1367,6 +1380,7 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
         "function_derived": bool(derived),
         "attribution": attribution,
         "function_id": None if function_id is None else int(function_id),
+        "range_kind": range_kind,
         "samples": int(samples or 0),
         "weight": weight,
         "tag_cycles": tag_cycles,

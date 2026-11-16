@@ -28,7 +28,7 @@ def query(sql, *, ranges=(), functions=(), samples=(), aliases=(), frames=(), **
 
     functions are (id, name) rows of the uProf Function table; samples are (function_id, rva,
     count) rows; aliases are (rva, name_count, names) public starts; frames are (rva, function,
-    function_short, containing_function[, file, line]) symbolizer frames.
+    function_short, containing_function[, file, line[, nearest_symbol]]) symbolizer frames.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -37,15 +37,16 @@ def query(sql, *, ranges=(), functions=(), samples=(), aliases=(), frames=(), **
             writer.execute(
                 "CREATE TABLE frames(module_name VARCHAR, address VARCHAR, function VARCHAR, "
                 "function_short VARCHAR, containing_function VARCHAR, file VARCHAR, "
-                "line INTEGER)"
+                "line INTEGER, nearest_symbol BOOLEAN)"
             )
             for frame in frames:
-                # A 4-tuple frame carries a.cpp:<rva>; a 6-tuple names its own file and line.
+                # A 4-tuple frame carries a.cpp:<rva>; a 6-tuple names its own file and line;
+                # a 7-tuple adds the nearest_symbol flag symbolization records.
                 rva, function, short, containing, *source = frame
-                file, line = source or ("a.cpp", rva)
+                file, line, nearest = (*(source or ("a.cpp", rva)), False)[:3]
                 writer.execute(
-                    "INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [MODULE, str(rva), function, short, containing, file, line],
+                    "INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [MODULE, str(rva), function, short, containing, file, line, nearest],
                 )
             writer.execute("COPY frames TO ? (FORMAT parquet)", [str(symbols)])
         functions_csv = uprof_functions.write_ranges_csv(root / "functions.csv", list(ranges))
@@ -387,7 +388,7 @@ REGION_HOT = "SELECT hot_rva, hot_function, attribution FROM v_region_rows WHERE
 # Without a PDB or debug info llvm-symbolizer names the nearest preceding export: 0x1050 lies in
 # its own .pdata function, yet the frame says "second" and carries no source line.
 NEAREST = {
-    "frames": [(0x1050, "second", "second", "second", "", 0)],
+    "frames": [(0x1050, "second", "second", "second", "", 0, True)],
     "samples": [(None, 0x1050, 2)],
 }
 PDATA_1050 = [
@@ -429,6 +430,18 @@ class NearestSymbolFrameTest(unittest.TestCase):
         )
 
         self.assertEqual(rows, [("second", "derived")])
+
+    def test_a_sized_symbol_table_frame_stays_named(self):
+        # An ELF symbol-table function whose size covers the address is a source symbol, even
+        # without a source line or a PDB.
+        rows = query(
+            INSTRUCTION_ROWS,
+            frames=[(0x1050, "internal", "internal", "internal", "", 0, False)],
+            samples=[(None, 0x1050, 1)],
+            uprof_by="instruction",
+        )
+
+        self.assertEqual(rows, [("0x1050", "internal", "unique")])
 
     def test_a_frame_with_a_source_line_stays_unique(self):
         rows = query(

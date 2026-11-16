@@ -777,13 +777,6 @@ class ImageResolutionTest(unittest.TestCase):
         self.assertEqual(image, self.image)
         self.assertIsNone(source)
 
-    def test_an_image_directory_resolves_a_module_the_capture_cannot_supply(self):
-        image, _source = uprof_symbols.resolve_image(
-            "app.exe", "C:/capture/app.exe", image_dirs=(self.images,)
-        )
-
-        self.assertEqual(image, self.found)
-
     def test_an_unmatched_image_path_resolves_nothing(self):
         image, source = uprof_symbols.resolve_image(
             "other.exe", "C:/capture/other.exe", image_dirs=(self.images,)

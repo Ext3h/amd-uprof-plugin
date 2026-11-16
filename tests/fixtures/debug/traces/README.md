@@ -10,8 +10,8 @@ its `SYMBOL_COVERAGE` line, its stderr `WARNING:` lines and its rows.
 
 The tool output was captured by
 [capture-debug-traces.yml](../../../../.github/workflows/capture-debug-traces.yml) in
-[run 43479468364](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43479468364) at
-commit `9775806`:
+[run 43824981103](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43824981103) at
+commit `078cb75`:
 
 | directory | runner | Python | LLVM | DuckDB |
 | --- | --- | --- | --- | --- |
@@ -19,9 +19,10 @@ commit `9775806`:
 | `linux/` | ubuntu-latest | 3.12.16 | 23.1.4 (release tarball) | 2.0.0 |
 
 Both jobs succeeded, and both downloaded artifacts are byte-identical to the committed files.
-Compared with run 43216136838 at `7c516a0`, only the `symbol_coverage=` line of
-`elf_fixture_nosym.txt` changed: line views name both symbolizer channels whenever
-llvm-symbolizer ran.
+Compared with the previous goldens, only Windows traces changed: an image that records no
+PDB is `resolved` when DWARF or its symbol table names an address, so its `no symbols
+resolved` warnings and readobj cause are gone, and `elf_fixture_nosym.txt` reports
+`no_pdb_record`.
 The capture commit is the parent of the commit that adds these files.
 Run 43216136838 differed from run 43214725994 at `c3e42a7` only in the PDB GUIDs of the PE fixtures,
 because they were relinked with `/release`.

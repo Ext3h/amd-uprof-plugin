@@ -185,10 +185,25 @@ class FoldLabelBoundTest(unittest.TestCase):
             uprof_by="instruction",
         )
 
+        # 0x1010 has no symbolizer frame, so no symbol evidence ties it to the folded names.
         self.assertEqual(
             rows,
-            [("0x1010", "shared: fa | fb", "shared"), ("0x1050", "<no symbol>", "unresolved")],
+            [("0x1010", "<no symbol>", "unresolved"), ("0x1050", "<no symbol>", "unresolved")],
         )
+
+    def test_a_no_frame_address_in_a_fold_is_unresolved_in_line_and_instruction_views(self):
+        scope = {
+            "aliases": [(0x3000, 2, "fa | fb")],
+            "samples": [(None, 0x3000, 2), (None, 0x3004, 1)],
+        }
+        instructions = query(INSTRUCTION_ROWS, uprof_by="instruction", **scope)
+        lines = query(LINE_ROWS, uprof_by="line", **scope)
+
+        self.assertEqual(
+            instructions,
+            [("0x3000", "<no symbol>", "unresolved"), ("0x3004", "<no symbol>", "unresolved")],
+        )
+        self.assertEqual(lines, [("<no symbol>", "unresolved")])
 
     def test_a_frame_outside_the_fold_keeps_its_name(self):
         rows = query(

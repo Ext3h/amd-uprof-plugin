@@ -246,6 +246,35 @@ class SkillTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertLessEqual(len(result.stdout.split()), ceiling)
 
+    def test_top_help_matches_the_printed_output(self):
+        # isSystemModule is uProf's system-module flag, which also covers vendor drivers, and a
+        # header-line list in the help either names every printed line or none (#113).
+        result = subprocess.run(
+            [sys.executable, str(TOOLS_DIR / "uprof.py"), "--help"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        text = _flat(result.stdout)
+        self.assertNotIn("OS-shipped", text)
+        self.assertIn("system-module flag", text)
+        header = {
+            "ACHIEVED",
+            "AGREEMENT",
+            "DUMP",
+            "HOT_RVA",
+            "KERNEL_COVERAGE",
+            "METRIC",
+            "SANITY",
+            "TAG_TO_RETIRE_SHARE",
+            "TIME_SHARE",
+            "VERSION",
+            "WEIGHTS",
+        }
+        named = {key for key in header if re.search(rf"\b{key}\b", text)}
+        self.assertIn(named, (set(), header))
+
 
 class ValidationQuoteTest(unittest.TestCase):
     def test_the_pmc_row_describes_the_printed_header(self):

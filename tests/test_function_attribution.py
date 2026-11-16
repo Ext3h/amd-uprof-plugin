@@ -28,7 +28,7 @@ def query(sql, *, ranges=(), functions=(), samples=(), aliases=(), frames=(), **
 
     functions are (id, name) rows of the uProf Function table; samples are (function_id, rva,
     count) rows; aliases are (rva, name_count, names) public starts; frames are (rva, function,
-    function_short, containing_function) symbolizer frames.
+    function_short, containing_function[, file, line]) symbolizer frames.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -39,10 +39,13 @@ def query(sql, *, ranges=(), functions=(), samples=(), aliases=(), frames=(), **
                 "function_short VARCHAR, containing_function VARCHAR, file VARCHAR, "
                 "line INTEGER)"
             )
-            for rva, function, short, containing in frames:
+            for frame in frames:
+                # A 4-tuple frame carries a.cpp:<rva>; a 6-tuple names its own file and line.
+                rva, function, short, containing, *source = frame
+                file, line = source or ("a.cpp", rva)
                 writer.execute(
-                    "INSERT INTO frames VALUES (?, ?, ?, ?, ?, 'a.cpp', ?)",
-                    [MODULE, str(rva), function, short, containing, rva],
+                    "INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [MODULE, str(rva), function, short, containing, file, line],
                 )
             writer.execute("COPY frames TO ? (FORMAT parquet)", [str(symbols)])
         functions_csv = uprof_functions.write_ranges_csv(root / "functions.csv", list(ranges))
@@ -378,6 +381,67 @@ class RegionSymbolReasonTest(unittest.TestCase):
                 )
             ],
         )
+
+
+REGION_HOT = (
+    "SELECT hot_rva, hot_function, attribution FROM v_region_rows WHERE module IS NOT NULL"
+)
+# Without a PDB or debug info llvm-symbolizer names the nearest preceding export: 0x1050 lies in
+# its own .pdata function, yet the frame says "second" and carries no source line.
+NEAREST = {
+    "frames": [(0x1050, "second", "second", "second", "", 0)],
+    "samples": [(None, 0x1050, 2)],
+}
+PDATA_1050 = [
+    FunctionRange(MODULE, 0x1030, 0x1050, "export", "second"),
+    FunctionRange(MODULE, 0x1050, 0x1080, "pdata", None),
+]
+
+
+class NearestSymbolFrameTest(unittest.TestCase):
+    """A frame from a module without a PDB or debug info is a derived name, not a source symbol.
+
+    llvm-symbolizer returns the nearest preceding export or symbol-table entry for it, so the
+    line, instruction, region and function views label it derived, and a derived range that
+    covers the address names the row instead (#282).
+    """
+
+    def test_the_instruction_view_prefers_the_covering_range(self):
+        rows = query(INSTRUCTION_ROWS, ranges=PDATA_1050, uprof_by="instruction", **NEAREST)
+
+        self.assertEqual(rows, [("0x1050", "pdata_0x1050", "derived")])
+
+    def test_without_a_range_the_nearest_name_is_derived(self):
+        instructions = query(INSTRUCTION_ROWS, uprof_by="instruction", **NEAREST)
+        lines = query(LINE_ROWS, uprof_by="line", **NEAREST)
+
+        self.assertEqual(instructions, [("0x1050", "second", "derived")])
+        self.assertEqual(lines, [("second", "derived")])
+
+    def test_the_region_view_prefers_the_covering_range(self):
+        rows = query(REGION_HOT, ranges=PDATA_1050, uprof_by="region", **NEAREST)
+
+        self.assertEqual(rows, [(0x1050, "pdata_0x1050", "derived")])
+
+    def test_the_function_view_labels_a_nearest_name_derived(self):
+        rows = query(
+            'SELECT "function", attribution FROM v_function_rows WHERE module IS NOT NULL',
+            uprof_by="function",
+            **NEAREST,
+        )
+
+        self.assertEqual(rows, [("second", "derived")])
+
+    def test_a_frame_with_a_source_line_stays_unique(self):
+        rows = query(
+            INSTRUCTION_ROWS,
+            ranges=PDATA_1050,
+            frames=[(0x1050, "internal", "internal", "internal")],
+            samples=[(None, 0x1050, 1)],
+            uprof_by="instruction",
+        )
+
+        self.assertEqual(rows, [("0x1050", "internal", "unique")])
 
 
 if __name__ == "__main__":

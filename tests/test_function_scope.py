@@ -155,8 +155,10 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                ("0x1050", "fixture_second", "<no source line>", 2),
-                ("0x1055", "fixture_second", "<no source line>", 1),
+                # The stripped image's nearest export is fixture_second; the .pdata range
+                # covering 0x1050 names the row instead.
+                ("0x1050", "pdata_0x1050", "<no source line>", 2),
+                ("0x1055", "pdata_0x1050", "<no source line>", 1),
             ],
         )
         self.assertAlmostEqual(document["rows"][0]["parent_sample_share"], 2 / 3)

@@ -498,8 +498,6 @@ class CollectRejectionTest(unittest.TestCase):
         def fake_run_cli(_uprof, event_args, _target_args, _options):
             spec = " ".join(event_args)
             calls.append(spec)
-            if "IBS" in spec.upper() and len(calls) == 1:
-                return subprocess.CompletedProcess(spec, 1, "", "ibs counters are not available")
             return subprocess.CompletedProcess(spec, 2148008192, rejected, "")
 
         options = uprof_collect.CollectOptions(
@@ -510,7 +508,6 @@ class CollectRejectionTest(unittest.TestCase):
             mock.patch.object(uprof_collect, "find_uprof", return_value=FAKE_CLI),
             mock.patch.object(uprof_collect, "require_uprof", return_value=FAKE_CLI),
             mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)),
-            mock.patch.object(uprof_collect, "ibs_unavailable_reason", return_value="test"),
             mock.patch.object(uprof_collect, "_run_cli", side_effect=fake_run_cli),
             mock.patch.object(
                 uprof_collect, "_core_frequency", return_value=(2_600_000_000, "2600 MHz", "test")
@@ -523,7 +520,7 @@ class CollectRejectionTest(unittest.TestCase):
         return str(raised.exception), calls
 
     def test_rejected_cycle_event(self):
-        for event, runs in (("cycles", 1), ("ibs-op", 2)):
+        for event, runs in (("cycles", 1),):
             with self.subTest(event=event):
                 text, calls = self.collect(event)
                 self.assertEqual(len(calls), runs)

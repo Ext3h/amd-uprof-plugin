@@ -6,6 +6,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Breaking
 
+- `collect --event ibs-op` on a host without IBS counters (for example with VBS running) no
+  longer falls back to a cycle capture (issue #202): it exits 2 with `IBS unavailable: <cause>`
+  and the same call with `--event cycles` and with `--event timer` as `ALTERNATIVE` lines.
 - Seven `profile` output columns are renamed in Markdown and JSON, so the name says what the
   legend had to (issue #389): `function_start` -> `range_start`, `function_end` ->
   `range_end_exclusive`, `function_derived` -> `synthetic_name`, `function_reason` ->

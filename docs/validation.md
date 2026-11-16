@@ -145,11 +145,10 @@ Live unelevated path, reproduced 2026-11-07 on `fold_busy.exe`:
 3. `profile --session <copy> --by process|function` printed `METRIC: ... interval 940000`, PMC
    column set only, and 5,726 samples for the captured PID.
 
-IBS fallback on this host: `collect --event ibs-op --seconds 1` printed
-`SAMPLER: falling back to cycle sampling (time-based); IBS unavailable: VBS is running
-(Win32_DeviceGuard VirtualizationBasedSecurityStatus 2), so IBS ...; remedy: ...`,
-then captured PMC at the 1 ms default (`interval=4700000`); after `translate`, `profile` showed
-the PMC column set and 1,143 samples.
+IBS unavailable on this host: `collect --event ibs-op --seconds 1` named the cause `VBS is
+running (Win32_DeviceGuard VirtualizationBasedSecurityStatus 2)`. That run predates #202 and then
+fell back to a PMC capture; collect now fails with that cause and `ALTERNATIVE` collect calls
+instead (not re-run on this host).
 
 ### Dump generation and the cache
 

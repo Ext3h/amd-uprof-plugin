@@ -2,7 +2,7 @@
 
 collect is the one command meant to run elevated. With administrator rights it must not load the
 analysis stack (DuckDB, LLVM wrappers, the caches), must delete nothing, and its remedies are the
-tool's own fixed text, even on the IBS-to-cycles fallback, which creates a new directory.
+tool's own fixed text, also when IBS is unavailable and it fails with alternatives.
 
 Each run happens in a fresh interpreter, so sys.modules shows exactly what collect imported.
 """
@@ -15,6 +15,8 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+
+import uprof_shell
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
 ANALYSIS_MODULES = (
@@ -37,19 +39,8 @@ PROBE = textwrap.dedent("""
     out_dir, report = Path(sys.argv[2]), Path(sys.argv[3])
     import uprof, uprof_collect
 
-    SESSION = {"collection": {"events": {"pmcEvents": {"pmcEventList": [{
-        "hwId": 118, "interval": 4_700_000, "isSampling": True}]}},
-        "target": {"systemWide": True}}, "auxiliary": {}}
-    calls = []
-
     def fake_run_cli(_uprof, spec, _target, options):
-        calls.append(options.out_dir)
-        if len(calls) == 1:
-            return subprocess.CompletedProcess(spec, 1, "", "ibs counters are not available")
-        session = Path(options.out_dir)
-        session.mkdir(parents=True, exist_ok=True)
-        (session / "session.uprof").write_text(json.dumps(SESSION), encoding="utf-8")
-        return subprocess.CompletedProcess(spec, 0, "", "")
+        return subprocess.CompletedProcess(spec, 1, "", "ibs counters are not available")
 
     deletes = []
 
@@ -106,38 +97,33 @@ class ElevatedCollectTest(unittest.TestCase):
 
     def setUp(self):
         self.assertIsNotNone(self.report, self.result.stdout + self.result.stderr)
-        self.assertEqual(self.report["code"], 0, self.result.stdout + self.result.stderr)
+        self.assertEqual(self.report["code"], 2, self.result.stdout + self.result.stderr)
 
     def test_the_analysis_stack_is_not_loaded(self):
         loaded = set(self.report["modules"])
         self.assertEqual(sorted(loaded.intersection(ANALYSIS_MODULES)), [])
 
     def test_nothing_is_deleted(self):
-        self.assertIn("SAMPLER: falling back", self.result.stdout)
         self.assertEqual(self.report["deletes"], [])
         self.assertEqual((self.out_dir / "earlier.txt").read_text(encoding="utf-8"), "keep")
 
     def test_remedies_are_fixed_text(self):
-        # With the paths the run chose replaced, stderr is exactly the tool's own text.
-        session = next(
-            line.split("=", 1)[1]
-            for line in self.result.stdout.splitlines()
-            if line.startswith("SESSION=")
-        )
-        text = self.result.stderr.replace(session, "<CYCLES_DIR>").replace(
-            str(self.out_dir), "<OUT_DIR>"
-        )
+        # With the paths the run used replaced, stderr is exactly the tool's own text.
+        out = uprof_shell.path_arg(str(self.out_dir), "<OUT_DIR>")[0]
+        tool = uprof_shell.path_arg(str(TOOLS_DIR / "uprof.py"), "<UPROF_PY>")[0]
+        text = self.result.stderr.replace(tool, "<UPROF_PY>").replace(out, "<OUT_DIR>")
+        text = text.replace(str(self.out_dir), "<OUT_DIR>")
+        call = "python <UPROF_PY> collect --out-dir <OUT_DIR> --seconds 1"
         self.assertEqual(
-            text.splitlines(),
+            text.splitlines()[:4],
             [
                 (
                     "WARNING: <OUT_DIR> exists; uProf will create an AMDuProf-* subdirectory to "
                     "avoid the collision"
                 ),
-                (
-                    "NOTE: the failed IBS attempt is left in <OUT_DIR>; the cycle capture goes to "
-                    "<CYCLES_DIR>"
-                ),
+                "error: IBS unavailable: IBS hidden for the test",
+                f"ALTERNATIVE: cycle capture (same target): {call} --event cycles",
+                f"ALTERNATIVE: timer capture (system-wide): {call} --event timer",
             ],
         )
 

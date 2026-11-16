@@ -148,14 +148,12 @@ class FixtureTest(unittest.TestCase):
         self.assertEqual(identity.identity, "size")
         self.assertEqual(identity.capture_size, self.build.size_of_image)
 
-    def test_a_zero_checksum_with_another_size_is_unverified(self):
-        identity = uprof_context.verify_build(
-            self.build, 0, capture_size=self.build.size_of_image + 1
-        )
+    def test_a_zero_checksum_with_another_size_is_a_build_mismatch(self):
+        with self.assertRaises(uprof_context.ContextOmission) as caught:
+            uprof_context.verify_build(self.build, 0, capture_size=self.build.size_of_image + 1)
 
-        self.assertFalse(identity.verified)
-        self.assertEqual(identity.identity, "unverified")
-        self.assertIn("SizeOfImage", identity.warning)
+        self.assertEqual(caught.exception.reason, "build_mismatch")
+        self.assertIn("SizeOfImage", caught.exception.detail)
 
     def test_an_export_wins_a_tie_over_a_public_at_the_same_start(self):
         anchor = uprof_context.select_anchor(

@@ -17,9 +17,13 @@ class CombineArtifactsTest(unittest.TestCase):
             connection.execute(
                 "CREATE TEMP TABLE rows(address VARCHAR, function VARCHAR, "
                 "function_short VARCHAR, file VARCHAR, line INTEGER, "
-                "containing_function VARCHAR)"
+                "containing_function VARCHAR, nearest_symbol BOOLEAN DEFAULT false)"
             )
-            connection.executemany("INSERT INTO rows VALUES (?, ?, ?, ?, ?, ?)", rows)
+            connection.executemany(
+                "INSERT INTO rows (address, function, function_short, file, line, "
+                "containing_function) VALUES (?, ?, ?, ?, ?, ?)",
+                rows,
+            )
             connection.execute("COPY rows TO ? (FORMAT parquet)", [str(path)])
 
     def _publics(self, path: Path, rows):

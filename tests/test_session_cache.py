@@ -180,7 +180,7 @@ class CacheTest(unittest.TestCase):
         connection.execute(
             "COPY (SELECT 'a.dll' AS module_name, '16' AS address, 'f' AS function, "
             "'f' AS function_short, 'f' AS containing_function, 'x.c' AS file, "
-            "1 AS line) TO ? (FORMAT parquet)",
+            "1 AS line, false AS nearest_symbol) TO ? (FORMAT parquet)",
             [str(self.symbols)],
         )
         connection.close()
@@ -730,7 +730,7 @@ class EndToEndHitTest(unittest.TestCase):
         connection.execute(
             "COPY (SELECT ? AS module_name, '0x101B' AS address, 'fixture_hot' AS function, "
             "'fixture_hot' AS function_short, 'fixture_hot' AS containing_function, "
-            "'fixture.s' AS file, 27 AS line) TO ? (FORMAT parquet)",
+            "'fixture.s' AS file, 27 AS line, false AS nearest_symbol) TO ? (FORMAT parquet)",
             [self.module_name, str(symbols)],
         )
         connection.close()

@@ -161,3 +161,46 @@ class PdbSectionAddressTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             self._section(self.PUBLICS.format(section=2))
         self.assertIn("fixture_hot", str(raised.exception))
+
+
+class ProfileSectionCacheTest(unittest.TestCase):
+    """A profile section also runs the session-cache path, not only the cold run (#136)."""
+
+    def _section(self, outputs):
+        import capture_debug_traces as C
+
+        case = next(case for case in C.CASES if case.name == "elf_fixture_nosym")
+        sessions = []
+
+        def fake_profile(session, by):
+            sessions.append(session)
+            return outputs[len(sessions) - 1]
+
+        with (
+            mock.patch.object(F, "write_session", lambda root, *_: Path(root) / "session"),
+            mock.patch.object(F, "profile_with_stderr", fake_profile),
+        ):
+            lines = C.profile_section(case, "line")
+        return sessions, lines
+
+    def test_the_cached_run_reads_the_same_session(self):
+        cold = ({"SYMBOL_COVERAGE": "cov", "rows": []}, "WARNING: cold\n")
+        sessions, lines = self._section([cold, cold])
+        self.assertEqual(len(sessions), 2)
+        self.assertEqual(sessions[0], sessions[1])
+        self.assertEqual(lines, ["## profile.line", "symbol_coverage=cov", "WARNING: cold"])
+
+    def test_a_differing_cached_run_gets_its_own_section(self):
+        cold = ({"SYMBOL_COVERAGE": "cov", "rows": []}, "WARNING: cold\n")
+        warm = ({"SYMBOL_COVERAGE": "cov", "rows": []}, "")
+        _, lines = self._section([cold, warm])
+        self.assertEqual(
+            lines,
+            [
+                "## profile.line",
+                "symbol_coverage=cov",
+                "WARNING: cold",
+                "## profile.line cached",
+                "symbol_coverage=cov",
+            ],
+        )

@@ -40,12 +40,11 @@ per-op latency. All shares are fractions (0.0-1.0). function, region, line and i
 symbolize every module in scope and print the uProf-vs-symbolizer agreement summary. function
 groups by a derived function range (.pdata, PE exports or PDB publics) and keeps uProf
 Function.id where no range was derived. module, function and region add isSystemModule
-(Module's OS-shipped flag) and cpu_seconds = samples x the requested cycle interval / the
+(uProf's system-module flag, not an OS predicate) and cpu_seconds = samples x the requested cycle interval / the
 reported core frequency; that conversion applies only to a cycle interval, and the result is
 CPU time, not wall time.
 
-Output is a Markdown pipe table with the METRIC, COLUMNS, READ, NEXT, DUMP, TIME_SHARE,
-TAG_TO_RETIRE_SHARE, WEIGHTS and AGREEMENT header lines above it; --json emits those fields, a
+Output is a Markdown pipe table below KEY: value header lines; --json emits those fields, a
 structured legend and the rows as a JSON document. COLUMNS names what each share measures in the
 capture mode; READ states which column ranks where time went and that the <other ...> remainder
 is last, not ranked; NEXT lists runnable calls that keep the session and scope. Shares are

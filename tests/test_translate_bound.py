@@ -131,10 +131,9 @@ class TranslateStallTest(unittest.TestCase):
             line for line in message.splitlines() if line.startswith("ALTERNATIVE: ")
         )
         session, _ = uprof_shell.path_arg(self.session, "<SESSION_DIR>")
-        out, _ = uprof_shell.path_arg(self.out, "<OUT_DIR>")
         cache, _ = uprof_shell.path_arg("c:\\sym", "<SYMBOL_CACHE>")
         self.assertIn(
-            f"translate --session {session} --out-dir {out} --symbol-cache {cache} --force",
+            f"translate --session {session} --out-dir <NEW_TR_DIR> --symbol-cache {cache}",
             alternative,
         )
         self.assertTrue(alternative.split(": ", 2)[2].startswith("python "), alternative)
@@ -187,18 +186,19 @@ class TranslateStallTest(unittest.TestCase):
             name: uprof_shell.path_arg(path, "<X>")[0]
             for name, path in (
                 ("session", self.session),
-                ("out", self.out),
                 ("pdbs", pdbs),
                 ("cache", cache),
             )
         }
         self.assertIn(
-            f"translate --session {arg['session']} --out-dir {arg['out']} --symbol-path "
+            f"translate --session {arg['session']} --out-dir <NEW_TR_DIR> --symbol-path "
             f"{arg['pdbs']} --symbol-cache {arg['cache']} --time-filter 10:15 --ascii "
-            "ibsop-event-dump --force",
+            "ibsop-event-dump",
             alternative,
         )
         self.assertNotIn("--symbol-server", alternative)
+        # A new --out-dir keeps the stopped run's files; --force would delete them.
+        self.assertNotIn("--force", alternative)
         # Without a set _NT_SYMBOL_PATH translate adds the Microsoft server again, so the
         # alternative is local-only only when its label names the local value to set first.
         label, command = alternative.split(": ", 2)[1:]

@@ -743,8 +743,10 @@ def file_disclosures(path: Path, names: list[str]) -> list[str]:
     return found
 
 
-def pe_identity(data: bytes) -> tuple[int, int]:
+def pe_identity(data: bytes | Path) -> tuple[int, int]:
     """(CheckSum, SizeOfImage) from a PE optional header, as the capture's Module table has them."""
+    if isinstance(data, Path):
+        data = data.read_bytes()
     optional = struct.unpack_from("<I", data, 0x3C)[0] + 24
     return struct.unpack_from("<I", data, optional + 64)[0], struct.unpack_from(
         "<I", data, optional + 56

@@ -473,7 +473,7 @@ class AnonymizeCaptureTest(unittest.TestCase):
 
         stderr = io.StringIO()
         with (
-            mock.patch.object(record, "is_elevated", return_value=False),
+            mock.patch.object(record, "is_admin", return_value=False),
             mock.patch.object(record, "record") as recorded,
             mock.patch.object(record, "record_callgraph") as callgraph,
             contextlib.redirect_stderr(stderr),

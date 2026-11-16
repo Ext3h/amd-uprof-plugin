@@ -170,8 +170,7 @@ class ProfileSectionCacheTest(unittest.TestCase):
     the other goldens keep a single, uncached run.
     """
 
-    # A PE image resolves on both runners; on Windows an ELF image ends in readobj_failed,
-    # which the profile treats as transient and never stores in the cache.
+    # Production resolves this PE image on both runners, so the cold run stores its symbols.
     CACHED = "pe_fixture_full"
 
     def _section(self, name, outputs, snapshots=()):

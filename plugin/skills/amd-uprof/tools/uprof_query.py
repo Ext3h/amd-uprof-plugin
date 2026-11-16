@@ -2304,6 +2304,10 @@ def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: st
     )
 
 
+# The text both views.sql refusals of a dump that disagrees with session.uprof carry.
+DUMP_DISAGREES: Final = "disagrees with session.uprof"
+
+
 def _dump_sanity(
     connection: object,
     has_dump: bool,
@@ -2323,7 +2327,7 @@ def _dump_sanity(
     try:
         rows = connection.sql("SELECT message, tag_values FROM v_dump_sanity").fetchall()
     except uprof_db._duckdb().Error as exc:
-        if "disagrees with session.uprof" not in str(exc):
+        if DUMP_DISAGREES not in str(exc):
             raise
         raise uprof_native.failure(util.one_line(exc), ["fresh dump"], session=session) from exc
     if not rows:

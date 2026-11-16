@@ -281,7 +281,8 @@ def pdb_section(case: Case) -> list[str]:
         if match:
             current = int(match.group(1))
             continue
-        match = re.match(r"^\s+(0x[0-9A-Fa-f]+|\d+) virtual address$", line)
+        # llvm-pdbutil prints the virtual address as hex without a 0x prefix.
+        match = re.match(r"^\s+(?:0x)?([0-9A-Fa-f]+) virtual address$", line)
         if current and match:
             section_addresses[current] = int(match.group(1), 16)
     facts = [
@@ -302,7 +303,12 @@ def pdb_section(case: Case) -> list[str]:
         match = re.search(r"addr = (\d+):(\d+)", line)
         if match and public_name:
             section, offset = int(match.group(1)), int(match.group(2), 10)
-            address = section_addresses.get(section, 0) + offset
+            if section not in section_addresses:
+                raise SystemExit(
+                    f"{pdb.name}: public {public_name} is in section {section}, "
+                    "which the section headers do not list"
+                )
+            address = section_addresses[section] + offset
             facts.append(f"public {public_name} rva=0x{address:X}")
             public_name = None
     return facts

@@ -743,7 +743,7 @@ class InstructionContextsTest(unittest.TestCase):
         self.assertEqual(contexts[2], {"omitted": True, "reason": "row_cap"})
 
     def test_an_omission_after_module_load_carries_the_build_evidence(self):
-        connection = FakeConnection(module_path=__file__, checksum=0, size=4096)
+        connection = FakeConnection(module_path=__file__, checksum=0, size=0)
         row = ("fixture.exe", "0x1002", None, None, None, "unique", 1, 1 / 60, 0.0, None)
 
         context = self.contexts_with(connection, fake_run, rows=[row])[0]
@@ -751,7 +751,17 @@ class InstructionContextsTest(unittest.TestCase):
         self.assertEqual(context["reason"], "hot_rva_not_instruction_start")
         self.assertFalse(context["build"]["verified"])
         self.assertEqual(context["build"]["identity"], "unverified")
-        self.assertIn("SizeOfImage", context["build"]["warning"])
+        self.assertIn("no usable", context["build"]["warning"])
+
+    def test_a_size_mismatch_without_a_checksum_omits_with_the_build_evidence(self):
+        connection = FakeConnection(module_path=__file__, checksum=0, size=4096)
+
+        context = self.contexts_with(connection, fake_run)[0]
+
+        self.assertEqual(context["reason"], "build_mismatch")
+        self.assertIn("SizeOfImage", context["detail"])
+        self.assertEqual(context["build"]["warning"], context["detail"])
+        self.assertFalse(context["build"]["verified"])
 
     def test_a_zero_capture_checksum_still_emits_an_unverified_block(self):
         connection = FakeConnection(module_path=__file__, checksum=0, size=0)

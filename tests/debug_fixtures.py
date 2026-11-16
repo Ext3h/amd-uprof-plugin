@@ -198,8 +198,12 @@ def production(exe, addresses, **kwargs):
 _SESSION_EVENTS = {"op": {"interval": 4_700_000}, "opInterval": 4_700_000, "opCycleCount": True}
 
 
-def write_session(root, module_path, addresses, function_name="") -> Path:
-    """A synthetic translated session with one module and one sample per address."""
+def write_session(root, module_path, addresses, function_name="", identity=False) -> Path:
+    """A synthetic translated session with one module and one sample per address.
+
+    With identity, the Module table also records the image size, checksum and bitness that
+    the session cache needs to verify a module version; without them the cache is disabled.
+    """
     import duckdb
 
     session = Path(root) / "session"
@@ -217,16 +221,28 @@ def write_session(root, module_path, addresses, function_name="") -> Path:
     connection = duckdb.connect(str(session / "cpu.db"))
     try:
         connection.execute("CREATE TABLE Process (id UINTEGER, name VARCHAR)")
-        connection.execute(
-            "CREATE TABLE Module (id UINTEGER, path VARCHAR, isSystemModule BOOLEAN)"
-        )
+        if identity:
+            connection.execute(
+                "CREATE TABLE Module (id UINTEGER, path VARCHAR, isSystemModule BOOLEAN, "
+                "size UBIGINT, checksum UBIGINT, is32Bit BOOLEAN)"
+            )
+        else:
+            connection.execute(
+                "CREATE TABLE Module (id UINTEGER, path VARCHAR, isSystemModule BOOLEAN)"
+            )
         connection.execute("CREATE TABLE Function (id UBIGINT, moduleId UINTEGER, name VARCHAR)")
         connection.execute(
             "CREATE TABLE UnifiedSampleSeries (moduleId UINTEGER, "
             "functionId UBIGINT, moduleRVA UBIGINT)"
         )
         connection.execute("INSERT INTO Process VALUES (100, 'c:\\capture\\workload.exe')")
-        connection.execute("INSERT INTO Module VALUES (1, ?, false)", [str(module_path)])
+        if identity:
+            connection.execute(
+                "INSERT INTO Module VALUES (1, ?, false, ?, 0, false)",
+                [str(module_path), Path(module_path).stat().st_size],
+            )
+        else:
+            connection.execute("INSERT INTO Module VALUES (1, ?, false)", [str(module_path)])
         connection.execute("INSERT INTO Function VALUES (10, 1, ?)", [function_name])
         connection.executemany(
             "INSERT INTO UnifiedSampleSeries VALUES (1, 10, ?)",
@@ -247,8 +263,11 @@ def profile(session, by="line", extra=()) -> dict:
     return profile_with_stderr(session, by, extra)[0]
 
 
-def profile_with_stderr(session, by="line", extra=()) -> tuple[dict, str]:
-    """Like profile(), and also return the run's stderr (WARNING lines and progress)."""
+def profile_with_stderr(session, by="line", extra=(), env=None) -> tuple[dict, str]:
+    """Like profile(), and also return the run's stderr (WARNING lines and progress).
+
+    env holds variables set for this run on top of the inherited environment.
+    """
     import sys
 
     completed = subprocess.run(
@@ -268,6 +287,7 @@ def profile_with_stderr(session, by="line", extra=()) -> tuple[dict, str]:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=None if env is None else {**os.environ, **env},
     )
     if completed.returncode != 0:
         raise AssertionError(

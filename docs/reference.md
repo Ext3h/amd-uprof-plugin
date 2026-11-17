@@ -475,7 +475,7 @@ The views and the materialized `v_dump` TEMP TABLE:
 | `v_capture_modules` | one row per whole-capture sample: module, context (CPU for a dump, `coreId` for PMC), sample count and kernel-image flag; before scope and time filters; feeds `ACHIEVED` and `KERNEL_COVERAGE` from one scan |
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
 | `v_module_rows` | module path aggregation, ranking, totals, `isSystemModule`, the module's `hot_rva`/`hot_samples` and the `<other modules>` remainder |
-| `v_function_measured` | the uncapped function aggregation behind `v_function_rows`: derived range when `uprof_functions` covers the RVA, else a named `Function.id`, else the symbolizer's containing function, else `Function.id`; `function_start`/`function_end`/`function_source`/`function_derived`; `<unresolved>` row; attribution `unique`/`shared` (range start with folded public names)/`derived` (synthetic name, also when the range's samples disagree on the uProf name)/`unresolved`; hot RVA by samples; total samples/weight/tag; `--function` reads its parent row here so `--top` cannot hide it |
+| `v_function_measured` | the uncapped function aggregation behind `v_function_rows`: derived range when `uprof_functions` covers the RVA, else a named `Function.id`, else the symbolizer's containing function; `function_start`/`function_end`/`function_source`/`function_derived`; one `<unresolved>` row per module, which also holds the samples of blank-named `Function.id`s; attribution `unique`/`shared` (range start with folded public names)/`derived` (synthetic name, also when the range's samples disagree on the uProf name)/`unresolved`; hot RVA by samples; total samples/weight/tag; `--function` reads its parent row here so `--top` cannot hide it |
 | `v_function_rows` | `v_function_measured` with `--top` applied and one `<other functions>` remainder |
 | `v_function_scope` | the single parent row selected by `uprof_function`/`uprof_function_module`/`uprof_function_start`; a `Function.id` parent holds only the samples outside every derived range; empty unless a function-scoped line or instruction view was requested |
 | `v_region_rows` | one row per module and 4 KiB address page; `page_start`/`page_end`, `sampled_addresses`, hot RVA and the function that owns it; attribution `unique`/`shared`/`derived`/`unresolved`; `<other regions>` |
@@ -494,7 +494,7 @@ The same capture and arguments produce byte-identical output on every run. Each 
 |---|---|
 | `process` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, pid, process` |
 | `module` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module` |
-| `function` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, function_name, module_name` |
+| `function` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, function_name, module_name, function_start NULLS LAST, function_id NULLS LAST, group_key` |
 | `region` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, page_start, module` |
 | `line` | `weight DESC NULLS LAST, samples DESC, file, line, function, module` |
 | `instruction` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module, rva NULLS LAST, function` |

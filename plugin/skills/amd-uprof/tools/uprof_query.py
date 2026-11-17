@@ -2365,6 +2365,46 @@ def _achieved_field(
     return field, samples, kernel_covered
 
 
+def _timer_scope_on_cpu(
+    connection: object, args: argparse.Namespace, sampler: uprof_session.Sampler
+) -> str | None:
+    """A --pid/--image timer scope's samples against one thread running the whole span.
+
+    A timer tick only finds running threads, so blocked or waiting time leaves no sample; the
+    comparison is the only place off-CPU time becomes visible. None without a scope, an interval
+    or a usable span, and for an empty scope, which its WARNING already names.
+    """
+    labels = []
+    if args.pid is not None:
+        labels.append(f"--pid {args.pid}")
+    if args.image is not None and args.image != "%":
+        labels.append(f"--image {args.image}")
+    if not labels or not sampler.interval_ms:
+        return None
+    meta = uprof_session.read_meta(args.session) or {}
+    collection = uprof_session.meta_section(meta, "collection", "collection")
+    elapsed_ms = uprof_session.meta_section(collection, "schedule", "collection.schedule").get(
+        "elapsed"
+    )
+    try:
+        span_s = int(elapsed_ms) / 1000.0
+    except (TypeError, ValueError):
+        return None
+    totals = connection.sql("SELECT total_samples FROM v_scope_totals").fetchall()
+    samples = int(totals[0][0] or 0) if totals else 0
+    ideal = span_s * 1000.0 / sampler.interval_ms
+    if span_s <= 0 or samples == 0:
+        return None
+    return (
+        f"scoped on-CPU ({' '.join(labels)}): {samples} samples against {ideal:.0f} for one "
+        f"thread running the whole {span_s:.3f} s span at one tick per "
+        f"{sampler.interval_ms:g} ms, so the scope was on CPU for about "
+        f"{100.0 * samples / ideal:.0f}% of the span (a sum over its threads, so several "
+        "threads can exceed 100%); time spent blocked or waiting gets no tick and appears in "
+        "no share"
+    )
+
+
 def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: str) -> bool:
     """True when the report's population is narrower than the whole dump.
 
@@ -3371,6 +3411,8 @@ def run_query_command(args: argparse.Namespace) -> None:
             if sampler.timer and args.by in _TIMER_CAUSE_VIEWS:
                 read_at = [name for name, _ in fields].index("READ")
                 fields.insert(read_at + 1, ("CAUSE", _TIMER_CAUSE))
+            if sampler.timer:
+                sanity_message = _timer_scope_on_cpu(connection, args, sampler)
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
             check_kernel = sampler.os_requested and not capture_windowed

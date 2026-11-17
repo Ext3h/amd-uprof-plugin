@@ -554,6 +554,31 @@ def format_duration(seconds: float) -> str:
     return f"{seconds * 1e3:.3g} ms" if seconds >= 1e-3 else f"{seconds * 1e6:.3g} us"
 
 
+def host_clock_text(frequency_hz: float) -> str:
+    """The clock a cycle figure converts at, with the error interval it carries.
+
+    The session records no clock, so the conversion uses this host's reported one. Under boost
+    the cores run faster, so a converted time is high by up to max/reported clock; the ratio is
+    a number only where the host reports its boost maximum, and a clock at that maximum adds no
+    boost error.
+    """
+    text = f"{frequency_hz / 1e6:g} MHz (this host's reported clock; the session records none"
+    try:
+        from uprof_collect import _boost_maximum_hz
+
+        maximum_hz = _boost_maximum_hz()
+    except Exception:  # noqa: BLE001 - an unreadable maximum states the ratio without a number
+        maximum_hz = None
+    if maximum_hz is None:
+        return text + "; boost makes true CPU time lower, by up to max/reported clock)"
+    if maximum_hz <= frequency_hz:
+        return text + ")"
+    return (
+        text + "; boost makes true CPU time lower, by up to max/reported clock "
+        f"({maximum_hz / 1e6:g}/{frequency_hz / 1e6:g} MHz = {maximum_hz / frequency_hz:.3f}))"
+    )
+
+
 def requested_interval(
     sampler: Sampler, frequency_hz: float | None = None
 ) -> tuple[float | None, str, str]:

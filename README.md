@@ -10,9 +10,10 @@ where the cycles go — with shares by process, function, source line or instruc
 - Captures with AMD uProf's CLI: PMCx076 `CYCLES_NOT_IN_HALT` cycle sampling, system-wide or
   attached to PIDs; IBS OP sampling with an op-count or cycle-controlled interval. IBS fetch
   dumps can be translated and profiled but are not a capture choice.
-- Symbolizes with llvm-symbolizer: PDB data on Windows, DWARF on Linux, down to file/line and
-  instruction attribution. ICF-folded addresses are labelled shared instead of being credited
-  to one name.
+- Symbolizes with llvm-symbolizer: PDB data on a Windows host, DWARF on Linux, down to
+  file/line and instruction attribution. ICF-folded addresses are labelled shared instead of
+  being credited to one name. PDBs are read only on Windows hosts, so profile a Windows capture
+  there.
 - Profiles by process, function, source line or instruction. Shares are fractions 0.0-1.0.
   `sample_share` states what a sample counts in that capture mode (busy core cycles for the
   supported PMC cycle event, core cycles for cycle-controlled IBS OP, dispatched ops for

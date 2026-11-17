@@ -928,7 +928,7 @@ _SAMPLE_CAVEAT: Final = (
 _SYSTEM_MODULE_MEANING: Final = (
     "Module.isSystemModule: uProf's system-module flag (OS components and some vendor "
     "drivers); false = third-party; "
-    "NULL when uncataloged, a remainder row, or an ambiguous basename whose versions disagree"
+    "NULL when uncataloged or an ambiguous basename whose versions disagree"
 )
 # A cycle interval is time only at a frequency; the session records the interval in cycles, not
 # the frequency of the capture machine.

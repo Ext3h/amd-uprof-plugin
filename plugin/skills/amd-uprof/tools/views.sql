@@ -806,11 +806,12 @@ HAVING count(*) > 0;
 
 -- Module shares. The key is the normalized module path the dump or UnifiedSampleSeries carries,
 -- the same key line and instruction rows use. isSystemModule comes from Module and stays NULL
--- when the export predates the column or the module is not in the catalog; the remainder row has
--- no single classification. Rows and --top follow uprof_primary_measure: gap weight for a
--- time-based capture, otherwise the sample count (the same order as sample_share). When --top
--- truncates, one <other modules> row carries the rest. The module totals and the per-module RVA
--- samples share one materialized scan of v_scoped; a second reference would evaluate it again.
+-- when the export predates the column or the module is not in the catalog. Rows and --top follow
+-- uprof_primary_measure: gap weight for a time-based capture, otherwise the sample count (the
+-- same order as sample_share). When --top truncates, the rest is one remainder row per
+-- classification (third-party, system, unclassified), so the isSystemModule = false rows still
+-- sum to the third-party total. The module totals and the per-module RVA samples share one
+-- materialized scan of v_scoped; a second reference would evaluate it again.
 CREATE OR REPLACE TEMP VIEW v_module_rows AS
 WITH scanned AS MATERIALIZED (
   SELECT w.module_name, w.rva, w.samples, w.weight, w.tag_cycles
@@ -857,11 +858,15 @@ SELECT module, samples, weight, tag_cycles, "isSystemModule", hot_rva, hot_sampl
 FROM flagged
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
-SELECT '<other modules>', CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles), NULL,
-       NULL, NULL, max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL
+SELECT CASE "isSystemModule" WHEN false THEN '<other third-party modules>'
+                                WHEN true THEN '<other system modules>'
+                                ELSE '<other unclassified modules>' END,
+       CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles), "isSystemModule",
+       NULL, NULL, max(total_samples), max(total_weight), max(total_tag_cycles),
+       CASE "isSystemModule" WHEN false THEN 1 WHEN true THEN 2 ELSE 3 END, NULL
 FROM flagged
 WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
-HAVING count(*) > 0;
+GROUP BY "isSystemModule";
 
 -- Every scoped sample with the function row it belongs to: the derived range that covers its RVA,
 -- else its named uProf Function.id, else the llvm-symbolizer containing function (an ELF/DWARF

@@ -355,9 +355,14 @@ class ModuleProfileTest(unittest.TestCase):
         session = self.session()
         document = self.document(session, "module", "--top", "1")
         rows = document["rows"]
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[-1]["module"], "<other modules>")
-        self.assertIsNone(rows[-1]["isSystemModule"])
+        self.assertEqual(
+            [(row["module"], row["isSystemModule"]) for row in rows],
+            [
+                (WORKLOAD_KEY, False),
+                ("<other third-party modules>", False),
+                ("<other system modules>", True),
+            ],
+        )
         self.assertIsNotNone(rows[-1]["cpu_seconds"])
 
     def test_truncated_remainder_keeps_the_third_party_total_summable(self):

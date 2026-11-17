@@ -631,7 +631,7 @@ class OutputLegendTest(unittest.TestCase):
 
         top = json.loads(self.profile(session, "--top", "1", "--json", by="module"))
         self.assertEqual(top["rows"][0]["module"], "a.exe")
-        self.assertEqual(top["rows"][-1]["module"], "<other modules>")
+        self.assertEqual(top["rows"][-1]["module"], "<other unclassified modules>")
 
     def test_module_ordering_and_top_follow_the_gap_weighted_measure(self):
         session = self._write_ordering(fetch=True, name="ordering-module-fetch")
@@ -641,7 +641,7 @@ class OutputLegendTest(unittest.TestCase):
 
         top = json.loads(self.profile(session, "--top", "1", "--json", by="module"))
         self.assertEqual(top["rows"][0]["module"], "b.exe")
-        self.assertEqual(top["rows"][-1]["module"], "<other modules>")
+        self.assertEqual(top["rows"][-1]["module"], "<other unclassified modules>")
 
     def test_instruction_order_follows_the_primary_measure(self):
         session = self._write_ordering(name="instruction-order")

@@ -218,13 +218,40 @@ class FunctionRangeProfileTest(unittest.TestCase):
         resolved = self.document(self.fixture_session("resolved-stop"), "--pid", "100")
         self.assertEqual(resolved["legend"]["next"], [])
 
+        # An unresolved module with an image on this host: the page view is the fallback.
+        image = self.root / "unnamed.dll"
+        image.write_bytes(b"not a PE image")
         session = Session(self.root, "unresolved-stop")
-        session.module(1, self.root / "missing.dll", False).function(10, 1, "")
+        session.module(1, image, False).function(10, 1, "")
         session.sample(1, 10, 0x2010, 2)
         calls = self.document(session.write(), "--pid", "100")["legend"]["next"]
         self.assertEqual(len(calls), 1)
         self.assertIn("--by region", calls[0])
         self.assertNotIn("--by instruction", calls[0])
+
+    def test_next_omits_region_when_the_unresolved_module_image_is_missing(self):
+        # The page view of a module whose file is not on this host repeats the function row's
+        # hot RVA, still unresolved; the --image-path remedy is in SYMBOL_COVERAGE.
+        session = Session(self.root, "missing-image")
+        session.module(1, self.root / "missing.dll", False).function(10, 1, "")
+        session.sample(1, 10, 0x2010, 2)
+        document = self.document(session.write(), "--pid", "100")
+        self.assertEqual(document["legend"]["next"], [])
+        self.assertIn("module file not available", document["SYMBOL_COVERAGE"])
+        self.assertIn("--image-path", document["SYMBOL_COVERAGE"])
+
+        # One unresolved module with its image keeps the page view on offer.
+        image = self.root / "present.dll"
+        image.write_bytes(b"not a PE image")
+        session = Session(self.root, "mixed-image")
+        session.module(1, self.root / "missing.dll", False).function(10, 1, "")
+        session.module(2, image, False).function(20, 2, "")
+        session.sample(1, 10, 0x2010, 2)
+        session.sample(2, 20, 0x3010, 1)
+        calls = self.document(session.write(), "--pid", "100")["legend"]["next"]
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--by region", calls[0])
+        self.assertNotIn("<", calls[0].split("--by region", 1)[1])
 
     def test_coverage_and_agreement_split_named_derived_and_unresolved(self):
         result = self.run_profile(self.fixture_session())

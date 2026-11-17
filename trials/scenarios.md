@@ -135,7 +135,7 @@ A trial run passes when both hold:
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by line --function fixture_entry --module <OWN_MODULE>`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json --top 1`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
 
 ## SCN-04: my PDB is in another folder
 
@@ -188,7 +188,7 @@ A trial run passes when both hold:
 - **Known gaps:** #339 (the instruction JSON can exceed a harness's output limit on a real capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json --top 1`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
 
 ## SCN-08: did my fix help
 
@@ -249,7 +249,7 @@ A trial run passes when both hold:
 - **Known gaps:** #339 (the instruction JSON can exceed a harness's output limit on a real capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
-  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json --top 1`
+  2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
 
 ## SCN-12: which thread is hot
 
@@ -367,7 +367,7 @@ A trial run passes when both hold:
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --json`
 
 ## SCN-22: what can I improve (lock class)
 
@@ -382,7 +382,7 @@ A trial run passes when both hold:
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --json`
 
 ## SCN-23: what can I improve (branch class)
 
@@ -397,7 +397,7 @@ A trial run passes when both hold:
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --json`
 
 ## SCN-24: what can I improve (os class)
 
@@ -456,7 +456,7 @@ A trial run passes when both hold:
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
-  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
+  3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --json`
 
 ## SCN-28: what can I improve (efficient class)
 
@@ -472,4 +472,4 @@ A trial run passes when both hold:
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by module --image %defect_lab.exe`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function --image %defect_lab.exe`
   3. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by line --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR>`
-  4. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --top 1`
+  4. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --image %defect_lab.exe --function <FUNCTION> --module c:/capture/lab_core.dll --image-path <IMAGE_DIR> --json`

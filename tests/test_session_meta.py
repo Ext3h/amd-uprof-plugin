@@ -194,6 +194,25 @@ class SessionMetaShapeTest(unittest.TestCase):
             "schedule.start", uprof_session.anchor_report, self.session, qpc=1000, freq=10_000_000
         )
 
+    def test_anchor_rejects_a_frequency_that_is_not_positive(self):
+        self._write_meta({"collection": {"schedule": {"start": 0}}})
+        for freq in (0, -1):
+            with self.subTest(freq=freq):
+                self._assert_raises(
+                    "--freq must be a positive",
+                    uprof_session.anchor_report,
+                    self.session,
+                    qpc=5,
+                    freq=freq,
+                )
+
+    def test_anchor_labels_the_default_only_without_freq(self):
+        self._write_meta({"collection": {"schedule": {"start": 0}}})
+        given = uprof_session.anchor_report(self.session, qpc=5, freq=1000)
+        self.assertIn("QPC=5 HZ=1000 HZ_SOURCE=argument", given)
+        default = uprof_session.anchor_report(self.session, qpc=5, freq=None)
+        self.assertTrue(default[0].startswith("QPC=5 HZ=10000000 HZ_SOURCE=default"), default)
+
     def test_collect_command_not_text_raises_uprof_error(self):
         meta = {"collectCommand": ["-e", "event=timer"]}
         self._assert_raises("collectCommand", uprof_session._event_from_command, meta)

@@ -63,32 +63,37 @@ class RunWatchedTest(unittest.TestCase):
 
     def test_a_child_that_keeps_progressing_outlives_the_stall_window(self):
         # The child writes for longer than the stall window, so only its progress keeps it alive.
+        # The window is 10 write intervals and well over 3x an interpreter start, so a loaded
+        # runner does not stall it.
+        started = time.monotonic()
         completed = uprof_native.run_watched(
-            writer(self.progress_file, 8.0),
+            writer(self.progress_file, 2.5),
             progress=self.size,
-            stall_s=4.0,
+            stall_s=1.0,
             ceiling_s=60.0,
             poll_s=0.1,
         )
 
         self.assertEqual(completed.returncode, 0)
         self.assertIn("done", completed.stdout)
+        self.assertGreater(time.monotonic() - started, 2.0)
 
     def test_new_output_counts_as_progress(self):
-        # The progress value never changes; the child's output alone keeps it alive.
-        code = (
-            "import time\nfor _ in range(40):\n    print('step', flush=True)\n    time.sleep(0.1)\n"
-        )
+        # The progress value never changes; the child's output alone keeps it alive. The child
+        # prints for longer than the stall window, 10 lines per window.
+        code = "import time\nfor _ in range(20):\n    print('step', flush=True)\n    time.sleep(0.05)\n"
+        started = time.monotonic()
         completed = uprof_native.run_watched(
             [sys.executable, "-c", code],
             progress=lambda: 0,
-            stall_s=2.0,
+            stall_s=0.5,
             ceiling_s=60.0,
             poll_s=0.1,
         )
 
         self.assertEqual(completed.returncode, 0)
-        self.assertEqual(completed.stdout.count("step"), 40)
+        self.assertEqual(completed.stdout.count("step"), 20)
+        self.assertGreater(time.monotonic() - started, 0.5)
 
     def test_the_ceiling_stops_a_child_that_keeps_progressing(self):
         with self.assertRaises(uprof_native.ToolTimeout):

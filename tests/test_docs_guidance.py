@@ -26,6 +26,7 @@ REFERENCE = (DOCS / "reference.md").read_text(encoding="utf-8")
 # The spec wording without its requirement ID markup.
 SPEC = re.sub(r"\*\*SPEC-\d{2,}\*\* ", "", (DOCS / "spec.md").read_text(encoding="utf-8"))
 VALIDATION = (DOCS / "validation.md").read_text(encoding="utf-8")
+README = (DOCS.parent / "README.md").read_text(encoding="utf-8")
 
 REGION_MEANING = (
     "region = 4 KiB address page; samples are grouped by address, not by control "
@@ -165,6 +166,13 @@ class DocsGuidanceTest(unittest.TestCase):
             with self.subTest(view=name):
                 row = re.search(rf"(?m)^\| `{name}` \|", REFERENCE)
                 self.assertIsNotNone(row, f"no row for `{name}` in docs/reference.md")
+
+    def test_symbol_path_pdbs_are_read_only_on_windows_hosts(self):
+        # PDB discovery runs only on a Windows host; elsewhere a --symbol-path PDB is unused, so a
+        # Windows capture profiled on Linux has no PDB names however the flag is passed.
+        for name, text in (("README", README), ("reference", REFERENCE)):
+            with self.subTest(document=name):
+                self.assertIn("PDBs are read only on Windows hosts", _flat(text))
 
 
 # One phrase per part of SKILL.md: entry point, first call, capture pipeline, permissions and

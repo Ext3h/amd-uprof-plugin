@@ -103,6 +103,22 @@ class LineCoverageTest(unittest.TestCase):
         self.assertEqual(legend["profile_symbolizer"]["derived_samples"], 4)
         self.assertEqual(legend["profile_symbolizer"]["unresolved_samples"], 0)
 
+    def test_an_all_derived_capture_is_drillable_at_its_addresses(self):
+        # rows_drillable means no scoped sample is unresolved, in every view: a derived row is
+        # attributed and actionable at its address, as the function and region legends say.
+        legend = uprof_query._symbol_coverage_legend(
+            COVERAGE, symbolizer(10, 0, 10), True, [], by="line"
+        )
+        rows = {"scoped": 10, "named": 0, "derived": 10, "unresolved": 0}
+        function = uprof_query._symbol_coverage_legend(
+            COVERAGE, None, True, [], by="function", row_attribution=rows
+        )
+
+        self.assertEqual(legend["profile_symbolizer"]["derived_samples"], 10)
+        self.assertEqual(legend["profile_symbolizer"]["named_samples"], 0)
+        self.assertTrue(legend["rows_drillable"])
+        self.assertEqual(legend["rows_drillable"], function["rows_drillable"])
+
     def test_without_derived_samples_the_line_is_unchanged(self):
         text = uprof_query._coverage_field(
             None, {}, symbolizer(10, 0, 0), True, [], COVERAGE, by="line"
@@ -162,6 +178,27 @@ class RangeCoverageTest(unittest.TestCase):
         )
 
         self.assertEqual(rows, [("Exported", "derived", 2)])
+
+    def test_a_folded_start_over_a_nearest_name_is_shared_as_in_the_drills(self):
+        capture = {
+            "ranges": [FunctionRange(MODULE, 0x1000, 0x1080, "export", "second")],
+            "frames": [(0x1050, "second", "second", "second", "", 0, True)],
+            "aliases": [(0x1000, 2, "second | other")],
+            "samples": [(None, 0x1050, 2)],
+        }
+        function = query(
+            "SELECT attribution, samples FROM v_function_rows WHERE module IS NOT NULL",
+            uprof_by="function",
+            **capture,
+        )
+        line = query(
+            "SELECT attribution, samples FROM v_line_rows WHERE module IS NOT NULL",
+            uprof_by="line",
+            **capture,
+        )
+
+        self.assertEqual(line, [("shared", 2)])
+        self.assertEqual(function, line)
 
     def test_a_sized_symbol_over_a_named_range_stays_unique(self):
         rows = query(
@@ -228,6 +265,13 @@ class CrossViewTest(unittest.TestCase):
             {key: function["profile_symbolizer"][key] for key in split},
             {key: line["profile_symbolizer"][key] for key in split},
         )
+
+    def test_rows_drillable_agrees_between_the_function_view_and_the_drills(self):
+        function = self.profile("--by", "function")["legend"]["symbol_coverage"]
+        for by in ("line", "instruction"):
+            with self.subTest(by=by):
+                drill = self.profile("--by", by)["legend"]["symbol_coverage"]
+                self.assertEqual(function["rows_drillable"], drill["rows_drillable"])
 
     def test_agreement_counts_the_same_derived_samples(self):
         function = self.profile("--by", "function")["AGREEMENT"]

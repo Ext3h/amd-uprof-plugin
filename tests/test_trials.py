@@ -17,9 +17,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import debug_fixtures as F
 import uprof
+import uprof_collect
 import uprof_context
 import uprof_symbols
 
@@ -512,6 +514,16 @@ CEILING_GAPS: dict[str, str] = {}
 # Views that run llvm-symbolizer; their calls keep a process of their own.
 SYMBOLIZING_VIEWS = {"function", "instruction", "line"}
 _SHARED: dict[str, object] = {}
+# One host clock for comparing an in-process call with a CLI process: (Hz, printed, source).
+PINNED_CLOCK = (3_700_000_000, "3700 MHz", "pinned")
+# uprof.py's entry point in a new interpreter, with the host clock pinned to PINNED_CLOCK.
+PINNED_CLOCK_CLI = (
+    "import sys\n"
+    f"sys.path.insert(0, {str(UPROF.parent)!r})\n"
+    "import uprof, uprof_collect\n"
+    f"uprof_collect._core_frequency = lambda: {PINNED_CLOCK!r}\n"
+    "raise SystemExit(uprof.main(sys.argv[1:]))\n"
+)
 
 
 def shared_captures() -> tuple[Path, dict[str, Path]]:
@@ -560,9 +572,10 @@ class ContextCeilingTest(unittest.TestCase):
             run_trials.extract("HEAD", images, target / run_trials.IMAGES)
         return target
 
-    def run_cli(self, call: str, args: list[str]) -> str:
+    def run_cli(self, call: str, args: list[str], *, pinned: bool = False) -> str:
+        script = ["-c", PINNED_CLOCK_CLI] if pinned else [str(UPROF)]
         result = subprocess.run(
-            [sys.executable, str(UPROF), *args],
+            [sys.executable, *script, *args],
             check=False,
             capture_output=True,
             text=True,
@@ -583,14 +596,17 @@ class ContextCeilingTest(unittest.TestCase):
             return self.outputs[call]
         args = shlex.split(call)
         # A call that does not symbolize runs in this process: it prints what the CLI prints,
-        # which the first such call checks against a real CLI run.
+        # which the first such call checks against a CLI process. Cycle-mode output carries the
+        # host clock, which Linux reads anew on every run, so that check pins it in both runs.
         if symbolizes(args):
             text = self.run_cli(call, args)
         else:
             text = self.run_in_process(call, args)
             if not type(self).cli_checked:
                 type(self).cli_checked = True
-                self.assertEqual(text, self.run_cli(call, args), call)
+                with mock.patch.object(uprof_collect, "_core_frequency", return_value=PINNED_CLOCK):
+                    in_process = self.run_in_process(call, args)
+                self.assertEqual(in_process, self.run_cli(call, args, pinned=True), call)
         # The temporary capture root repeats in every path; count it as a short user path, so
         # the result does not depend on where the test runs.
         for spelling in sorted(

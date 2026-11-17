@@ -167,6 +167,23 @@ class DumpIdentityTest(unittest.TestCase):
             "is beside session.uprof; the dump cannot be generated here",
         )
 
+    def test_a_dump_beside_the_session_carries_the_recorded_time_filter(self):
+        """translate --time-filter --ascii writes the dump beside session.uprof; it holds only
+        the window's samples, so the window must reach the rate and the DUMP line."""
+        self.make_capture(self.session, b"capture A")
+        (self.session / "session.uprof").write_text(
+            json.dumps(
+                {"translateCommand": "AMDuProfCLI translate -i x --time-filter 10:15 --ascii x"}
+            ),
+            encoding="utf-8",
+        )
+        (self.session / DUMP_FILENAMES[KIND]).write_bytes(b"window dump")
+
+        info = uprof_dump.resolve_dump(self.session, Sampler(ibs_dump_kind=KIND))
+
+        self.assertEqual((info.source, info.time_filter), ("beside", "10:15"))
+        self.assertEqual(self.translations, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

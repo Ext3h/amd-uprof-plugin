@@ -20,7 +20,8 @@ SESSION = "C:/captures/run" if uprof_query.os.name == "nt" else "/captures/run"
 
 def next_calls(*argv, system_wide, unresolved=0):
     args = uprof.build_parser().parse_args(["profile", "--session", SESSION, *argv])
-    return uprof_query._next_calls(args, {"unresolved": unresolved}, system_wide=system_wide)
+    attribution = {"unresolved": unresolved, "unresolved_with_image": unresolved}
+    return uprof_query._next_calls(args, attribution, system_wide=system_wide)
 
 
 def argv_of(call):

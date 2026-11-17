@@ -626,7 +626,8 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO, args: 
     """Symbolize every module in scope.
 
     Returns the artifact variables, per-module causes, whether a transient tool failure
-    occurred, and the resolved PDB identities. A module name the capture maps to more than one
+    occurred, the resolved PDB identities, the probed paths and the modules whose file is not
+    on this host. A module name the capture maps to more than one
     image version is not symbolized: IBS dump rows carry the name, not Module.id, so their
     samples cannot be attributed to one build.
     """
@@ -692,6 +693,7 @@ def _symbolize_scope(connection: object, artifacts: Path, stream: TextIO, args: 
         transient_failure,
         _pdb_identities(pdbs, evidence),
         list(probes.values()),
+        {item.module_name for item in evidence if item.outcome == "module_missing"},
     )
 
 
@@ -1155,7 +1157,8 @@ def _next_calls(
     """Drill-down calls, stopping at the function unless its rows are unresolved.
 
     The CPU-time path ends at the derived function. Region is the page fallback, offered only
-    when function rows still carry unresolved samples; instruction context is a separate request,
+    when function rows still carry unresolved samples of a module whose file is on this host (the
+    page view of a missing module repeats the same unresolved RVA); instruction context is a separate request,
     not a default drill-down. A line view offers the instruction view with the same
     --function/--module scope and --top 1; the instruction rows carry the instruction text, so
     the instruction view ends the drill. An unscoped module, function or region rollup of a system-wide capture mixes
@@ -1182,7 +1185,11 @@ def _next_calls(
         scoped = argparse.Namespace(**vars(args))
         scoped.pid, scoped.image = "<PID>", None
         calls = [_profile_command(scoped, "module", data=data)]
-    if args.by == "function" and row_attribution and row_attribution.get("unresolved", 0) > 0:
+    if (
+        args.by == "function"
+        and row_attribution
+        and row_attribution.get("unresolved_with_image", 0) > 0
+    ):
         calls.append(_profile_command(args, "region", data=data))
     if args.by == "line":
         one_row = argparse.Namespace(**vars(args))
@@ -2678,8 +2685,13 @@ def _agreement_values(connection: object) -> dict[str, Any] | None:
     return dict(zip(columns, rows[0])) if rows else None
 
 
-def _row_attribution(connection: object, by: str) -> dict[str, int]:
+def _row_attribution(
+    connection: object, by: str, missing_modules: set[str] | None = None
+) -> dict[str, int]:
     """Sample weight by the row attribution for --by function/region.
+
+    unresolved_with_image counts the unresolved samples of modules whose file is on this host:
+    the page view of a missing module repeats its unresolved hot RVA and adds nothing.
 
     The row views are the authority: a derived range is an attribution, not a missing symbol, so
     the symbolizer-only unresolved counts must not be quoted for these scopes. Query the view with
@@ -2691,12 +2703,15 @@ def _row_attribution(connection: object, by: str) -> dict[str, int]:
     try:
         connection.execute("SET VARIABLE top_n = ?", [0])
         rows = connection.execute(
-            f"SELECT attribution, CAST(sum(samples) AS BIGINT) FROM {view} GROUP BY attribution"
+            f"SELECT attribution, module, CAST(sum(samples) AS BIGINT) FROM {view} "
+            "GROUP BY attribution, module"
         ).fetchall()
     finally:
         connection.execute("SET VARIABLE top_n = ?", [previous])
+    missing = missing_modules or set()
     counts = {"named": 0, "derived": 0, "unresolved": 0}
-    for attribution, samples in rows:
+    with_image = 0
+    for attribution, module, samples in rows:
         value = int(samples or 0)
         if attribution in ("unique", "shared"):
             counts["named"] += value
@@ -2704,7 +2719,10 @@ def _row_attribution(connection: object, by: str) -> dict[str, int]:
             counts["derived"] += value
         else:
             counts["unresolved"] += value
+            if module not in missing:
+                with_image += value
     counts["scoped"] = sum(counts.values())
+    counts["unresolved_with_image"] = with_image
     return counts
 
 
@@ -3080,6 +3098,8 @@ def run_query_command(args: argparse.Namespace) -> None:
             _guard_out_file_images(out_path, connection, args)
             _bind_ambiguous_modules(connection, variables)
             causes: dict[str, str] = {}
+            # A missing module is a transient outcome, never cached, so a cache hit has none.
+            missing_modules: set[str] = set()
             symbolizer: dict[str, Any] | None = None
             symbolized = False
             symbol_hit = False
@@ -3141,9 +3161,14 @@ def run_query_command(args: argparse.Namespace) -> None:
                         artifacts = _artifact_dir(stream)
                     symbol_stream = _Tee(symbol_out)
                     try:
-                        symbols, causes, symbol_transient, pdb_identity, probe_identity = (
-                            _symbolize_scope(connection, artifacts, symbol_stream, args)
-                        )
+                        (
+                            symbols,
+                            causes,
+                            symbol_transient,
+                            pdb_identity,
+                            probe_identity,
+                            missing_modules,
+                        ) = _symbolize_scope(connection, artifacts, symbol_stream, args)
                     finally:
                         symbol_out.flush()
                     variables.update(symbols)
@@ -3203,7 +3228,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 variables["uprof_range_attempted"] = attempted
                 uprof_db.set_variables(connection, {"uprof_range_attempted": attempted})
                 if args.by in RANGE_SCOPES:
-                    row_attribution = _row_attribution(connection, args.by)
+                    row_attribution = _row_attribution(connection, args.by, missing_modules)
                 else:
                     # A function filter can name a derived range, so the instruction/line scope
                     # needs the same boundary derivation the function scope performs.

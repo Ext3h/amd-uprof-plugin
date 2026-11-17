@@ -356,7 +356,7 @@ The sample-hot address is the `hot_rva` with the largest `hot_rva_samples`, and 
 
 ### Absolute CPU time
 
-`--by module` emits `cpu_seconds` as `samples × interval / core_frequency`: `samples` is the row count and `interval` is the requested cycle count converted at the core frequency `ACHIEVED` reports, the capture's nominal execution clock. The session records the interval in cycles, not the frequency of the capture machine, so a capture from other hardware gives an approximate figure and the seconds are an estimate at that clock, not a measured cycle count. The conversion does not apply to op-count or fetch samples: their interval is work, not time, and `cpu_seconds` is omitted with that reason.
+`--by module` emits `cpu_seconds` as `samples × interval / core_frequency`: `samples` is the row count and `interval` is the requested cycle count converted at the core frequency `ACHIEVED` reports: this host's reported clock, read once per report. The session records the interval in cycles, not the frequency of the capture machine, so a capture from other hardware gives an approximate figure and the seconds are an estimate at that clock, not a measured cycle count. The cycle counter runs at the effective clock, so under boost the true CPU time is lower by up to max/reported clock; the legend states that interval, with the ratio as a number where the host reports its boost maximum (Linux `cpuinfo_max_freq`) and without the boost clause when the reported clock is that maximum. The conversion does not apply to op-count or fetch samples: their interval is work, not time, and `cpu_seconds` is omitted with that reason.
 
 ## Instruction context — `--by instruction`
 

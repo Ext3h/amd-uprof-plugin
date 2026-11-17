@@ -939,11 +939,10 @@ _SYSTEM_MODULE_MEANING: Final = (
     "NULL when uncataloged or an ambiguous basename whose versions disagree"
 )
 # A cycle interval is time only at a frequency; the session records the interval in cycles, not
-# the frequency of the capture machine.
+# the frequency of the capture machine. The clock and its error interval follow "at".
 _CPU_SECONDS_MEANING: Final = (
-    "sampled CPU seconds = samples x the requested cycle interval / this machine's reported core "
-    "frequency (the session records no frequency, so a capture from other hardware is "
-    "approximate); CPU time, not wall-clock elapsed time"
+    "sampled CPU seconds = samples x the requested cycle interval at {clock}; CPU time, not "
+    "wall-clock elapsed time"
 )
 # Timer captures: one sample is one timer tick that found the thread running. Neither samples x
 # the requested interval nor samples x the achieved tick period reproduced in-process CPU time
@@ -1534,6 +1533,7 @@ def _legend(
     row_attribution: dict[str, int] | None = None,
     function_scope: dict[str, Any] | None = None,
     empty_scope: bool = False,
+    frequency_hz: float | None = None,
 ) -> dict[str, Any]:
     """Machine-readable meaning of every share column, the ordering estimate and next calls.
 
@@ -1693,7 +1693,12 @@ def _legend(
                 "this export has no Module.isSystemModule column; third-party cannot be classified"
             )
         if sample_interval_s is not None:
-            columns["cpu_seconds"] = _CPU_SECONDS_MEANING + (
+            clock = (
+                "this host's reported clock"
+                if frequency_hz is None
+                else uprof_session.host_clock_text(frequency_hz)
+            )
+            columns["cpu_seconds"] = _CPU_SECONDS_MEANING.format(clock=clock) + (
                 _CPU_SECONDS_SYSTEM_WIDE if system_wide else _CPU_SECONDS_ATTACHED
             )
         else:
@@ -3511,6 +3516,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 row_attribution,
                 function_scope,
                 empty_scope=empty_scope,
+                frequency_hz=frequency_hz,
             )
             scope_base = (
                 None

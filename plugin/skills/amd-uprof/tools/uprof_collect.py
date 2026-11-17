@@ -181,6 +181,17 @@ def _linux_core_frequency(
     )
 
 
+def _boost_maximum_hz() -> int | None:
+    """This host's boost maximum, or None where the platform reports none (Windows)."""
+    if IS_WINDOWS:
+        return None
+    try:
+        khz = int(_LINUX_CPUFREQ_PATHS[1].read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+    return khz * 1000 if khz > 0 else None
+
+
 def _core_frequency() -> tuple[int, str, str]:
     """The machine's reported core frequency: (Hz, printed value, source)."""
     if IS_WINDOWS:

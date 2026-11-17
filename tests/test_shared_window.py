@@ -5,6 +5,7 @@ Run from the repository root: python tests/run_tests.py test_shared_window
 # Spec: SPEC-86, SPEC-88, SPEC-130
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import debug_fixtures as F
 import uprof_context
+from run_tests import HOST_SKIP
 
 REPO = Path(__file__).resolve().parents[1]
 UPROF = REPO / "plugin" / "skills" / "amd-uprof" / "tools" / "uprof.py"
@@ -141,6 +143,9 @@ class ShareWindowsTest(unittest.TestCase):
 
 @unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
 @unittest.skipIf(F.tool_skip(), F.tool_skip() or "")
+# The context reads the PDB that symbolization verified by GUID and age; that verification runs
+# only on Windows, so elsewhere every lab_core.dll context omits with pdb_unverified.
+@unittest.skipUnless(os.name == "nt", HOST_SKIP + "PDB verification runs only on Windows")
 class SharedWindowCaptureTest(unittest.TestCase):
     """The default instruction document reaches the IBS cause evidence of the defect lab."""
 

@@ -1236,11 +1236,7 @@ def context_help(
             reason: text for reason, text in _CONTEXT_HELP_OMISSIONS.items() if reason in reasons
         },
         "read": read,
-        "next": (
-            "Use legend.next to change scope or granularity. Rank by "
-            "legend.impact.order_by; a high sample_share with a low time_share and no IBS "
-            "tag-to-retire evidence is frequency, not an impact finding."
-        ),
+        "next": ("Use legend.next to change scope or granularity. Rank by legend.impact.order_by."),
     }
 
 

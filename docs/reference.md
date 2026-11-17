@@ -83,6 +83,7 @@ Rules that follow:
 - `samples` for a dump is the row count (one per dump row); for PMC it is `sum(event column)`, not `count(*)`.
 - `share(part, whole) = part / NULLIF(whole, 0)`: every share is a fraction 0.0-1.0, printed at full precision.
 - `tag_to_retire_share = Σ LEAST(tag, 65535)` for the group divided by the same sum over the scope. Only an unsigned decimal integer cell counts; NULL, negative, fractional and exponent spellings stay NULL and are excluded from both numerator and denominator (never charged the maximum). The projection emits the column only for an IBS OP dump whose `IbsTagToRetCtr` exists and has at least one nonzero value.
+- `time_share` is time only at process, thread or phase scale. Below it, in op-count and fetch mode, code interleaved within one sampling interval sees the same expected gap per sample, so the gap share equals the sample frequency share; cost there is `tag_to_retire_share` or a cycle-controlled capture's `sample_share`.
 
 ### Anchoring a workload's clock
 
@@ -409,7 +410,7 @@ When every context is omitted with `symbolizer_failed`, or every one with `pdb_u
 | `fields` | `anchor` (`kind`, `rva`, `name` when named, `distance` in bytes from the anchor to the row's rva), `build` (`verified`, `identity`, hex identities and sizes, `warning` when present), `function, file` (the frame-0 function and file most of the window shares), `window` (`index` into `windows`, each printed once for the rows whose windows overlap in one module, with `module`, `function`, `file` and `runs`; `first`/`last` rva of the row's own decode), `windows[].runs` (static stream in ascending rva, grouped into runs of consecutive instructions with the same frame 0; each run has `line` and `instructions`, and `function`/`file` only where they differ from the window, `null` meaning none), `windows[].runs[].instructions` (`rva`, `instruction`, `samples`, `sample_share` fraction, optional `import`, `ibs`; `instruction` may retain objdump's nearest-symbol `<...>` decoration, so use the run's `function` for the frame-0 name), `windows[].runs[].instructions[].import`, `windows[].runs[].instructions[].ibs` (including the 65535 clip, the unsigned-decimal-integer policy and the note that values are AMD-encoded counts/histograms, not decoded meanings), `omitted` (carrying `build` when the module was examined), and `row.attribution` only when the legend carries that column; each entry only when a context carries that field |
 | `omission_reasons` | each reason code a context in this document omits with, with its meaning and remedy, in the order listed above |
 | `read` | the sampled instruction is the entry of the row's window (`windows[context.window.index]`) whose `rva` equals the row's; `sample_share` is the mode-specific raw share, not a per-op cost and not a ranking; rows are ordered by `legend.impact.order_by`; imports and symbol frames identify the work kind; when the legend carries `tag_to_retire_share`, it and `ibs.IbsTagToRetCtr` are total tag-to-retire dwell evidence, not per-op latency |
-| `next` | defer to `legend.next`; rank by `legend.impact.order_by`; a high `sample_share` with a low `time_share` and no tag-to-retire evidence is frequency, not an impact finding |
+| `next` | defer to `legend.next`; rank by `legend.impact.order_by` |
 
 **Limits and caching.** Each external call has a five-minute timeout.
 

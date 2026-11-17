@@ -36,8 +36,8 @@ TIME_MEANING = (
     "time share estimated from the gaps between per-sample timestamps within each "
     "thread (PID, TID), so a thread that migrates between CPUs is counted once; the "
     "gap includes off-CPU time and is charged to the ending sample up to the WEIGHTS cap, the "
-    "first sample "
-    "per thread is ignored (no gap before it), and NULL sorts last; for a "
+    "first sample per thread is ignored (no gap before it), and NULL sorts last; "
+    "time only at process, thread or phase scale; for a "
     "cycle-controlled IBS capture sample_share (fixed cycles per sample) is the "
     "CPU-cycle share and the better ranking"
 )
@@ -301,7 +301,10 @@ class AttachedTimeShareTest(unittest.TestCase):
     def test_headers_state_the_thread_partition(self):
         output = self._run_profile()
 
-        self.assertIn("time_share = per-thread time share;", output)
+        self.assertIn(
+            "time_share = per-thread gap share, time only at process, thread or phase scale;",
+            output,
+        )
         self.assertIn(
             "idle/wait, including off-CPU time, is charged to the ending sample up to the WEIGHTS cap",
             output,

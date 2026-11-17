@@ -17,10 +17,11 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import uprof_dump
 import uprof_native
 import uprof_shell
 from uprof_util import UprofError
@@ -204,6 +205,63 @@ class TranslateStallTest(unittest.TestCase):
         label, command = alternative.split(": ", 2)[1:]
         self.assertIn(f"_NT_SYMBOL_PATH={arg['cache']}", label)
         self.assertTrue(command.startswith("python "), command)
+
+
+class DumpTranslateStallTest(unittest.TestCase):
+    """profile's dump translate runs the same AMDuProfCLI call under the same bounds (#400)."""
+
+    def failure(self, error):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(os.path.realpath(directory))
+            session = root / "capture"
+            session.mkdir()
+            (session / "session.uprof").write_text("{}", encoding="utf-8")
+            with (
+                mock.patch.object(uprof_dump, "require_uprof", return_value=Path("AMDuProfCLI")),
+                # The plain run with its hours-long timeout must not be the runner.
+                mock.patch.object(
+                    uprof_dump,
+                    "run",
+                    side_effect=uprof_native.ToolTimeout("AMDuProfCLI timed out after 14400s"),
+                    create=True,
+                ),
+                mock.patch.object(
+                    uprof_dump, "run_watched", side_effect=error, create=True
+                ) as watched,
+                mock.patch.dict(os.environ, {"_NT_SYMBOL_PATH": "srv*c:\\sym*\\\\slow\\share"}),
+                redirect_stderr(io.StringIO()),
+                self.assertRaises(UprofError) as raised,
+            ):
+                uprof_dump._make_dump(
+                    session, "ibsfetch-event-dump", "1:2", root / "cache" / "dump", None
+                )
+            kwargs = watched.call_args.kwargs
+            self.assertEqual(kwargs["stall_s"], uprof_native.TRANSLATE_STALL)
+            self.assertEqual(kwargs["ceiling_s"], uprof_native.TRANSLATE_CEILING)
+            message = str(raised.exception)
+            alternative = next(
+                line for line in message.splitlines() if line.startswith("ALTERNATIVE: ")
+            )
+            session_arg, _ = uprof_shell.path_arg(session, "<SESSION_DIR>")
+            cache, _ = uprof_shell.path_arg("c:\\sym", "<SYMBOL_CACHE>")
+            self.assertIn(
+                f"translate --session {session_arg} --out-dir <NEW_TR_DIR> --symbol-cache "
+                f"{cache} --time-filter 1:2 --ascii ibsfetch-event-dump",
+                alternative,
+            )
+            self.assertIn("srv*c:\\sym*\\\\slow\\share", message)
+            self.assertNotIn("AMDuProfCLI ", alternative)
+            return message
+
+    def test_a_stalled_dump_translate_names_the_stall_and_the_alternative(self):
+        message = self.failure(uprof_native.ToolStalled("stalled"))
+        minutes = uprof_native.TRANSLATE_STALL // 60
+        self.assertIn(f"translate made no progress for {minutes} min", message)
+
+    def test_a_dump_translate_past_the_ceiling_names_the_bound_and_the_alternative(self):
+        message = self.failure(uprof_native.ToolTimeout("timed out"))
+        minutes = uprof_native.TRANSLATE_CEILING // 60
+        self.assertIn(f"translate did not finish within {minutes} min", message)
 
 
 if __name__ == "__main__":

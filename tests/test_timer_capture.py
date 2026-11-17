@@ -13,6 +13,7 @@ import io
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -76,6 +77,22 @@ def _labels(text):
 
 
 class _Session(unittest.TestCase):
+    """Each test gets a fresh copy of a fixture session built once per class.
+
+    profile() and symbolized() without session= read from a per-class cache of outputs taken on
+    a second, unmodified copy, so a view another test of the class already ran is not rerun.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if _duckdb_missing():
+            return
+        tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(tmp.cleanup)
+        cls.template = timer_fixture.build(Path(tmp.name) / "template")
+        cls.shared = shutil.copytree(cls.template, Path(tmp.name) / "shared")
+        cls.outputs = {}
+
     def setUp(self):
         reason = _duckdb_missing()
         if reason:
@@ -83,7 +100,11 @@ class _Session(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.session = timer_fixture.build(self.root / "timer")
+        self.session = shutil.copytree(self.template, self.root / "timer")
+
+    def variant(self, name, **changes):
+        """A fresh copy of the class's fixture session with one variant applied."""
+        return timer_fixture.derive(self.template, self.root / name, **changes)
 
     def run_tool(self, *args):
         result = subprocess.run(
@@ -97,9 +118,15 @@ class _Session(unittest.TestCase):
         return result
 
     def profile(self, by, *extra, session=None):
-        result = self.run_tool(
-            "profile", "--session", str(session or self.session), "--by", by, *extra
-        )
+        if session is None:
+            key = (by, *extra)
+            if key not in self.outputs:
+                self.outputs[key] = self.run_tool(
+                    "profile", "--session", str(self.shared), "--by", by, *extra
+                )
+            result = self.outputs[key]
+        else:
+            result = self.run_tool("profile", "--session", str(session), "--by", by, *extra)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
@@ -225,9 +252,7 @@ class TimerDetectionTest(_Session):
         self.assertTrue(sampler.pmc_cycle_shares)
 
     def test_missing_sample_column_fails_with_cause_and_alternative(self):
-        session = timer_fixture.build(
-            self.root / "nocol", drop_columns=(timer_fixture.EVENT_COLUMN,)
-        )
+        session = self.variant("nocol", drop_columns=(timer_fixture.EVENT_COLUMN,))
         result = self.run_tool("profile", "--session", str(session), "--by", "process")
         self.assertEqual(result.returncode, 2)
         lines = result.stderr.strip().splitlines()
@@ -253,7 +278,7 @@ class TimerOutputTest(_Session):
     def test_system_wide_metric_states_the_unverified_denominator(self):
         meta = timer_fixture.meta()
         meta["collection"]["target"]["systemWide"] = True
-        session = timer_fixture.build(self.root / "wide", meta_override=meta)
+        session = self.variant("wide", meta_override=meta)
         self.assertIn(METRIC_WIDE + "\n", self.profile("process", session=session))
 
     def test_no_kernel_coverage_line(self):
@@ -376,7 +401,7 @@ class TimerOutputTest(_Session):
         self.assertIn("72.8% ±2.3 points", expected)
 
     def test_read_states_no_interval_below_thirty_samples(self):
-        session = timer_fixture.build(self.root / "small", keep_rows=20)
+        session = self.variant("small", keep_rows=20)
         read = re.search(
             r"^READ: .*$", self.profile("module", session=session), re.MULTILINE
         ).group(0)

@@ -55,7 +55,7 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
             return F.profile_with_stderr(session, by)
 
     def test_the_captured_build_is_symbolized(self):
-        checksum, size = pe_identity(IMAGE)
+        checksum, size = pe_identity(IMAGE.read_bytes())
         document, _ = self.profile(checksum, size)
         self.assertIn("fixture_entry", _names(document))
 
@@ -70,11 +70,11 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
         self.assertRegex(lines[0], re.compile(r"--by module", re.IGNORECASE))
 
     def test_a_different_checksum_gives_no_names(self):
-        checksum, size = pe_identity(IMAGE)
+        checksum, size = pe_identity(IMAGE.read_bytes())
         self.assert_wrong_build(*self.profile(checksum + 1, size))
 
     def test_a_different_size_of_image_without_a_checksum_gives_no_names(self):
-        _, size = pe_identity(IMAGE)
+        _, size = pe_identity(IMAGE.read_bytes())
         self.assert_wrong_build(*self.profile(0, size + 0x1000))
 
     def test_missing_identity_evidence_keeps_the_names(self):
@@ -82,13 +82,13 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
         self.assertIn("fixture_entry", _names(document))
 
     def test_the_captured_build_derives_function_ranges(self):
-        checksum, size = pe_identity(IMAGE)
+        checksum, size = pe_identity(IMAGE.read_bytes())
         document, _ = self.profile(checksum, size, by="function")
         self.assertIn("fixture_entry", _names(document))
         self.assertEqual(document["legend"]["function_ranges"]["absent_by_module"], {})
 
     def test_a_different_build_derives_no_function_ranges(self):
-        checksum, size = pe_identity(IMAGE)
+        checksum, size = pe_identity(IMAGE.read_bytes())
         document, stderr = self.profile(checksum + 1, size, by="function")
         sources = {row.get("function_source") for row in document["rows"]}
         self.assertFalse(sources & {"pdata", "export", "pdb_public"}, document["rows"])
@@ -105,7 +105,7 @@ class SymbolizedImageIdentityTest(unittest.TestCase):
         self.assertIn("--by module", lines[0])
 
     def test_a_different_size_of_image_derives_no_function_ranges(self):
-        _, size = pe_identity(IMAGE)
+        _, size = pe_identity(IMAGE.read_bytes())
         document, _ = self.profile(0, size + 0x1000, by="function")
         absent = document["legend"]["function_ranges"]["absent_by_module"]
         self.assertTrue(next(iter(absent.values()), "").startswith("wrong_build: "), absent)

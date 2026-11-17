@@ -905,7 +905,7 @@ LEFT JOIN v_symbol_frames s ON s.module_name = w.module_name AND s.rva = w.rva;
 -- row over a nearest-symbol frame, not a source symbol, and 'shared' a range whose start carries several public names. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
 -- otherwise the sample count (the same order as sample_share). This view is uncapped, so the
 -- parent lookup of a function-scoped instruction or line view is not hidden by --top; the public
--- v_function_rows adds the cap and the <other functions> remainder.
+-- v_function_rows adds the cap and the remainder rows.
 CREATE OR REPLACE TEMP VIEW v_function_measured AS
 WITH keyed AS (
   SELECT w.module_label AS module_name, w.rva, w.function_id, w.samples, w.weight,

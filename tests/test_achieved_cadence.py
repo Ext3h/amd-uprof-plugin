@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 import uprof_collect
+import uprof_dump
 import uprof_query
 import uprof_session
 
@@ -121,6 +122,35 @@ class OneFrequencyReadTest(unittest.TestCase):
         self.assertEqual(read.call_count, 1)
         self.assertEqual(limits, [10 * 4_700_000 / 4.7e9 * 1e9])
         self.assertIn("4700 MHz", text)
+
+
+class TranslateWindowTest(unittest.TestCase):
+    """A translate time filter that runs past the capture covers only the recorded elapsed time."""
+
+    def achieved(self, time_filter):
+        sampler = cycle_sampler(ibs_dump_kind="ibsop-event-dump")
+        args = argparse.Namespace(session=Path("session"))
+        dump = uprof_dump.DumpInfo(Path("dump.csv"), "beside", time_filter=time_filter)
+        meta = {"collection": {"schedule": {"elapsed": 60_000}}}
+        with (
+            mock.patch.object(uprof_session, "cycle_frequency_hz", return_value=4.7e9),
+            mock.patch.object(uprof_session, "read_meta", return_value=meta),
+            mock.patch.object(uprof_session, "system_wide", return_value=True),
+            mock.patch.object(uprof_query, "_capture_scan", return_value=(6000, 1, None)),
+            mock.patch.object(uprof_query, "_dump_contexts", return_value=[]),
+        ):
+            (_name, text), _samples, _kernel = uprof_query._achieved_field(
+                None, True, args, sampler, dump
+            )
+        return text
+
+    def test_the_window_ends_at_the_capture_end(self):
+        for time_filter, window in (("0:1000", "60.000 s"), ("50:1000", "10.000 s")):
+            with self.subTest(time_filter=time_filter):
+                self.assertIn(f"6000 samples, {window}, 1 CPUs", self.achieved(time_filter))
+
+    def test_a_window_inside_the_capture_is_unchanged(self):
+        self.assertIn("6000 samples, 5.000 s, 1 CPUs", self.achieved("10:15"))
 
 
 if __name__ == "__main__":

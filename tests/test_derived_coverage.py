@@ -2,22 +2,31 @@
 
 Without a PDB or debug info llvm-symbolizer names the nearest preceding export or symbol-table
 entry. Such a frame is not a source symbol, so the coverage line must not call every sample
-drillable, and both the Markdown header and the JSON legend carry the derived count.
+drillable, and both the Markdown header and the JSON legend carry the derived count. A covering
+export range or a uProf name over such a frame repeats the same unproven name, so the row stays
+derived: one name in one capture gets one category in the function, line and instruction views.
 
 Run from the repository root: python tests/run_tests.py test_derived_coverage
 """
 # Spec: SPEC-03, SPEC-04
 
+import json
+import re
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
+import debug_fixtures as F
 import uprof_query
 from test_function_attribution import MODULE, query
 from uprof_functions import FunctionRange
 
-AGREEMENT_SQL = (
-    Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
-) / "agreement.sql"
+REPO = Path(__file__).resolve().parents[1]
+TOOLS = REPO / "plugin" / "skills" / "amd-uprof" / "tools"
+AGREEMENT_SQL = TOOLS / "agreement.sql"
+UPROF = TOOLS / "uprof.py"
 
 
 def symbolizer(scoped, unresolved, derived):
@@ -131,6 +140,120 @@ class RangeCoverageTest(unittest.TestCase):
         )
 
         self.assertEqual(rows, [("derived", 2)])
+
+    def test_a_named_export_range_over_a_nearest_name_stays_derived(self):
+        rows = query(
+            'SELECT "function", attribution, samples FROM v_function_rows WHERE module IS NOT NULL',
+            ranges=[FunctionRange(MODULE, 0x1000, 0x1080, "export", "second")],
+            frames=[(0x1050, "second", "second", "second", "", 0, True)],
+            samples=[(None, 0x1050, 2)],
+            uprof_by="function",
+        )
+
+        self.assertEqual(rows, [("second", "derived", 2)])
+
+    def test_a_uprof_name_over_a_nearest_name_stays_derived(self):
+        rows = query(
+            'SELECT "function", attribution, samples FROM v_function_rows WHERE module IS NOT NULL',
+            functions=[(7, "Exported")],
+            frames=[(0x1050, "second", "second", "second", "", 0, True)],
+            samples=[(7, 0x1050, 2)],
+            uprof_by="function",
+        )
+
+        self.assertEqual(rows, [("Exported", "derived", 2)])
+
+    def test_a_sized_symbol_over_a_named_range_stays_unique(self):
+        rows = query(
+            "SELECT attribution, samples FROM v_function_rows WHERE module IS NOT NULL",
+            ranges=[FunctionRange(MODULE, 0x1000, 0x1080, "export", "second")],
+            frames=[(0x1050, "second", "second", "second", "", 0, False)],
+            samples=[(None, 0x1050, 2)],
+            uprof_by="function",
+        )
+
+        self.assertEqual(rows, [("unique", 2)])
+
+
+@unittest.skipIf(F.duckdb_skip(), F.duckdb_skip() or "")
+@unittest.skipIf(F.tool_skip(), F.tool_skip() or "")
+class CrossViewTest(unittest.TestCase):
+    """The function view and the drills classify one capture's nearest-symbol names alike."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(REPO / "trials"))
+        import build_captures
+
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.session = build_captures.build(Path(cls.tmp.name) / "c", ["attached"])["attached"]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def profile(self, *args) -> dict:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(UPROF),
+                "profile",
+                "--session",
+                str(self.session),
+                "--json",
+                *args,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    @staticmethod
+    def categories(rows) -> dict:
+        found: dict = {}
+        for row in rows:
+            if row.get("module") and row.get("attribution"):
+                found.setdefault((row["module"], row["function"]), set()).add(row["attribution"])
+        return found
+
+    def test_coverage_splits_named_and_derived_alike(self):
+        function = self.profile("--by", "function")["legend"]["symbol_coverage"]
+        line = self.profile("--by", "line")["legend"]["symbol_coverage"]
+
+        split = ("named_samples", "derived_samples", "unresolved_samples", "scoped_samples")
+        self.assertEqual(
+            {key: function["profile_symbolizer"][key] for key in split},
+            {key: line["profile_symbolizer"][key] for key in split},
+        )
+
+    def test_agreement_counts_the_same_derived_samples(self):
+        function = self.profile("--by", "function")["AGREEMENT"]
+        line = self.profile("--by", "line")["AGREEMENT"]
+        derived = re.search(r"derived=\d+ addresses, (\d+) samples", line)
+
+        self.assertIsNotNone(derived, line)
+        self.assertIn(f"derived {derived.group(1)} samples", function)
+
+    def test_a_name_gets_one_category_in_every_view(self):
+        function = self.categories(self.profile("--by", "function")["rows"])
+        drills = {}
+        for by in ("line", "instruction"):
+            for name, found in self.categories(self.profile("--by", by)["rows"]).items():
+                drills.setdefault(name, set()).update(found)
+        for module, name in [key for key in function if key in drills]:
+            for by in ("line", "instruction"):
+                scoped = self.profile("--by", by, "--function", name, "--module", module)
+                for key, found in self.categories(scoped["rows"]).items():
+                    drills.setdefault(key, set()).update(found)
+        shared = sorted(set(function) & set(drills))
+
+        self.assertTrue(shared)
+        for key in shared:
+            with self.subTest(name=key):
+                self.assertEqual(function[key], drills[key])
 
 
 if __name__ == "__main__":

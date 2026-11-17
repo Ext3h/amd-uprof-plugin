@@ -150,7 +150,7 @@ ranges are bound to the symbolization key they consume.
 On a hit the run reads the cached tables through the same artifact views and replays the
 symbolization and range text, so stdout is identical to the cold run. The replayed text carries
 the cold run's temporary paths and the artifact lines are not reprinted, so stderr is not
-byte-identical. `views.sql` defines file-backed source views itself, so a hand-run query with the
+byte-identical. `views.sql` defines the file-backed `uprof_*_source` views itself, so a hand-run query with the
 artifact variables set works; a cache hit replaces them with table reads.
 
 The cache is per session and never shared across sessions. A database over the size cap refuses
@@ -445,10 +445,15 @@ The views and the materialized `v_dump` TEMP TABLE:
 | `v_dump_weighted` | applies `[time_start, time_end)` then adds `weight = delta_tick - lag(delta_tick) OVER (PARTITION BY context_pid, context ORDER BY delta_tick)` from `v_dump_context`; the helper columns are excluded |
 | `v_capture_span` | the span recorded in `session.uprof`: the translate `--time-filter` window when recorded, else `collection.schedule.elapsed`, else `profileDuration`; `start_ns`/`end_ns`/`expected_ns`/`span_label`/`system_wide`, shared by the dump-wide and scoped sanity views |
 | `v_dump_sanity` | whole-dump provenance check: samples before the recorded span start, or core time above span × CPUs when system-wide, error; attached captures report `OK, attached` with processes, TIDs, active TID and CPUs visited, and error only for samples before the span start; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure |
+| `uprof_symbols_source` | file-backed source of `v_symbols`: `read_parquet` of `uprof_symbols`, else an empty typed relation; a session cache hit replaces it with a table read |
+| `uprof_aliases_source` | file-backed source of `v_public_starts`: `read_csv` (all VARCHAR) of `uprof_aliases`, else an empty typed relation; a session cache hit replaces it with a table read |
+| `uprof_functions_source` | file-backed source of `v_function_ranges`: `read_csv` (all VARCHAR) of `uprof_functions`, else an empty typed relation; a session cache hit replaces it with a table read |
+| `uprof_pdbs_source` | file-backed source of `v_pdbs`: `read_csv` (all VARCHAR) of `uprof_pdbs`, else an empty typed relation; a session cache hit replaces it with a table read |
 | `v_symbols` | combined symbolizer artifact: `module_name, rva, function, function_short, containing_function, file, line` |
 | `v_public_starts` | public-symbol fold cache: `module_name, rva, name_count, names` |
 | `v_function_ranges` | derived code ranges from `uprof_functions`, typed to `module_name, function_start, function_end, function_source, function_name`; empty when no derivation ran |
 | `v_pdbs` | PDB chosen by symbolization per module (`module_name`, `pdb`); empty when absent, so the instruction context reuses it instead of discovering a PDB again |
+| `v_symbol_frames` | `v_symbols` with `nearest_symbol` NULL read as `false`; the symbolizer frame `v_scoped_keyed`, `v_line_rows`, `v_instruction_rows` and `v_region_rows` join per module and RVA |
 | `v_scoped` | the one scope: dump branch weights `v_dump_weighted` and maps RVA to `Function.id`; PMC branch counts the event column and leaves `weight` NULL; `--pid`/`--image` apply after weighting |
 | `v_scoped_keyed` | `v_scoped` with each sample's function row: the covering derived range, `range_name`, `range_kind` and `group_key` (range, else `Function.id`, else module); `v_function_measured` groups by `group_key` and a function-scoped line or instruction view selects its parent's `group_key` |
 | `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds the scope's own sampling cadence |

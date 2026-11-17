@@ -1153,8 +1153,9 @@ def _next_calls(
     when function rows still carry unresolved samples of a module whose file is on this host (the
     page view of a missing module repeats the same unresolved RVA); instruction context is a separate request,
     not a default drill-down. A line view offers the instruction view with the same
-    --function/--module scope and --top 1; the instruction rows carry the instruction text, so
-    the instruction view ends the drill. An unscoped module, function or region rollup of a system-wide capture mixes
+    --function/--module scope as --json without --top: the JSON document carries every row's
+    IBS fields and the shared decoded window the cause needs, so the first instruction call is
+    the one that answers and the instruction view ends the drill. An unscoped module, function or region rollup of a system-wide capture mixes
     every process (see below); line and instruction views are asked-for drill-downs and keep their
     calls. The first call itself is chosen by the question. The
     system-wide process ranking scopes its module call to --pid <PID>: which process to drill into
@@ -1185,9 +1186,9 @@ def _next_calls(
     ):
         calls.append(_profile_command(args, "region", data=data))
     if args.by == "line":
-        one_row = argparse.Namespace(**vars(args))
-        one_row.top = "1"
-        calls.append(_profile_command(one_row, "instruction", data=data))
+        drill = argparse.Namespace(**vars(args))
+        drill.top = "20"
+        calls.append(_profile_command(drill, "instruction", json_mode=True, data=data))
     return calls
 
 
@@ -2878,7 +2879,6 @@ def _write_profile(
             image_dirs=paths.image_dirs,
             ambiguous_modules=ambiguous,
         )
-        help_text = uprof_context.context_help(legend or {}, contexts)
         summary = uprof_context.context_omission_summary(contexts)
         if summary:
             print(f"CONTEXT: {summary}", file=sys.stderr)
@@ -2892,10 +2892,25 @@ def _write_profile(
             + tuple(row[rva_at:])
             for row, context in zip(rows, contexts)
         ]
-        if not args.json:
-            contexts, help_text = None, None
+        if args.json:
+            # Each overlapping window is printed once; rows refer to it.
+            contexts, windows = uprof_context.share_windows(
+                [None if module_at is None else row[module_at] for row in rows], contexts
+            )
+            help_text = uprof_context.context_help(legend or {}, contexts, windows)
+        else:
+            contexts, windows, help_text = None, None, None
         uprof_db.output_rows(
-            columns, types, rows, fields, args.json, out_path, legend, contexts, help_text
+            columns,
+            types,
+            rows,
+            fields,
+            args.json,
+            out_path,
+            legend,
+            contexts,
+            help_text,
+            windows,
         )
         return
     uprof_db.output(

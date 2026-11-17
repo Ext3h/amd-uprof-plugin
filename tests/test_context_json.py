@@ -396,7 +396,9 @@ class InstructionProfileTest(unittest.TestCase):
             ),
         )
         self.assertIs(call[6], legend)
-        self.assertIs(call[7], contexts)
+        # A context without runs has no window to share and passes through unchanged.
+        self.assertEqual(call[7], contexts)
+        self.assertEqual(call[9], [])
         help_text = call[8]
         self.assertEqual(
             list(help_text), ["scope", "share", "fields", "omission_reasons", "read", "next"]
@@ -513,17 +515,23 @@ class ContextHelpTest(unittest.TestCase):
         self.assertNotIn("pct", json.dumps(help_text))
         self.assertNotIn("131070", json.dumps(help_text))
 
+    def shared_help(self, contexts):
+        shared, windows = uprof_context.share_windows(["m"] * len(contexts), contexts)
+        return uprof_context.context_help(self.LEGEND, shared, windows)
+
     def test_document_help_names_the_emitted_context_fields(self):
-        fields = uprof_context.context_help(self.LEGEND, self.CONTEXTS)["fields"]
+        fields = self.shared_help(self.CONTEXTS)["fields"]
 
         for name in (
             "anchor",
             "build",
             "function, file",
-            "runs",
-            "runs[].instructions",
-            "runs[].instructions[].import",
-            "runs[].instructions[].ibs",
+            "window",
+            "windows",
+            "windows[].runs",
+            "windows[].runs[].instructions",
+            "windows[].runs[].instructions[].import",
+            "windows[].runs[].instructions[].ibs",
             "omitted",
         ):
             self.assertIn(name, fields)
@@ -531,23 +539,24 @@ class ContextHelpTest(unittest.TestCase):
         self.assertIn("kind", fields["anchor"])
         self.assertIn("verified", fields["build"])
         self.assertIn("frame 0", fields["function, file"])
-        self.assertIn("differs from the context", fields["runs"])
-        self.assertIn("null", fields["runs"])
-        self.assertIn("sample_share", fields["runs[].instructions"])
-        self.assertIn("65535", fields["runs[].instructions[].ibs"])
-        self.assertIn("unsigned decimal integer", fields["runs[].instructions[].ibs"])
+        self.assertIn("differs from the window", fields["windows[].runs"])
+        self.assertIn("null", fields["windows[].runs"])
+        self.assertIn("index into the top-level windows", fields["window"])
+        self.assertIn("printed once", fields["windows"])
+        self.assertIn("sample_share", fields["windows[].runs[].instructions"])
+        self.assertIn("65535", fields["windows[].runs[].instructions[].ibs"])
+        self.assertIn("unsigned decimal integer", fields["windows[].runs[].instructions[].ibs"])
 
     def test_document_help_qualifies_instruction_text_and_ibs_values(self):
-        fields = uprof_context.context_help(self.LEGEND, self.CONTEXTS)["fields"]
+        fields = self.shared_help(self.CONTEXTS)["fields"]
+        instructions = fields["windows[].runs[].instructions"]
+        ibs = fields["windows[].runs[].instructions[].ibs"]
 
-        self.assertIn("nearest-symbol <...> decoration", fields["runs[].instructions"])
-        self.assertIn("not the frame-0 symbol", fields["runs[].instructions"])
-        self.assertIn("use the run's function for the real frame", fields["runs[].instructions"])
-        self.assertIn(
-            "AMD-encoded hardware fields (counts or histograms)",
-            fields["runs[].instructions[].ibs"],
-        )
-        self.assertIn("not decoded meanings", fields["runs[].instructions[].ibs"])
+        self.assertIn("nearest-symbol <...> decoration", instructions)
+        self.assertIn("not the frame-0 symbol", instructions)
+        self.assertIn("use the run's function for the real frame", instructions)
+        self.assertIn("AMD-encoded hardware fields (counts or histograms)", ibs)
+        self.assertIn("not decoded meanings", ibs)
 
     def test_document_help_says_the_cap_counts_row_slots(self):
         scope = uprof_context.context_help(self.LEGEND, self.CONTEXTS)["scope"]
@@ -585,11 +594,20 @@ class ContextHelpTest(unittest.TestCase):
             None,
         ]
 
-        help_text = uprof_context.context_help(self.LEGEND, contexts)
+        help_text = self.shared_help(contexts)
 
         self.assertEqual(
             list(help_text["fields"]),
-            ["anchor", "build", "function, file", "runs", "runs[].instructions", "row.attribution"],
+            [
+                "anchor",
+                "build",
+                "function, file",
+                "window",
+                "windows",
+                "windows[].runs",
+                "windows[].runs[].instructions",
+                "row.attribution",
+            ],
         )
         self.assertEqual(help_text["omission_reasons"], {})
 

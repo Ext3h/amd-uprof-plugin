@@ -72,6 +72,12 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- The `--by instruction --json` document prints each decoded window once in a top-level
+  `windows` list, shared by the rows whose windows overlap in one module; a row's context keeps
+  `anchor`, `build`, `function` and `file` and names its window as `window` (`index`, `first`,
+  `last`) instead of carrying `runs`. The line view's `NEXT` and SKILL.md drill into
+  `--by instruction --json` without `--top`, so the first instruction call carries the IBS
+  cause evidence (issue #446).
 - `--json` prints one compact line, without indentation or separator padding; keys, order and
   values are unchanged. The `--by instruction --top 1 --json` document on the defect lab's
   chain.ibs capture shrinks from 35,313 to 20,768 characters (issue #339).

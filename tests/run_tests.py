@@ -53,11 +53,16 @@ def run(suite: unittest.TestSuite, require_tools: bool, stream=None) -> bool:
 # local symbol caches into the test suite or trace comparisons.
 SYMBOL_PATH_VARS = ("_NT_SYMBOL_PATH", "_NT_ALT_SYMBOL_PATH", "DEBUGINFOD_URLS")
 
+# Caller switches cleared by isolate(): the session-cache opt-out and the uProf CLI override
+# would make test outcomes depend on the developer's environment.
+CALLER_VARS = ("AMDUPROF_CLI", "UPROF_SESSION_CACHE_DISABLE")
+
 
 def isolate(root: Path) -> None:
     """Point the session cache, the user cache directory and every temp directory of this process and its children
     below root, overriding the caller's settings so a run never touches their cache,
-    and clear symbol-path variables so the developer's environment never leaks into tests."""
+    and clear symbol-path variables and caller switches so the developer's environment never leaks
+    into tests."""
     cache, temp, user_cache = root / "cache", root / "tmp", root / "user-cache"
     for directory in (cache, temp, user_cache):
         directory.mkdir()
@@ -68,7 +73,7 @@ def isolate(root: Path) -> None:
     for name in ("TMPDIR", "TEMP", "TMP"):
         os.environ[name] = str(temp)
     tempfile.tempdir = str(temp)
-    for name in SYMBOL_PATH_VARS:
+    for name in SYMBOL_PATH_VARS + CALLER_VARS:
         os.environ.pop(name, None)
 
 

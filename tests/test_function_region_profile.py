@@ -158,7 +158,9 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertEqual((entry["range_start"], entry["range_end_exclusive"]), ("0x1000", "0x1030"))
         self.assertEqual(entry["function_source"], "export")
         self.assertFalse(entry["synthetic_name"])
-        self.assertEqual(entry["attribution"], "unique")
+        # The export range labels the row, but without debug info the export is only the
+        # nearest preceding name, as the line and instruction drills say, so it stays derived.
+        self.assertEqual(entry["attribution"], "derived")
         self.assertIsNone(entry["no_range_reason"])
         self.assertEqual((entry["hot_rva"], entry["hot_rva_samples"]), ("0x101B", 3))
         self.assertEqual(entry["samples_outside_hot_rva"], 1)
@@ -192,7 +194,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertIn("sample_share orders the functions", result.stdout)
         self.assertIn(
             "attribution = unique / shared (folded names) / derived (synthetic binary "
-            "range) / unresolved",
+            "range or nearest-symbol name) / unresolved",
             result.stdout,
         )
         self.assertIn(
@@ -257,7 +259,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
         result = self.run_profile(self.fixture_session())
 
         self.assertIn(
-            "rows named 6/9 samples (66.7%), derived 3/9 samples (33.3%) from a "
+            "rows named 0/9 samples (0.0%), derived 9/9 samples (100.0%) from a "
             "synthetic binary range or a nearest-symbol name, unresolved 0/9 samples (0.0%) "
             "(<no symbol>)",
             result.stdout,
@@ -266,8 +268,8 @@ class FunctionRangeProfileTest(unittest.TestCase):
         agreement = next(
             line for line in result.stdout.splitlines() if line.startswith("AGREEMENT: ")
         )
-        self.assertIn("named 6 samples", agreement)
-        self.assertIn("derived 3 samples", agreement)
+        self.assertIn("named 0 samples", agreement)
+        self.assertIn("derived 9 samples", agreement)
         self.assertIn("unresolved 0 samples", agreement)
         self.assertNotIn("unresolved=", agreement)
 
@@ -276,8 +278,8 @@ class FunctionRangeProfileTest(unittest.TestCase):
             legend["profile_symbolizer"],
             {
                 "source": "the emitted rows: llvm-symbolizer names plus derived PE ranges",
-                "named_samples": 6,
-                "derived_samples": 3,
+                "named_samples": 0,
+                "derived_samples": 9,
                 "resolved_samples": 9,
                 "unresolved_samples": 0,
                 "scoped_samples": 9,
@@ -343,7 +345,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
         self.assertEqual(first["function"], "fixture_entry")
         self.assertEqual(first["function_source"], "export")
         self.assertFalse(first["synthetic_name"])
-        self.assertEqual(first["attribution"], "unique")
+        self.assertEqual(first["attribution"], "derived")
 
         outside = rows[2]
         self.assertEqual((outside["sampled_addresses"], outside["hot_rva"]), (1, "0x201B"))

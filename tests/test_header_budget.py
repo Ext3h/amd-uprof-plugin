@@ -48,7 +48,7 @@ CEILINGS = {
     "function": {
         "ACHIEVED": 41,
         "AGREEMENT": 67,
-        "COLUMNS": 205,
+        "COLUMNS": 208,
         "DUMP": 7,
         "HOT_RVA": 35,
         "KERNEL_COVERAGE": 38,
@@ -65,7 +65,7 @@ CEILINGS = {
     "line": {
         "ACHIEVED": 41,
         "AGREEMENT": 57,
-        "COLUMNS": 58,
+        "COLUMNS": 62,
         "DUMP": 7,
         "FILTER": 29,
         "KERNEL_COVERAGE": 38,
@@ -83,7 +83,7 @@ CEILINGS = {
     "instruction": {
         "ACHIEVED": 41,
         "AGREEMENT": 57,
-        "COLUMNS": 66,
+        "COLUMNS": 70,
         "DUMP": 7,
         "FILTER": 29,
         "KERNEL_COVERAGE": 38,
@@ -97,8 +97,8 @@ CEILINGS = {
         "TIME_SHARE": 87,
         "VERSION": 7,
         "WEIGHTS": 13,
-        "context_help": 481,
-        "legend": 414,
+        "context_help": 485,
+        "legend": 417,
     },
 }
 SYMBOLIZING = ("function", "line", "instruction")

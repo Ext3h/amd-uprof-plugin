@@ -782,8 +782,8 @@ class OutputLegendTest(unittest.TestCase):
 
     def test_attribution_definition_is_emitted(self):
         definition = (
-            "unique / shared (folded names) / derived (synthetic binary range) / "
-            "unresolved (no symbol)"
+            "unique / shared (folded names) / derived (synthetic binary range or "
+            "nearest-symbol name) / unresolved (no symbol)"
         )
         session = self._write_ordering()
         document = json.loads(self.profile(session, "--by", "function", "--json"))

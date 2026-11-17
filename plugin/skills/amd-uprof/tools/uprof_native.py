@@ -199,10 +199,25 @@ def find_symbolizer() -> Path | None:
 
 
 def find_sibling(symbolizer: Path | None, name: str) -> Path | None:
-    """llvm-pdbutil, llvm-readobj and llvm-objdump usually sit next to llvm-symbolizer."""
-    candidates: list[str | os.PathLike[str] | None] = [_which(name)]
+    """llvm-pdbutil, llvm-readobj and llvm-objdump usually sit next to llvm-symbolizer.
+
+    A versioned symbolizer (llvm-symbolizer-18) belongs to one LLVM release, so the tool with
+    the same suffix (llvm-readobj-18) is tried first, beside it and then on PATH; an unversioned
+    name may be another release's tool.
+    """
+    exe = ".exe" if IS_WINDOWS else ""
+    suffix = ""
     if symbolizer:
-        candidates.insert(0, symbolizer.parent / (name + (".exe" if IS_WINDOWS else "")))
+        match = re.fullmatch(
+            r"llvm-symbolizer(-\d+(?:\.\d+)*)(?:\.exe)?", symbolizer.name, re.IGNORECASE
+        )
+        suffix = match.group(1) if match else ""
+    names = [name + suffix, name] if suffix else [name]
+    candidates: list[str | os.PathLike[str] | None] = []
+    for each in names:
+        if symbolizer:
+            candidates.append(symbolizer.parent / (each + exe))
+        candidates.append(_which(each))
     return _first_existing(candidates)
 
 

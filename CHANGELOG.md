@@ -157,6 +157,11 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - The specification, derivation notes and validation records moved from the skill's
   `references/` to the repository's `docs/`; the installed skill no longer ships or names them
   (issue #297).
+- `COLUMNS`, `READ`, `legend.columns.time_share` and `legend.impact.primary_measure_reason` say
+  `time_share` is time only at process, thread or phase scale: below it, in op-count and fetch
+  mode, the gap share equals the sample frequency share. The instruction `context_help.next` no
+  longer calls a high `sample_share` with a low `time_share` frequency rather than impact
+  (issue #278).
 
 ### Fixed
 

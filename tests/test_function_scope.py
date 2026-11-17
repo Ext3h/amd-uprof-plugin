@@ -210,8 +210,8 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.assertEqual(instruction["legend"]["next"], [])
         self.assertEqual(len(line["legend"]["next"]), 1)
         self.assertIn("--by instruction", line["legend"]["next"][0])
-        self.assertNotIn("--json", line["legend"]["next"][0])
-        self.assertIn("--top 1", line["legend"]["next"][0])
+        self.assertIn("--json", line["legend"]["next"][0])
+        self.assertNotIn("--top", line["legend"]["next"][0])
         self.assertIn("--function pdata_0x1050", line["legend"]["next"][0])
 
     def test_the_unscoped_instruction_stop_is_unchanged(self):

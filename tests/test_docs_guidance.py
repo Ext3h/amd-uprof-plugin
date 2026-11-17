@@ -169,7 +169,7 @@ SKILL_PARTS = {
         "| which process, kernel time | `process` |",
         "Options: `--image %<EXE>`/`--pid N` for the named process,",
         (
-            "then the view asked for: `--by line` or `--by instruction --top 1`, with "
+            "then the view asked for: `--by line` or `--by instruction --json`, with "
             "`--function`/`--module` from its row"
         ),
     ),
@@ -194,7 +194,6 @@ SKILL_PARTS = {
         "quote shares as they say",
         "a CPU-time answer ends at `--by function` and its `HOT_RVA` line, without `--by region`",
         "a drill runs only the one view asked for",
-        "Run every `instruction` view with `--top 1`, also when `NEXT` omits it.",
         "No `NEXT` line: report.",
         "Answer from `uprof.py` output only",
     ),

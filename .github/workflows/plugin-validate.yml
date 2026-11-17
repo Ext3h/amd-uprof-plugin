@@ -22,10 +22,10 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Validate plugin
-        run: claude plugin validate ./plugin
+        run: claude plugin validate --strict ./plugin
 
       - name: Validate marketplace
-        run: claude plugin validate .
+        run: claude plugin validate --strict .
 
       - uses: actions/setup-python@v5
         with:

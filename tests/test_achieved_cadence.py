@@ -116,7 +116,7 @@ class OneFrequencyReadTest(unittest.TestCase):
             mock.patch.object(uprof_query, "_dump_contexts", side_effect=contexts),
         ):
             (_name, text), _samples, _kernel = uprof_query._achieved_field(
-                None, True, args, sampler, None
+                None, True, args, sampler, None, uprof_session.cycle_frequency_hz(sampler)
             )
 
         self.assertEqual(read.call_count, 1)
@@ -140,7 +140,7 @@ class TranslateWindowTest(unittest.TestCase):
             mock.patch.object(uprof_query, "_dump_contexts", return_value=[]),
         ):
             (_name, text), _samples, _kernel = uprof_query._achieved_field(
-                None, True, args, sampler, dump
+                None, True, args, sampler, dump, uprof_session.cycle_frequency_hz(sampler)
             )
         return text
 

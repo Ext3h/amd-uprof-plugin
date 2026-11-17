@@ -1084,11 +1084,17 @@ def _cycle_controlled(sampler: uprof_session.Sampler) -> bool:
     return sampler.ibs_dump_kind == "ibsop-event-dump" and sampler.interval_units == "cycles"
 
 
-def _cpu_seconds_interval(sampler: uprof_session.Sampler) -> float | None:
-    """Seconds per sample, or None when a sample is not a fixed cycle count."""
-    if not (sampler.pmc_cycle_shares or _cycle_controlled(sampler)):
+def _cpu_seconds_interval(
+    sampler: uprof_session.Sampler, frequency_hz: float | None
+) -> float | None:
+    """Seconds per sample, or None when a sample is not a fixed cycle count.
+
+    frequency_hz is the report's one frequency read, the one ACHIEVED converts at; None means
+    no frequency is readable, so no seconds follow.
+    """
+    if frequency_hz is None or not (sampler.pmc_cycle_shares or _cycle_controlled(sampler)):
         return None
-    interval_s, _requested, _ideal = uprof_session.requested_interval(sampler)
+    interval_s, _requested, _ideal = uprof_session.requested_interval(sampler, frequency_hz)
     return interval_s
 
 
@@ -2201,7 +2207,9 @@ def dump_achieved(session: Path, dump_path: Path, time_filter: str | None) -> st
     with uprof_db.open_query(
         session / "cpu.db", [TOOLS_DIR / "views.sql"], variables
     ) as connection:
-        (_name, text), _samples, _kernel = _achieved_field(connection, True, args, sampler, dump)
+        (_name, text), _samples, _kernel = _achieved_field(
+            connection, True, args, sampler, dump, uprof_session.cycle_frequency_hz(sampler)
+        )
     return text
 
 
@@ -2317,10 +2325,14 @@ def _achieved_field(
     args: argparse.Namespace,
     sampler: uprof_session.Sampler,
     dump: uprof_dump.DumpInfo | None,
+    frequency_hz: float | None,
     check_kernel: bool = False,
     timer_contexts: list[uprof_session.ContextCadence] | None = None,
 ) -> tuple[tuple[str, str], int, bool | None]:
     """The achieved sampling rate over the whole capture, independent of the scope filter.
+
+    frequency_hz is the report's one core-frequency read (cycle_frequency_hz), so the run-gap
+    limit, the ACHIEVED text and cpu_seconds convert at the same value.
 
     The same scan returns the whole-capture sample count and, when check_kernel is set, whether
     any sample landed in a kernel image, so the kernel-coverage check adds no query of its own.
@@ -2338,7 +2350,6 @@ def _achieved_field(
     label = "CPU"
     window_s: float | None = None
     samples, cpus, kernel_covered = _capture_scan(connection, check_kernel)
-    frequency_hz = uprof_session.cycle_frequency_hz(sampler)
     if has_dump:
         wide = uprof_session.system_wide(args.session)
         label = "CPU" if wide else "thread"
@@ -3207,8 +3218,9 @@ def run_query_command(args: argparse.Namespace) -> None:
     function_scoped = getattr(args, "function", None) is not None
     # A view filtered to one module reports symbolization diagnostics for that module only.
     diagnostics_scope = getattr(args, "module", None) if function_scoped else None
+    frequency_hz = uprof_session.cycle_frequency_hz(sampler)
     sample_interval_s = (
-        _cpu_seconds_interval(sampler)
+        _cpu_seconds_interval(sampler, frequency_hz)
         if args.by in ("module", "region", "function") or function_scoped
         else None
     )
@@ -3426,7 +3438,14 @@ def run_query_command(args: argparse.Namespace) -> None:
                 fields.append(("SANITY", sanity_message))
             check_kernel = sampler.os_requested and not capture_windowed
             achieved, captured_samples, kernel_covered = _achieved_field(
-                connection, dump is not None, args, sampler, dump, check_kernel, timer_contexts
+                connection,
+                dump is not None,
+                args,
+                sampler,
+                dump,
+                frequency_hz,
+                check_kernel,
+                timer_contexts,
             )
             if achieved:
                 fields.append(achieved)

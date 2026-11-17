@@ -14,7 +14,8 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 
-from uprof_util import UprofError, check_session_meta_size
+import uprof_shell
+from uprof_util import LinesError, UprofError, check_session_meta_size
 
 PMC_EVENT = "event#0x3000076"
 IBS_OP_EVENT = "event#0x100000000f100"
@@ -732,6 +733,23 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
     (qpc * 1e9 / freq - start) / 1e9. A reading taken before the capture started (negative)
     is attach latency: the capture does not cover it.
     """
+    # A frequency is ticks per second; zero or a negative value has no meaning, and only an
+    # absent --freq takes the default.
+    if freq is not None and freq <= 0:
+        tool, tool_data = uprof_shell.path_arg(
+            Path(__file__).resolve().with_name("uprof.py"), "<UPROF_PY>"
+        )
+        session, session_data = uprof_shell.path_arg(Path(session_dir).resolve(), "<SESSION_DIR>")
+        command = f"python {tool} anchor --session {session} --qpc {qpc}"
+        raise LinesError(
+            [
+                f"--freq must be a positive QueryPerformanceFrequency in Hz, got {freq}",
+                f"ALTERNATIVE: measured frequency: {command} --freq <QPC_HZ>",
+                f"ALTERNATIVE: 10 MHz default: {command}",
+                tool_data,
+                session_data,
+            ]
+        )
     meta = read_meta(session_dir)
     if not meta:
         raise UprofError(f"session.uprof is missing or unreadable in {session_dir}")
@@ -740,8 +758,10 @@ def anchor_report(session_dir: Path | str, qpc: int, freq: int | None) -> list[s
         raise UprofError("session.uprof records no collection.schedule.start; cannot anchor")
     start = meta_int(schedule["start"], "collection.schedule.start")
 
-    hertz = freq or 10_000_000
-    source = "argument" if freq else "default (10 MHz; the session records no QPC frequency)"
+    hertz = 10_000_000 if freq is None else freq
+    source = (
+        "default (10 MHz; the session records no QPC frequency)" if freq is None else "argument"
+    )
     relative = (qpc * 1e9 / hertz - start) / 1e9
     lines = [
         f"QPC={qpc} HZ={hertz} HZ_SOURCE={source}",

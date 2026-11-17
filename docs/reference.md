@@ -96,7 +96,7 @@ cover it. `startTs`
 The session records no QPC frequency — only the core MHz used for the collect interval conversion
 — so `--freq` defaults to 10,000,000 Hz (the Windows QPC frequency) unless it is given. Pass it
 when the workload's clock differs. `HZ_SOURCE=argument` means `--freq` supplied the value;
-`HZ_SOURCE=default` names the 10 MHz default.
+`HZ_SOURCE=default` names the 10 MHz default. A `--freq` of zero or below is an error (exit 2).
 
 ### Dump resolution and cache
 

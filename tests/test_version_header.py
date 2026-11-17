@@ -17,8 +17,34 @@ from pathlib import Path
 import duckdb
 import uprof_util
 
-TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TOOLS_DIR = REPO_ROOT / "plugin" / "skills" / "amd-uprof" / "tools"
 EVENT_COLUMN = "event#0x3000076"
+
+
+class VersionAgreementTest(unittest.TestCase):
+    """The marketplace entry, plugin.json and the built-in fallback state one version (#124)."""
+
+    def test_all_stated_versions_agree(self):
+        plugin = json.loads(
+            (REPO_ROOT / "plugin" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        marketplace = json.loads(
+            (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        entry = next(p for p in marketplace["plugins"] if p["name"] == plugin["name"])
+
+        self.assertEqual(
+            {
+                "marketplace.json": entry["version"],
+                "uprof_util._BUILTIN_VERSION": uprof_util._BUILTIN_VERSION,
+            },
+            {
+                "marketplace.json": plugin["version"],
+                "uprof_util._BUILTIN_VERSION": plugin["version"],
+            },
+            "every stated version must equal plugin.json's",
+        )
 
 
 class SkillIdentityTest(unittest.TestCase):

@@ -33,7 +33,9 @@ PROBE = textwrap.dedent("""
                            "scratch": scratch,
                            "env_temp": [os.environ.get(name) for name in ("TMPDIR", "TEMP", "TMP")],
                            "symbol_vars": {name: os.environ.get(name) for name in (
-                               "_NT_SYMBOL_PATH", "_NT_ALT_SYMBOL_PATH", "DEBUGINFOD_URLS")}},
+                               "_NT_SYMBOL_PATH", "_NT_ALT_SYMBOL_PATH", "DEBUGINFOD_URLS")},
+                           "caller_vars": {name: os.environ.get(name) for name in (
+                               "AMDUPROF_CLI", "UPROF_SESSION_CACHE_DISABLE")}},
                           handle)
 """)
 
@@ -64,6 +66,31 @@ class RunnerIsolationTest(unittest.TestCase):
             seen = json.loads(report.read_text(encoding="utf-8"))
             for name in sentinels:
                 self.assertIsNone(seen["symbol_vars"][name], f"{name} leaked into the test suite")
+
+    def test_a_run_clears_the_callers_cache_opt_out_and_uprof_cli(self):
+        with tempfile.TemporaryDirectory() as outer:
+            outer = Path(outer)
+            probe_dir = outer / "probe"
+            probe_dir.mkdir()
+            (probe_dir / "probe_caller.py").write_text(PROBE, encoding="utf-8")
+            report = outer / "report.json"
+            sentinels = {
+                "AMDUPROF_CLI": r"C:\developer\AMDuProfCLI.exe",
+                "UPROF_SESSION_CACHE_DISABLE": "1",
+            }
+            env = dict(os.environ, PYTHONPATH=str(probe_dir), PROBE_REPORT=str(report), **sentinels)
+            run = subprocess.run(
+                [sys.executable, str(RUNNER), "probe_caller"],
+                check=False,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            seen = json.loads(report.read_text(encoding="utf-8"))
+            for name in sentinels:
+                self.assertIsNone(seen["caller_vars"][name], f"{name} leaked into the test suite")
 
     def test_a_run_uses_and_removes_its_own_cache_and_temp_root(self):
         with tempfile.TemporaryDirectory() as outer:

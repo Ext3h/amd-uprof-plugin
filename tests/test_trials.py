@@ -509,6 +509,26 @@ CALL_OUTPUT_CEILING = 44_000
 # Scenarios whose minimal calls exceed the ceiling today, with the issue that brings them
 # below it. Their Known gaps must name that issue; drop an entry once it is fixed.
 CEILING_GAPS: dict[str, str] = {}
+# Views that run llvm-symbolizer; their calls keep a process of their own.
+SYMBOLIZING_VIEWS = {"function", "instruction", "line"}
+_SHARED: dict[str, object] = {}
+
+
+def shared_captures() -> tuple[Path, dict[str, Path]]:
+    """(root, sessions) of one build of every session, shared by the classes that only read
+    them and removed after this module's tests."""
+    if not _SHARED:
+        directory = tempfile.TemporaryDirectory(prefix="uprof-trials-captures-")
+        unittest.addModuleCleanup(directory.cleanup)
+        root = Path(directory.name) / "captures"
+        _SHARED.update(root=root, sessions=build_captures.build(root))
+    return _SHARED["root"], _SHARED["sessions"]
+
+
+def symbolizes(args: list[str]) -> bool:
+    return "--by" in args and args[args.index("--by") + 1] in SYMBOLIZING_VIEWS
+
+
 # The function row each lab scenario drills into, as the committed capture names it.
 LAB_FUNCTIONS = {
     "SCN-21": "lab_memory",
@@ -526,15 +546,9 @@ class ContextCeilingTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.directory = tempfile.TemporaryDirectory(prefix="uprof-trials-ceiling-")
-        cls.root = Path(cls.directory.name) / "captures"
-        cls.sessions = build_captures.build(cls.root)
-
+        cls.root, cls.sessions = shared_captures()
         cls.outputs: dict[str, str] = {}
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.directory.cleanup()
+        cls.cli_checked = False
 
     def committed(self, name: str) -> Path:
         """A copy of a committed capture from HEAD, with its images/ beside it."""
@@ -546,18 +560,37 @@ class ContextCeilingTest(unittest.TestCase):
             run_trials.extract("HEAD", images, target / run_trials.IMAGES)
         return target
 
-    def run_call(self, call: str) -> str:
-        if call in self.outputs:
-            return self.outputs[call]
+    def run_cli(self, call: str, args: list[str]) -> str:
         result = subprocess.run(
-            [sys.executable, str(UPROF), *shlex.split(call)],
+            [sys.executable, str(UPROF), *args],
             check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
         )
         self.assertEqual(result.returncode, 0, f"{call}\n{result.stderr}")
-        text = result.stdout + result.stderr
+        return result.stdout + result.stderr
+
+    def run_in_process(self, call: str, args: list[str]) -> str:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = uprof.main(args)
+        self.assertEqual(code, 0, f"{call}\n{stderr.getvalue()}")
+        return stdout.getvalue() + stderr.getvalue()
+
+    def run_call(self, call: str) -> str:
+        if call in self.outputs:
+            return self.outputs[call]
+        args = shlex.split(call)
+        # A call that does not symbolize runs in this process: it prints what the CLI prints,
+        # which the first such call checks against a real CLI run.
+        if symbolizes(args):
+            text = self.run_cli(call, args)
+        else:
+            text = self.run_in_process(call, args)
+            if not type(self).cli_checked:
+                type(self).cli_checked = True
+                self.assertEqual(text, self.run_cli(call, args), call)
         # The temporary capture root repeats in every path; count it as a short user path, so
         # the result does not depend on where the test runs.
         for spelling in sorted(
@@ -660,14 +693,7 @@ class LoadedSessionTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.directory = tempfile.TemporaryDirectory(prefix="uprof-trials-loaded-")
-        cls.sessions = build_captures.build(
-            Path(cls.directory.name) / "captures", ["systemwide_loaded", "attached_inproc_loaded"]
-        )
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.directory.cleanup()
+        _root, cls.sessions = shared_captures()
 
     def rows(self, session: str, by: str, *extra: str) -> list[dict]:
         return F.profile(self.sessions[session], by, extra)["rows"]

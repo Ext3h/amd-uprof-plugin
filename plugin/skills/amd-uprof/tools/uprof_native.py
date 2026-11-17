@@ -32,8 +32,8 @@ from uprof_util import (
     contains,
     copy_session,
     inline,
-    parse_time_filter,
     redact_credentials,
+    require_time_filter,
     skill_identity,
     tail_lines,
 )
@@ -1212,8 +1212,8 @@ def translate(
             "translate never appends to it or merges into it. Choose another --out-dir, or pass "
             "--force to replace the files translate copied and generated there"
         )
-    if time_filter and parse_time_filter(time_filter) is None:
-        raise UprofError("--time-filter needs T1:T2 in seconds from capture start, e.g. 0:5")
+    if time_filter:
+        require_time_filter(time_filter)
     if ascii_kind and ascii_kind not in DUMP_FILENAMES:
         raise UprofError(
             f"unknown --ascii kind {ascii_kind!r}; use ibsop-event-dump or ibsfetch-event-dump"

@@ -71,17 +71,38 @@ class ContextCadence:
 _RUN_GAP_FACTOR = 10.0
 
 
+def _load_meta(session_dir: Path | str) -> Any:
+    """The parsed session.uprof; the open or JSON error propagates."""
+    path = Path(session_dir) / "session.uprof"
+    check_session_meta_size(path)
+    with open(path, "r", encoding="utf-8-sig") as handle:
+        return json.load(handle)
+
+
+def require_readable_meta(session_dir: Path | str) -> None:
+    """Raise UprofError when session.uprof exists but cannot be opened or is not valid JSON.
+
+    Such a file says nothing about the sampler, so the error names the file instead of a
+    missing event; recapturing does not repair a corrupt or locked copy.
+    """
+    try:
+        _load_meta(session_dir)
+    except FileNotFoundError:
+        return
+    except (OSError, json.JSONDecodeError) as exc:
+        raise UprofError(
+            f"session.uprof is not readable JSON ({exc}); copy the session again"
+        ) from exc
+
+
 def read_meta(session_dir: Path | str) -> dict[str, Any] | None:
     """The session.uprof object: None when the file is missing, {} when it is not readable JSON.
 
     Unreadable JSON stays {} so callers can report the metric basis as not established. JSON that
     parses to anything but an object is a malformed file and raises UprofError.
     """
-    path = Path(session_dir) / "session.uprof"
-    check_session_meta_size(path)
     try:
-        with open(path, "r", encoding="utf-8-sig") as handle:
-            data = json.load(handle)
+        data = _load_meta(session_dir)
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError):

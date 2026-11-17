@@ -42,7 +42,7 @@ from uprof_native import (
     translate_stopped,
     tree_size,
 )
-from uprof_session import Sampler
+from uprof_session import Sampler, require_readable_meta
 from uprof_util import (
     DUMP_FILENAMES,
     LinesError,
@@ -634,6 +634,7 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
             f"session.uprof is missing from {session_dir}; time_share needs it to identify the "
             "sampler and check the dump against the capture span"
         )
+    require_readable_meta(session_dir)
     if not sampler.ibs_dump_kind:
         raise failure(
             "session.uprof records no IBS, PMC or timer event",

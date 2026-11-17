@@ -26,7 +26,7 @@ separator padding, so agent harnesses that cut long tool output keep more of it.
 
 ## session.uprof
 
-UTF-8 JSON (a BOM is tolerated). A file that is not readable JSON is read as empty, so the metric basis is reported as not established. JSON that is not an object, a section of the wrong type, or a non-integer ID or start time is an error (exit 2); an absent or null section is empty. Integers may be JSON numbers, decimal text or `0x` hex text. The keys the tools read:
+UTF-8 JSON (a BOM is tolerated). A file that cannot be opened or is not valid JSON is read as empty, so the metric basis is reported as not established; a profile run that needs the IBS dump then fails with `session.uprof is not readable JSON (<error>); copy the session again` (exit 2). JSON that is not an object, a section of the wrong type, or a non-integer ID or start time is an error (exit 2); an absent or null section is empty. Integers may be JSON numbers, decimal text or `0x` hex text. The keys the tools read:
 
 | Key | Used for |
 |---|---|

@@ -214,15 +214,28 @@ class AttachedTimeShareTest(unittest.TestCase):
         # A single thread cannot have 2 CPUs' worth of capacity.
         self.assertNotIn("x 2 CPUs", sanity)
 
-    def test_sanity_names_the_outside_samples_not_a_capacity(self):
-        # The per-thread guard must not pre-empt the accurate out-of-span error: a thread whose
-        # first sample is at 0 and last at 25 s against a 21 s span has samples outside it.
+    def test_samples_past_the_recorded_end_are_not_refused(self):
+        # Acquisition stops after the recorded end, so a thread may sample past it; only a sample
+        # before the recorded start is a provenance error.
         self._write_rows(_dump_rows() + [(25_000_000_000, 0, BETA, BETA_OFFSET)])
+
+        sanity = self._profile()["SANITY"]
+
+        self.assertTrue(sanity.startswith("OK, attached: "), sanity)
+
+    def test_sanity_names_the_samples_before_the_recorded_start(self):
+        # A recorded translate window [1, 21) s keeps DeltaTick capture-relative, so the sample at
+        # 0 s lies before it; the per-thread guard must not pre-empt this error.
+        meta = json.loads((self.session / "session.uprof").read_text(encoding="utf-8"))
+        meta["translateCommand"] += " --time-filter 1:21"
+        (self.session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
 
         result = self._run_profile_failure()
 
-        self.assertIn("1 TID(s) hold samples outside the recorded elapsed", result.stderr)
-        self.assertIn("sample DeltaTick range 0.000..25.000 s", result.stderr)
+        self.assertIn(
+            "1 TID(s) hold samples before the recorded window start 1.000 s", result.stderr
+        )
+        self.assertIn("sample DeltaTick range 0.000..21.000 s", result.stderr)
         self.assertNotIn("one thread covers", result.stderr)
 
     def test_single_sample_threads_still_get_a_sanity_line(self):

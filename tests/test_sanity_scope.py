@@ -138,6 +138,49 @@ class SanityScopeTest(unittest.TestCase):
         self.assertNotIn("span", line)
         self.assertNotIn("s of core time", line)
 
+    def test_samples_past_the_recorded_end_are_not_refused(self):
+        # Acquisition stops after the recorded end: every CPU may sample past it while the core
+        # time stays within span x CPUs.
+        lines = ["DeltaTick,CPU_Number,TID,PID,Offset,ModuleName"]
+        for cpu in (0, 1):
+            # 0.5 .. 10.4 s on each CPU: 9.9 s of core time per CPU, 0.4 s past the 10 s end.
+            for i in range(100):
+                lines.append(f"{500_000_000 + i * 100_000_000},{cpu},200,200,8192,background.exe")
+        (self.session / "IbsOpDump.csv").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+        )
+
+        line = self.sanity_line()
+
+        self.assertIn("SANITY: OK, system-wide: ", line)
+        self.assertNotIn("within one sampling cadence", line)
+
+    def test_samples_before_the_recorded_start_are_refused(self):
+        meta = json.loads((self.session / "session.uprof").read_text(encoding="utf-8"))
+        meta["translateCommand"] += " --time-filter 1:10"
+        (self.session / "session.uprof").write_text(json.dumps(meta), encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOLS_DIR / "uprof.py"),
+                "profile",
+                "--session",
+                str(self.session),
+                "--by",
+                "process",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(
+            "2 CPU(s) hold samples before the recorded window start 1.000 s", result.stderr
+        )
+
     def test_unfiltered_run_makes_no_scoped_claim(self):
         line = self.sanity_line()
 

@@ -1042,12 +1042,19 @@ def _hot_rva_attribution(sampler: uprof_session.Sampler, container: str) -> str:
     )
 
 
+# A sample with an empty address lands in no page, so the region total leaves it out.
+_REGION_DENOMINATOR = (
+    "samples without an address are in no page, so every region share is of the scoped samples "
+    "that carry an address"
+)
+
+
 def _region_meaning(sampler: uprof_session.Sampler) -> str:
     """What a region row is, with the capture mode's hot_rva note."""
     return (
         "4 KiB address page; samples are grouped by address, not by control flow; a page may "
         "span unrelated code; the hot RVA is the most precise attribution available"
-        f"{_hot_rva_suffix(sampler)} and the page is the coarse bucket"
+        f"{_hot_rva_suffix(sampler)} and the page is the coarse bucket; {_REGION_DENOMINATOR}"
     )
 
 
@@ -1578,7 +1585,7 @@ def _legend(
         columns["hot_rva"] = (
             f"highest-sample RVA in the page; ties pick the lowest RVA; {attribution}"
         )
-        columns["hot_rva_share"] = "share of the scoped capture total"
+        columns["hot_rva_share"] = "share of the scoped samples that carry an address"
         columns["function_source"] = (
             "hot_rva's boundary source: pdb_public, export, pdata or none (no range covers hot_rva)"
         )

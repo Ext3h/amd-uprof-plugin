@@ -157,6 +157,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - The `HOT_RVA` summary of `profile --by function` breaks a hot-sample tie by the numeric RVA,
   then the module, instead of by the hex string, so `0x9` comes before `0x10` and the pick is
   the same on every run (issue #98).
+- The `profile --by region` legend names its denominator: a sample without an address is in no
+  page, so the region shares and `hot_rva_share` are of the scoped samples that carry an
+  address, not of the scoped capture total the legend claimed (issue #90).
 
 ## 2.1.0 — 2026-11-08
 

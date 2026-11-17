@@ -307,6 +307,38 @@ class ModuleProfileTest(unittest.TestCase):
         for row in document["rows"]:
             self.assertAlmostEqual(row["cpu_seconds"], row["samples"] * 0.001, places=12)
 
+    def cpu_seconds_meaning(self, boost_maximum_hz):
+        """The cpu_seconds legend at a pinned 4700 MHz host clock and boost maximum."""
+        from unittest import mock
+
+        import uprof_collect
+
+        with mock.patch.object(
+            uprof_collect, "_boost_maximum_hz", return_value=boost_maximum_hz, create=True
+        ):
+            document = self.document_at_frequency(self.session(), 4_700_000_000)
+        return document["legend"]["columns"]["cpu_seconds"]
+
+    def test_cpu_seconds_names_the_host_clock_and_the_boost_error(self):
+        # The session records no clock, and the cores run above the nominal clock under boost,
+        # so the seconds overstate CPU time by up to the max/reported clock ratio (#275).
+        meaning = self.cpu_seconds_meaning(None)
+        self.assertIn(
+            "at 4700 MHz (this host's reported clock; the session records none; boost makes "
+            "true CPU time lower, by up to max/reported clock)",
+            meaning,
+        )
+
+    def test_cpu_seconds_states_the_boost_ratio_where_the_host_reports_its_maximum(self):
+        meaning = self.cpu_seconds_meaning(5_200_000_000)
+        self.assertIn("by up to max/reported clock (5200/4700 MHz = 1.106))", meaning)
+
+    def test_cpu_seconds_states_no_boost_error_when_the_clock_is_the_maximum(self):
+        # A reported clock at the boost maximum cannot be exceeded, so boost adds no error.
+        meaning = self.cpu_seconds_meaning(4_700_000_000)
+        self.assertIn("at 4700 MHz (this host's reported clock; the session records none)", meaning)
+        self.assertNotIn("boost", meaning)
+
     def test_op_count_module_output_omits_cpu_seconds_with_the_reason(self):
         session = self.session("op-count", cycle_controlled=False)
         document = self.document(session)

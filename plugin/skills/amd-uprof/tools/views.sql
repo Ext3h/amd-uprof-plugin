@@ -857,7 +857,8 @@ HAVING count(*) > 0;
 
 -- Every scoped sample with the function row it belongs to: the derived range that covers its RVA,
 -- else its named uProf Function.id, else the llvm-symbolizer containing function (an ELF/DWARF
--- image has no PE boundary source), else its unnamed Function.id, else its module. The function rows group by group_key, and a
+-- image has no PE boundary source), else its module. A blank-named Function.id names nothing, so
+-- its samples join the module's one <unresolved> row. The function rows group by group_key, and a
 -- function-scoped instruction or line view selects its samples by the parent row's group_key, so
 -- a parent's children are exactly the samples its measurement holds.
 CREATE OR REPLACE TEMP VIEW v_scoped_keyed AS
@@ -875,12 +876,10 @@ SELECT w.*,
             WHEN NULLIF(s.containing_function, '') IS NOT NULL
               THEN 's:' || COALESCE(NULLIF(w.module_name, ''), '<unknown module>') || chr(2)
                    || s.containing_function
-            WHEN w.function_id IS NOT NULL THEN 'f:' || CAST(w.function_id AS VARCHAR)
             ELSE 'u:' || COALESCE(NULLIF(w.module_name, ''), '<unknown module>') END AS group_key,
        CASE WHEN r.function_start IS NOT NULL THEN 'range'
             WHEN w.function_id IS NOT NULL AND COALESCE(f.name, '') <> '' THEN 'uprof_db'
             WHEN NULLIF(s.containing_function, '') IS NOT NULL THEN 'symbolizer'
-            WHEN w.function_id IS NOT NULL THEN 'uprof_db'
             ELSE 'none' END AS range_kind
 FROM v_scoped w
 LEFT JOIN v_function_ranges r
@@ -922,7 +921,7 @@ WITH keyed AS (
   SELECT group_key,
          min(module_name) AS module_name,
          min(range_kind) AS range_kind,
-         max(function_id) AS function_id,
+         CASE WHEN min(range_kind) <> 'none' THEN max(function_id) END AS function_id,
          max(function_start) AS function_start,
          max(function_end) AS function_end,
          max(function_source) AS function_source,
@@ -978,7 +977,7 @@ WITH keyed AS (
                 THEN 'no boundary source (export, PDB public or .pdata) covers these samples: the module file is unavailable, not a PE image, or the RVA is outside a code section; the row groups by uProf Function.id, and --by region is the page view'
               WHEN getvariable('has_dump') AND module_ambiguous(a.module_name)
                 THEN 'the capture maps this module name to more than one image version and IBS dump rows carry the name, not Module.id, so no version''s functions are attributed; --by module is the module view'
-              ELSE 'no derived range and no uProf Function.id for these samples; --by region is the page view' END
+              ELSE 'no derived range and no named uProf Function for these samples; --by region is the page view' END
            AS function_reason
   FROM agg a
   LEFT JOIN hot h USING (group_key)
@@ -994,7 +993,9 @@ WITH keyed AS (
          row_number() OVER (
            ORDER BY CASE getvariable('uprof_primary_measure')
                       WHEN 'time_share' THEN weight END DESC NULLS LAST,
-                    samples DESC, function_name, module_name) AS rn
+                    samples DESC, function_name, module_name,
+                    -- group_key is unique per row, so the order is total and --top stable.
+                    function_start NULLS LAST, function_id NULLS LAST, group_key) AS rn
   FROM labelled
 )
 SELECT * FROM measured;

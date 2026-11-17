@@ -1411,7 +1411,7 @@ def _function_scope(connection: object, args: argparse.Namespace) -> dict[str, A
         )
     else:
         raise util.UprofError(
-            f"{wanted} has no derived range and no uProf Function.id; there is no address set "
+            f"{wanted} has no derived range and no named uProf Function; there is no address set "
             "to filter the instruction or line rows to; use --by region for the page view"
         )
     return {

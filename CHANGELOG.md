@@ -145,6 +145,13 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   `references/` to the repository's `docs/`; the installed skill no longer ships or names them
   (issue #297).
 
+### Fixed
+
+- `profile --by function` keeps one `<unresolved>` row per module: samples of blank-named uProf
+  `Function.id`s join it instead of adding look-alike rows, so `--function '<unresolved>'
+  --module <m>` selects it. Rows that tie on every measure and name order by range start,
+  `Function.id` and group key, so `--top` keeps the same rows on every run (issue #83).
+
 ## 2.1.0 — 2026-11-08
 
 ### Added

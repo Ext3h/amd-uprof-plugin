@@ -197,6 +197,13 @@ compares it with the end of the scope window — the recorded translate span cli
 busiest in-scope thread's sample count). The verdict says `WARN` and names the scope when the
 scope's late time is uncovered, and `OK` when the scope sampled near the end of its window.
 
+A timer capture has no dump, so the late-coverage verdict does not apply. Under `--pid`/`--image`
+its `SANITY` field is a `scoped on-CPU (<scope>)` line instead: the scope's samples against the
+ticks one thread running the whole recorded span would get at the requested interval, as a
+rounded percentage of the span. A timer tick only finds running threads, so time the scope spent
+blocked or waiting appears in no share; a low percentage is that off-CPU time. The figure sums
+the scope's threads, so a multithreaded scope can exceed 100%.
+
 An empty scope prints one `WARNING: no samples in the selected scope` on stderr before the document is written, and no `NEXT` (no rows to descend from); with `--image` it names the capture's `Process.name` values and states that `--image` filters on `Process.name`, not modules.
 
 ### Achieved sample rate

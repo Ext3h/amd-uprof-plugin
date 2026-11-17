@@ -922,6 +922,9 @@ _CYCLE_BASIS: Final = (
     "; for a cycle-controlled IBS capture sample_share (fixed cycles per "
     "sample) is the CPU-cycle share and the better ranking"
 )
+# In op-count and fetch mode, interleaved code sees the same expected gap per sample, so below
+# process, thread or phase scale the gap share equals the sample frequency share.
+_TIME_SCALE: Final = "time only at process, thread or phase scale"
 _TAG_SHARE_MEANING: Final = (
     "share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to retirement, "
     "queue/stalls included; 16-bit counter clipped at 65535); a total, not per-op latency"
@@ -1276,8 +1279,8 @@ def _primary_measure(
             "share"
         )
     return "time_share", (
-        "this gap-weighted (time-based) capture has per-sample timestamps, so "
-        "time_share ranks where time went"
+        "this capture has per-sample timestamps but no fixed work per sample, so the gap "
+        f"share ranks; it is {_TIME_SCALE}"
     )
 
 
@@ -1617,9 +1620,9 @@ def _legend(
         absent["tag_to_retire_share"] = "this export has no tag-to-retire counter"
     else:
         if system_wide:
-            columns["time_share"] = _TIME_SHARE_MEANING
+            columns["time_share"] = f"{_TIME_SHARE_MEANING}; {_TIME_SCALE}"
         else:
-            columns["time_share"] = _TIME_SHARE_MEANING_ATTACHED + (
+            columns["time_share"] = f"{_TIME_SHARE_MEANING_ATTACHED}; {_TIME_SCALE}" + (
                 _CYCLE_BASIS if _cycle_controlled(sampler) else ""
             )
         denominators["time_share"] = "total_weight"
@@ -1854,11 +1857,11 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
     measure = legend["impact"].get("primary_measure")
     if measure == "time_share":
         if system_wide:
-            read = "time_share ranks where time went; sample_share is not a per-op cost"
+            read = f"time_share orders the rows, {_TIME_SCALE}; sample_share is not a per-op cost"
         else:
             read = (
-                "time_share ranks where each thread's elapsed time went (PID, TID partition, "
-                "so a migrating thread is counted once); sample_share is not a per-op cost"
+                "time_share orders the rows (PID, TID partition, so a migrating thread is "
+                f"counted once), {_TIME_SCALE}; sample_share is not a per-op cost"
             )
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
@@ -1939,7 +1942,8 @@ def _legend_fields(
         sample = "the METRIC sample share"
     parts += ["samples = raw count", f"sample_share = {sample}"]
     if "time_share" in legend["columns"]:
-        parts.append(f"time_share = {'time share' if system_wide else 'per-thread time share'}")
+        share = "gap share" if system_wide else "per-thread gap share"
+        parts.append(f"time_share = {share}, {_TIME_SCALE}")
     elif not timer:
         parts.append(f"time_share absent ({legend['absent']['time_share']})")
     if "tag_to_retire_share" in legend["columns"]:

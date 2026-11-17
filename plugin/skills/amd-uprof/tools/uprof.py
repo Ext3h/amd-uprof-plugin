@@ -46,7 +46,7 @@ CPU time, not wall time.
 
 Output is a Markdown pipe table below KEY: value header lines; --json emits those fields, a
 structured legend and the rows as a JSON document. COLUMNS names what each share measures in the
-capture mode; READ states which column ranks where time went and that the <other ...> remainder
+capture mode; READ states which column orders the rows and that the <other ...> remainder
 is last, not ranked; NEXT lists runnable calls that keep the session and scope. Shares are
 emitted at full precision. Table cells and header values show CR, LF, TAB, NUL, other
 C0 controls and DEL as

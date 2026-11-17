@@ -32,7 +32,7 @@ HEADER = re.compile(r"^([A-Z][A-Z_]+): (.*)$")
 CEILINGS = {
     "module": {
         "ACHIEVED": 41,
-        "COLUMNS": 145,
+        "COLUMNS": 153,
         "DUMP": 7,
         "KERNEL_COVERAGE": 38,
         "METRIC": 41,
@@ -48,7 +48,7 @@ CEILINGS = {
     "function": {
         "ACHIEVED": 41,
         "AGREEMENT": 67,
-        "COLUMNS": 208,
+        "COLUMNS": 216,
         "DUMP": 7,
         "HOT_RVA": 35,
         "KERNEL_COVERAGE": 38,
@@ -65,7 +65,7 @@ CEILINGS = {
     "line": {
         "ACHIEVED": 41,
         "AGREEMENT": 57,
-        "COLUMNS": 62,
+        "COLUMNS": 70,
         "DUMP": 7,
         "FILTER": 29,
         "KERNEL_COVERAGE": 38,
@@ -83,7 +83,7 @@ CEILINGS = {
     "instruction": {
         "ACHIEVED": 41,
         "AGREEMENT": 57,
-        "COLUMNS": 70,
+        "COLUMNS": 78,
         "DUMP": 7,
         "FILTER": 29,
         "KERNEL_COVERAGE": 38,
@@ -98,7 +98,7 @@ CEILINGS = {
         "VERSION": 7,
         "WEIGHTS": 26,
         "context_help": 508,
-        "legend": 422,
+        "legend": 430,
     },
 }
 SYMBOLIZING = ("function", "line", "instruction")

@@ -43,8 +43,7 @@ SAMPLE_FETCH = "fetch-sample frequency share (fixed fetch events per sample)"
 TIME_MEANING = (
     "time share estimated from the gaps between per-sample timestamps (idle/wait "
     "is charged to the ending sample up to the WEIGHTS cap; the first sample per CPU is "
-    "ignored, no gap "
-    "before it; NULL sorts last)"
+    "ignored, no gap before it; NULL sorts last); time only at process, thread or phase scale"
 )
 TAG_MEANING = (
     "share of tag-to-retire cycles summed over sampled ops (AMD tag at dispatch to "
@@ -177,7 +176,7 @@ def expected_columns(mode, metric):
         sample = "the METRIC sample share"
     parts = ["samples = raw count", f"sample_share = {sample}"]
     if spec["time"]:
-        parts.append("time_share = time share")
+        parts.append("time_share = gap share, time only at process, thread or phase scale")
     else:
         parts.append(f"time_share absent ({TIME_ABSENT_PMC})")
     reason = TAG_ABSENT.get(mode)
@@ -191,7 +190,7 @@ def expected_columns(mode, metric):
 def expected_read(mode):
     spec = MODES[mode]
     if spec["order_by"][0] == "time_share":
-        read = "time_share ranks where time went; sample_share is not a per-op cost"
+        read = "time_share orders the rows, time only at process, thread or phase scale; sample_share is not a per-op cost"
         if spec["sample"].startswith(("dispatched-op", "fetch-sample")):
             read += f"; {CAVEAT}"
     elif spec["sample"].startswith("not established"):

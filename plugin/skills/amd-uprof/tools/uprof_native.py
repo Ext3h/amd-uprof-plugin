@@ -270,14 +270,19 @@ def require_uprof() -> Path:
 
 
 def failure(
-    cause: str, labels: Iterable[str], *, session: str | os.PathLike[str] | None = None
+    cause: str,
+    labels: Iterable[str],
+    *,
+    session: str | os.PathLike[str] | None = None,
+    dump_kind: str | None = None,
 ) -> UprofError:
     """An unsupported case: the cause, then one runnable ALTERNATIVE line per applicable option.
 
     The tool never switches capture or analysis mode on its own, so the caller chooses. Lines are
     sorted by label without a default; each chain is complete, fills in only this skill's uprof.py
     and the failing session, and keeps the rest as <PLACEHOLDER>, so an option is the same text
-    wherever it is offered.
+    wherever it is offered. dump_kind is the capture's IBS dump kind a fresh dump must have; an
+    unknown kind stays a choice for the caller.
     """
     script, script_data = uprof_shell.path_arg(
         Path(__file__).resolve().parent / "uprof.py", "<UPROF_PY>"
@@ -311,7 +316,8 @@ def failure(
         ),
         "fresh dump": (
             f"{tool} translate --session {known} --out-dir <NEW_TR_DIR> --ascii "
-            f"ibsop-event-dump; {tool} profile --session <NEW_TR_DIR> --by process"
+            f"{dump_kind or '<ibsop-event-dump|ibsfetch-event-dump>'}; "
+            f"{tool} profile --session <NEW_TR_DIR> --by process"
         ),
         "whole capture": f"{tool} profile --session {known} --by process",
         "Zen host": (

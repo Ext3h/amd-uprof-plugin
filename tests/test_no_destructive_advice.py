@@ -134,7 +134,9 @@ class DisagreeingDumpTest(unittest.TestCase):
     def test_the_refusal_offers_a_fresh_dump_beside_a_new_translation(self):
         session = Path(__file__).resolve().parent / "capture"
         with self.assertRaises(uprof_util.LinesError) as raised:
-            uprof_query._dump_sanity(self._Connection(), True, False, True, session)
+            uprof_query._dump_sanity(
+                self._Connection(), True, False, True, session, dump_kind="ibsop-event-dump"
+            )
         lines = str(raised.exception).splitlines()
         self.assertIn("possibly incompatible with this session", lines[0])
         self.assertEqual(len(lines), 2, lines)

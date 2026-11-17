@@ -955,8 +955,10 @@ WITH keyed AS (
               THEN true ELSE false END AS function_derived,
          CASE WHEN a.range_kind = 'range' AND a.range_name IS NULL AND a.db_name = ''
                    THEN 'derived'
-              WHEN a.sym_nearest THEN 'derived'
+              -- A folded start is shared before a nearest-symbol frame is derived, as in the
+              -- line and instruction drills.
               WHEN a.range_kind = 'range' AND COALESCE(p.name_count, 1) > 1 THEN 'shared'
+              WHEN a.sym_nearest THEN 'derived'
               WHEN a.range_kind = 'range' THEN 'unique'
               WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN 'unique'
               WHEN a.range_kind = 'symbolizer' THEN 'unique'

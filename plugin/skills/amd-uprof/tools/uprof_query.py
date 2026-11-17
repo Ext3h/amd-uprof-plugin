@@ -2367,6 +2367,23 @@ def _scope_filter_active(args: argparse.Namespace, time_start: str, time_end: st
 
 # The text both views.sql refusals of a dump that disagrees with session.uprof carry.
 DUMP_DISAGREES: Final = "disagrees with session.uprof"
+# The text every views.sql refusal of a missing dump, a dump without a required column or one
+# without sample rows begins with.
+DUMP_UNUSABLE: Final = "IBS ASCII dump "
+
+
+def dump_refusal(exc: Exception, session: Path, dump_kind: str | None) -> util.UprofError | None:
+    """The cause and the fresh-dump alternative for a views.sql refusal of an unusable dump.
+
+    None when exc is another error. The fresh dump has the capture's dump kind and is written by
+    the skill's translate into a new directory, so the refused dump and its source stay as they
+    are.
+    """
+    if isinstance(exc, util.LinesError) or DUMP_UNUSABLE not in str(exc):
+        return None
+    return uprof_native.failure(
+        util.one_line(exc), ["fresh dump"], session=session, dump_kind=dump_kind
+    )
 
 
 def _dump_sanity(
@@ -2375,6 +2392,8 @@ def _dump_sanity(
     scope_filtered: bool,
     system_wide: bool,
     session: Path | None = None,
+    *,
+    dump_kind: str | None = None,
 ) -> tuple[str | None, int]:
     """The sanity message and the dump's non-null IbsTagToRetCtr value count.
 
@@ -2390,7 +2409,9 @@ def _dump_sanity(
     except uprof_db._duckdb().Error as exc:
         if DUMP_DISAGREES not in str(exc):
             raise
-        raise uprof_native.failure(util.one_line(exc), ["fresh dump"], session=session) from exc
+        raise uprof_native.failure(
+            util.one_line(exc), ["fresh dump"], session=session, dump_kind=dump_kind
+        ) from exc
     if not rows:
         return None, 0
     message = rows[0][0] or None
@@ -3291,6 +3312,7 @@ def run_query_command(args: argparse.Namespace) -> None:
                 _scope_filter_active(args, time_start, time_end),
                 system_wide,
                 session,
+                dump_kind=sampler.ibs_dump_kind,
             )
             tag_rows = connection.sql("SELECT getvariable('has_tag')").fetchall()
             has_tag = bool(tag_rows and tag_rows[0][0])
@@ -3377,6 +3399,11 @@ def run_query_command(args: argparse.Namespace) -> None:
                     fields.append(("AGREEMENT", agreement))
             _write_profile(connection, args, fields, out_path, legend)
         success = True
+    except util.UprofError as exc:
+        refusal = dump_refusal(exc, session, sampler.ibs_dump_kind) if dump else None
+        if refusal is None:
+            raise
+        raise refusal from exc
     finally:
         if artifacts is not None:
             if not success:

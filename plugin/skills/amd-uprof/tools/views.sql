@@ -181,20 +181,20 @@ SET VARIABLE schema_check_pid = CASE WHEN NOT getvariable('has_dump') THEN (
 SET VARIABLE dump_guard = CASE
   WHEN NOT getvariable('has_dump') THEN 1
   WHEN NOT (SELECT count(*) > 0 FROM glob(literal_path(getvariable('uprof_ibs_dump'))))
-    THEN error('IBS ASCII dump not found at ' || getvariable('uprof_ibs_dump') || '; generate it with AMDuProfCLI translate --ascii ibsop-event-dump on a COPY of the session')
+    THEN error('IBS ASCII dump not found at ' || getvariable('uprof_ibs_dump'))
   WHEN TRY_CAST(NULLIF(getvariable('uprof_time_end'), '') AS BIGINT)
        <= TRY_CAST(COALESCE(NULLIF(getvariable('uprof_time_start'), ''), '0') AS BIGINT)
     THEN error('the time filter ends before it starts; pass T1:T2 with T1 < T2')
   ELSE 1 END;
 
 -- One DESCRIBE of the dump; a dump missing a column cannot be queried, and regenerating it is the
--- only fix.
+-- only fix. Every refusal of an unusable dump begins with 'IBS ASCII dump ', so profile adds the
+-- fresh-dump alternative for the capture's dump kind.
 SET VARIABLE dump_columns_guard = (
   SELECT CASE WHEN count(*) > 0
               THEN error('IBS ASCII dump ' || getvariable('uprof_ibs_dump') ||
                          ' is missing required column(s) ' ||
-                         string_agg(missing_name, ', ' ORDER BY missing_name) ||
-                         '; regenerate it with AMDuProfCLI translate --ascii ibsop-event-dump on a COPY of the session')
+                         string_agg(missing_name, ', ' ORDER BY missing_name))
               ELSE 1 END
   FROM query(CASE WHEN getvariable('has_dump')
     THEN $cols$SELECT required.name AS missing_name
@@ -439,7 +439,7 @@ WITH weighted_all AS (
 )
 SELECT CASE
   WHEN dump_samples = 0 THEN
-    error('IBS ASCII dump ' || getvariable('uprof_ibs_dump') || ' has no sample rows; regenerate it with AMDuProfCLI translate --ascii ibsop-event-dump on a COPY of the session')
+    error('IBS ASCII dump ' || getvariable('uprof_ibs_dump') || ' has no sample rows')
   WHEN expected_ns IS NULL OR expected_ns = 0 THEN
     (CASE WHEN getvariable('attached') THEN 'WARN, attached: ' ELSE 'WARN, system-wide: ' END) ||
     'dump: ' || CAST(dump_samples AS VARCHAR) ||

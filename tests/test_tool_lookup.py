@@ -64,6 +64,31 @@ class LookupTest(unittest.TestCase):
         # resolve() on both sides: a temp root may be spelled with an 8.3 short name.
         self.assertEqual(found.resolve(), real.resolve())
 
+    def sibling(self, symbolizer, name, path_entries):
+        with mock.patch.dict(os.environ, {"PATH": os.pathsep.join(path_entries)}):
+            return uprof_native.find_sibling(symbolizer, name)
+
+    def test_a_versioned_symbolizer_finds_the_siblings_of_its_version(self):
+        symbolizer = self.plant(self.bin, "llvm-symbolizer-18")
+        real = self.plant(self.bin, "llvm-readobj-18")
+        self.plant(self.bin, "llvm-readobj")
+        other = self.root / "other"
+        other.mkdir()
+        self.plant(other, "llvm-objdump")
+        objdump = self.plant(other, "llvm-objdump-18")
+        found = self.sibling(symbolizer, "llvm-readobj", [str(self.bin)])
+        self.assertEqual(found.resolve(), real.resolve())
+        # On PATH too, the symbolizer's version comes before an unversioned tool.
+        found = self.sibling(symbolizer, "llvm-objdump", [str(other)])
+        self.assertEqual(found.resolve(), objdump.resolve())
+
+    def test_an_unversioned_symbolizer_finds_unversioned_siblings(self):
+        symbolizer = self.plant(self.bin, "llvm-symbolizer")
+        real = self.plant(self.bin, "llvm-readobj")
+        self.plant(self.bin, "llvm-readobj-18")
+        found = self.sibling(symbolizer, "llvm-readobj", [str(self.bin)])
+        self.assertEqual(found.resolve(), real.resolve())
+
 
 @unittest.skipUnless(os.name == "nt", "host: PowerShell is started only on Windows")
 class PowerShellPathTest(unittest.TestCase):

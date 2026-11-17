@@ -204,6 +204,14 @@ rounded percentage of the span. A timer tick only finds running threads, so time
 blocked or waiting appears in no share; a low percentage is that off-CPU time. The figure sums
 the scope's threads, so a multithreaded scope can exceed 100%.
 
+Under `--pid`/`--image` every share is a fraction of the scope, not of the capture. `COLUMNS`
+names the scope as the share base, and `READ` gives the scope's sample count and its fraction of
+the capture's samples in the same time window (and of its gap weight when the mode has
+`time_share`); a row's capture share is its share times that fraction. JSON carries the same as
+`legend.scope`: `filter`, `samples`, `capture_samples`, `capture_window` (`capture`, or
+`time_filter` under `--time-filter`), `sample_share` and, with gap weights, `time_share`. An
+unscoped view and an empty scope have no `legend.scope`.
+
 An empty scope prints one `WARNING: no samples in the selected scope` on stderr before the document is written, and no `NEXT` (no rows to descend from); with `--image` it names the capture's `Process.name` values and states that `--image` filters on `Process.name`, not modules.
 
 ### Achieved sample rate
@@ -468,6 +476,7 @@ The views and the materialized `v_dump` TEMP TABLE:
 | `v_scoped_keyed` | `v_scoped` with each sample's function row: the covering derived range, `range_name`, `range_kind` and `group_key` (range, else `Function.id`, else module); `v_function_measured` groups by `group_key` and a function-scoped line or instruction view selects its parent's `group_key` |
 | `v_scope_sanity` | scoped late-coverage verdict appended to `SANITY` when `--image`/`--pid`/`--time-filter` is active: last sample of `v_scoped` against the scope window end, `WARN` when the gap exceeds the scope's own sampling cadence |
 | `v_scope_totals` | `total_samples` (0 when empty); feeds the empty-scope warning |
+| `v_capture_measures` | the time window's `total_samples`/`total_weight` without the `--pid`/`--image` filter; the base of a scope's `legend.scope` fraction |
 | `v_scope_measures` | the whole scoped capture's `total_samples`/`total_weight`/`total_tag_cycles`; line and instruction rows use it as their denominator so a `--function` filter cannot silently shrink the capture shares |
 | `v_module_catalog` | one row per module path with its highest `ModuleInstance.loadAddress` and kernel-image flag; empty when the export has no `ModuleInstance` |
 | `v_module_flags_exact` | `Module.isSystemModule` keyed by the full normalized path; empty when the export has no such column |

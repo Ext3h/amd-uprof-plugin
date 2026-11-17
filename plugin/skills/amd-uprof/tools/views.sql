@@ -703,6 +703,17 @@ SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT) AS total_samples,
        sum(tag_cycles) AS total_tag_cycles
 FROM v_scoped;
 
+-- The same window's totals without the --pid/--image filter: the capture a scoped view's shares
+-- are a part of, so the scope can state its own fraction of it.
+CREATE OR REPLACE TEMP VIEW v_capture_measures AS
+SELECT * FROM query(CASE WHEN getvariable('has_dump') THEN $dump$
+SELECT CAST(count(*) AS BIGINT) AS total_samples, sum(weight) AS total_weight
+FROM v_dump_weighted$dump$
+ELSE $pmc$
+SELECT CAST(COALESCE(sum(CAST(COLUMNS(lambda c: lower(c) = lower(getvariable('uprof_event_column'))) AS BIGINT)), 0) AS BIGINT) AS total_samples,
+       CAST(NULL AS DOUBLE) AS total_weight
+FROM UnifiedSampleSeries s$pmc$ END);
+
 -- One row per module path with its highest load address and whether that address is kernel-space,
 -- or an empty relation when the export has no ModuleInstance table. v_capture_modules asks it
 -- whether a module sits in kernel space, so the classification runs per module, not per sample.

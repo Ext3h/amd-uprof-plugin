@@ -48,7 +48,7 @@ where the cycles go — with shares by process, function, source line or instruc
 
 - AMD uProf CLI (`AMDuProfCLI`) 5.3 or later.
 - DuckDB 2.x Python package.
-- LLVM 23 or later: llvm-symbolizer and llvm-readobj; llvm-objdump for instruction context; on
+- LLVM 23.1.0 or later: llvm-symbolizer and llvm-readobj; llvm-objdump for instruction context; on
   Windows, llvm-pdbutil enables shared-address labelling.
 
 `tools/uprof.py tools` prints every resolved path and version against its minimum, and fails when

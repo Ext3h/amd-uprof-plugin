@@ -17,7 +17,7 @@ columns, so their runs warn that the session cache is disabled.
 
 The committed files are the artifacts of
 [capture-debug-traces.yml](../../../../.github/workflows/capture-debug-traces.yml)
-[run 43836866209](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43836866209), byte for
+[run 44038717988](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/44038717988), byte for
 byte on both OSes:
 
 | directory | runner | Python | LLVM | DuckDB |
@@ -25,22 +25,24 @@ byte on both OSes:
 | `windows/` | windows-latest | 3.12.10 | 23.1.4 (MSI) | 2.0.0 |
 | `linux/` | ubuntu-latest | 3.12.16 | 23.1.4 (release tarball) | 2.0.0 |
 
-The run captured branch commit `cb5e315`, which is not in main's history. Main has it rebased as
-`5803eeb` (same subject, newer base), and its child `f23fce2` committed the traces.
-Compared with run 43833713311, only the profile rows and `symbol_coverage=` lines of
-`elf_fixture_buildid`, `elf_fixture_dynsym_so` and `elf_fixture_symtab` changed: an ELF
-symbol-table function with a nonzero size is a source symbol again, so its rows are `unique`;
-PE export and COFF names stay `derived`.
-
-`pe_fixture_full.txt` is the exception: it comes from
-[run 43841653092](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/43841653092) at branch
-commit `178ef87` ("Drop the readobj_failed reason for the PE cached-run case"), whose base is
-main's `9aa4d6e`. Its session records the image identity, so its runs no longer warn that the
-session cache is disabled, and each profile section is followed by a `cached` section reporting
-`session_cache=hit`. Main's later captures, runs 43833713311 and 43836866209, left
-`pe_fixture_full.txt` as run 43826808166 had it.
+The run captured commit `71c45cb` ("Expect the nearest-symbol wording in the function coverage
+split test"), the parent of the commit that adds these files. Compared with run 43836866209 and,
+for `pe_fixture_full.txt`, run 43841653092, only `symbol_coverage=` lines changed: the function
+split says derived covers a synthetic range or a nearest-symbol name, and a line view with
+nearest-symbol frames reports them as derived instead of calling every sample drillable.
 
 Earlier captures, at commits not in main's history:
+
+- Run 43841653092 at `178ef87` (on main as `33a1f89`, whose child `6443601` committed that run's
+  `pe_fixture_full.txt` only): its session records the image identity, so its runs no longer
+  warn that the session cache is disabled, and each profile section is followed by a `cached`
+  section reporting `session_cache=hit`. Runs 43833713311 and 43836866209 left
+  `pe_fixture_full.txt` as run 43826808166 had it.
+- Run 43836866209 at `cb5e315` (on main as `5803eeb`, whose child `f23fce2` committed that run's
+  traces) differed from run 43833713311 only in the profile rows and `symbol_coverage=` lines of
+  `elf_fixture_buildid`, `elf_fixture_dynsym_so` and `elf_fixture_symtab`: an ELF symbol-table
+  function with a nonzero size is a source symbol again, so its rows are `unique`; PE export and
+  COFF names stay `derived`.
 
 - Run 43833713311 at `db7ff27` (on main as `5bf1fc0`, whose child `f305823` committed that run's
   traces) differed from run 43826808166 in the profile rows and `symbol_coverage=` lines of

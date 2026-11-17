@@ -60,12 +60,12 @@ line module=fixture_full.exe function=fixture_entry file=/build/fixture_debug.c 
 line module=fixture_full.exe function=fixture_entry file=/build/fixture_debug.c line=7 samples=1 attribution=unique
 line module=fixture_full.exe function=fixture_helper file=/build/fixture_debug.c line=2 samples=1 attribution=unique
 ## profile.function
-symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; rows named 3/3 samples (100.0%), derived 0/3 samples (0.0%) from a synthetic binary range, unresolved 0/3 samples (0.0%) (<no symbol>); every scoped sample is attributed below module/RVA; a derived row is actionable at its hot RVA
+symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; rows named 3/3 samples (100.0%), derived 0/3 samples (0.0%) from a synthetic binary range or a nearest-symbol name, unresolved 0/3 samples (0.0%) (<no symbol>); every scoped sample is attributed below module/RVA; a derived row is actionable at its hot RVA
 WARNING: cannot build the Parquet dump copy for <SESSION_ROOT>\session\IbsOpDump.csv; reading the CSV
 function module=fixture_full.exe function=fixture_entry start=0x1010 end=0x1030 source=pdb_public samples=2 attribution=unique
 function module=fixture_full.exe function=fixture_helper start=0x1000 end=0x1010 source=pdb_public samples=1 attribution=unique
 ## profile.function cached
 session_cache=hit symbol_runs=1 range_runs=1
-symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; rows named 3/3 samples (100.0%), derived 0/3 samples (0.0%) from a synthetic binary range, unresolved 0/3 samples (0.0%) (<no symbol>); every scoped sample is attributed below module/RVA; a derived row is actionable at its hot RVA
+symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; rows named 3/3 samples (100.0%), derived 0/3 samples (0.0%) from a synthetic binary range or a nearest-symbol name, unresolved 0/3 samples (0.0%) (<no symbol>); every scoped sample is attributed below module/RVA; a derived row is actionable at its hot RVA
 function module=fixture_full.exe function=fixture_entry start=0x1010 end=0x1030 source=pdb_public samples=2 attribution=unique
 function module=fixture_full.exe function=fixture_helper start=0x1000 end=0x1010 source=pdb_public samples=1 attribution=unique

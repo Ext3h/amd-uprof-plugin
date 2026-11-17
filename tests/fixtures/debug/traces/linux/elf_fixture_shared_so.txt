@@ -68,7 +68,7 @@ line module=fixture_shared.so function=fixture_entry file=/build/fixture_debug.c
 line module=fixture_shared.so function=fixture_entry file=/build/fixture_debug.c line=7 samples=1 attribution=unique
 line module=fixture_shared.so function=fixture_helper file=/build/fixture_debug.c line=2 samples=1 attribution=unique
 ## profile.function
-symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; rows named 3/3 samples (100.0%), derived 0/3 samples (0.0%) from a synthetic binary range, unresolved 0/3 samples (0.0%) (<no symbol>); every scoped sample is attributed below module/RVA; a derived row is actionable at its hot RVA
+symbol_coverage=uProf DB 0/3 samples (0.0%) resolve to a named function; rows named 3/3 samples (100.0%), derived 0/3 samples (0.0%) from a synthetic binary range or a nearest-symbol name, unresolved 0/3 samples (0.0%) (<no symbol>); every scoped sample is attributed below module/RVA; a derived row is actionable at its hot RVA
 WARNING: cannot build the Parquet dump copy for <SESSION_ROOT>/session/IbsOpDump.csv; reading the CSV
 WARNING: session cache: disabled (the capture records no image size/checksum/bitness columns, so module version identity cannot be verified and the session cache is disabled); profiling without the cache
 WARNING: no function range derived for <FIXTURES>/elf/fixture_shared.so (<FIXTURES>/elf/fixture_shared.so): not_pe: llvm-readobj file headers lack ImageBase, TimeDateStamp, CheckSum, Magic

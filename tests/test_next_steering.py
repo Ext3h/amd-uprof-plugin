@@ -56,14 +56,17 @@ class NextSteeringTest(unittest.TestCase):
         self.assertEqual(bys(next_calls("--by", "line", system_wide=True)), ["instruction"])
         self.assertEqual(bys(next_calls("--by", "instruction", system_wide=True)), [])
 
-    def test_the_line_view_names_the_instruction_text_view_with_one_row(self):
-        # The text view carries the instruction, so NEXT never names --json (#385).
-        (call,) = next_calls(
-            "--by", "line", "--function", "f", "--module", "m.dll", system_wide=False
-        )
-        self.assertIn("--by instruction", call)
-        self.assertNotIn("--json", call)
-        self.assertTrue(call.endswith("--top 1"), call)
+    def test_the_line_view_names_the_instruction_json_view_without_a_top(self):
+        # The first instruction call is the one that answers: the JSON document carries the IBS
+        # fields and the shared window, and no fixed --top cuts the evidence rows (#446).
+        for extra in ((), ("--top", "5")):
+            (call,) = next_calls(
+                "--by", "line", "--function", "f", "--module", "m.dll", *extra, system_wide=False
+            )
+            with self.subTest(extra=extra):
+                self.assertIn("--by instruction", call)
+                self.assertTrue(call.endswith("--json"), call)
+                self.assertNotIn("--top", call)
 
     def test_following_next_from_a_drill_never_returns_to_a_visited_view(self):
         # line -> instruction, then no call; the instruction view never sends the caller back

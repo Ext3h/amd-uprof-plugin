@@ -2845,7 +2845,8 @@ def _hot_rva_field(connection: object) -> list[tuple[str, str]]:
         rows = connection.execute(
             "SELECT function, module, hot_rva, hot_samples, samples, total_samples "
             "FROM v_function_rows WHERE hot_samples IS NOT NULL "
-            "ORDER BY hot_samples DESC, hot_rva LIMIT 1"
+            # A tie goes to the lowest address, compared as a number, then to the first module.
+            "ORDER BY hot_samples DESC, CAST(hot_rva AS UBIGINT), module LIMIT 1"
         ).fetchall()
     finally:
         connection.execute("SET VARIABLE top_n = ?", [previous])

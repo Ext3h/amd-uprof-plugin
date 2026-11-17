@@ -154,6 +154,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - `profile --by line` orders its rows and cuts `--top` by the capture's primary measure, as the
   function and instruction views do; a sample_share capture no longer ranks lines by gap weight,
   and the JSON `legend.impact` names `primary_measure` for the line view (issue #93).
+- The `HOT_RVA` summary of `profile --by function` breaks a hot-sample tie by the numeric RVA,
+  then the module, instead of by the hex string, so `0x9` comes before `0x10` and the pick is
+  the same on every run (issue #98).
 
 ## 2.1.0 — 2026-11-08
 

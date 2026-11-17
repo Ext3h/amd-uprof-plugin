@@ -42,7 +42,8 @@ SAMPLE_OP_OPS = "dispatched-op frequency share (fixed dispatched ops per sample)
 SAMPLE_FETCH = "fetch-sample frequency share (fixed fetch events per sample)"
 TIME_MEANING = (
     "time share estimated from the gaps between per-sample timestamps (idle/wait "
-    "is charged to the ending sample; the first sample per CPU is ignored, no gap "
+    "is charged to the ending sample up to the WEIGHTS cap; the first sample per CPU is "
+    "ignored, no gap "
     "before it; NULL sorts last)"
 )
 TAG_MEANING = (

@@ -8,6 +8,8 @@ module (alpha) ends most of the thread's own gaps.
 
 The per-CPU estimator reports beta first and 40 s of weight over a 21 s span. Partitioning by the
 thread gives exactly the 21 s span, puts alpha first, and matches the fixed-cycle sample share.
+Each beta gap exceeds the run-gap limit, so beta carries 5 limits against alpha's 398 ms plus 2
+limits: alpha stays first for any limit below 132 ms, whatever core frequency the host reports.
 
 Run from the repository root: python tests/run_tests.py test_attached_time_share
 """
@@ -33,7 +35,8 @@ BETA = "beta.exe"
 TIME_MEANING = (
     "time share estimated from the gaps between per-sample timestamps within each "
     "thread (PID, TID), so a thread that migrates between CPUs is counted once; the "
-    "gap includes off-CPU time and is charged to the ending sample, the first sample "
+    "gap includes off-CPU time and is charged to the ending sample up to the WEIGHTS cap, the "
+    "first sample "
     "per thread is ignored (no gap before it), and NULL sorts last; for a "
     "cycle-controlled IBS capture sample_share (fixed cycles per sample) is the "
     "CPU-cycle share and the better ranking"
@@ -50,8 +53,8 @@ def _dump_rows():
         (20_000_000_000, 0, BETA, BETA_OFFSET),
         (21_000_000_000, 1, BETA, BETA_OFFSET),
     ]
-    rows += [(9_000_000_000 + index * 1_000_000, 1, ALPHA, ALPHA_OFFSET) for index in range(20)]
-    rows += [(19_000_000_000 + index * 1_000_000, 1, ALPHA, ALPHA_OFFSET) for index in range(20)]
+    rows += [(9_000_000_000 + index * 1_000_000, 1, ALPHA, ALPHA_OFFSET) for index in range(200)]
+    rows += [(19_000_000_000 + index * 1_000_000, 1, ALPHA, ALPHA_OFFSET) for index in range(200)]
     return sorted(rows)
 
 
@@ -182,10 +185,12 @@ class AttachedTimeShareTest(unittest.TestCase):
         with uprof_db.open_query(
             self.session / "cpu.db", [TOOLS_DIR / "views.sql"], self._variables()
         ) as connection:
-            total = connection.sql("SELECT sum(weight) FROM v_dump_weighted").fetchall()[0][0]
+            total = connection.sql(
+                "SELECT sum(weight) + sum(excess_weight) FROM v_dump_weighted"
+            ).fetchall()[0][0]
 
         # The per-CPU estimator sums 40 s over a 21 s span; per thread the two CPUs' gaps do not
-        # overlap, so the total is the thread's own span.
+        # overlap, so the charged and the capped-off gap time together are the thread's own span.
         self.assertAlmostEqual(float(total) / SPAN_NS, 1.0, delta=0.02)
 
     def test_time_share_ranking_matches_the_fixed_cycle_sample_share(self):
@@ -206,7 +211,7 @@ class AttachedTimeShareTest(unittest.TestCase):
         self.assertTrue(sanity.startswith("OK, attached: "), sanity)
         self.assertNotIn("span", sanity)
         self.assertNotIn("busiest TID covers", sanity)
-        self.assertIn("1 active TID (46/46 samples in the busiest)", sanity)
+        self.assertIn("1 active TID (406/406 samples in the busiest)", sanity)
         self.assertIn("2 CPU(s) visited", sanity)
         # TIME_SHARE states the (PID, TID) partition; SANITY does not repeat it.
         self.assertIn("the partition is (PID, TID)", document["TIME_SHARE"])
@@ -297,7 +302,10 @@ class AttachedTimeShareTest(unittest.TestCase):
         output = self._run_profile()
 
         self.assertIn("time_share = per-thread time share;", output)
-        self.assertIn("idle/wait, including off-CPU time, is charged to the ending sample", output)
+        self.assertIn(
+            "idle/wait, including off-CPU time, is charged to the ending sample up to the WEIGHTS cap",
+            output,
+        )
         self.assertIn("sample_share orders the functions", output)
         self.assertIn("the partition is (PID, TID)", output)
         self.assertIn("exact DeltaTick-gap weights per (PID, TID)", output)

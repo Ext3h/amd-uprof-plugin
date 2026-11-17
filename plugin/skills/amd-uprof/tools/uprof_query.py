@@ -197,6 +197,7 @@ def _variables(
     event_column: str | None,
     sample_interval_s: float | None = None,
     primary_measure: str = "samples",
+    gap_limit_ns: float | None = None,
 ) -> dict[str, str]:
     meta_path = util.absolute(args.session) / "session.uprof"
     return {
@@ -217,6 +218,7 @@ def _variables(
         "uprof_ambiguous_modules": "",
         "uprof_sample_interval_s": "" if sample_interval_s is None else repr(sample_interval_s),
         "uprof_primary_measure": primary_measure,
+        "uprof_gap_limit_ns": "" if gap_limit_ns is None else repr(gap_limit_ns),
         # Only the line and instruction projections read the detail views (FUNCTION_SCOPED);
         # every other scope must not pay to bind them.
         "uprof_detail_views": "true" if args.by in FUNCTION_SCOPED else "false",
@@ -903,14 +905,17 @@ def _dump_field(dump: uprof_dump.DumpInfo) -> str:
 
 _TIME_SHARE_MEANING: Final = (
     "time share estimated from the gaps between per-sample timestamps (idle/wait is charged to "
-    "the ending sample; the first sample per CPU is ignored, no gap before it; NULL sorts last)"
+    "the ending sample up to the WEIGHTS cap; the first sample per CPU is ignored, no gap "
+    "before it; NULL sorts last)"
 )
 # An attached thread's samples span whichever CPUs it ran on; partitioning by TID keeps its
-# migrating gaps from being counted once per CPU. The gap includes time the thread was off-CPU.
+# migrating gaps from being counted once per CPU. The gap includes time the thread was off-CPU,
+# up to the run-gap cap.
 _TIME_SHARE_MEANING_ATTACHED: Final = (
     "time share estimated from the gaps between per-sample timestamps within each thread "
     "(PID, TID), so a thread that migrates between CPUs is counted once; the gap includes "
-    "off-CPU time and is charged to the ending sample, the first sample per thread is ignored "
+    "off-CPU time and is charged to the ending sample up to the WEIGHTS cap, the "
+    "first sample per thread is ignored "
     "(no gap before it), and NULL sorts last"
 )
 _CYCLE_BASIS: Final = (
@@ -1657,14 +1662,16 @@ def _legend(
         if system_wide:
             estimate = (
                 "time_share is a time share estimated from the gaps between per-sample "
-                "timestamps; idle/wait is charged to the ending sample, the first sample "
+                "timestamps; idle/wait is charged to the ending sample up to the WEIGHTS "
+                "cap, the first sample "
                 "per CPU is ignored (no gap before it), and NULL sorts last"
             )
         else:
             estimate = (
                 "time_share is a time share estimated from the gaps between per-sample "
                 "timestamps within each thread (PID, TID), so a migrating thread is "
-                "counted once; off-CPU time is charged to the ending sample, the first "
+                "counted once; off-CPU time is charged to the ending sample up to the "
+                "WEIGHTS cap, the first "
                 "sample per thread is ignored (no gap before it), and NULL sorts last"
                 + (_CYCLE_BASIS if _cycle_controlled(sampler) else "")
             )
@@ -2015,8 +2022,12 @@ def _header_fields(
     has_tag: bool,
     tag_available: bool,
     system_wide: bool,
+    gap_cap: str = "",
 ) -> list[tuple[str, str]]:
-    """Detailed capture fields carried above the table and in the JSON document."""
+    """Detailed capture fields carried above the table and in the JSON document.
+
+    gap_cap is the WEIGHTS clause stating the run-gap cap and the scoped gap time above it.
+    """
     fields = [
         ("VERSION", util.skill_identity()),
         ("METRIC", sampler.metric.removeprefix("METRIC: ")),
@@ -2070,7 +2081,8 @@ def _header_fields(
                     (
                         "share of time estimated from the per-sample DeltaTick "
                         f"gaps within {window}; an estimate: idle/wait is "
-                        "charged to the ending sample, the first sample per CPU "
+                        "charged to the ending sample up to the WEIGHTS cap"
+                        ", the first sample per CPU "
                         "inside the window is ignored (no gap before it), and "
                         "NULL sorts last; with few samples the share is coarse, "
                         "so check sample_share"
@@ -2093,7 +2105,8 @@ def _header_fields(
                         f"{window}; the partition is (PID, TID), so a thread that "
                         "migrates between CPUs is counted once; an estimate: "
                         "idle/wait, including off-CPU time, is charged to the "
-                        "ending sample, the first sample per thread inside the "
+                        "ending sample up to the WEIGHTS cap, the "
+                        "first sample per thread inside the "
                         "window is ignored (no gap before it), and NULL sorts "
                         "last; with few samples the share is coarse, so check "
                         f"sample_share{cycle_basis}"
@@ -2158,9 +2171,25 @@ def _header_fields(
         # TIME_SHARE states how gaps are charged and that the first sample has none.
         window = "whole capture" if args.time_filter is None else f"time filter {args.time_filter}"
         context = "CPU_Number" if system_wide else "(PID, TID)"
-        weights = f"exact DeltaTick-gap weights per {context}; {window}"
+        weights = f"exact DeltaTick-gap weights per {context}{gap_cap}; {window}"
     fields.append(("WEIGHTS", f"{weights}; --by {args.by}: {GRANULARITY_LABELS[args.by]}"))
     return fields
+
+
+def _gap_cap_clause(connection: object, gap_limit_ns: float | None) -> str:
+    """The WEIGHTS clause naming the run-gap cap and the scoped gap time above it.
+
+    A gap above the cap is time the context was not running; the views charge its ending sample
+    only the cap, so the excess is stated once here instead of ranking any row.
+    """
+    rows = connection.sql("SELECT excess_weight, excess_gaps FROM v_scope_measures").fetchall()
+    excess_ns, gaps = (rows[0][0] or 0, rows[0][1] or 0) if rows else (0, 0)
+    if gap_limit_ns is None:
+        cap = ", capped at 10x each context's median gap"
+    else:
+        limit = uprof_session.format_duration(gap_limit_ns / 1e9)
+        cap = f", capped at {limit} (10x interval)"
+    return f"{cap}; {float(excess_ns) / 1e9:.3f} s in {int(gaps)} longer gaps excluded"
 
 
 def _dump_contexts(
@@ -3275,6 +3304,10 @@ def run_query_command(args: argparse.Namespace) -> None:
     # A view filtered to one module reports symbolization diagnostics for that module only.
     diagnostics_scope = getattr(args, "module", None) if function_scoped else None
     frequency_hz = uprof_session.cycle_frequency_hz(sampler)
+    # The views cap gaps at the run-gap limit of the same frequency read ACHIEVED converts at.
+    gap_limit_ns = (
+        uprof_session.run_gap_limit_ns(sampler, frequency_hz) if dump is not None else None
+    )
     sample_interval_s = (
         _cpu_seconds_interval(sampler, frequency_hz)
         if args.by in ("module", "region", "function") or function_scoped
@@ -3289,6 +3322,7 @@ def run_query_command(args: argparse.Namespace) -> None:
         sampler.event_column,
         sample_interval_s,
         primary_measure,
+        gap_limit_ns,
     )
     variables["uprof_ibs_parquet"] = "" if samples is None else str(samples)
     artifacts: Path | None = None
@@ -3481,7 +3515,10 @@ def run_query_command(args: argparse.Namespace) -> None:
             )
             if scope_base is not None:
                 legend["scope"] = scope_base
-            fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
+            gap_cap = _gap_cap_clause(connection, gap_limit_ns) if dump is not None else ""
+            fields = _header_fields(
+                args, sampler, dump, has_tag, tag_available, system_wide, gap_cap
+            )
             top_row = _top_row_precision(connection, args.by) if sampler.timer else None
             # The filter and its parent measurement precede the reading rule; both sit directly
             # below METRIC, after VERSION, before the detailed fields.

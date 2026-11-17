@@ -53,8 +53,8 @@ Per Hofer, JKU PhD thesis, section 3.2.4:
 1. Partition by execution context: `CPU_Number` for a system-wide capture, `(PID, TID)` for an
    attached one. A thread's samples share a partition across every CPU it ran on.
 2. Order each partition by `DeltaTick`.
-3. Weight each sample by `DeltaTick - lag(DeltaTick)`; the first sample per context is ignored,
-   having no gap before it.
+3. Weight each sample by `DeltaTick - lag(DeltaTick)`, capped at the run-gap limit; the first
+   sample per context is ignored, having no gap before it.
 4. A group's share is `sum(weight in the group) / sum(weight in scope)`.
 
 The partition is the difference between the capture modes. A system-wide gap is the shared CPU
@@ -64,17 +64,22 @@ by CPU would charge that interval once per CPU and inflate the total past the ca
 
 Rules that follow:
 
+- The run-gap limit is 10x the requested interval when that interval is a time (a cycle interval
+  at the machine's core frequency), else 10x the context's median gap (op-count, fetch, or no
+  readable frequency). A longer gap is time the context was not running: the ending sample is
+  charged the limit, and `WEIGHTS` states the cap and the scoped gap time above it once
+  (`capped at <limit> (10x interval); <s> s in <n> longer gaps excluded`); no row carries that time.
 - `--time-filter T1:T2` selects `DeltaTick ∈ [T1, T2)` **before** the lag, so the first sample per
   context inside the window is ignored, having no gap before it; filtering never re-translates.
   The first-per-context sample still counts in `sample_share`.
-- System-wide, a gap spans all work on that CPU since the previous sample, so halted/idle time is
-  charged to the later sample: `system idle process` and `system` carry share. A process total is
-  core time summed over CPUs (10 s on 16 CPUs is about 160 s of weight). That normalization
-  applies only to a system-wide capture.
+- System-wide, a gap spans all work on that CPU since the previous sample, so halted/idle time up
+  to the run-gap limit is charged to the later sample: `system idle process` and `system` carry
+  share. A process total is core time summed over CPUs (10 s on 16 busy CPUs is about 160 s of
+  weight). That normalization applies only to a system-wide capture.
 - Attached, a gap is the thread's own interval since its previous sample and may cover time it
-  was off-CPU; partitions do not overlap, so a migrating thread is counted once and its total
-  cannot exceed the capture span.
-- `(ModuleName, Offset)` maps to `Function.id` through the `UnifiedSampleSeries` rows that carry both; `Offset` is module-relative, and `ModuleName` matches `Module.path` after `module_key` (lowercase, `/` separators). The scope filter runs after weighting, so a gap is charged whole to the sample that ends it.
+  was off-CPU, up to the run-gap limit; partitions do not overlap, so a migrating thread is
+  counted once and its total cannot exceed the capture span.
+- `(ModuleName, Offset)` maps to `Function.id` through the `UnifiedSampleSeries` rows that carry both; `Offset` is module-relative, and `ModuleName` matches `Module.path` after `module_key` (lowercase, `/` separators). The scope filter runs after weighting, so a gap is charged to the sample that ends it, up to the run-gap limit.
 - `samples` for a dump is the row count (one per dump row); for PMC it is `sum(event column)`, not `count(*)`.
 - `share(part, whole) = part / NULLIF(whole, 0)`: every share is a fraction 0.0-1.0, printed at full precision.
 - `tag_to_retire_share = Σ LEAST(tag, 65535)` for the group divided by the same sum over the scope. Only an unsigned decimal integer cell counts; NULL, negative, fractional and exponent spellings stay NULL and are excluded from both numerator and denominator (never charged the maximum). The projection emits the column only for an IBS OP dump whose `IbsTagToRetCtr` exists and has at least one nonzero value.

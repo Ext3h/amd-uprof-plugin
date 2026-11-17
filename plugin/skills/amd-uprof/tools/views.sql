@@ -27,6 +27,8 @@
 --                       are skipped); lets function_reason say "skipped" only when it was
 --   uprof_ambiguous_modules  chr(2)-joined module names the capture maps to more than one image
 --                       version; dump samples of these get no Function.id
+--   uprof_gap_limit_ns  run-gap limit in ns (10x the requested time interval); empty when the
+--                       interval is not a time, so each context's limit is 10x its median gap
 --   uprof_primary_measure  the column that orders function/region rows and --top: sample_share,
 --                       time_share or samples
 --   uprof_detail_views  'true' (the default when unset) binds the full line and instruction
@@ -372,14 +374,27 @@ FROM v_dump;
 
 -- The query window is applied before the lag, so the first sample per weighting context inside the
 -- window has no preceding in-window interval and carries no weight. weight is that DeltaTick gap in
--- nanoseconds; a gap is charged whole to the later sample, so idle/wait time accrues to the sample
--- that ends it.
+-- nanoseconds, capped at the run-gap limit: a longer gap is time the context was not running
+-- (off CPU, idle), so the sample that ends it is charged only the limit and excess_weight keeps
+-- the rest, which no row ranks by. The limit is uprof_gap_limit_ns when the requested interval
+-- is a time, else 10x the context's median gap.
 CREATE OR REPLACE TEMP VIEW v_dump_weighted AS
-SELECT d.* EXCLUDE (context_pid, context),
-       delta_tick - lag(delta_tick) OVER (
-         PARTITION BY context_pid, context ORDER BY delta_tick) AS weight
-FROM v_dump_context AS d
-WHERE delta_tick >= getvariable('time_start') AND delta_tick < getvariable('time_end');
+WITH gaps AS (
+  SELECT d.* EXCLUDE (context_pid, context), context_pid, context,
+         delta_tick - lag(delta_tick) OVER (
+           PARTITION BY context_pid, context ORDER BY delta_tick) AS gap
+  FROM v_dump_context AS d
+  WHERE delta_tick >= getvariable('time_start') AND delta_tick < getvariable('time_end')
+), limits AS (
+  SELECT *, CAST(floor(COALESCE(
+           TRY_CAST(NULLIF(COALESCE(getvariable('uprof_gap_limit_ns'), ''), '') AS DOUBLE),
+           10 * median(gap) OVER (PARTITION BY context_pid, context))) AS BIGINT) AS gap_limit
+  FROM gaps
+)
+SELECT * EXCLUDE (context_pid, context, gap, gap_limit),
+       CASE WHEN gap > gap_limit THEN gap_limit ELSE gap END AS weight,
+       CASE WHEN gap > gap_limit THEN gap - gap_limit ELSE 0 END AS excess_weight
+FROM limits;
 
 -- Provenance check for the whole dump, printed in the header of every dump-backed run. The weighted
 -- CTE is unfiltered on purpose: the span check compares the dump with session.uprof, independent
@@ -580,15 +595,15 @@ SELECT module_name, rva, function, function_short, containing_function, file, li
 FROM v_symbols;
 
 -- Scope is every process image matching --image and, when given, the one PID named by --pid.
--- With a dump, samples are the DeltaTick-weighted ASCII rows and weight is the exact time; without
+-- With a dump, samples are the DeltaTick-weighted ASCII rows and weight is the capped gap time; without
 -- one (PMC), samples are the UnifiedSampleSeries event-column counts (fixed cycles; one row may
 -- carry several), weight is NULL because there are no per-sample timestamps, and function_id comes
--- from the sample table. The process filter runs after weighting, so a gap is charged whole to the
--- sample that ends it. The COLUMNS lambda selects the event column by name, so the query string
+-- from the sample table. The process filter runs after weighting, so a gap is charged to the sample
+-- that ends it, up to the run-gap limit. The COLUMNS lambda selects the event column by name, so the query string
 -- needs no identifier splicing.
 CREATE OR REPLACE TEMP VIEW v_scoped AS
 SELECT * FROM query(CASE WHEN getvariable('has_dump') THEN $dump$
-SELECT w.delta_tick, w.cpu, w.tid, w.pid, w.rva, w.module_name, w.weight,
+SELECT w.delta_tick, w.cpu, w.tid, w.pid, w.rva, w.module_name, w.weight, w.excess_weight,
        CAST(1 AS BIGINT) AS samples, w.tag_cycles,
        COALESCE(p.name, '<unknown process>') AS process,
        rf.function_id
@@ -611,7 +626,7 @@ SELECT CAST(NULL AS BIGINT) AS delta_tick,
        CAST(s.processId AS INTEGER) AS pid,
        CAST(s.moduleRVA AS BIGINT) AS rva,
        module_key(m.path) AS module_name,
-       CAST(NULL AS DOUBLE) AS weight,
+       CAST(NULL AS DOUBLE) AS weight, CAST(NULL AS DOUBLE) AS excess_weight,
        CAST(COLUMNS(lambda c: lower(c) = lower(getvariable('uprof_event_column'))) AS BIGINT) AS samples,
        CAST(NULL AS DOUBLE) AS tag_cycles,
        COALESCE(p.name, '<unknown process>') AS process,
@@ -700,7 +715,9 @@ FROM v_scoped;
 CREATE OR REPLACE TEMP VIEW v_scope_measures AS
 SELECT CAST(COALESCE(sum(samples), 0) AS BIGINT) AS total_samples,
        sum(weight) AS total_weight,
-       sum(tag_cycles) AS total_tag_cycles
+       sum(tag_cycles) AS total_tag_cycles,
+       sum(excess_weight) AS excess_weight,
+       count(*) FILTER (WHERE excess_weight > 0) AS excess_gaps
 FROM v_scoped;
 
 -- The same window's totals without the --pid/--image filter: the capture a scoped view's shares

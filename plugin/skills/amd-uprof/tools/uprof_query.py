@@ -2311,6 +2311,10 @@ def _achieved_field(
     elapsed_ms = uprof_session.meta_section(collection, "schedule", "collection.schedule").get(
         "elapsed"
     )
+    try:
+        elapsed_s = None if elapsed_ms is None else Decimal(int(elapsed_ms)) / 1000
+    except (TypeError, ValueError):
+        elapsed_s = None
     contexts: list[uprof_session.ContextCadence] = []
     label = "CPU"
     window_s: float | None = None
@@ -2323,7 +2327,9 @@ def _achieved_field(
         if dump is not None and dump.time_filter:
             bounds = util.parse_time_filter(dump.time_filter)
             if bounds is not None:
-                window_s = float(bounds[1] - bounds[0])
+                # The dump holds no samples past the capture end, so the window stops there.
+                end = bounds[1] if elapsed_s is None else min(bounds[1], elapsed_s)
+                window_s = float(end - bounds[0])
     elif sampler.timer:
         contexts = (
             timer_contexts if timer_contexts is not None else _timer_contexts(connection, sampler)
@@ -2337,11 +2343,8 @@ def _achieved_field(
         ).fetchall()
         contexts = [uprof_session.ContextCadence(int(row[1] or 0)) for row in per_core]
         label = "core"
-    if window_s is None and elapsed_ms is not None:
-        try:
-            window_s = int(elapsed_ms) / 1000.0
-        except (TypeError, ValueError):
-            window_s = None
+    if window_s is None and elapsed_s is not None:
+        window_s = float(elapsed_s)
     field = (
         "ACHIEVED",
         uprof_session.achieved_summary(

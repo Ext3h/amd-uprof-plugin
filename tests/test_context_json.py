@@ -465,9 +465,39 @@ class ContextHelpTest(unittest.TestCase):
         },
         "impact": {"order_by": ["time_share", "samples"]},
     }
+    REASONS: ClassVar[tuple] = (
+        "module_missing",
+        "readobj_missing",
+        "readobj_failed",
+        "metadata_incomplete",
+        "no_code_section",
+        "anchor_too_far",
+        "hot_rva_not_instruction_start",
+        "objdump_missing",
+        "objdump_failed",
+        "symbolizer_missing",
+        "symbolizer_failed",
+        "pdb_unverified",
+        "imports_failed",
+        "build_mismatch",
+        "ambiguous_module_version",
+        "context_failed",
+        "row_cap",
+    )
+    # One context that carries every field, plus one omission per reason.
+    CONTEXTS: ClassVar[list] = [
+        {
+            "anchor": {"kind": "section"},
+            "build": {"verified": True},
+            "function": "f",
+            "file": "f.c",
+            "runs": [{"line": 1, "instructions": [{"rva": "0x1", "import": {}, "ibs": {}}]}],
+        },
+        *({"omitted": True, "reason": reason} for reason in REASONS),
+    ]
 
     def test_document_help_reuses_the_main_legend_unit_and_meaning(self):
-        help_text = uprof_context.context_help(self.LEGEND)
+        help_text = uprof_context.context_help(self.LEGEND, self.CONTEXTS)
 
         self.assertEqual(
             list(help_text), ["scope", "share", "fields", "omission_reasons", "read", "next"]
@@ -484,7 +514,7 @@ class ContextHelpTest(unittest.TestCase):
         self.assertNotIn("131070", json.dumps(help_text))
 
     def test_document_help_names_the_emitted_context_fields(self):
-        fields = uprof_context.context_help(self.LEGEND)["fields"]
+        fields = uprof_context.context_help(self.LEGEND, self.CONTEXTS)["fields"]
 
         for name in (
             "anchor",
@@ -508,7 +538,7 @@ class ContextHelpTest(unittest.TestCase):
         self.assertIn("unsigned decimal integer", fields["runs[].instructions[].ibs"])
 
     def test_document_help_qualifies_instruction_text_and_ibs_values(self):
-        fields = uprof_context.context_help(self.LEGEND)["fields"]
+        fields = uprof_context.context_help(self.LEGEND, self.CONTEXTS)["fields"]
 
         self.assertIn("nearest-symbol <...> decoration", fields["runs[].instructions"])
         self.assertIn("not the frame-0 symbol", fields["runs[].instructions"])
@@ -520,20 +550,51 @@ class ContextHelpTest(unittest.TestCase):
         self.assertIn("not decoded meanings", fields["runs[].instructions[].ibs"])
 
     def test_document_help_says_the_cap_counts_row_slots(self):
-        scope = uprof_context.context_help(self.LEGEND)["scope"]
+        scope = uprof_context.context_help(self.LEGEND, self.CONTEXTS)["scope"]
 
         self.assertIn("row slots", scope)
         self.assertIn("still consumes a slot", scope)
 
     def test_document_help_omits_tag_and_attribution_when_not_emitted(self):
         legend = {"columns": {"sample_share": "not established", "time_share": "time share"}}
-        help_text = uprof_context.context_help(legend)
+        help_text = uprof_context.context_help(legend, self.CONTEXTS)
 
         self.assertNotIn("row.attribution", help_text["fields"])
         self.assertNotIn("tag_to_retire_share", help_text["read"])
 
+    def test_document_help_lists_only_the_omission_reasons_the_contexts_carry(self):
+        contexts = [
+            {"omitted": True, "reason": "row_cap"},
+            None,
+            {"omitted": True, "reason": "module_missing"},
+            {"omitted": True, "reason": "row_cap"},
+        ]
+
+        reasons = uprof_context.context_help(self.LEGEND, contexts)["omission_reasons"]
+
+        self.assertEqual(list(reasons), ["module_missing", "row_cap"])
+
+    def test_document_help_names_only_the_fields_the_contexts_carry(self):
+        contexts = [
+            {
+                "anchor": {"kind": "section"},
+                "build": {"verified": True},
+                "function": "f",
+                "runs": [{"line": 1, "instructions": [{"rva": "0x1"}]}],
+            },
+            None,
+        ]
+
+        help_text = uprof_context.context_help(self.LEGEND, contexts)
+
+        self.assertEqual(
+            list(help_text["fields"]),
+            ["anchor", "build", "function, file", "runs", "runs[].instructions", "row.attribution"],
+        )
+        self.assertEqual(help_text["omission_reasons"], {})
+
     def test_every_omission_reason_has_a_meaning(self):
-        reasons = uprof_context.context_help(self.LEGEND)["omission_reasons"]
+        reasons = uprof_context.context_help(self.LEGEND, self.CONTEXTS)["omission_reasons"]
 
         self.assertEqual(
             set(reasons),
@@ -617,8 +678,8 @@ class ContextHelpTest(unittest.TestCase):
         )
 
     def test_document_help_is_deterministic(self):
-        first = uprof_context.context_help(self.LEGEND)
-        second = uprof_context.context_help(self.LEGEND)
+        first = uprof_context.context_help(self.LEGEND, self.CONTEXTS)
+        second = uprof_context.context_help(self.LEGEND, self.CONTEXTS)
 
         self.assertEqual(json.dumps(first, indent=2), json.dumps(second, indent=2))
         self.assertEqual(
@@ -666,7 +727,7 @@ class JsonDocumentTest(unittest.TestCase):
             uprof_output.json_document([], ["rva"], [("0x1",)], contexts=[])
 
     def test_context_help_is_emitted_once_before_the_rows(self):
-        help_text = uprof_context.context_help(ContextHelpTest.LEGEND)
+        help_text = uprof_context.context_help(ContextHelpTest.LEGEND, ContextHelpTest.CONTEXTS)
 
         text = uprof_output.json_document(
             [("METRIC", "x")],

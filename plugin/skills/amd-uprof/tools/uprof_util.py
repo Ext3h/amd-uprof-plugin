@@ -67,6 +67,18 @@ def parse_time_filter(value: str) -> tuple[Decimal, Decimal] | None:
     return Decimal(match.group(1)), Decimal(match.group(2))
 
 
+def require_time_filter(value: str) -> tuple[Decimal, Decimal]:
+    """Bounds of a caller's --time-filter; the window must be T1:T2 seconds with T1 < T2."""
+    bounds = parse_time_filter(value)
+    if bounds is None:
+        raise UprofError(
+            "--time-filter needs T1:T2 in seconds from capture start (for example 0:10)"
+        )
+    if bounds[1] <= bounds[0]:
+        raise UprofError(f"--time-filter needs T1 < T2; got {value}")
+    return bounds
+
+
 _CONTROL_ESCAPES: Final = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
 # Zero-width and bidi controls hide or reorder the text around them.
 _HIDDEN: Final = frozenset([*range(0x200B, 0x2010), *range(0x202A, 0x202F), *range(0x2066, 0x206A)])

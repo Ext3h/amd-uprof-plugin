@@ -129,14 +129,7 @@ def _time_range(args: argparse.Namespace) -> tuple[str, str]:
     """Turn T1:T2 seconds into [start, end) nanoseconds for the DeltaTick filter."""
     if not args.time_filter:
         return "0", _ALL_NS
-    bounds = util.parse_time_filter(args.time_filter)
-    if bounds is None:
-        raise util.UprofError(
-            "--time-filter needs T1:T2 in seconds from capture start (for example 0:10)"
-        )
-    start, end = bounds
-    if end <= start:
-        raise util.UprofError(f"--time-filter needs T1 < T2; got {args.time_filter}")
+    start, end = util.require_time_filter(args.time_filter)
     scale = Decimal(1_000_000_000)
     return str(int(start * scale)), str(int(end * scale))
 

@@ -412,7 +412,9 @@ WITH weighted_all AS (
          sum(b.end_ns - last_ns) AS trailing_ns,
          min(first_ns) AS first_sample_ns,
          max(last_ns) AS max_last_ns,
-         count(*) FILTER (WHERE first_ns < b.start_ns OR last_ns > b.end_ns) AS beyond_contexts,
+         -- Only the start bounds provenance: acquisition stops after the recorded end, so valid
+         -- captures sample past it, and the core-time guard bounds a system-wide overrun.
+         count(*) FILTER (WHERE first_ns < b.start_ns) AS beyond_contexts,
          arg_max(context, b.start_ns + b.end_ns - last_ns + first_ns) AS worst_context
   FROM contexts CROSS JOIN recorded AS b
 ), busiest AS (
@@ -449,9 +451,9 @@ SELECT CASE
                  getvariable('uprof_ibs_dump'), total_weight / 1e9, dump_cpus,
                  span_label, expected_ns / 1e9, dump_cpus, expected_core_ns / 1e9))
   WHEN beyond_contexts > 0 THEN
-    error(printf('dump %s disagrees with session.uprof: %d %s(s) hold samples outside the recorded %s [%.3f, %.3f) s (sample DeltaTick range %.3f..%.3f s); the dump is possibly incompatible with this session',
+    error(printf('dump %s disagrees with session.uprof: %d %s(s) hold samples before the recorded %s start %.3f s (sample DeltaTick range %.3f..%.3f s); the dump is possibly incompatible with this session',
                  getvariable('uprof_ibs_dump'), beyond_contexts, context_label,
-                 span_label, start_ns / 1e9, end_ns / 1e9,
+                 span_label, start_ns / 1e9,
                  first_sample_ns / 1e9, max_last_ns / 1e9))
   WHEN getvariable('attached') THEN
     printf('OK, attached: dump: %d samples, %d first-per-%s samples excluded; %d process(es), %d TID(s), %d active %s (%d/%d samples in the busiest), %d CPU(s) visited',
@@ -466,7 +468,7 @@ SELECT CASE
            (expected_core_ns - total_weight) / 1e9, leading_ns / 1e9, trailing_ns / 1e9,
            CAST(worst_context AS VARCHAR))
   ELSE
-    printf('OK, system-wide: dump: %d samples, %d first-per-CPU samples excluded; %d CPU(s); the last sample lies within one sampling cadence of the recorded window end',
+    printf('OK, system-wide: dump: %d samples, %d first-per-CPU samples excluded; %d CPU(s); the last sample lies no earlier than one sampling cadence before the recorded window end',
            dump_samples, excluded_first, dump_cpus)
 END AS message,
 CAST(tag_values AS BIGINT) AS tag_values

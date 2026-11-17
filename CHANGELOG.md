@@ -75,6 +75,10 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - `--json` prints one compact line, without indentation or separator padding; keys, order and
   values are unchanged. The `--by instruction --top 1 --json` document on the defect lab's
   chain.ibs capture shrinks from 35,313 to 20,768 characters (issue #339).
+- `SANITY` no longer refuses an IBS dump whose samples run past the recorded span end
+  (issue #358): AMDuProfCLI keeps acquiring after the recorded schedule end, so valid captures
+  sampled 21-38 ms past it and were rejected. Only a sample before the recorded span start is
+  still an error; a system-wide overrun still counts toward the core-time bound.
 - `SKILL.md` is cut from about 8,500 to fewer than 500 words: the entry point, the first call per
   question, the capture pipeline, the permissions and how to read the output. The meaning of each
   share, the next call and every cause come from the tool output; `--help` does not grow. A

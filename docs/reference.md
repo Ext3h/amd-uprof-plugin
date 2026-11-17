@@ -170,21 +170,22 @@ across all processes. It raises an error only on genuine
 inconsistency: `sum(weight)` greater than the span from `session.uprof` — the
 `translate --time-filter` window when `translateCommand` records one, else
 `collection.schedule.elapsed` (ms), else `profileDuration` (s) — times the dump's distinct CPU
-count, or any sample whose `DeltaTick` lies outside that span's bounds. A recorded translate
-window is compared as `[T1, T2)`, not as the width `T2 - T1` alone: `DeltaTick` stays
-capture-start-relative in a windowed dump. Either condition is a dump that does not belong to
-this session.
+count, or any sample whose `DeltaTick` lies before that span's start. A recorded translate
+window starts at `T1`, not at 0: `DeltaTick` stays capture-start-relative in a windowed dump.
+Either condition is a dump that does not belong to this session. Samples after the span's end
+are no error: acquisition stops after the recorded end, so valid captures sample tens of
+milliseconds past it (#358); a system-wide overrun still counts toward the core-time bound.
 
 Normal captures never reach that bound. The message starts with the verdict and scope in a
-fixed form: `OK, system-wide` when the last sample lies within one sampling cadence of the
-recorded span's end, `WARN, system-wide` when the capture window ends earlier (no CPU sampled
+fixed form: `OK, system-wide` when the last sample lies no earlier than one sampling cadence
+before the recorded span's end, `WARN, system-wide` when the capture window ends earlier (no CPU sampled
 near the end); only the WARN reports the covered core time and the boundary gaps split
 leading/trailing with the worst CPU, since numbers beside an OK were read as a defect. **Attached captures**
 (`collection.target.systemWide` false) partition gaps by `(PID, TID)`, not by CPU, so the verdict
 is thread coverage, never a CPU capacity: `elapsed x CPUs` was meaningless for a single-thread
-process and hid the per-CPU overcount. A thread holding a sample outside the recorded span is an
-error, the same out-of-span error as system-wide; the last-to-first span of an in-span thread
-cannot exceed the capture span by construction. The attached `OK` line names no thread's
+process and hid the per-CPU overcount. A thread holding a sample before the recorded span's start
+is an error, the same error as system-wide; no error bounds a thread's samples past the span's
+end. The attached `OK` line names no thread's
 covered time against the span: one thread's busy time is not a capture window. No usable
 duration gives a `WARN` and no comparison; an empty dump raises an error.
 
@@ -441,7 +442,7 @@ The views and the materialized `v_dump` TEMP TABLE:
 | `v_dump_context` | `v_dump` plus the weighting context: `context_pid` 0 and `context` = `cpu` for a system-wide capture, `context_pid` = `pid` and `context` = `tid` for an attached one; defined once so weighting and the sanity check cannot disagree |
 | `v_dump_weighted` | applies `[time_start, time_end)` then adds `weight = delta_tick - lag(delta_tick) OVER (PARTITION BY context_pid, context ORDER BY delta_tick)` from `v_dump_context`; the helper columns are excluded |
 | `v_capture_span` | the span recorded in `session.uprof`: the translate `--time-filter` window when recorded, else `collection.schedule.elapsed`, else `profileDuration`; `start_ns`/`end_ns`/`expected_ns`/`span_label`/`system_wide`, shared by the dump-wide and scoped sanity views |
-| `v_dump_sanity` | whole-dump provenance check: samples outside the recorded span bounds, or core time above span × CPUs when system-wide, error; attached captures report `OK, attached` with processes, TIDs, active TID and CPUs visited, and error only for samples outside the span; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure |
+| `v_dump_sanity` | whole-dump provenance check: samples before the recorded span start, or core time above span × CPUs when system-wide, error; attached captures report `OK, attached` with processes, TIDs, active TID and CPUs visited, and error only for samples before the span start; no usable duration or uncovered late time warns dump-wide; exposes `tag_values` for the empty-tag disclosure |
 | `v_symbols` | combined symbolizer artifact: `module_name, rva, function, function_short, containing_function, file, line` |
 | `v_public_starts` | public-symbol fold cache: `module_name, rva, name_count, names` |
 | `v_function_ranges` | derived code ranges from `uprof_functions`, typed to `module_name, function_start, function_end, function_source, function_name`; empty when no derivation ran |

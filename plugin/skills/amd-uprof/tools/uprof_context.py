@@ -1090,13 +1090,38 @@ _CONTEXT_HELP_OMISSIONS: Final = {
 }
 
 
-def context_help(legend: dict[str, Any]) -> dict[str, Any]:
+def _context_keys(contexts: Sequence[object]) -> tuple[set[str], set[str]]:
+    """The help field names and the omission reasons that occur in the contexts."""
+    present: set[str] = set()
+    reasons: set[str] = set()
+    for context in contexts:
+        if not isinstance(context, dict):
+            continue
+        if context.get("omitted"):
+            present.add("omitted")
+            reasons.add(str(context.get("reason")))
+        present.update(key for key in ("anchor", "build", "runs") if key in context)
+        if "function" in context or "file" in context:
+            present.add("function, file")
+        for source_run in context.get("runs") or ():
+            for entry in source_run.get("instructions") or ():
+                present.add("runs[].instructions")
+                present.update(
+                    f"runs[].instructions[].{key}" for key in ("import", "ibs") if key in entry
+                )
+    return present, reasons
+
+
+def context_help(legend: dict[str, Any], contexts: Sequence[object]) -> dict[str, Any]:
     """Once-per-document help for the context blocks; JSON only, in a fixed key order.
 
     The share unit and denominator come from the document's legend rather than a second scale,
-    so the context cannot drift from the table's sample_share meaning.
+    so the context cannot drift from the table's sample_share meaning. The help explains only
+    the fields and omission reasons that occur in the document's contexts, so each document
+    pays only for the help its own contexts need.
     """
-    fields = dict(_CONTEXT_HELP_FIELDS)
+    present, reasons = _context_keys(contexts)
+    fields = {name: text for name, text in _CONTEXT_HELP_FIELDS.items() if name in present}
     columns = legend.get("columns") or {}
     if "attribution" in columns:
         fields["row.attribution"] = columns["attribution"]
@@ -1128,7 +1153,9 @@ def context_help(legend: dict[str, Any]) -> dict[str, Any]:
             "legend.columns.sample_share gives its meaning for this capture mode"
         ),
         "fields": fields,
-        "omission_reasons": dict(_CONTEXT_HELP_OMISSIONS),
+        "omission_reasons": {
+            reason: text for reason, text in _CONTEXT_HELP_OMISSIONS.items() if reason in reasons
+        },
         "read": read,
         "next": (
             "Use legend.next to change scope or granularity. Rank by "

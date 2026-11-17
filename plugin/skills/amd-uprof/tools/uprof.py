@@ -51,8 +51,8 @@ is last, not ranked; NEXT lists runnable calls that keep the session and scope. 
 emitted at full precision. Table cells and header values show CR, LF, TAB, NUL, other
 C0 controls and DEL as
 visible \\n, \\r, \\t or \\xNN escapes; JSON keeps the original characters, so table and JSON
-agree modulo this display escaping for control characters. --top N returns N rows and a
-<other ...> remainder row when the result is truncated; --top all returns every row.
+agree modulo this display escaping for control characters. --top N returns N rows and the
+<other ...> remainder when the result is truncated; --top all returns every row.
 --out-file writes exactly the bytes stdout would carry: UTF-8 without a BOM, LF newlines.
 """
 

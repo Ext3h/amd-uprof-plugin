@@ -24,6 +24,14 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   instruction view with `--top 1` and without `--json`, and a function-scoped instruction view
   has no `NEXT` back to `--by line` (issue #385).
 
+- The `--top` remainder of `profile --by function`, `--by region` and unscoped `--by line` tells
+  the shown module's rest from other modules (issue #332). When every shown row is in one module
+  it is two rows: `<other functions in this module>` with that module's cell and
+  `<other functions in other modules>`; when the shown rows span several modules it is one
+  `<other functions (all modules)>` row. Lines follow the same names; a region row has no name
+  column, so its labels sit in the module cell and the first one names the module:
+  `<other regions in <module>>`. READ says "the <other ...> rows are last, not ranked".
+
 ### Added
 
 - Timer captures are profiled as an on-CPU time share; unsupported cases fail with a cause

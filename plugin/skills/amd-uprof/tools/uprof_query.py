@@ -1814,7 +1814,7 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
             read = f"rows are ordered by raw sample count: {reason}"
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
-        read += "; the <other functions> row is last, not ranked"
+        read += "; the <other ...> rows are last, not ranked"
         return read
     if "region" in legend:
         measure = legend["impact"]["primary_measure"]
@@ -1836,7 +1836,7 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         )
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
-        read += "; the <other regions> row is last, not ranked"
+        read += "; the <other ...> rows are last, not ranked"
         return read
     measure = legend["impact"].get("primary_measure")
     if measure == "time_share":
@@ -1884,7 +1884,7 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
             "capture, while parent_* are relative to the parent function, and every other "
             "function is excluded"
         )
-    read += "; the <other ...> row is last, not ranked"
+    read += "; the <other ...> rows are last, not ranked"
     return read
 
 

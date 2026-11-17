@@ -54,6 +54,14 @@ CREATE OR REPLACE TEMP MACRO module_ambiguous(name) AS COALESCE(list_contains(
   string_split(NULLIF(getvariable('uprof_ambiguous_modules'), ''), chr(2)), name), false);
 -- A share is a fraction of the scoped total (0.0-1.0); the unit is stated once in the output.
 CREATE OR REPLACE TEMP MACRO share(part, whole) AS part / NULLIF(whole, 0);
+
+-- The --top remainder part of a cut row, from the lowest and highest module of the shown rows:
+-- 0 the shown module's rest and 1 the other modules when every shown row is in one module,
+-- else 2, one row for all modules. A '<multiple>' module cell spans several modules.
+CREATE OR REPLACE TEMP MACRO remainder_part(module, shown_min, shown_max) AS CASE
+  WHEN shown_min IS NULL OR shown_min <> shown_max OR shown_min = '<multiple>' THEN 2
+  WHEN module = shown_min THEN 0
+  ELSE 1 END;
 -- The plain identifier a function name carries: before the first '@' of a decorated MSVC public
 -- ('?f@@YAHH@Z', '?m@K@ns@@...', '??$f@H@@...' for a template), else the last identifier of a
 -- demangled spelling once template arguments and the parameter list are removed
@@ -1000,8 +1008,15 @@ WITH keyed AS (
 )
 SELECT * FROM measured;
 
--- The public function rows: the aggregated rows with --top applied and one remainder row.
+-- The public function rows: the aggregated rows with --top applied and the remainder, split by
+-- module as remainder_part says.
 CREATE OR REPLACE TEMP VIEW v_function_rows AS
+WITH measured AS (
+  SELECT v.*,
+         min(module_name) FILTER (WHERE rn <= getvariable('top_n')) OVER () AS shown_min,
+         max(module_name) FILTER (WHERE rn <= getvariable('top_n')) OVER () AS shown_max
+  FROM v_function_measured v
+)
 SELECT m.function_name AS "function", m.module_name AS module,
        CASE WHEN m.function_start IS NULL THEN NULL
             ELSE printf('0x%X', m.function_start) END AS function_start,
@@ -1014,17 +1029,23 @@ SELECT m.function_name AS "function", m.module_name AS module,
        m.hot_samples,
        m.total_samples, m.total_weight, m.total_tag_cycles, 0 AS sort_key, m.rn,
        COALESCE(fe."isSystemModule", fb."isSystemModule") AS "isSystemModule"
-FROM v_function_measured m
+FROM measured m
 LEFT JOIN v_module_flags_exact fe ON fe.module_name = m.module_name
 LEFT JOIN v_module_flags_basename fb ON fb.basename = regexp_extract(m.module_name, '([^/]+)$', 1)
 WHERE getvariable('top_n') = 0 OR m.rn <= getvariable('top_n')
 UNION ALL
-SELECT '<other functions>', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+SELECT CASE part WHEN 0 THEN '<other functions in this module>'
+                 WHEN 1 THEN '<other functions in other modules>'
+                 ELSE '<other functions (all modules)>' END,
+       CASE WHEN part = 0 THEN min(module_name) END, NULL, NULL, NULL, NULL, NULL, NULL,
        CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles), NULL, NULL,
-       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL, NULL
-FROM v_function_measured
-WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
-HAVING count(*) > 0;
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1 + part, NULL, NULL
+FROM (
+  SELECT *, remainder_part(module_name, shown_min, shown_max) AS part
+  FROM measured
+  WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
+)
+GROUP BY part;
 
 -- The parent function selected by --function/--module/--function-start. Empty unless a
 -- function-scoped instruction or line view was requested. It reads the same uncapped aggregated
@@ -1065,8 +1086,8 @@ WHERE COALESCE(getvariable('uprof_function'), '') <> ''
 -- The folded body ends where a derived range starts after the folded start or where the
 -- symbolizer frame names a function outside the fold (fold_holds).
 -- Rows and --top follow uprof_primary_measure: gap weight for a time-based capture, otherwise the
--- sample count (the same order as sample_share). When --top truncates, one <other lines> row
--- carries the rest.
+-- sample count (the same order as sample_share). When --top truncates, the <other lines ...> rows
+-- carry the rest, split by module as remainder_part says.
 CREATE OR REPLACE TEMP VIEW v_line_rows AS
 SELECT * FROM query(CASE
   WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $line_rows$
@@ -1167,6 +1188,11 @@ scoped AS (
                     samples DESC,
                     file_name, line_number, function_name, module_name) AS rn
   FROM agg LEFT JOIN fs_one ON true
+), shown AS (
+  SELECT *,
+         min(module_name) FILTER (WHERE rn <= getvariable('top_n')) OVER () AS shown_min,
+         max(module_name) FILTER (WHERE rn <= getvariable('top_n')) OVER () AS shown_max
+  FROM ranked
 )
 SELECT file_name AS "file", line_number AS line, function_name AS "function",
        module_name AS module, attribution, samples, weight, tag_cycles,
@@ -1175,13 +1201,19 @@ SELECT file_name AS "file", line_number AS line, function_name AS "function",
 FROM ranked
 WHERE getvariable('top_n') = 0 OR rn <= getvariable('top_n')
 UNION ALL
-SELECT '<other lines>', NULL, NULL, NULL, NULL,
+SELECT CASE part WHEN 0 THEN '<other lines in this module>'
+                 WHEN 1 THEN '<other lines in other modules>'
+                 ELSE '<other lines (all modules)>' END,
+       NULL, NULL, CASE WHEN part = 0 THEN min(module_name) END, NULL,
        CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
        max(total_samples), max(total_weight), max(total_tag_cycles),
-       max(parent_samples), max(parent_weight), max(parent_tag_cycles), 1, NULL
-FROM ranked
-WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
-HAVING count(*) > 0$line_rows$
+       max(parent_samples), max(parent_weight), max(parent_tag_cycles), 1 + part, NULL
+FROM (
+  SELECT *, remainder_part(module_name, shown_min, shown_max) AS part
+  FROM shown
+  WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
+)
+GROUP BY part$line_rows$
   ELSE $line_rows_empty$
     SELECT CAST(NULL AS VARCHAR) AS "file", CAST(NULL AS INTEGER) AS line,
            CAST(NULL AS VARCHAR) AS "function", CAST(NULL AS VARCHAR) AS module,
@@ -1305,8 +1337,9 @@ HAVING count(*) > 0$instruction_rows$
 -- sampled_addresses says whether the page is a tight cluster or a diffuse bucket. hot_rva is the
 -- highest-sample RVA in the page (ties pick the lowest); its symbolizer frame names function, file
 -- and line, and the derived function range names it when the symbolizer has no frame. Rows and
--- --top follow uprof_primary_measure as v_function_rows does. When --top truncates, one
--- <other regions> row carries the rest.
+-- --top follow uprof_primary_measure as v_function_rows does. When --top truncates, the
+-- <other regions ...> rows carry the rest, split by module as remainder_part says. A region row
+-- has no name column, so the label sits in the module cell and names the shown module itself.
 CREATE OR REPLACE TEMP VIEW v_region_rows AS
 WITH paged AS (
   SELECT COALESCE(NULLIF(w.module_name, ''), '<unknown module>') AS module_name,
@@ -1402,6 +1435,11 @@ WITH paged AS (
                       WHEN 'time_share' THEN weight END DESC NULLS LAST,
                     samples DESC, page_start, module_name) AS rn
   FROM labelled
+), shown AS (
+  SELECT *,
+         min(module_name) FILTER (WHERE rn <= getvariable('top_n')) OVER () AS shown_min,
+         max(module_name) FILTER (WHERE rn <= getvariable('top_n')) OVER () AS shown_max
+  FROM measured
 )
 SELECT m.module_name AS module,
        printf('0x%X', m.page_start) AS page_start,
@@ -1418,9 +1456,15 @@ LEFT JOIN v_module_flags_exact fe ON fe.module_name = m.module_name
 LEFT JOIN v_module_flags_basename fb ON fb.basename = regexp_extract(m.module_name, '([^/]+)$', 1)
 WHERE getvariable('top_n') = 0 OR m.rn <= getvariable('top_n')
 UNION ALL
-SELECT '<other regions>', NULL, NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
-       max(total_samples), max(total_weight), max(total_tag_cycles), 1, NULL,
+SELECT CASE part WHEN 0 THEN '<other regions in ' || min(module_name) || '>'
+                 WHEN 1 THEN '<other regions in other modules>'
+                 ELSE '<other regions (all modules)>' END,
+       NULL, NULL, CAST(sum(samples) AS BIGINT), sum(weight), sum(tag_cycles),
+       max(total_samples), max(total_weight), max(total_tag_cycles), 1 + part, NULL,
        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-FROM measured
-WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
-HAVING count(*) > 0;
+FROM (
+  SELECT *, remainder_part(module_name, shown_min, shown_max) AS part
+  FROM shown
+  WHERE getvariable('top_n') > 0 AND rn > getvariable('top_n')
+)
+GROUP BY part;

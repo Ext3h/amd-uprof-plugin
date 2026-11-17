@@ -476,10 +476,10 @@ The views and the materialized `v_dump` TEMP TABLE:
 | `v_process_rows` | aggregation, ranking, totals and the `<other processes>` remainder |
 | `v_module_rows` | module path aggregation, ranking, totals, `isSystemModule`, the module's `hot_rva`/`hot_samples` and the `<other modules>` remainder |
 | `v_function_measured` | the uncapped function aggregation behind `v_function_rows`: derived range when `uprof_functions` covers the RVA, else a named `Function.id`, else the symbolizer's containing function; `function_start`/`function_end`/`function_source`/`function_derived`; one `<unresolved>` row per module, which also holds the samples of blank-named `Function.id`s; attribution `unique`/`shared` (range start with folded public names)/`derived` (synthetic name, also when the range's samples disagree on the uProf name)/`unresolved`; hot RVA by samples; total samples/weight/tag; `--function` reads its parent row here so `--top` cannot hide it |
-| `v_function_rows` | `v_function_measured` with `--top` applied and one `<other functions>` remainder |
+| `v_function_rows` | `v_function_measured` with `--top` applied and the remainder: `<other functions in this module>` (module cell set) and `<other functions in other modules>` when every shown row is in one module, else one `<other functions (all modules)>` |
 | `v_function_scope` | the single parent row selected by `uprof_function`/`uprof_function_module`/`uprof_function_start`; a `Function.id` parent holds only the samples outside every derived range; empty unless a function-scoped line or instruction view was requested |
-| `v_region_rows` | one row per module and 4 KiB address page; `page_start`/`page_end`, `sampled_addresses`, hot RVA and the function that owns it; attribution `unique`/`shared`/`derived`/`unresolved`; `<other regions>` |
-| `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels bounded to the folded body; filtered to `v_function_scope` when `--function` is set; `<other lines>`; full body only when `uprof_detail_views` is `'true'`, else an empty typed relation |
+| `v_region_rows` | one row per module and 4 KiB address page; `page_start`/`page_end`, `sampled_addresses`, hot RVA and the function that owns it; attribution `unique`/`shared`/`derived`/`unresolved`; the remainder split by module like the function rows, with the label in the module cell: `<other regions in <module>>`, `<other regions in other modules>` or `<other regions (all modules)>` |
+| `v_line_rows` | symbolizer join, short-name/overload identity, `<no symbol>`/`<no source line>`/`<multiple>` buckets, fold labels bounded to the folded body; filtered to `v_function_scope` when `--function` is set; `<other lines ...>` remainder split by module like the function rows; full body only when `uprof_detail_views` is `'true'`, else an empty typed relation |
 | `v_instruction_rows` | one row per module + RVA with innermost annotation, ordered by the mode's primary measure; filtered to `v_function_scope` when `--function` is set; `<other instructions>`; full body only when `uprof_detail_views` is `'true'`, else an empty typed relation |
 
 - **Projection files** are one final SELECT over the views: `profile-process.sql`, `profile-module.sql`, `profile-function.sql`, `profile-region.sql`, `profile-line.sql`, `profile-instruction.sql`; they apply the `share()` macro and hide internal columns. `profile-rvas.sql` exports the symbolization scope, `profile-function-modules.sql` names the modules whose samples need derived ranges, `agreement.sql` computes the metric, `coverage.sql` reports per-module symbol coverage, and `schema.sql` lists the live schema. There are no optional schema files: `views.sql` is the only schema.
@@ -488,7 +488,7 @@ The views and the materialized `v_dump` TEMP TABLE:
 
 ## Reproducibility and tie order
 
-The same capture and arguments produce byte-identical output on every run. Each row view ranks by weight, then samples, then a stable key; the remainder row is last:
+The same capture and arguments produce byte-identical output on every run. Each row view ranks by weight, then samples, then a stable key; the remainder rows are last:
 
 | `--by` | ORDER BY |
 |---|---|

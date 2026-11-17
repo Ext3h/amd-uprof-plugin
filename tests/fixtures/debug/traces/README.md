@@ -26,7 +26,11 @@ byte on both OSes:
 | `linux/` | ubuntu-latest | 3.12.16 | 23.1.4 (release tarball) | 2.0.0 |
 
 The run captured commit `71c45cb` ("Expect the nearest-symbol wording in the function coverage
-split test"), the parent of the commit that adds these files. Compared with run 43836866209 and,
+split test", rebased as `fca2fe9`), the parent of the commit that adds these files.
+[Run 44052057343](https://github.com/Ext3h/amd-uprof-plugin/actions/runs/44052057343) at
+`655bcb0` ("Keep nearest-symbol names derived in every view", same runner versions) reproduced
+every file byte for byte: the traces derive ranges only from PDB publics and `.pdata`, never
+from an export, so that change leaves them as they are. Compared with run 43836866209 and,
 for `pe_fixture_full.txt`, run 43841653092, only `symbol_coverage=` lines changed: the function
 split says derived covers a synthetic range or a nearest-symbol name, and a line view with
 nearest-symbol frames reports them as derived instead of calling every sample drillable.

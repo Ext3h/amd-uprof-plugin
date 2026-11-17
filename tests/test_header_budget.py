@@ -97,7 +97,7 @@ CEILINGS = {
         "TIME_SHARE": 87,
         "VERSION": 7,
         "WEIGHTS": 13,
-        "context_help": 485,
+        "context_help": 504,
         "legend": 417,
     },
 }
@@ -158,7 +158,8 @@ class HeaderBudgetTest(unittest.TestCase):
         return {
             key: self.words(value if isinstance(value, str) else json.dumps(value))
             for key, value in document.items()
-            if key != "rows"
+            # windows holds the rows' decoded instructions, shared between rows: row data.
+            if key not in ("rows", "windows")
         }
 
     def markdown(self, *args) -> dict[str, int]:

@@ -527,7 +527,6 @@ class ContextHelpTest(unittest.TestCase):
             "build",
             "function, file",
             "window",
-            "windows",
             "windows[].runs",
             "windows[].runs[].instructions",
             "windows[].runs[].instructions[].import",
@@ -541,8 +540,8 @@ class ContextHelpTest(unittest.TestCase):
         self.assertIn("frame 0", fields["function, file"])
         self.assertIn("differs from the window", fields["windows[].runs"])
         self.assertIn("null", fields["windows[].runs"])
-        self.assertIn("index into the top-level windows", fields["window"])
-        self.assertIn("printed once", fields["windows"])
+        self.assertIn("index into windows", fields["window"])
+        self.assertIn("printed once", fields["window"])
         self.assertIn("sample_share", fields["windows[].runs[].instructions"])
         self.assertIn("65535", fields["windows[].runs[].instructions[].ibs"])
         self.assertIn("unsigned decimal integer", fields["windows[].runs[].instructions[].ibs"])
@@ -603,7 +602,6 @@ class ContextHelpTest(unittest.TestCase):
                 "build",
                 "function, file",
                 "window",
-                "windows",
                 "windows[].runs",
                 "windows[].runs[].instructions",
                 "row.attribution",

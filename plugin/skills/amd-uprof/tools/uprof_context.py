@@ -1043,13 +1043,8 @@ _CONTEXT_HELP_FIELDS: Final = {
         "absent when no instruction has one"
     ),
     "window": (
-        "the row's decoded window: index into the top-level windows list, and first and last, "
-        "the lowest and highest rva the row's own decode covered in that window"
-    ),
-    "windows": (
-        "top-level list of decoded windows, each printed once and shared by every row whose "
-        "window overlaps it in the same module, entries unique by rva; each has module, the "
-        "frame-0 function and file most of its instructions share, and runs"
+        "index into windows, each printed once for the rows overlapping it in one module; "
+        "first and last bound the row's rvas"
     ),
     "windows[].runs": (
         "the static decoded stream in ascending rva, grouped into runs of consecutive "
@@ -1179,7 +1174,7 @@ def _context_keys(
         if "function" in context or "file" in context:
             present.add("function, file")
     if windows:
-        present.update(("windows", "windows[].runs"))
+        present.add("windows[].runs")
     for window in windows:
         for source_run in window.get("runs") or ():
             for entry in source_run.get("instructions") or ():
@@ -1210,8 +1205,7 @@ def context_help(
     if "attribution" in columns:
         fields["row.attribution"] = columns["attribution"]
     read = (
-        "The entry of the row's window (windows[context.window.index]) whose rva equals the "
-        "row's rva is the sampled instruction. "
+        "The row's window entry whose rva equals the row's rva is the sampled instruction. "
         "sample_share is the raw share for this capture mode: read its meaning from "
         "legend.columns.sample_share and its fraction unit and denominator from "
         "legend.share_unit, legend.share_scale and legend.denominators.sample_share; it is "

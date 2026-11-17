@@ -168,6 +168,10 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - The `profile --by region` legend names its denominator: a sample without an address is in no
   page, so the region shares and `hot_rva_share` are of the scoped samples that carry an
   address, not of the scoped capture total the legend claimed (issue #90).
+- A truncated `profile --by module` splits its remainder by `isSystemModule` into
+  `<other third-party modules>`, `<other system modules>` and `<other unclassified modules>`
+  instead of one `<other modules>` row with no classification, so the `isSystemModule = false`
+  rows sum to the whole third-party share (issue #280).
 
 ## 2.1.0 — 2026-11-08
 

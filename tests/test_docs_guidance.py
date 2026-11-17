@@ -174,6 +174,15 @@ class DocsGuidanceTest(unittest.TestCase):
             with self.subTest(document=name):
                 self.assertIn("PDBs are read only on Windows hosts", _flat(text))
 
+    def test_the_ambiguous_module_skip_is_a_symbolization_rule(self):
+        # A module name mapped to several image versions is never symbolized, cache or not, so
+        # the rule belongs to symbolization; under the cache alone it reads as a cache effect.
+        symbolization = REFERENCE.split("\n## Symbolization\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn(
+            "A module name the capture maps to more than one image version is not symbolized",
+            _flat(symbolization),
+        )
+
 
 # One phrase per part of SKILL.md: entry point, first call, capture pipeline, permissions and
 # reading the output.

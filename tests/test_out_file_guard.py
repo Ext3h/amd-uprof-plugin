@@ -4,7 +4,6 @@
 import contextlib
 import os
 import tempfile
-import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -70,9 +69,7 @@ class OutFileGuardTest(unittest.TestCase):
             target.write_bytes(b"rebuilt")
             return target
 
-        sampler = types.SimpleNamespace(
-            pmc=False, timer=False, event_column="", ibs_dump_kind="ibsop-event-dump"
-        )
+        sampler = uprof_session.Sampler(event_column="", ibs_dump_kind="ibsop-event-dump")
         dump = uprof_dump.DumpInfo(self.dump, "beside", self.cache)
         with (
             mock.patch.object(uprof_session, "derive_sampler", return_value=sampler),

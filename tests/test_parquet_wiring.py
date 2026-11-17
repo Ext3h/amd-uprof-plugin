@@ -2,7 +2,6 @@
 
 import contextlib
 import tempfile
-import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -57,7 +56,7 @@ class ParquetWiringTest(unittest.TestCase):
                 raise _Abort()
                 yield
 
-            sampler = types.SimpleNamespace(pmc=False, timer=False, event_column="")
+            sampler = uprof_session.Sampler(event_column="")
             with (
                 mock.patch.object(uprof_query, "_check_args", return_value=None),
                 mock.patch.object(uprof_session, "derive_sampler", return_value=sampler),

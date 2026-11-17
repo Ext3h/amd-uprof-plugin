@@ -3427,7 +3427,8 @@ def run_query_command(args: argparse.Namespace) -> None:
                 empty_scope=empty_scope,
             )
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
-            top_row = _top_row_precision(connection, args.by) if sampler.timer else None
+            # Every capture mode states the top row's sampling uncertainty.
+            top_row = _top_row_precision(connection, args.by)
             # The filter and its parent measurement precede the reading rule; both sit directly
             # below METRIC, after VERSION, before the detailed fields.
             fields[2:2] = _legend_fields(

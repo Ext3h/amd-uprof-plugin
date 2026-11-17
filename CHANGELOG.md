@@ -38,7 +38,7 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   and proposed alternatives. A timer-based capture (`AMDuProfCLI collect --config
   tbp`, the only sampler on hosts without IBS or `CYCLES_NOT_IN_HALT`) is detected from its
   `CPU_TIME` event column; every `profile --by` view reads it, `METRIC` names the measures it
-  lacks once, `READ` carries the top row's 95% binomial interval, and `ACHIEVED` reports per
+  lacks once, `READ` carries the top row's 95% Wilson score interval, and `ACHIEVED` reports per
   thread. `cpu_seconds` is not derived: on the reference host, samples × interval was 13% low
   to 0.2% high at 1 ms and 31% to 12% low at 10 ms against measured CPU time. `profile --time-filter` and `translate --ascii` on a timer capture,
   a session with no recognized sampler, and a `collect` whose `CYCLES_NOT_IN_HALT` AMDuProfCLI
@@ -80,6 +80,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- `READ` ends with the top row's share, its 95% Wilson score interval and `n` in every capture
+  mode, not only for timer captures, so IBS and PMC shares state their sampling uncertainty
+  (issue #201).
 - The top-row clause in `READ` widens its 95% interval for the selection with a Bonferroni z over
   the ranked rows (`as the top of m rows`) and states whether row 1 is separated from row 2
   (a 95% Wilson interval of k1 / (k1 + k2) that excludes one half) (issue #277).

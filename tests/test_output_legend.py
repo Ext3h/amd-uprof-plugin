@@ -53,6 +53,14 @@ TAG_MEANING = (
 CAVEAT = "a raw share cannot separate a cheap operation run often from an expensive one run rarely"
 READ_TAIL = "the <other ...> rows are last, not ranked"
 
+
+def top_row_clause(mode):
+    """The READ clause for the fixture's one process: every sample, so a whole share."""
+    total = 5 if mode.startswith("pmc") else 3
+    low = total / (total + 1.96 * 1.96)
+    return rf"top row c:\workload.exe 100.0% (95% CI {100 * low:.1f}-100.0%, n={total} samples)"
+
+
 TAG_ABSENT = {
     "pmc": "this export has no tag-to-retire counter",
     "pmc-unsupported": "this export has no tag-to-retire counter",
@@ -207,7 +215,7 @@ def expected_read(mode):
         read = "sample_share orders the rows"
         if spec["sample"].startswith(("dispatched-op", "fetch-sample")):
             read += f"; {CAVEAT}"
-    return f"READ: {read}; {READ_TAIL}"
+    return f"READ: {read}; {READ_TAIL}; {top_row_clause(mode)}"
 
 
 def dump_row(tick_ns, cpu, pid, module, tag=None):

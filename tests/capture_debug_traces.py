@@ -15,6 +15,7 @@ the traces are symbol/debug-format and production-pipeline evidence, not hardwar
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import os
 import re
 import shutil
@@ -500,6 +501,14 @@ def render(case: Case) -> str:
     return normalize("\n".join(lines)) + "\n"
 
 
+def render_job(name: str | None) -> tuple[str, str]:
+    """(trace name, trace text) of the named case, or of the fallback case for None."""
+    if name is None:
+        name, lines = fallback_case()
+        return name, normalize("\n".join(lines)) + "\n"
+    return name, render(next(case for case in CASES if case.name == name))
+
+
 def manifest() -> list[str]:
     import platform
 
@@ -531,12 +540,12 @@ def main(argv=None) -> int:
     out_dir = Path(args.out_dir).resolve()
     target = out_dir / os_name
     target.mkdir(parents=True, exist_ok=True)
-    for case in CASES:
-        (target / f"{case.name}.txt").write_text(render(case), encoding="utf-8", newline="\n")
-    name, lines = fallback_case()
-    (target / f"{name}.txt").write_text(
-        normalize("\n".join(lines)) + "\n", encoding="utf-8", newline="\n"
-    )
+    # The cases share no state (each runs in its own temporary directories), so they render in
+    # parallel; the traces do not depend on the order.
+    jobs = [case.name for case in CASES] + [None]
+    with concurrent.futures.ProcessPoolExecutor(min(len(jobs), os.cpu_count() or 1)) as pool:
+        for name, text in pool.map(render_job, jobs):
+            (target / f"{name}.txt").write_text(text, encoding="utf-8", newline="\n")
     (out_dir / "manifest.txt").write_text(
         "\n".join(manifest()) + "\n", encoding="utf-8", newline="\n"
     )

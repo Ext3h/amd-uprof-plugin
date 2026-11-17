@@ -494,7 +494,7 @@ class AnonymizeCaptureTest(unittest.TestCase):
         files.mkdir()
         for name in ("heap_churn.exe", "heap_churn.pdb"):
             (files / name).write_bytes((timer / name).read_bytes())
-        checksum, size = build_captures.pe_identity(files / "heap_churn.exe")
+        checksum, size = build_captures.pe_identity((files / "heap_churn.exe").read_bytes())
         connection = duckdb.connect(str(self.session / "cpu.db"))
         try:
             connection.execute(

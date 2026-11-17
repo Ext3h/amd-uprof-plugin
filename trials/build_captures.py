@@ -139,7 +139,7 @@ class Builder:
 
     @staticmethod
     def _module(module_id: int, image: Path, system: bool, debug_info: bool) -> Module:
-        checksum, size = pe_identity(image)
+        checksum, size = pe_identity(image.read_bytes())
         return Module(module_id, str(image), system, size, checksum, debug_info)
 
     def write(

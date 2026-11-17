@@ -332,7 +332,7 @@ class BuilderTest(unittest.TestCase):
     def test_recorded_identity_is_read_from_the_image(self):
         for name, path, image, checksum, size in self.images():
             with self.subTest(session=name, module=path):
-                self.assertEqual((checksum, size), build_captures.pe_identity(image))
+                self.assertEqual((checksum, size), build_captures.pe_identity(image.read_bytes()))
                 self.assertNotEqual(checksum, 0, "a zero CheckSum would skip the check")
 
     def shares(self, session: str, by: str, key: str, *extra: str) -> dict[str, float]:

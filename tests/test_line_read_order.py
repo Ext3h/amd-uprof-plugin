@@ -17,10 +17,9 @@ import uprof_query
 import uprof_session
 
 CAVEAT = "a raw share cannot separate a cheap operation run often from an expensive one run rarely"
-TIME_READ = (
-    "time_share ranks where each thread's elapsed time went (PID, TID partition, so a migrating "
-    "thread is counted once); sample_share is not a per-op cost"
-)
+# time_share is time only at process, thread or phase scale (#278), so READ names it as the
+# order, not as where time went.
+SCALE = "time only at process, thread or phase scale"
 CYCLE_READ = (
     "sample_share is the busy core-cycle share, so the sample order ranks where cycles were spent"
 )
@@ -60,15 +59,25 @@ class LineReadOrderTest(unittest.TestCase):
             "fetch": (
                 uprof_session.Sampler(ibs_dump_kind="ibsfetch-event-dump", interval_units="fetch"),
                 "time_share",
-                f"{TIME_READ}; {CAVEAT}",
+                f"{SCALE}; sample_share is not a per-op cost; {CAVEAT}",
             ),
         }
         for mode, (sampler, order, expected) in cases.items():
             with self.subTest(mode=mode):
                 legend, read = _read(sampler, dump)
                 self.assertEqual(legend["impact"]["order_by"][0], order)
-                self.assertEqual(read, expected + TAIL)
+                # READ names the line view's own primary order first.
+                self.assertTrue(read.startswith(f"{order} orders the rows"), read)
+                self.assertTrue(read.endswith(expected + TAIL), read)
                 self.assertNotIn("cycles were spent", read)
+                self.assertNotIn("where time went", read)
+
+    def test_timer_line_read_names_the_sample_order(self):
+        sampler = uprof_session.Sampler(pmc=True, timer=True, interval_units="ms", interval_ms=1.0)
+        legend, read = _read(sampler, None)
+        self.assertEqual(legend["impact"]["order_by"][0], "sample_share")
+        self.assertTrue(read.startswith("sample_share orders the rows"), read)
+        self.assertTrue(read.endswith(TAIL), read)
 
     def test_pmc_cycle_line_read_keeps_the_cycle_order(self):
         sampler = uprof_session.Sampler(pmc=True, pmc_cycle_shares=True)

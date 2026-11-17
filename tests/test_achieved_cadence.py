@@ -91,6 +91,38 @@ class AchievedCadenceTest(unittest.TestCase):
         self.assertNotIn("WARN", text)
 
 
+class HostClockTest(unittest.TestCase):
+    """The ACHIEVED requested text names the clock it converts at and its boost error.
+
+    The session records no clock, so a capture from other hardware or a boosting core makes the
+    requested time and the ideal rate an estimate at this host's reported clock (#76).
+    """
+
+    def test_requested_cycles_at_a_given_clock_point_to_the_cpu_seconds_legend(self):
+        # profile passes its one frequency read and states the clock in full in cpu_seconds.
+        _interval, requested, _ideal = uprof_session.requested_interval(
+            cycle_sampler(), 4_700_000_000
+        )
+        self.assertEqual(
+            requested, "4700000 cycles at 4700 MHz (host clock, as cpu_seconds) = 1 ms"
+        )
+
+    def test_requested_cycles_read_without_a_given_frequency_name_the_clock(self):
+        # translate reads the clock itself; its ACHIEVED line names the same source.
+        with (
+            mock.patch.object(
+                uprof_collect, "_core_frequency", return_value=(4_700_000_000, "4700 MHz", "t")
+            ),
+            mock.patch.object(uprof_collect, "_boost_maximum_hz", return_value=4_700_000_000),
+        ):
+            _interval, requested, _ideal = uprof_session.requested_interval(cycle_sampler())
+        self.assertEqual(
+            requested,
+            "4700000 cycles at 4700 MHz (this host's reported clock; the session records none) "
+            "= 1 ms",
+        )
+
+
 class OneFrequencyReadTest(unittest.TestCase):
     """The run-gap limit and the ACHIEVED text convert the cycle interval at one frequency.
 

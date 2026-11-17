@@ -81,9 +81,10 @@ class RemainderByModuleTest(unittest.TestCase):
                 ("<other functions in other modules>", None, 1),
             ],
         )
+        # The text view carries the same labels, with the display escaping of '<' and '>'.
         text = self.profile(session, "function", "--top", "1")
-        self.assertIn("<other functions in this module>", text)
-        self.assertIn("<other functions in other modules>", text)
+        self.assertIn("| &lt;other functions in this module&gt; | " + self.modules[0], text)
+        self.assertIn("| &lt;other functions in other modules&gt; | NULL |", text)
 
     def test_several_shown_modules_keep_one_function_remainder(self):
         session = self.session(
@@ -114,6 +115,36 @@ class RemainderByModuleTest(unittest.TestCase):
         self.assertEqual(
             self.remainder(session, "line", 2, "file"),
             [("<other lines (all modules)>", None, 1)],
+        )
+
+    def test_one_shown_module_names_itself_in_the_region_remainder(self):
+        # A region row has no name column, so the label in the module cell names the module.
+        session = self.session(
+            "regions-one", [(1, "fa", 0x1010, 3), (1, "fb", 0x2010, 2), (2, "fc", 0x1010, 1)]
+        )
+
+        self.assertEqual(
+            self.remainder(session, "region", 1, "module"),
+            [
+                (
+                    f"<other regions in {self.modules[0]}>",
+                    f"<other regions in {self.modules[0]}>",
+                    2,
+                ),
+                ("<other regions in other modules>", "<other regions in other modules>", 1),
+            ],
+        )
+
+    def test_several_shown_modules_keep_one_region_remainder(self):
+        session = self.session(
+            "regions-several",
+            [(1, "fa", 0x1010, 3), (2, "fc", 0x1010, 2), (1, "fb", 0x2010, 1)],
+        )
+
+        rows = json.loads(self.profile(session, "region", "--top", "2", "--json"))["rows"]
+        self.assertEqual(
+            [(row["module"], row["page_start"], row["samples"]) for row in rows[2:]],
+            [("<other regions (all modules)>", None, 1)],
         )
 
 

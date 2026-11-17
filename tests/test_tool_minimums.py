@@ -1,6 +1,6 @@
 """External tools below their minimum version stop the command that needs them.
 
-AMD uProf must be 5.3 or later and every LLVM tool 23 or later. `tools` prints each found
+AMD uProf must be 5.3 or later and every LLVM tool 23.1.0 or later. `tools` prints each found
 version against its minimum; collect/translate (uProf) and a profile that symbolizes or
 disassembles (LLVM) stop before any work with one cause line and runnable alternatives.
 The versions CI pins must meet the same minimums.
@@ -115,8 +115,20 @@ class LlvmMinimumTest(unittest.TestCase):
             uprof_native.require_symbolizer()
         message = str(caught.exception)
         self.assertNotIn("\n", message)
-        for part in ("22.1.8", "minimum 23", "LLVM_SYMBOLIZER", "re-run"):
+        for part in ("22.1.8", "minimum 23.1.0", "LLVM_SYMBOLIZER", "re-run"):
             self.assertIn(part, message)
+
+    def test_a_23_0_snapshot_is_below_the_23_1_0_minimum(self):
+        with (
+            toolchain(dict(ALL23, **{"llvm-symbolizer": "Homebrew LLVM version 23.0.0git"})),
+            self.assertRaises(UprofError) as caught,
+        ):
+            uprof_native.require_symbolizer()
+        self.assertIn("minimum 23.1.0", str(caught.exception))
+
+    def test_llvm_23_1_0_is_accepted(self):
+        with toolchain(dict(ALL23, **{"llvm-symbolizer": "Ubuntu LLVM version 23.1.0"})):
+            self.assertEqual(uprof_native.require_symbolizer(), LLVM_BIN / "llvm-symbolizer")
 
     def test_an_old_readobj_stops_symbolization_on_every_os(self):
         # Function-range derivation runs llvm-readobj on every OS.
@@ -211,13 +223,13 @@ class ToolsReportMinimumTest(unittest.TestCase):
             f"UPROF={UPROF}; version=AMDuProfCLI.exe Version 5.3.521.0; minimum=5.3; ok", rows
         )
         self.assertIn(
-            f"OBJDUMP={LLVM_BIN / 'llvm-objdump'}; version={LLVM23}; minimum=23; ok", rows
+            f"OBJDUMP={LLVM_BIN / 'llvm-objdump'}; version={LLVM23}; minimum=23.1.0; ok", rows
         )
 
     def test_a_tool_below_its_minimum_prints_too_old_and_fails(self):
         rows, error = self.report(dict(ALL23, **{"llvm-objdump": LLVM22}))
         row = next(row for row in rows if row.startswith("OBJDUMP="))
-        self.assertIn(f"version={LLVM22}; minimum=23; TOO OLD: ", row)
+        self.assertIn(f"version={LLVM22}; minimum=23.1.0; TOO OLD: ", row)
         self.assertIn("llvm-objdump", error)
 
 

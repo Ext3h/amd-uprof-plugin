@@ -1718,15 +1718,16 @@ def _legend(
                     f"attribution available{_hot_rva_suffix(sampler)}"
                 )
             result["impact"]["estimate"] += f"; {precise}"
-    if args.by == "instruction":
+    if args.by in ("instruction", "line"):
         measure, reason = _primary_measure(sampler, dump)
         result["impact"]["order_by"] = [measure] + ([] if measure == "samples" else ["samples"])
         result["impact"]["gap_weighted"] = measure == "time_share"
         result["impact"]["primary_measure"] = measure
         result["impact"]["primary_measure_reason"] = reason
         result["impact"]["estimate"] = (
-            f"{reason}; --top selects the highest instruction rows by {measure}"
+            f"{reason}; --top selects the highest {args.by} rows by {measure}"
         )
+    if args.by == "instruction":
         if measure == "time_share":
             result["impact"]["sample_hot"] = (
                 "this instruction table is time_share-ordered, not sample-hot: do not read its "

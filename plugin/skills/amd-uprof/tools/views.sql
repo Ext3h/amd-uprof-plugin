@@ -1064,7 +1064,9 @@ WHERE COALESCE(getvariable('uprof_function'), '') <> ''
 -- labelled 'shared: nameA | nameB'; a line whose addresses include one gets attribution 'shared'.
 -- The folded body ends where a derived range starts after the folded start or where the
 -- symbolizer frame names a function outside the fold (fold_holds).
--- When --top truncates, one <other lines> row carries the rest.
+-- Rows and --top follow uprof_primary_measure: gap weight for a time-based capture, otherwise the
+-- sample count (the same order as sample_share). When --top truncates, one <other lines> row
+-- carries the rest.
 CREATE OR REPLACE TEMP VIEW v_line_rows AS
 SELECT * FROM query(CASE
   WHEN COALESCE(getvariable('uprof_detail_views'), 'true') = 'true' THEN $line_rows$
@@ -1160,7 +1162,9 @@ scoped AS (
          (SELECT total_weight FROM v_scope_measures) AS total_weight,
          (SELECT total_tag_cycles FROM v_scope_measures) AS total_tag_cycles,
          row_number() OVER (
-           ORDER BY weight DESC NULLS LAST, samples DESC,
+           ORDER BY CASE getvariable('uprof_primary_measure')
+                      WHEN 'time_share' THEN weight END DESC NULLS LAST,
+                    samples DESC,
                     file_name, line_number, function_name, module_name) AS rn
   FROM agg LEFT JOIN fs_one ON true
 )

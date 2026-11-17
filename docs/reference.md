@@ -496,7 +496,7 @@ The same capture and arguments produce byte-identical output on every run. Each 
 | `module` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module` |
 | `function` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, function_name, module_name, function_start NULLS LAST, function_id NULLS LAST, group_key` |
 | `region` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, page_start, module` |
-| `line` | `weight DESC NULLS LAST, samples DESC, file, line, function, module` |
+| `line` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, file, line, function, module` |
 | `instruction` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module, rva NULLS LAST, function` |
 
 The JSON `legend.impact` (`order_by`, `gap_weighted`, `estimate`, `primary_measure`, `primary_measure_reason`) and the `READ` line state this ordering.

@@ -26,14 +26,21 @@ from typing import Final
 import uprof_db
 import uprof_shell
 from uprof_native import (
-    TRANSLATE_TIMEOUT,
+    TRANSLATE_CEILING,
+    TRANSLATE_STALL,
     CliLog,
+    ToolStalled,
+    ToolTimeout,
     failure,
     failure_detail,
+    parse_symbol_path,
     require_uprof,
-    run,
+    run_watched,
+    symbol_cache_dir,
     translate_command,
     translate_failure,
+    translate_stopped,
+    tree_size,
 )
 from uprof_session import Sampler
 from uprof_util import (
@@ -509,7 +516,28 @@ def _make_dump(
         copy_session(session_dir, staging)
         command = translate_command(uprof, staging, time_filter=time_filter, ascii_kind=kind)
         log = CliLog()
-        completed = run(command, timeout=TRANSLATE_TIMEOUT)
+        # The same call translate runs, so the same stall and ceiling bounds stop it; AMDuProfCLI
+        # reads its symbol sources from the inherited _NT_SYMBOL_PATH here.
+        env_cache, env_servers = parse_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
+        symbol_cache = Path(env_cache) if env_cache else symbol_cache_dir()
+
+        def progress() -> tuple[object, ...]:
+            return (tuple(log.sizes_now()), tree_size(staging), tree_size(symbol_cache))
+
+        try:
+            completed = run_watched(
+                command, progress=progress, stall_s=TRANSLATE_STALL, ceiling_s=TRANSLATE_CEILING
+            )
+        except (ToolStalled, ToolTimeout) as exc:
+            raise translate_stopped(
+                absolute(session_dir),
+                staging,
+                env_servers,
+                stalled=isinstance(exc, ToolStalled),
+                cache=symbol_cache,
+                time_filter=time_filter,
+                ascii_kind=kind,
+            ) from None
         # The same tool output failure_detail redacts: AMDuProfCLI can echo symbol-server URLs.
         detail = failure_detail(completed)
         if completed.returncode != 0:

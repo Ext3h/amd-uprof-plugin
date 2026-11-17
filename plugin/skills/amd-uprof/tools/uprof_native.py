@@ -39,7 +39,6 @@ from uprof_util import (
 )
 
 IS_WINDOWS = os.name == "nt"
-TRANSLATE_TIMEOUT: Final = 4 * 60 * 60
 # translate is stopped when AMDuProfCLI's log, the out-dir and the symbol cache all stop changing
 # for TRANSLATE_STALL: a slow or unreachable symbol source stalls it silently. Measured on healthy
 # translates of a 30 s system-wide capture with the Microsoft server: a cold symbol cache took 22
@@ -708,7 +707,7 @@ def translate_stopped(
     return LinesError(lines)
 
 
-def _tree_size(root: Path) -> int:
+def tree_size(root: Path) -> int:
     """Total bytes of the files under root; 0 when it cannot be read."""
     total = 0
     for base, _dirs, files in os.walk(root):
@@ -1263,7 +1262,7 @@ def translate(
     cache_dir = Path(cache)
 
     def progress() -> tuple[object, ...]:
-        return (tuple(log.sizes_now()), _tree_size(out), _tree_size(cache_dir))
+        return (tuple(log.sizes_now()), tree_size(out), tree_size(cache_dir))
 
     try:
         completed = run_watched(

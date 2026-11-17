@@ -41,7 +41,7 @@ class DumpIdentityTest(unittest.TestCase):
                 "translate_command",
                 side_effect=lambda _uprof, out, **_kw: ["AMDuProfCLI", str(out)],
             ),
-            mock.patch.object(uprof_dump, "run", side_effect=self.fake_run),
+            mock.patch.object(uprof_dump, "run_watched", side_effect=self.fake_run),
         ]
         for patch in patches:
             patch.start()

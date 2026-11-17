@@ -140,7 +140,9 @@ class DumpRedactTest(unittest.TestCase):
                             uprof_dump, "require_uprof", return_value=Path("AMDuProfCLI")
                         )
                     )
-                    stack.enter_context(mock.patch.object(uprof_dump, "run", side_effect=fake_run))
+                    stack.enter_context(
+                        mock.patch.object(uprof_dump, "run_watched", side_effect=fake_run)
+                    )
                     stack.enter_context(redirect_stderr(io.StringIO()))
                     with self.assertRaises(uprof_util.UprofError) as cm:
                         uprof_dump._make_dump(

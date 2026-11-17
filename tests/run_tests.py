@@ -63,6 +63,8 @@ def isolate(root: Path) -> None:
         directory.mkdir()
     os.environ["UPROF_SESSION_CACHE_ROOT"] = str(cache)
     os.environ["XDG_CACHE_HOME"] = str(user_cache)
+    # On Windows the user cache directory is %LOCALAPPDATA%\Symbols.
+    os.environ["LOCALAPPDATA"] = str(user_cache)
     for name in ("TMPDIR", "TEMP", "TMP"):
         os.environ[name] = str(temp)
     tempfile.tempdir = str(temp)

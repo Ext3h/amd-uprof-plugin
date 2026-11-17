@@ -277,6 +277,36 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertIn("isSystemModule = ", output)
         self.assertIn("cpu_seconds = sampled CPU seconds", output)
 
+    def test_cpu_seconds_and_achieved_convert_at_one_frequency_read(self):
+        # The Linux fallback reads the current MHz, which differs between two reads; one
+        # report must convert cpu_seconds and the ACHIEVED interval at the same value (#397).
+        import contextlib
+        import io
+        from unittest import mock
+
+        import uprof
+        import uprof_collect
+
+        reads = [(4_700_000_000, "4700 MHz", "first"), (2_350_000_000, "2350 MHz", "second")] * 2
+        out = io.StringIO()
+        with (
+            mock.patch.object(uprof_collect, "_core_frequency", side_effect=reads) as read,
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(
+                uprof.main(
+                    ["profile", "--session", str(self.session()), "--by", "module", "--json"]
+                ),
+                0,
+            )
+        document = json.loads(out.getvalue())
+        self.assertEqual(read.call_count, 1)
+        self.assertIn("4700 MHz", json.dumps(document))
+        self.assertNotIn("2350 MHz", json.dumps(document))
+        for row in document["rows"]:
+            self.assertAlmostEqual(row["cpu_seconds"], row["samples"] * 0.001, places=12)
+
     def test_op_count_module_output_omits_cpu_seconds_with_the_reason(self):
         session = self.session("op-count", cycle_controlled=False)
         document = self.document(session)

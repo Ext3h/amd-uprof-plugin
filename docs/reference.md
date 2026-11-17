@@ -9,6 +9,9 @@ Header fields are emitted in this fixed order, with optional fields omitted when
 optional `DB`, `TIME_SHARE` and `TAG_TO_RETIRE_SHARE` (IBS dump captures), `WEIGHTS`, optional
 `SANITY`, `ACHIEVED`, `KERNEL_COVERAGE`, `HOT_RVA`, `SYMBOL_COVERAGE`, `WARNING`, `AGREEMENT`.
 
+`--json` prints the same fields as one compact JSON document on one line, with no indentation or
+separator padding, so agent harnesses that cut long tool output keep more of it.
+
 ## Granularities
 
 | `--by` | row key | symbolization |

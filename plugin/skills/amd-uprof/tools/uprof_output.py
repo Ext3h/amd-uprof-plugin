@@ -130,7 +130,8 @@ def json_document(
             record["context"] = contexts[index]
         records.append(record)
     payload["rows"] = records
-    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    # Compact: agent harnesses cut long tool output, and indentation adds no content.
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     # json.dumps escapes C0 only; DEL, C1, zero-width and bidi controls become \\uNNNN, which
     # decodes to the same string.
     return (

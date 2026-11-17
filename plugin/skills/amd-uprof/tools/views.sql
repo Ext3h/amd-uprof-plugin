@@ -560,8 +560,10 @@ FROM query(CASE WHEN getvariable('uprof_pdbs') <> ''
 -- frame that names a function without a source line, from a module with no accepted PDB, whose
 -- extent the image does not prove: a PE export or COFF symbol (they carry no size) or an ELF
 -- symbol of size 0. llvm-symbolizer then returns the nearest preceding name, which may belong
--- to another function, so the name is derived, not a source symbol, and a derived range that
--- covers the address names the row instead. A sized ELF symbol-table function stays named.
+-- to another function, so the name is derived, not a source symbol. A derived range that covers
+-- the address may label the row, but an export or COFF range name is the same unproven nearest
+-- name and a uProf name adds no extent, so the row stays derived in every view. A sized ELF
+-- symbol-table function stays named.
 CREATE OR REPLACE TEMP VIEW v_symbol_frames AS
 SELECT module_name, rva, function, function_short, containing_function, file, line,
        COALESCE(nearest_symbol, false) AS nearest_symbol
@@ -890,8 +892,8 @@ LEFT JOIN v_symbol_frames s ON s.module_name = w.module_name AND s.rva = w.rva;
 -- synthetic pdata_0x<start>/sub_0x<start> names the row, and a name names it only when the
 -- range's samples agree on it. Samples outside every derived range fall
 -- back to Function.id, so a module whose binary is unavailable keeps its uProf naming. hot_rva is
--- the highest-sample RVA in the row; attribution 'derived' marks a synthetic binary name, not a
--- source symbol, and 'shared' a range whose start carries several public names. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
+-- the highest-sample RVA in the row; attribution 'derived' marks a synthetic binary name or a
+-- row over a nearest-symbol frame, not a source symbol, and 'shared' a range whose start carries several public names. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
 -- otherwise the sample count (the same order as sample_share). This view is uncapped, so the
 -- parent lookup of a function-scoped instruction or line view is not hidden by --top; the public
 -- v_function_rows adds the cap and the <other functions> remainder.
@@ -953,10 +955,10 @@ WITH keyed AS (
               THEN true ELSE false END AS function_derived,
          CASE WHEN a.range_kind = 'range' AND a.range_name IS NULL AND a.db_name = ''
                    THEN 'derived'
+              WHEN a.sym_nearest THEN 'derived'
               WHEN a.range_kind = 'range' AND COALESCE(p.name_count, 1) > 1 THEN 'shared'
               WHEN a.range_kind = 'range' THEN 'unique'
               WHEN a.range_kind = 'uprof_db' AND a.db_name <> '' THEN 'unique'
-              WHEN a.range_kind = 'symbolizer' AND a.sym_nearest THEN 'derived'
               WHEN a.range_kind = 'symbolizer' THEN 'unique'
               ELSE 'unresolved' END AS attribution,
          CASE WHEN a.range_kind = 'range' THEN NULL
@@ -1122,7 +1124,6 @@ scoped AS (
          COALESCE(NULLIF(module_name, ''), '<unknown module>') AS module_label,
          CASE WHEN folded THEN 'shared'
               WHEN COALESCE(sym_function, '') = '' THEN 'unresolved'
-              WHEN nearest AND range_name IS NOT NULL THEN 'unique'
               WHEN nearest THEN 'derived'
               ELSE 'unique' END AS address_attribution,
          samples, weight, tag_cycles
@@ -1238,7 +1239,6 @@ scoped AS (
          CASE WHEN COALESCE(sym_function, '') = '' THEN 0 ELSE COALESCE(sym_line, 0) END AS line_number,
          CASE WHEN folded THEN 'shared'
               WHEN COALESCE(sym_function, '') = '' THEN 'unresolved'
-              WHEN nearest AND range_name IS NOT NULL THEN 'unique'
               WHEN nearest THEN 'derived'
               ELSE 'unique' END AS attribution,
          samples, weight, tag_cycles
@@ -1357,12 +1357,12 @@ WITH paged AS (
               ELSE NULL END AS hot_function,
          CASE WHEN folded THEN 'shared'
               WHEN COALESCE(sym_function, '') <> '' AND NOT nearest THEN 'unique'
-              WHEN nearest AND hot_function_start IS NULL THEN 'derived'
+              WHEN nearest THEN 'derived'
               WHEN hot_range_name IS NOT NULL THEN 'unique'
               WHEN hot_function_start IS NOT NULL THEN 'derived'
               ELSE 'unresolved' END AS attribution,
          CASE WHEN NOT folded AND nearest AND hot_function_start IS NOT NULL
-              THEN 'no source line: without a PDB or debug info llvm-symbolizer returned the nearest preceding symbol, so the derived function range covering hot_rva names it'
+              THEN 'no source line: without a PDB or debug info llvm-symbolizer returned the nearest preceding symbol, so the derived function range covering hot_rva labels it and the name stays derived'
               WHEN NOT folded AND nearest
               THEN 'no source line: without a PDB or debug info llvm-symbolizer returned the nearest preceding symbol, so the name is derived'
               WHEN NOT folded AND COALESCE(sym_function, '') = ''

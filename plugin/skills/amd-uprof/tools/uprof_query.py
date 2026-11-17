@@ -1518,7 +1518,7 @@ def _legend(
     if args.by == "function":
         columns["attribution"] = (
             "unique / shared (folded names) / derived (synthetic binary "
-            "range) / unresolved (no symbol)"
+            "range or nearest-symbol name) / unresolved (no symbol)"
         )
         columns["range_start"] = "NULL when no range was derived"
         columns["function_source"] = (
@@ -1534,7 +1534,9 @@ def _legend(
         columns["samples_outside_hot_rva"] = "the rest of the row, not a second hot address"
         columns["hot_rva_share"] = "share of the scoped capture total"
     elif args.by in ("line", "instruction"):
-        columns["attribution"] = "unique / shared (folded names) / unresolved (no symbol)"
+        columns["attribution"] = (
+            "unique / shared (folded names) / derived (nearest-symbol name) / unresolved (no symbol)"
+        )
         if args.by == "instruction":
             columns["instruction"] = "decode at rva; empty where omitted"
         if function_scope is not None:
@@ -1557,7 +1559,7 @@ def _legend(
     elif args.by == "region":
         columns["attribution"] = (
             "hot_rva: unique / shared (folded names) / derived (synthetic "
-            "binary range) / unresolved (no symbol)"
+            "binary range or nearest-symbol name) / unresolved (no symbol)"
         )
         columns["region"] = _region_meaning(sampler)
         columns["sampled_addresses"] = "distinct RVAs with samples in the page"

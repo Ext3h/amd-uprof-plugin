@@ -97,7 +97,7 @@ A trial run passes when both hold:
 - **Question:** "Where did the CPU time of my app storage_test.exe (PID 3112) go? What are the hottest functions? The capture is in `<CAPTURE>`."
 - **Answer:**
   - **Location:** in the app's process (PID 3112): `amdvlk64.dll` `fixture_entry` at 0x101B, `ntdll.dll` `RtlQueryPerformanceCounter` at 0x1000, `amdvlk64.dll` `fixture_second` at 0x1030, then own `fixture_entry` in `fixture_full.exe` at 0x1018.
-  - **Proof:** under `--pid 3112`, 80, 28, 24 and 18 samples, `attribution` unique; `amdvlk64.dll` has no PDB, its names are exports.
+  - **Proof:** under `--pid 3112`, 80, 28, 24 and 18 samples; `amdvlk64.dll` and `ntdll.dll` have no PDB, so their export names are nearest-symbol names, `attribution` derived; own `fixture_entry` unique.
   - **Cost:** shares of PID 3112's 194 samples: modules `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052; functions 0.412, 0.144, 0.124, 0.093. The PID's share of the whole capture is not printed under `--pid`.
   - **Confidence:** PID ±7% (194 samples), own `fixture_entry` ±24% (18).
   - **Saving:** at most own `fixture_entry`'s `cpu_seconds`; the driver's cost is outside the app's code.
@@ -157,7 +157,7 @@ A trial run passes when both hold:
 - **Question:** "In my AMD uProf capture (`<CAPTURE>`) symbols are missing for some DLLs, and vendorlib.dll isn't even on this machine. Where is the time going in those DLLs?"
 - **Answer:**
   - **Location:** `amdvlk64.dll`: `fixture_entry` `[0x1000, 0x1030)` hot 0x101B, `fixture_second` `[0x1030, 0x1050)`, derived `pdata_0x1050` `[0x1050, 0x1062)`; `vendorlib.dll`: `<unresolved>`, hot RVA 0x2040, no range.
-  - **Proof:** `amdvlk64.dll` ranges come from its exports and `.pdata` (`attribution` unique for exports, derived for `pdata_`), a finding, not a blocker; `vendorlib.dll` is not available on this host (`module_missing`), and `--image-path` with the DLL is the alternative.
+  - **Proof:** `amdvlk64.dll` ranges come from its exports and `.pdata` (`attribution` derived: without a PDB an export name is only the nearest preceding symbol, and `pdata_` is synthetic), a finding, not a blocker; `vendorlib.dll` is not available on this host (`module_missing`), and `--image-path` with the DLL is the alternative.
   - **Cost:** `amdvlk64.dll` 0.619 (60 samples: 40, 12, 8), `vendorlib.dll` 0.052 (5); `cpu_seconds` = samples × 4.7 M cycles / core frequency.
   - **Confidence:** `fixture_entry` in the driver ±16% (40 samples), `vendorlib.dll` ±45% (5).
   - **Saving:** n/a (neither DLL is the user's code).
@@ -210,7 +210,7 @@ A trial run passes when both hold:
 - **Question:** "This is a system-wide AMD uProf capture: `<CAPTURE>`. What is slow in my process storage_test.exe, PID 3112?"
 - **Answer:**
   - **Location:** in PID 3112: own `fixture_entry` at 0x1018; outside, `amdvlk64.dll` `fixture_entry` at 0x101B.
-  - **Proof:** scoped to PID 3112 (194 samples): `amdvlk64.dll` `fixture_entry` 80 samples, own `fixture_entry` 18, `attribution` unique. `--image %storage_test.exe` would also count PID 3113, an unrelated instance of the same image, and raise `fixture_full.exe` from 24 to 34 samples.
+  - **Proof:** scoped to PID 3112 (194 samples): `amdvlk64.dll` `fixture_entry` 80 samples (`attribution` derived, no PDB), own `fixture_entry` 18 (unique). `--image %storage_test.exe` would also count PID 3113, an unrelated instance of the same image, and raise `fixture_full.exe` from 24 to 34 samples.
   - **Cost:** shares of PID 3112's samples: `amdvlk64.dll` 0.619, `ntdll.dll` 0.206, `fixture_full.exe` 0.124, `vendorlib.dll` 0.052; own `fixture_entry` 0.093. The PID's share of the whole capture is not printed under `--pid`. `cpu_seconds` = samples × 4.7 M cycles / core frequency.
   - **Confidence:** PID ±7% (194 samples), own module ±20% (24).
   - **Saving:** at most own `fixture_entry`'s `cpu_seconds`.

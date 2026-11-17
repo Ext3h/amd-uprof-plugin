@@ -549,7 +549,8 @@ def collect_summary(meta: dict[str, Any], event: str) -> str:
     )
 
 
-def _format_duration(seconds: float) -> str:
+def format_duration(seconds: float) -> str:
+    """A duration in ms at three significant digits, or in us below one millisecond."""
     return f"{seconds * 1e3:.3g} ms" if seconds >= 1e-3 else f"{seconds * 1e6:.3g} us"
 
 
@@ -580,7 +581,7 @@ def requested_interval(
             else:
                 hertz, display = float(frequency_hz), f"{frequency_hz / 1e6:g} MHz"
             interval_s = sampler.interval / hertz
-            requested = f"{sampler.interval} cycles at {display} = {_format_duration(interval_s)}"
+            requested = f"{sampler.interval} cycles at {display} = {format_duration(interval_s)}"
             return interval_s, requested, f"; ideal {1.0 / interval_s:,.0f}/s per CPU"
         except Exception:  # noqa: BLE001 - any failure reads as an unknown frequency
             return None, f"{sampler.interval} cycles (core frequency unavailable)", ""
@@ -672,7 +673,7 @@ def achieved_summary(
                 gap_s = busiest.median_gap_ns / 1e9
                 text += (
                     f"; busiest {context_label} {delivered:,.0f}/s "
-                    f"(median gap {_format_duration(gap_s)})"
+                    f"(median gap {format_duration(gap_s)})"
                 )
             elif sampler.ibs_dump_kind is not None:
                 # The dump has timestamps, so no gap inside the limit means the context never
@@ -718,7 +719,7 @@ def _attached_lead(
     active = sum(1 for context in contexts if context.samples >= 0.1 * busiest.samples)
     rate = samples / window_s / cpus
     return (
-        f"busiest thread {delivered:,.0f}/s (median gap {_format_duration(gap_s)}; requested "
+        f"busiest thread {delivered:,.0f}/s (median gap {format_duration(gap_s)}; requested "
         f"{requested}{ideal_note}); {samples} samples, {window_s:.3f} s, {cpus} CPUs; "
         f"{rate:,.2f}/s per CPU is diluted over every CPU, not the delivered cadence; "
         f"{active} active {context_label if active == 1 else context_label + 's'}"

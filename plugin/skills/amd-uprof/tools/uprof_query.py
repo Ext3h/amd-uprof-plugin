@@ -949,6 +949,12 @@ _TIMER_CPU_SECONDS_ABSENT: Final = (
     "low at 10 ms against the workload's own CPU time, so no seconds are derived; for a cost in "
     "seconds, multiply sample_share by the workload's measured CPU time"
 )
+# The drill views name the hotspot; a timer tick cannot tell why it is slow, so they say so.
+_TIMER_CAUSE: Final = (
+    "not determinable from a timer capture: a tick shows where a thread ran, not why the code "
+    "is slow (memory, lock, branch or dependency chain); an IBS OP capture can show it"
+)
+_TIMER_CAUSE_VIEWS: Final = ("function", "line", "instruction")
 _TIMER_ABSENT_TIME_SHARE: Final = "a timer capture has no per-sample timestamps"
 _TIMER_ABSENT_TAG: Final = "a timer capture has no tag-to-retire counter"
 _CPU_SECONDS_SYSTEM_WIDE: Final = (
@@ -3362,6 +3368,9 @@ def run_query_command(args: argparse.Namespace) -> None:
                 fields[2:2] = _function_scope_fields(
                     function_scope, legend, sample_interval_s, sampler.timer
                 )
+            if sampler.timer and args.by in _TIMER_CAUSE_VIEWS:
+                read_at = [name for name, _ in fields].index("READ")
+                fields.insert(read_at + 1, ("CAUSE", _TIMER_CAUSE))
             if sanity_message:
                 fields.append(("SANITY", sanity_message))
             check_kernel = sampler.os_requested and not capture_windowed

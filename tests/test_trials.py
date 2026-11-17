@@ -256,12 +256,15 @@ class CatalogueTest(unittest.TestCase):
                 with self.subTest(scenario=scn, decision=decision):
                     self.assertIn(decision, listed)
 
-    def test_instruction_calls_ask_for_the_hot_row_only(self):
+    def test_instruction_calls_are_one_json_call_without_a_top(self):
+        # The drill's first call is the one that answers: the JSON document carries the IBS
+        # fields and the shared window, and no fixed --top cuts the evidence rows (#446).
         for scn, entry in self.scenarios.items():
             for call in entry["calls"]:
                 if "--by instruction" in call:
                     with self.subTest(scenario=scn, call=call):
-                        self.assertIn("--top 1", call)
+                        self.assertTrue(call.endswith(" --json"), call)
+                        self.assertNotIn("--top", call)
 
     def test_the_conventions_state_the_filter_first_rule(self):
         text = " ".join(conventions().split())
@@ -638,10 +641,15 @@ class ContextCeilingTest(unittest.TestCase):
                 parts = " ".join(entry["parts"].values())
                 for rva in re.findall(r"RVA (0x[0-9A-F]+)", parts):
                     self.assertIn(rva, printed)
+                # A Markdown view prints the line as a table cell; the instruction drill's JSON
+                # prints the window's file and each run's line as keys.
+                json_file = r'"file":"[^"]*{}"'
                 for source, line in re.findall(r"`(\w+\.c):(\d+)`", parts):
-                    self.assertRegex(printed, rf"{re.escape(source)} \| {line} \|")
+                    if not re.search(rf"{re.escape(source)} \| {line} \|", printed):
+                        self.assertRegex(printed, json_file.format(re.escape(source)))
+                        self.assertRegex(printed, rf'"line":{line}[,}}]')
                 for count in re.findall(r"\((\d+) samples\)", entry["parts"]["Confidence"]):
-                    self.assertRegex(printed, rf"\| {count} \|")
+                    self.assertRegex(printed, rf'\| {count} \||"samples":{count}[,}}]')
                 if scn in LAB_FUNCTIONS:
                     self.assertIn(LAB_FUNCTIONS[scn], printed)
 

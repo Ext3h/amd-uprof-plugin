@@ -58,7 +58,7 @@ def top_row_clause(mode):
     """The READ clause for the fixture's one process: every sample, so a whole share."""
     total = 5 if mode.startswith("pmc") else 3
     low = total / (total + 1.96 * 1.96)
-    return rf"top row c:\workload.exe 100.0% (95% CI {100 * low:.1f}-100.0%, n={total} samples)"
+    return rf"top c:\workload.exe 100.0% (95% CI {100 * low:.1f}-100.0%, n={total})"
 
 
 TAG_ABSENT = {

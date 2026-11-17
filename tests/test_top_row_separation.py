@@ -39,7 +39,7 @@ def _clause(samples):
             f"{values}, ('<other modules>', 0, {total}, NULL)) "
             "AS t(module, samples, total_samples, rn)"
         )
-        return uprof_query._top_row_precision(connection, "module")
+        return uprof_query._top_row_precision(connection, "module")[0]
     finally:
         connection.close()
 
@@ -49,21 +49,19 @@ class TopRowSeparationTest(unittest.TestCase):
         z = NormalDist().inv_cdf(1 - 0.05 / 4)
         self.assertEqual(
             _clause([100, 98]),
-            f"top row m1.dll 50.5% (95% CI {_wilson(100, 198, z)}% as the top of 2 rows, "
-            "n=198 samples; not separated from row 2 at 98 samples)",
+            f"top m1.dll 50.5% (95% CI {_wilson(100, 198, z)}%, n=198, row2 tied)",
         )
 
     def test_distant_rows_are_separated(self):
         z = NormalDist().inv_cdf(1 - 0.05 / 6)
         self.assertEqual(
             _clause([100, 20, 10]),
-            f"top row m1.dll 76.9% (95% CI {_wilson(100, 130, z)}% as the top of 3 rows, "
-            "n=130 samples; separated from row 2 at 20 samples)",
+            f"top m1.dll 76.9% (95% CI {_wilson(100, 130, z)}%, n=130, row2 separated)",
         )
 
     def test_a_single_row_keeps_the_plain_interval(self):
         self.assertEqual(
-            _clause([40]), f"top row m1.dll 100.0% (95% CI {_wilson(40, 40, 1.96)}%, n=40 samples)"
+            _clause([40]), f"top m1.dll 100.0% (95% CI {_wilson(40, 40, 1.96)}%, n=40)"
         )
 
 

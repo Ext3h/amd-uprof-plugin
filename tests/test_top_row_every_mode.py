@@ -111,14 +111,14 @@ class TopRowEveryModeTest(unittest.TestCase):
     def test_ibs_dump_read_states_the_top_row_interval(self):
         read = self._read(self._ibs_session(), "module")
 
-        self.assertIn("top row alpha.exe 75.0% (95% CI ", read)
-        self.assertIn("n=40 samples", read)
+        self.assertIn("top alpha.exe 75.0% (95% CI ", read)
+        self.assertIn("n=40, row2 separated)", read)
 
     def test_pmc_read_states_the_top_row_interval(self):
         read = self._read(self._pmc_session(), "process")
 
-        self.assertIn("top row c:\\app\\workload.exe 100.0% (95% CI ", read)
-        self.assertIn("n=9 samples", read)
+        self.assertIn("top c:\\app\\workload.exe 100.0% (95% CI ", read)
+        self.assertIn("n=9)", read)
 
 
 if __name__ == "__main__":

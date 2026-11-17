@@ -2266,13 +2266,14 @@ def _timer_contexts(
     ]
 
 
-def _top_row_precision(connection: object, by: str) -> str | None:
+def _top_row_precision(connection: object, by: str) -> tuple[str | None, dict[str, Any] | None]:
     """The first row's share with its 95% Wilson score interval over the scoped sample count n.
 
     The first row is the maximum of the m ranked rows, and a maximum picked from noisy shares is
     biased up, so with m > 1 the interval uses a Bonferroni z over the m ranked rows and the clause
     states whether row 1 is separated from row 2: the 95% Wilson interval of k1 / (k1 + k2)
-    excludes one half.
+    excludes one half. READ carries the short clause; the second value is the selection detail
+    legend.impact.top_row carries, None for a single ranked row.
     """
     keys = {
         "process": ("process",),
@@ -2288,7 +2289,7 @@ def _top_row_precision(connection: object, by: str) -> str | None:
         "WHERE rn IS NOT NULL ORDER BY rn LIMIT 2"
     ).fetchall()
     if not rows or not rows[0][-2]:
-        return None
+        return None, None
     first = rows[0]
     parts = [
         f"0x{value:X}"
@@ -2302,19 +2303,31 @@ def _top_row_precision(connection: object, by: str) -> str | None:
     if ranked < 2:
         low, high = _wilson_interval(samples, total)
         return (
-            f"top row {name} {100.0 * share:.1f}% "
-            f"(95% CI {100.0 * low:.1f}-{100.0 * high:.1f}%, n={total} samples)"
-        )
-    low, high = _wilson_interval(samples, total, NormalDist().inv_cdf(1.0 - 0.025 / ranked))
+            f"top {name} {100.0 * share:.1f}% "
+            f"(95% CI {100.0 * low:.1f}-{100.0 * high:.1f}%, n={total})"
+        ), None
+    z = NormalDist().inv_cdf(1.0 - 0.025 / ranked)
+    low, high = _wilson_interval(samples, total, z)
     second = int(rows[1][-3] or 0)
     pair = samples + second
     separated = pair > 0 and _wilson_interval(samples, pair)[0] > 0.5
-    return (
-        f"top row {name} {100.0 * share:.1f}% "
-        f"(95% CI {100.0 * low:.1f}-{100.0 * high:.1f}% as the top of {ranked} rows, "
-        f"n={total} samples; {'' if separated else 'not '}separated from row 2 at "
-        f"{second} samples)"
+    clause = (
+        f"top {name} {100.0 * share:.1f}% "
+        f"(95% CI {100.0 * low:.1f}-{100.0 * high:.1f}%, n={total}, "
+        f"row2 {'separated' if separated else 'tied'})"
     )
+    detail = {
+        "ranked_rows": ranked,
+        "z": z,
+        "row2_samples": second,
+        "separated": separated,
+        "rule": (
+            "the interval uses a Bonferroni z over the ranked rows because the top row is "
+            "their maximum; row2 separated means the 95% Wilson interval of top samples / "
+            "(top + row 2 samples) excludes one half, tied means it does not"
+        ),
+    }
+    return clause, detail
 
 
 def _wilson_interval(samples: int, total: int, z: float = 1.96) -> tuple[float, float]:
@@ -3428,7 +3441,9 @@ def run_query_command(args: argparse.Namespace) -> None:
             )
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             # Every capture mode states the top row's sampling uncertainty.
-            top_row = _top_row_precision(connection, args.by)
+            top_row, top_row_detail = _top_row_precision(connection, args.by)
+            if top_row_detail is not None:
+                legend["impact"]["top_row"] = top_row_detail
             # The filter and its parent measurement precede the reading rule; both sit directly
             # below METRIC, after VERSION, before the detailed fields.
             fields[2:2] = _legend_fields(

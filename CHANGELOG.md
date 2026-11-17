@@ -84,8 +84,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   mode, not only for timer captures, so IBS and PMC shares state their sampling uncertainty
   (issue #201).
 - The top-row clause in `READ` widens its 95% interval for the selection with a Bonferroni z over
-  the ranked rows (`as the top of m rows`) and states whether row 1 is separated from row 2
-  (a 95% Wilson interval of k1 / (k1 + k2) that excludes one half) (issue #277).
+  the ranked rows and ends with `row2 separated` or `row2 tied` (a 95% Wilson interval of
+  k1 / (k1 + k2) that does or does not exclude one half); `legend.impact.top_row` carries the
+  detail. The clause reads `top <row> <share>% (95% CI <lo>-<hi>%, n=<n>)` (issue #277).
 - The `--by instruction --json` document prints each decoded window once in a top-level
   `windows` list, shared by the rows whose windows overlap in one module; a row's context keeps
   `anchor`, `build`, `function` and `file` and names its window as `window` (`index`, `first`,

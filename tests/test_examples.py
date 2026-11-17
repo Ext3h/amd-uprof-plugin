@@ -204,12 +204,10 @@ class TimerScenarioTest(unittest.TestCase):
         own = self.expected["modules"][self.expected["own_module"]]["samples"]
         self.assertIn(self.expected["metric_prefix"], module)
         ranked = [row for row in self.rows(module) if not row["module"].startswith("<other")]
-        second = int(ranked[1]["samples"])
         z = NormalDist().inv_cdf(1 - 0.025 / len(ranked))
         self.assertIn(
-            f"top row {self.expected['own_module']} {_percent(own, total)}% "
-            f"(95% CI {_interval(own, total, z)}% as the top of {len(ranked)} rows, "
-            f"n={total} samples; separated from row 2 at {second} samples)",
+            f"top {self.expected['own_module']} {_percent(own, total)}% "
+            f"(95% CI {_interval(own, total, z)}%, n={total}, row2 separated)",
             module,
         )
         rows = {row["module"]: row for row in self.rows(module)}

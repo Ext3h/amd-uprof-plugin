@@ -430,9 +430,8 @@ class TimerOutputTest(_Session):
 
     def test_read_carries_the_top_row_interval(self):
         expected = (
-            f"top row {timer_fixture.IMAGE_KEY} {100 * IMAGE_SAMPLES / TOTAL:.1f}% "
-            f"(95% CI 69.9-75.5% as the top of 3 rows, n={TOTAL} samples; "
-            "separated from row 2 at 393 samples)"
+            f"top {timer_fixture.IMAGE_KEY} {100 * IMAGE_SAMPLES / TOTAL:.1f}% "
+            f"(95% CI 69.9-75.5%, n={TOTAL}, row2 separated)"
         )
         read = re.search(r"^READ: .*$", self.profile("module"), re.MULTILINE).group(0)
         self.assertTrue(read.endswith(expected), read)
@@ -445,13 +444,13 @@ class TimerOutputTest(_Session):
         ).group(0)
         self.assertRegex(
             read,
-            r"top row \S+ \d+\.\d% \(95% CI \d+\.\d-\d+\.\d% as the top of \d+ rows, "
-            r"n=(\d|1\d|2\d) samples; (not )?separated from row 2 at \d+ samples\)$",
+            r"top \S+ \d+\.\d% \(95% CI \d+\.\d-\d+\.\d%, n=(\d|1\d|2\d), "
+            r"row2 (separated|tied)\)$",
         )
 
     def test_read_states_an_interval_for_a_whole_share(self):
         read = re.search(r"^READ: .*$", self.profile("process"), re.MULTILINE).group(0)
-        self.assertTrue(read.endswith(f"100.0% (95% CI 99.7-100.0%, n={TOTAL} samples)"), read)
+        self.assertTrue(read.endswith(f"100.0% (95% CI 99.7-100.0%, n={TOTAL})"), read)
 
     def test_achieved_reports_the_busiest_thread_without_warning(self):
         achieved = re.search(r"^ACHIEVED: .*$", self.profile("process"), re.MULTILINE).group(0)
@@ -494,11 +493,9 @@ class TopRowIntervalTest(unittest.TestCase):
     def test_wilson_bounds(self):
         for samples, total, bounds in self.CASES:
             with self.subTest(samples=samples, total=total):
-                clause = uprof_query._top_row_precision(_Connection(samples, total), "module")
+                clause, _ = uprof_query._top_row_precision(_Connection(samples, total), "module")
                 share = f"{100 * samples / total:.1f}%"
-                self.assertEqual(
-                    clause, f"top row m.dll {share} (95% CI {bounds}%, n={total} samples)"
-                )
+                self.assertEqual(clause, f"top m.dll {share} (95% CI {bounds}%, n={total})")
                 low, high = (float(value) for value in bounds.split("-"))
                 self.assertTrue(0.0 <= low <= high <= 100.0)
 

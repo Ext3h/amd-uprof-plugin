@@ -499,9 +499,9 @@ The same capture and arguments produce byte-identical output on every run. Each 
 | `line` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, file, line, function, module` |
 | `instruction` | `CASE uprof_primary_measure WHEN 'time_share' THEN weight END DESC NULLS LAST, samples DESC, module, rva NULLS LAST, function` |
 
-The JSON `legend.impact` (`order_by`, `gap_weighted`, `estimate`, `primary_measure`, `primary_measure_reason`) and the `READ` line state this ordering.
+The JSON `legend.impact` (`order_by`, `gap_weighted`, `estimate`, `primary_measure`, `primary_measure_reason`, optional `top_row`) and the `READ` line state this ordering.
 
-**Top-row precision.** `READ` ends with the first row's share and its 95% Wilson score interval over the scoped sample count `n`. The first row is the maximum of the `m` ranked rows (the emitted rows; the `--top` remainder is not ranked), and a maximum picked from noisy shares is biased up, so with `m >= 2` the interval uses a Bonferroni `z = Φ⁻¹(1 − 0.025/m)` (`as the top of m rows`) and the clause states whether row 1 is separated from row 2: the 95% Wilson interval of `k1 / (k1 + k2)` excludes one half.
+**Top-row precision.** `READ` ends with the first row's share and its 95% Wilson score interval over the scoped sample count `n` (`top <row> <share>% (95% CI <lo>-<hi>%, n=<n>)`). The first row is the maximum of the `m` ranked rows (the emitted rows; the `--top` remainder is not ranked), and a maximum picked from noisy shares is biased up, so with `m >= 2` the interval uses a Bonferroni `z = Φ⁻¹(1 − 0.025/m)` and the clause ends with `row2 separated` when the 95% Wilson interval of `k1 / (k1 + k2)` excludes one half, else `row2 tied`. JSON `legend.impact.top_row` carries `ranked_rows`, `z`, `row2_samples`, `separated` and the `rule`; it is absent for a single ranked row.
 
 **Display escaping.** Table cells and header values escape controls as described in the top-level `uprof.py --help`; JSON carries the true characters, so table/JSON parity is modulo that display escaping. `--out-file` receives the same bytes as stdout.
 

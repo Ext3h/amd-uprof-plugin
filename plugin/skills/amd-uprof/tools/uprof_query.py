@@ -810,9 +810,20 @@ def _derive_scope_ranges(
             # Ranges read from another build would regroup the captured build's RVAs.
             if readobj is None:
                 readobj = uprof_context.find_readobj() or ""
-            mismatch = uprof_symbols.image_build_mismatch(
-                path, identity[0], identity[1], Path(readobj) if readobj else None
-            )
+            try:
+                mismatch = uprof_symbols.image_build_mismatch(
+                    path, identity[0], identity[1], Path(readobj) if readobj else None
+                )
+            except util.UprofError as exc:
+                # A tool failure in the build check fails only this module's derivation.
+                reason = f"range derivation failed: {exc}"
+                info["absent_by_module"][name] = reason
+                print(
+                    f"WARNING: no function range derived for {util.inline(name)} "
+                    f"({util.inline(path)}): {util.one_line(reason)}",
+                    file=stream,
+                )
+                continue
             if mismatch:
                 reason = (
                     f"wrong_build: {mismatch}; put the captured build at {path} and re-run "

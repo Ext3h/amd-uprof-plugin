@@ -1603,12 +1603,20 @@ def _symbolize_worker(
             return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence)
         module_path = os.fspath(resolved)
         if identity is not None:
-            mismatch = image_build_mismatch(
-                module_path,
-                identity[0],
-                identity[1],
-                find_sibling(require_symbolizer(), "llvm-readobj"),
-            )
+            try:
+                mismatch = image_build_mismatch(
+                    module_path,
+                    identity[0],
+                    identity[1],
+                    find_sibling(require_symbolizer(), "llvm-readobj"),
+                )
+            except UprofError as exc:
+                # A tool failure in the build check is this module's failure, like any other.
+                evidence = failure_evidence(
+                    exc, module_name, module_path, (debug_info or {}).get(module_name)
+                )
+                _evidence_line(evidence, output)
+                return _ModuleSymbolization(module_name, output.getvalue(), evidence=evidence)
             if mismatch:
                 evidence = ModuleEvidence(
                     module_name,

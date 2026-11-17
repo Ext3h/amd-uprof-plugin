@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from statistics import NormalDist
 
 import timer_fixture
 import uprof_native
@@ -68,9 +69,13 @@ def _percent(count, total):
     return f"{100 * count / total:.1f}"
 
 
-def _interval(count, total):
-    """The 95% Wilson score interval of count / total in percent, as printed: "lo-hi"."""
-    share, z = count / total, 1.96
+def _interval(count, total, z=1.96):
+    """The 95% Wilson score interval of count / total in percent, as printed: "lo-hi".
+
+    The top-row clause widens z for the selection over its ranked rows; a share the answer
+    names in advance (own code, outside the program) keeps z = 1.96.
+    """
+    share = count / total
     center = (share + z * z / (2 * total)) / (1 + z * z / total)
     half = z * math.sqrt(share * (1 - share) / total + z * z / (4 * total * total))
     half /= 1 + z * z / total
@@ -198,9 +203,13 @@ class TimerScenarioTest(unittest.TestCase):
         total = self.expected["total_samples"]
         own = self.expected["modules"][self.expected["own_module"]]["samples"]
         self.assertIn(self.expected["metric_prefix"], module)
+        ranked = [row for row in self.rows(module) if not row["module"].startswith("<other")]
+        second = int(ranked[1]["samples"])
+        z = NormalDist().inv_cdf(1 - 0.025 / len(ranked))
         self.assertIn(
             f"top row {self.expected['own_module']} {_percent(own, total)}% "
-            f"(95% CI {_interval(own, total)}%, n={total} samples)",
+            f"(95% CI {_interval(own, total, z)}% as the top of {len(ranked)} rows, "
+            f"n={total} samples; separated from row 2 at {second} samples)",
             module,
         )
         rows = {row["module"]: row for row in self.rows(module)}

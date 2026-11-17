@@ -19,6 +19,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from decimal import Decimal
 from pathlib import Path
+from statistics import NormalDist
 from types import MappingProxyType
 from typing import Any, Final, TextIO
 
@@ -2266,7 +2267,13 @@ def _timer_contexts(
 
 
 def _top_row_precision(connection: object, by: str) -> str | None:
-    """The first row's share with its 95% Wilson score interval over the scoped sample count n."""
+    """The first row's share with its 95% Wilson score interval over the scoped sample count n.
+
+    The first row is the maximum of the m ranked rows, and a maximum picked from noisy shares is
+    biased up, so with m > 1 the interval uses a Bonferroni z over the m ranked rows and the clause
+    states whether row 1 is separated from row 2: the 95% Wilson interval of k1 / (k1 + k2)
+    excludes one half.
+    """
     keys = {
         "process": ("process",),
         "module": ("module",),
@@ -2277,23 +2284,36 @@ def _top_row_precision(connection: object, by: str) -> str | None:
     }[by]
     selected = ", ".join(f'"{key}"' for key in keys)
     rows = connection.sql(
-        f"SELECT {selected}, samples, total_samples FROM v_{by}_rows WHERE rn = 1"
+        f"SELECT {selected}, samples, total_samples, count(*) OVER () FROM v_{by}_rows "
+        "WHERE rn IS NOT NULL ORDER BY rn LIMIT 2"
     ).fetchall()
-    if not rows or not rows[0][-1]:
+    if not rows or not rows[0][-2]:
         return None
+    first = rows[0]
     parts = [
         f"0x{value:X}"
         if isinstance(value, int) and key in ("rva", "page_start")
         else ("<unresolved>" if value is None else str(value))
-        for key, value in zip(keys, rows[0])
+        for key, value in zip(keys, first)
     ]
     name = ":".join(parts) if by == "line" else " ".join(parts)
-    samples, total = int(rows[0][-2] or 0), int(rows[0][-1])
+    samples, total, ranked = int(first[-3] or 0), int(first[-2]), int(first[-1])
     share = samples / total
-    low, high = _wilson_interval(samples, total)
+    if ranked < 2:
+        low, high = _wilson_interval(samples, total)
+        return (
+            f"top row {name} {100.0 * share:.1f}% "
+            f"(95% CI {100.0 * low:.1f}-{100.0 * high:.1f}%, n={total} samples)"
+        )
+    low, high = _wilson_interval(samples, total, NormalDist().inv_cdf(1.0 - 0.025 / ranked))
+    second = int(rows[1][-3] or 0)
+    pair = samples + second
+    separated = pair > 0 and _wilson_interval(samples, pair)[0] > 0.5
     return (
         f"top row {name} {100.0 * share:.1f}% "
-        f"(95% CI {100.0 * low:.1f}-{100.0 * high:.1f}%, n={total} samples)"
+        f"(95% CI {100.0 * low:.1f}-{100.0 * high:.1f}% as the top of {ranked} rows, "
+        f"n={total} samples; {'' if separated else 'not '}separated from row 2 at "
+        f"{second} samples)"
     )
 
 

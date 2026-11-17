@@ -431,7 +431,8 @@ class TimerOutputTest(_Session):
     def test_read_carries_the_top_row_interval(self):
         expected = (
             f"top row {timer_fixture.IMAGE_KEY} {100 * IMAGE_SAMPLES / TOTAL:.1f}% "
-            f"(95% CI 70.4-75.0%, n={TOTAL} samples)"
+            f"(95% CI 69.9-75.5% as the top of 3 rows, n={TOTAL} samples; "
+            "separated from row 2 at 393 samples)"
         )
         read = re.search(r"^READ: .*$", self.profile("module"), re.MULTILINE).group(0)
         self.assertTrue(read.endswith(expected), read)
@@ -443,7 +444,9 @@ class TimerOutputTest(_Session):
             r"^READ: .*$", self.profile("module", session=session), re.MULTILINE
         ).group(0)
         self.assertRegex(
-            read, r"top row \S+ \d+\.\d% \(95% CI \d+\.\d-\d+\.\d%, n=(\d|1\d|2\d) samples\)$"
+            read,
+            r"top row \S+ \d+\.\d% \(95% CI \d+\.\d-\d+\.\d% as the top of \d+ rows, "
+            r"n=(\d|1\d|2\d) samples; (not )?separated from row 2 at \d+ samples\)$",
         )
 
     def test_read_states_an_interval_for_a_whole_share(self):
@@ -470,7 +473,7 @@ class _Connection:
     """Answers the top-row query with one module row of samples out of total."""
 
     def __init__(self, samples, total):
-        self.row = ("m.dll", samples, total)
+        self.row = ("m.dll", samples, total, 1)
 
     def sql(self, _query):
         return _Rows([self.row])

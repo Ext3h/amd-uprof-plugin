@@ -80,6 +80,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- The top-row clause in `READ` widens its 95% interval for the selection with a Bonferroni z over
+  the ranked rows (`as the top of m rows`) and states whether row 1 is separated from row 2
+  (a 95% Wilson interval of k1 / (k1 + k2) that excludes one half) (issue #277).
 - The `--by instruction --json` document prints each decoded window once in a top-level
   `windows` list, shared by the rows whose windows overlap in one module; a row's context keeps
   `anchor`, `build`, `function` and `file` and names its window as `window` (`index`, `first`,

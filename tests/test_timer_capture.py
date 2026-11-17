@@ -580,6 +580,23 @@ class TimerFailureTest(_Session):
         self.assertEqual(_labels(text), ["timer capture", "timer capture (launch)", "Zen host"])
         self.assertNotIn("schema", text)
 
+    def test_unreadable_session_meta_names_the_file_not_the_sampler(self):
+        session = self.root / "corrupt"
+        session.mkdir()
+        (session / "session.uprof").write_text("{bad", encoding="utf-8")
+        with (
+            mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)),
+            self.assertRaises(uprof_native.UprofError) as raised,
+        ):
+            uprof_dump.resolve_dump(session, uprof_session.derive_sampler(session))
+        text = str(raised.exception)
+        self.assertTrue(
+            text.startswith("session.uprof is not readable JSON ("), text.splitlines()[0]
+        )
+        self.assertIn("copy the session again", text)
+        self.assertNotIn("records no IBS", text)
+        self.assertEqual(_labels(text), [])
+
     def test_shared_alternatives_are_identical(self):
         with mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)):
             first = str(uprof_native.failure("a", ["timer capture (launch)", "Zen host"]))

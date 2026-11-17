@@ -2251,16 +2251,8 @@ def _timer_contexts(
     ]
 
 
-# Below this many scoped samples the normal approximation of a share's interval is not stated.
-_PRECISION_MIN_SAMPLES: Final = 30
-
-
 def _top_row_precision(connection: object, by: str) -> str | None:
-    """The first row's share with its 95% binomial interval, h = 1.96 * sqrt(p(1-p)/n).
-
-    n is the scoped sample count. At p = 0 or 1, or below the minimum n, the interval is not
-    stated because the normal approximation does not hold there.
-    """
+    """The first row's share with its 95% Wilson score interval over the scoped sample count n."""
     keys = {
         "process": ("process",),
         "module": ("module",),
@@ -2284,12 +2276,25 @@ def _top_row_precision(connection: object, by: str) -> str | None:
     name = ":".join(parts) if by == "line" else " ".join(parts)
     samples, total = int(rows[0][-2] or 0), int(rows[0][-1])
     share = samples / total
-    if total < _PRECISION_MIN_SAMPLES or share in (0.0, 1.0):
-        return f"top row {name} {100.0 * share:.1f}% (n={total}; no interval)"
-    half = 1.96 * math.sqrt(share * (1.0 - share) / total)
+    low, high = _wilson_interval(samples, total)
     return (
-        f"top row {name} {100.0 * share:.1f}% ±{100.0 * half:.1f} points (95% binomial, n={total})"
+        f"top row {name} {100.0 * share:.1f}% "
+        f"(95% CI {100.0 * low:.1f}-{100.0 * high:.1f}%, n={total} samples)"
     )
+
+
+def _wilson_interval(samples: int, total: int, z: float = 1.96) -> tuple[float, float]:
+    """The Wilson score interval of the share samples / total, clamped to [0, 1].
+
+    Unlike the normal approximation p +- z * sqrt(p(1-p)/n), it is defined for every n >= 1,
+    including samples = 0 and samples = total, and its bounds never leave [0, 1].
+    """
+    share = samples / total
+    denominator = 1.0 + z * z / total
+    center = (share + z * z / (2.0 * total)) / denominator
+    half = z * math.sqrt(share * (1.0 - share) / total + z * z / (4.0 * total * total))
+    half /= denominator
+    return max(0.0, center - half), min(1.0, center + half)
 
 
 def _achieved_field(

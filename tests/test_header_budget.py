@@ -97,7 +97,7 @@ CEILINGS = {
         "TIME_SHARE": 87,
         "VERSION": 7,
         "WEIGHTS": 13,
-        "context_help": 935,
+        "context_help": 481,
         "legend": 414,
     },
 }

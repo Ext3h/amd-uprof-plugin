@@ -2837,7 +2837,7 @@ def _write_profile(
             image_dirs=paths.image_dirs,
             ambiguous_modules=ambiguous,
         )
-        help_text = uprof_context.context_help(legend or {})
+        help_text = uprof_context.context_help(legend or {}, contexts)
         summary = uprof_context.context_omission_summary(contexts)
         if summary:
             print(f"CONTEXT: {summary}", file=sys.stderr)

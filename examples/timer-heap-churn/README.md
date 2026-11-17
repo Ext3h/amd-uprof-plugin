@@ -56,7 +56,8 @@ needed.
     capture. Its hot lines in `heap_churn.c` are **25** (`h ^= p[i];`), **26**
     (`h *= 16777619u;`) and **24** (the loop header), together all of its 826 samples, most on
     line 25. The sample-hot address is `HOT_RVA` 0x129E (167 samples) inside it. Source reading,
-    not measured: this is the byte-at-a-time FNV loop, a serial multiply chain per byte.
+    not measured: this is the byte-at-a-time FNV loop, a serial multiply chain per byte; the
+    timer capture cannot show why it is slow (`CAUSE`).
   - `fill_block` 211 samples (14.6%); `heap_churn_entry` 15 samples (1.0%).
 - **Outside the program: 27.2% (95% CI 25.0-29.6%)** (394 samples): `ntdll.dll` 393 samples
   (`isSystemModule=true`) plus one `apphelp.dll` sample. Almost all of it is heap management:

@@ -68,9 +68,13 @@ def _percent(count, total):
     return f"{100 * count / total:.1f}"
 
 
-def _half_width(count, total):
-    share = count / total
-    return f"{100 * 1.96 * math.sqrt(share * (1 - share) / total):.1f}"
+def _interval(count, total):
+    """The 95% Wilson score interval of count / total in percent, as printed: "lo-hi"."""
+    share, z = count / total, 1.96
+    center = (share + z * z / (2 * total)) / (1 + z * z / total)
+    half = z * math.sqrt(share * (1 - share) / total + z * z / (4 * total * total))
+    half /= 1 + z * z / total
+    return f"{100 * max(0.0, center - half):.1f}-{100 * min(1.0, center + half):.1f}"
 
 
 class ExamplesLayoutTest(unittest.TestCase):
@@ -115,15 +119,15 @@ class ExamplesLayoutTest(unittest.TestCase):
         counts = _counts(expected)
         answer = _section(_readme(), "Expected answer")
         percents = {_percent(count, total) for count in counts}
-        widths = {_half_width(count, total) for count in counts}
-        quoted = re.findall(r"(?<![\d±])(\d+\.\d)%", answer)
+        intervals = {_interval(count, total) for count in counts}
+        quoted = re.findall(r"(?<![\d-])(\d+\.\d)%", answer)
         self.assertTrue(quoted)
         for value in quoted:
             with self.subTest(percent=value):
                 self.assertIn(value, percents)
-        for value in re.findall(r"±(\d+\.\d) points", answer):
-            with self.subTest(width=value):
-                self.assertIn(value, widths)
+        for value in re.findall(r"95% CI (\d+\.\d-\d+\.\d)%", answer):
+            with self.subTest(interval=value):
+                self.assertIn(value, intervals)
         for count in re.findall(r"(\d+) samples", answer):
             with self.subTest(samples=count):
                 self.assertIn(int(count), counts | {total, expected["hot_rva"]["samples"]})
@@ -196,7 +200,7 @@ class TimerScenarioTest(unittest.TestCase):
         self.assertIn(self.expected["metric_prefix"], module)
         self.assertIn(
             f"top row {self.expected['own_module']} {_percent(own, total)}% "
-            f"±{_half_width(own, total)} points (95% binomial, n={total})",
+            f"(95% CI {_interval(own, total)}%, n={total} samples)",
             module,
         )
         rows = {row["module"]: row for row in self.rows(module)}

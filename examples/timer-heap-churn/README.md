@@ -50,24 +50,26 @@ needed.
 - **Mode and basis.** Timer sampling, 1 ms: `sample_share` is the on-CPU time share of the
   sampled thread. There is no `time_share`, cycle cost or `cpu_seconds` for a timer capture
   (METRIC; the `cpu_seconds` cause gives the measured undercount). One thread, 1446 samples.
-- **Own code: 72.8% ±2.3 points** (`heap_churn.exe`, 1052 samples, `isSystemModule=false`).
-  - `hash_block` is the offending function: 826 samples, **57.1% ±2.6 points** of the capture.
-    Its hot lines in `heap_churn.c` are **25** (`h ^= p[i];`), **26** (`h *= 16777619u;`) and
-    **24** (the loop header), together all of its 826 samples, most on line 25. The sample-hot
-    address is `HOT_RVA` 0x129E (167 samples) inside it. Source reading, not measured: this is
-    the byte-at-a-time FNV loop, a serial multiply chain per byte.
+- **Own code: 72.8% (95% CI 70.4-75.0%)** (`heap_churn.exe`, 1052 samples,
+  `isSystemModule=false`).
+  - `hash_block` is the offending function: 826 samples, **57.1% (95% CI 54.6-59.7%)** of the
+    capture. Its hot lines in `heap_churn.c` are **25** (`h ^= p[i];`), **26**
+    (`h *= 16777619u;`) and **24** (the loop header), together all of its 826 samples, most on
+    line 25. The sample-hot address is `HOT_RVA` 0x129E (167 samples) inside it. Source reading,
+    not measured: this is the byte-at-a-time FNV loop, a serial multiply chain per byte.
   - `fill_block` 211 samples (14.6%); `heap_churn_entry` 15 samples (1.0%).
-- **Outside the program: 27.2% ±2.3 points** (394 samples): `ntdll.dll` 393 samples
+- **Outside the program: 27.2% (95% CI 25.0-29.6%)** (394 samples): `ntdll.dll` 393 samples
   (`isSystemModule=true`) plus one `apphelp.dll` sample. Almost all of it is heap management:
   `RtlpLowFragHeapAllocFromContext` 206, `RtlFreeHeap` 99, `RtlpAllocateNTHeapInternal` 55 and
   `RtlAllocateHeap` 28, together 388 samples (26.8%). The program can change it:
   `heap_churn_entry` allocates and frees one block per iteration (`heap_churn.c` lines 38 and
   41). The link from those calls to the ntdll functions is by name and source, not measured: a
   timer capture carries no caller attribution into external modules (METRIC).
-- **Cost estimate.** In CPU-time shares of this run: the hash loop 57.1% ±2.6 points, the heap
-  calls 26.8% ±2.3 points. Estimate, not measured: reusing one buffer would remove most of the
-  heap share. In seconds: multiply a share by the workload's measured CPU time (the process's
-  user + kernel time, not its wall time); the tool derives no seconds from timer ticks.
+- **Cost estimate.** In CPU-time shares of this run: the hash loop 57.1% (95% CI 54.6-59.7%),
+  the heap calls 26.8% (95% CI 24.6-29.2%). Estimate, not measured: reusing one buffer would
+  remove most of the heap share. In seconds: multiply a share by the workload's measured CPU
+  time (the process's user + kernel time, not its wall time); the tool derives no seconds from
+  timer ticks.
 
 ## Reference metrics
 

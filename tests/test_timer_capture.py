@@ -11,7 +11,6 @@ Run from the repository root: python tests/run_tests.py test_timer_capture
 import contextlib
 import io
 import json
-import math
 import re
 import shutil
 import subprocess

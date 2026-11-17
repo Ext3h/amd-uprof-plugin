@@ -390,6 +390,24 @@ class TimerOutputTest(_Session):
             with self.subTest(by=by):
                 self.assertNotIn("CAUSE", self.symbolized(by))
 
+    def test_scoped_view_states_the_on_cpu_fraction(self):
+        """Issue #387: a waiting thread gets few ticks, so a --pid/--image view sets the
+        scope's samples against one thread running the whole span and names blocked time."""
+        on_cpu = (
+            "scoped on-CPU (--pid 10936): 1446 samples against 2644 for one thread running the "
+            "whole 2.644 s span at one tick per 1 ms, so the scope was on CPU for about 55% of "
+            "the span (a sum over its threads, so several threads can exceed 100%); time spent "
+            "blocked or waiting gets no tick and appears in no share"
+        )
+        for scope in (("--pid", "10936"), ("--image", "%heap_churn.exe")):
+            with self.subTest(scope=scope):
+                expected = on_cpu.replace("--pid 10936", " ".join(scope))
+                text = self.profile("process", *scope)
+                sanity = re.search(r"^SANITY: .*$", text, re.MULTILINE).group(0)
+                self.assertEqual(sanity, "SANITY: " + expected)
+                self.assertEqual(self.document("process", *scope)["SANITY"], expected)
+        self.assertNotIn("SANITY", self.profile("process"))
+
     def test_module_rows_keep_the_external_share(self):
         rows = {row["module"]: row for row in self.document("module")["rows"]}
         image = rows[timer_fixture.IMAGE_KEY]

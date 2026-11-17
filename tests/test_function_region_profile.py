@@ -380,7 +380,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
         document = self.document(session, "--top", "1", by="region")
         self.assertEqual(
             [(row["module"], row["page_start"]) for row in document["rows"]],
-            [(module_key(FIXTURE), "0x2000"), ("<other regions>", None)],
+            [(module_key(FIXTURE), "0x2000"), (f"<other regions in {module_key(FIXTURE)}>", None)],
         )
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "time_share")
         self.assertEqual(document["legend"]["impact"]["order_by"], ["time_share", "samples"])
@@ -390,7 +390,8 @@ class FunctionRangeProfileTest(unittest.TestCase):
 
         document = self.document(session, "--top", "1")
         self.assertEqual(
-            [row["function"] for row in document["rows"]], ["fixture_second", "<other functions>"]
+            [row["function"] for row in document["rows"]],
+            ["fixture_second", "<other functions in this module>"],
         )
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "time_share")
 
@@ -408,7 +409,7 @@ class FunctionRangeProfileTest(unittest.TestCase):
         document = self.document(session, "--top", "1", by="region")
         self.assertEqual(
             [(row["module"], row["page_start"]) for row in document["rows"]],
-            [(module_key(FIXTURE), "0x1000"), ("<other regions>", None)],
+            [(module_key(FIXTURE), "0x1000"), (f"<other regions in {module_key(FIXTURE)}>", None)],
         )
         self.assertEqual(document["legend"]["impact"]["primary_measure"], "sample_share")
 

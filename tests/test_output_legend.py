@@ -51,7 +51,7 @@ TAG_MEANING = (
     "not per-op latency"
 )
 CAVEAT = "a raw share cannot separate a cheap operation run often from an expensive one run rarely"
-READ_TAIL = "the <other ...> row is last, not ranked"
+READ_TAIL = "the <other ...> rows are last, not ranked"
 
 TAG_ABSENT = {
     "pmc": "this export has no tag-to-retire counter",

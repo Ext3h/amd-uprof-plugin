@@ -641,10 +641,12 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
         )
     dump_name = DUMP_FILENAMES[sampler.ibs_dump_kind]
     path = Path(session_dir) / dump_name
-    if path.is_file():
-        return DumpInfo(absolute(path), "beside", reason="found beside the session")
-
     time_filter = recorded_time_filter(session_dir)
+    if path.is_file():
+        return DumpInfo(
+            absolute(path), "beside", reason="found beside the session", time_filter=time_filter
+        )
+
     cache = _private_cache(cache_dir(session_dir))
     cached_dump = cache / dump_name
     cache_meta = cache / "cache.json"

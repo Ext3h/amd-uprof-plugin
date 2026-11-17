@@ -41,6 +41,10 @@ METRIC_WIDE = METRIC.replace(
     "kernel-mode ticks not established)",
     "kernel-mode ticks not established; system-wide denominator and idle handling unverified)",
 )
+CAUSE = (
+    "CAUSE: not determinable from a timer capture: a tick shows where a thread ran, not why "
+    "the code is slow (memory, lock, branch or dependency chain); an IBS OP capture can show it"
+)
 FAKE_CLI = "/opt/uprof/bin/AMDuProfCLI"
 TOTAL = 1446
 IMAGE_SAMPLES = 1052
@@ -368,6 +372,23 @@ class TimerOutputTest(_Session):
                 )
                 parent = re.search(r"^PARENT: .*$", text, re.MULTILINE).group(0)
                 self.assertIn("cpu_seconds absent (on the reference host", parent)
+
+    def test_drill_views_state_the_cause_is_not_determinable(self):
+        """Issue #386: function, line and instruction name the hotspot, so each says once that
+        a timer capture cannot show why it is slow and which capture can."""
+        reason = _symbolizer_skip()
+        if reason:
+            self.skipTest(reason)
+        for by in ("function", "line", "instruction"):
+            with self.subTest(by=by):
+                text = self.symbolized(by)
+                self.assertEqual(text.count("CAUSE: "), 1, text)
+                self.assertIn(CAUSE + "\n", text)
+                document = json.loads(self.symbolized(by, "--json"))
+                self.assertEqual("CAUSE: " + document["CAUSE"], CAUSE)
+        for by in ("process", "module", "region"):
+            with self.subTest(by=by):
+                self.assertNotIn("CAUSE", self.symbolized(by))
 
     def test_module_rows_keep_the_external_share(self):
         rows = {row["module"]: row for row in self.document("module")["rows"]}

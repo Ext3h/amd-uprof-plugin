@@ -202,8 +202,10 @@ implied bound. Each verdict was reproduced through `uprof_db.open_query` with a 
 `session.uprof`.
 
 Synthetic DuckDB fixtures cover the branches directly: a dump whose weight stays below the
-capacity bound but whose samples run outside the recorded elapsed (0.010-1.600 s against 1.000 s)
-errors with `1 CPU(s) hold samples outside the recorded elapsed [0.000, 1.000) s`; 45 s of samples
+capacity bound but whose samples run past the recorded elapsed (two CPUs at 0.5-10.4 s against
+10.000 s) reports `OK`, because samples past the recorded end are no error (#358); a dump with samples before
+a recorded `--time-filter` window's start errors with `hold samples before the recorded window
+start`; 45 s of samples
 against a 90 s span prints the late-window `WARN`; a session with no duration warns; an empty dump
 errors; and a recorded `--time-filter 10:12` on a 60 s capture is judged against `[10, 12) s`, not
 the 2 s width, reporting `OK` with leading 0.300 s and trailing 1.200 s gaps.

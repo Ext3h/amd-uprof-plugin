@@ -74,6 +74,51 @@ class DebugTraceTest(unittest.TestCase):
 
 
 @unittest.skipIf(SKIP, SKIP or "")
+class RecordedPdbTest(unittest.TestCase):
+    """The absolute PDB path a PE fixture's CodeView entry records lies outside the checkout:
+    whether it exists depends on the host that built the fixtures, so a trace never depends on
+    the outcome of probing it."""
+
+    RECORDED = r"C:\uprof-fixture-build\pe\fixture_other.pdb"
+
+    def test_production_section_ignores_whether_the_recorded_pdb_exists(self):
+        import capture_debug_traces as C
+        import uprof_symbols
+
+        case = next(case for case in C.CASES if case.name == "pe_fixture_mismatch")
+        real = uprof_symbols._probe_pdb
+
+        def probe_as_built_on(host_has_build_dir):
+            def probe(pdbutil, path, guid, age):
+                if str(path) != self.RECORDED:
+                    return real(pdbutil, path, guid, age)
+                if not host_has_build_dir:
+                    return uprof_symbols.PdbProbe(path, "not_found", detail="not found")
+                found = real(pdbutil, F.PE / "fixture_other.pdb", guid, age)
+                found.path = path
+                return found
+
+            return probe
+
+        sections = []
+        for host_has_build_dir in (False, True):
+            with mock.patch.object(
+                uprof_symbols, "_probe_pdb", probe_as_built_on(host_has_build_dir)
+            ):
+                sections.append(C.production_section(case))
+        self.assertEqual(sections[1], sections[0])
+
+    def test_normalize_hides_the_status_of_the_recorded_pdb(self):
+        import capture_debug_traces as C
+
+        searched = "searched: <FIXTURES>\\pe\\fixture_mismatch.pdb [not found]; {} [{}]; copy"
+        absent = C.normalize(searched.format(self.RECORDED, "not found"))
+        present = C.normalize(searched.format(self.RECORDED, "PDB GUID A != image GUID B"))
+        self.assertEqual(present, absent)
+        self.assertIn("<FIXTURES>\\pe\\fixture_mismatch.pdb [not found]", absent)
+
+
+@unittest.skipIf(SKIP, SKIP or "")
 class ProfileSectionTest(unittest.TestCase):
     """A profile section keeps the symbol-outcome evidence, not only the JSON rows."""
 

@@ -26,6 +26,7 @@ import timer_fixture
 import uprof_collect
 import uprof_dump
 import uprof_native
+import uprof_query
 import uprof_session
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "plugin" / "skills" / "amd-uprof" / "tools"
@@ -390,26 +391,26 @@ class TimerOutputTest(_Session):
         self.assertAlmostEqual(hashed["sample_share"], HASH_SAMPLES / TOTAL)
 
     def test_read_carries_the_top_row_interval(self):
-        share = IMAGE_SAMPLES / TOTAL
-        half = 1.96 * math.sqrt(share * (1 - share) / TOTAL)
         expected = (
-            f"top row {timer_fixture.IMAGE_KEY} {100 * share:.1f}% "
-            f"±{100 * half:.1f} points (95% binomial, n={TOTAL})"
+            f"top row {timer_fixture.IMAGE_KEY} {100 * IMAGE_SAMPLES / TOTAL:.1f}% "
+            f"(95% CI 70.4-75.0%, n={TOTAL} samples)"
         )
         read = re.search(r"^READ: .*$", self.profile("module"), re.MULTILINE).group(0)
         self.assertTrue(read.endswith(expected), read)
-        self.assertIn("72.8% ±2.3 points", expected)
+        self.assertIn("72.8% (95% CI", expected)
 
-    def test_read_states_no_interval_below_thirty_samples(self):
+    def test_read_states_an_interval_below_thirty_samples(self):
         session = self.variant("small", keep_rows=20)
         read = re.search(
             r"^READ: .*$", self.profile("module", session=session), re.MULTILINE
         ).group(0)
-        self.assertRegex(read, r"top row \S+ \d+\.\d% \(n=(\d|1\d|2\d); no interval\)$")
+        self.assertRegex(
+            read, r"top row \S+ \d+\.\d% \(95% CI \d+\.\d-\d+\.\d%, n=(\d|1\d|2\d) samples\)$"
+        )
 
-    def test_read_states_no_interval_for_a_whole_share(self):
+    def test_read_states_an_interval_for_a_whole_share(self):
         read = re.search(r"^READ: .*$", self.profile("process"), re.MULTILINE).group(0)
-        self.assertTrue(read.endswith(f"100.0% (n={TOTAL}; no interval)"), read)
+        self.assertTrue(read.endswith(f"100.0% (95% CI 99.7-100.0%, n={TOTAL} samples)"), read)
 
     def test_achieved_reports_the_busiest_thread_without_warning(self):
         achieved = re.search(r"^ACHIEVED: .*$", self.profile("process"), re.MULTILINE).group(0)
@@ -417,6 +418,48 @@ class TimerOutputTest(_Session):
         self.assertIn("busiest thread", achieved)
         self.assertIn("1 active thread", achieved)
         self.assertNotIn("WARN", achieved)
+
+
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class _Connection:
+    """Answers the top-row query with one module row of samples out of total."""
+
+    def __init__(self, samples, total):
+        self.row = ("m.dll", samples, total)
+
+    def sql(self, _query):
+        return _Rows([self.row])
+
+
+class TopRowIntervalTest(unittest.TestCase):
+    """The top row's share interval is the Wilson score interval, inside 0-100 % for every n."""
+
+    CASES = (
+        (2, 40, "1.4-16.5"),
+        (38, 40, "83.5-98.6"),
+        (0, 40, "0.0-8.8"),
+        (40, 40, "91.2-100.0"),
+        (9, 97, "5.0-16.7"),
+        (1, 1, "20.7-100.0"),
+    )
+
+    def test_wilson_bounds(self):
+        for samples, total, bounds in self.CASES:
+            with self.subTest(samples=samples, total=total):
+                clause = uprof_query._top_row_precision(_Connection(samples, total), "module")
+                share = f"{100 * samples / total:.1f}%"
+                self.assertEqual(
+                    clause, f"top row m.dll {share} (95% CI {bounds}%, n={total} samples)"
+                )
+                low, high = (float(value) for value in bounds.split("-"))
+                self.assertTrue(0.0 <= low <= high <= 100.0)
 
 
 class TimerModesTest(_Session):

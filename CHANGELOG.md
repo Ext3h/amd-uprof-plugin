@@ -80,6 +80,11 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 
 ### Changed
 
+- `time_share` charges each DeltaTick gap to its ending sample only up to the run-gap limit
+  (10x the requested interval, else 10x the context's median gap), so an off-CPU wait or idle
+  stretch no longer lifts the first sample after it. `WEIGHTS` states the cap and the scoped gap
+  time above it once; no row carries it. `--by line` rows follow the primary measure like the
+  other views (issue #279).
 - The `--by instruction --json` document prints each decoded window once in a top-level
   `windows` list, shared by the rows whose windows overlap in one module; a row's context keeps
   `anchor`, `build`, `function` and `file` and names its window as `window` (`index`, `first`,

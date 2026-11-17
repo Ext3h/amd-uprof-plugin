@@ -415,7 +415,7 @@ When every context is omitted with `symbolizer_failed`, or every one with `pdb_u
 
 ## SQL schema — `tools/views.sql`
 
-One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twenty-two inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection. The table below is the full bound set: the twenty-one `uprof_*` keys of `uprof_query._variables` plus `uprof_ibs_parquet`, which the profile call binds after locating the dump's Parquet copy; `views.sql`'s header lists nineteen of the twenty-two.
+One schema file; every object is TEMP because `cpu.db` is opened read-only. `uprof.py` binds twenty-three inputs as prepared parameters (`SET VARIABLE name = ?`, never text splicing), loads `views.sql` once, then runs one projection. The table below is the full bound set: the twenty-two `uprof_*` keys of `uprof_query._variables` plus `uprof_ibs_parquet`, which the profile call binds after locating the dump's Parquet copy; `views.sql`'s header lists twenty of the twenty-three.
 
 | Bound input | Meaning |
 |---|---|
@@ -435,6 +435,7 @@ One schema file; every object is TEMP because `cpu.db` is opened read-only. `upr
 | `uprof_range_attempted` | chr(2)-joined modules for which derivation ran; a fully named module is absent, so `no_range_reason` says the derivation was skipped rather than failed |
 | `uprof_ambiguous_modules` | chr(2)-joined module names the capture maps to more than one image version; their dump samples get no `Function.id` |
 | `uprof_primary_measure` | `sample_share`, `time_share` or `samples`: orders the row views and their `--top` |
+| `uprof_gap_limit_ns` | run-gap limit in ns, 10x the requested interval when it is a time; empty otherwise, so each weighting context's limit is 10x its median gap |
 | `uprof_detail_views` | `'true'` binds the full `v_line_rows` and `v_instruction_rows` bodies (line and instruction scopes); `'false'` binds them as an empty typed relation, so every other mode skips that bind cost |
 | `uprof_sample_interval_s` | requested cycle interval in seconds, bound for `--by module|function|region`; empty when the interval is a work/fetch count or the core frequency is unavailable, which hides `cpu_seconds` |
 | `uprof_function` | parent function name selected by `--function` for a line or instruction view; empty otherwise, which leaves `v_function_scope` empty |

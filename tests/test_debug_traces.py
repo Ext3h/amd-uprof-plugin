@@ -29,6 +29,17 @@ SKIP = F.tool_skip() or F.duckdb_skip()
 TRACE_SKIP = SKIP or F.llvm_version_skip() or F.zlib_skip()
 
 
+def assert_cache_hits(test: unittest.TestCase, trace: Path) -> None:
+    """Both profile views of the cached case's trace show a session-cache hit."""
+    lines = trace.read_text(encoding="utf-8").splitlines()
+    text = "\n".join(lines)
+    for by in ("line", "function"):
+        with test.subTest(cached=trace.parent.name, by=by):
+            test.assertNotIn("session cache: disabled", text)
+            cached = lines.index(f"## profile.{by} cached")
+            test.assertTrue(lines[cached + 1].startswith("session_cache=hit "), text)
+
+
 @unittest.skipIf(TRACE_SKIP, TRACE_SKIP or "")
 class DebugTraceTest(unittest.TestCase):
     def test_capture_matches_the_committed_goldens(self):
@@ -57,6 +68,9 @@ class DebugTraceTest(unittest.TestCase):
                     actual = generated[name].read_text(encoding="utf-8")
                     expected = committed[name].read_text(encoding="utf-8")
                     self.assertEqual(actual, expected, f"{OS_NAME}/{name} differs from the golden")
+            # The cached case's second run, made after a pause past the cache's one-second
+            # created_at stamp, reached the session cache and was served from it untouched.
+            assert_cache_hits(self, generated[f"{ProfileSectionCacheTest.CACHED}.txt"])
 
 
 @unittest.skipIf(SKIP, SKIP or "")
@@ -131,6 +145,14 @@ class GoldenSemanticsTest(unittest.TestCase):
                         if line.startswith("symbol_coverage=")
                     ]
                     self.assertIn("cause by module:", coverage[0], name)
+
+    def test_the_committed_cached_sections_are_cache_hits(self):
+        # The golden comparison regenerates the cached case and checks its hit; the committed
+        # traces of every OS show one too.
+        traces = sorted((F.DEBUG / "traces").glob(f"*/{ProfileSectionCacheTest.CACHED}.txt"))
+        self.assertEqual([trace.parent.name for trace in traces], ["linux", "windows"])
+        for trace in traces:
+            assert_cache_hits(self, trace)
 
 
 class PdbSectionAddressTest(unittest.TestCase):
@@ -269,15 +291,3 @@ class CachedRunTest(unittest.TestCase):
                 finally:
                     connection.close()
                 self.assertEqual({"size", "checksum", "is32bit"} <= columns, identity)
-
-    def test_the_cached_section_is_a_cache_hit(self):
-        import capture_debug_traces as C
-
-        case = next(case for case in C.CASES if case.cached_run)
-        for by in ("line", "function"):
-            with self.subTest(by=by):
-                lines = C.profile_section(case, by)
-                text = "\n".join(lines)
-                self.assertNotIn("session cache: disabled", text)
-                cached = lines.index(f"## profile.{by} cached")
-                self.assertTrue(lines[cached + 1].startswith("session_cache=hit "), text)

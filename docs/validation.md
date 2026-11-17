@@ -47,7 +47,7 @@ image filter). Both print:
 ### Line baseline (innermost-frame attribution)
 
 `... --by line` (whole capture, default `--top 20`). This is the post-fix baseline. Row 21 is the
-`<other lines>` remainder.
+`<other lines (all modules)>` remainder: the shown rows span several modules.
 
 | # | file | line | function | module | attribution | samples | sample_share | time_share |
 |---:|---|---:|---|---|---|---:|---:|---:|
@@ -71,7 +71,7 @@ image filter). Both print:
 | 18 | `<no source line>` | 0 | `CmpDoParseKey` | ntoskrnl.exe | unique | 1549 | 0.0009706036791456181 | 0.006086308646028924 |
 | 19 | `<no source line>` | 0 | `MiInsertPagesInList` | ntoskrnl.exe | unique | 9995 | 0.006262868801201067 | 0.005999875979772568 |
 | 20 | `...\amd\memcpy_repmovs_amd.asm` | 21 | `memcpy_repmovs_amd` | vcruntime140.dll | unique | 3341 | 0.0020934712020823176 | 0.005911077587523921 |
-| 21 | `<other lines>` | NULL | NULL | NULL | NULL | 938337 | 0.5879621332979095 | 0.5737108703880413 |
+| 21 | `<other lines (all modules)>` | NULL | NULL | NULL | NULL | 938337 | 0.5879621332979095 | 0.5737108703880413 |
 
 Module names are the short forms the output prints; `...\` abbreviates the MSVC 14.51 include path
 and the vcruntime amd64 asm path.
@@ -119,7 +119,10 @@ are the uncapped views.
 ### Tagged IBS and `tag_to_retire_share`
 
 `ibs-session` has 59,243 samples on 16 CPUs. The default (top 20) run returns 20 rows plus one
-`<other processes|functions|lines|instructions>` remainder whose identifying columns are NULL;
+remainder: `<other processes>` or `<other instructions>` with NULL identifying columns, or the
+function and line remainders split by the shown module (`<other functions in this module>`, whose
+module cell names that module, `<other functions in other modules>` or
+`<other functions (all modules)>`, and the same for lines);
 the three shares still sum to 1.0 at every granularity.
 
 - Clip: a two-row fixture with tags 200000 and 1000 gives `65535/66535 = 0.9849703163748403`

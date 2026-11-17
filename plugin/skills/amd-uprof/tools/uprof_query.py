@@ -1990,10 +1990,14 @@ def _legend_fields(
     elif "cpu_seconds" in legend["absent"]:
         parts.append(f"cpu_seconds absent ({legend['absent']['cpu_seconds']})")
     read = _read_text(legend, system_wide, sampler=sampler)
+    scope = legend.get("scope")
+    if scope:
+        read += f"; {_scope_read(scope, 'time_share' in legend['columns'])}"
     if top_row:
         read += f"; {top_row}"
+    base = f" of the {scope['filter']} scope" if scope else ""
     fields = [
-        ("COLUMNS", "share columns are fractions 0.0-1.0; " + "; ".join(parts)),
+        ("COLUMNS", f"share columns are fractions 0.0-1.0{base}; " + "; ".join(parts)),
         ("READ", read),
     ]
     if legend["next"]:
@@ -2384,6 +2388,62 @@ def _achieved_field(
     return field, samples, kernel_covered
 
 
+def _scope_labels(args: argparse.Namespace) -> list[str]:
+    """The --pid/--image filters that narrow the report to part of the capture."""
+    labels = []
+    if args.pid is not None:
+        labels.append(f"--pid {args.pid}")
+    if args.image is not None and args.image != "%":
+        labels.append(f"--image {args.image}")
+    return labels
+
+
+def _scope_base(
+    connection: object, args: argparse.Namespace, windowed: bool
+) -> dict[str, Any] | None:
+    """A --pid/--image scope's samples and its fraction of the unscoped capture.
+
+    Every share of a scoped view is a fraction of the scope, so the scope's own fraction of the
+    capture is what turns a row share into a capture share. The capture is the same time window
+    without the --pid/--image filter. None without such a filter or for an empty scope.
+    """
+    labels = _scope_labels(args)
+    if not labels:
+        return None
+    scope = connection.sql("SELECT total_samples, total_weight FROM v_scope_measures").fetchall()
+    capture = connection.sql(
+        "SELECT total_samples, total_weight FROM v_capture_measures"
+    ).fetchall()
+    samples, weight = (int(scope[0][0] or 0), scope[0][1]) if scope else (0, None)
+    capture_samples, capture_weight = (
+        (int(capture[0][0] or 0), capture[0][1]) if capture else (0, None)
+    )
+    if samples == 0 or capture_samples == 0:
+        return None
+    result: dict[str, Any] = {
+        "filter": " ".join(labels),
+        "samples": samples,
+        "capture_samples": capture_samples,
+        "capture_window": "time_filter" if windowed else "capture",
+        "sample_share": samples / capture_samples,
+    }
+    if weight is not None and capture_weight:
+        result["time_share"] = float(weight) / float(capture_weight)
+    return result
+
+
+def _scope_read(scope: dict[str, Any], time_share: bool) -> str:
+    """The READ clause that names the scope's sample count and its fraction of the capture."""
+    capture = "capture window's" if scope["capture_window"] == "time_filter" else "capture's"
+    text = (
+        f"the {scope['filter']} scope is {scope['samples']} samples, "
+        f"{scope['sample_share']:.3f} of the {capture} {scope['capture_samples']} samples"
+    )
+    if time_share and "time_share" in scope:
+        text += f" and {scope['time_share']:.3f} of its time"
+    return text + "; a row's capture share is its share times that fraction"
+
+
 def _timer_scope_on_cpu(
     connection: object, args: argparse.Namespace, sampler: uprof_session.Sampler
 ) -> str | None:
@@ -2393,11 +2453,7 @@ def _timer_scope_on_cpu(
     comparison is the only place off-CPU time becomes visible. None without a scope, an interval
     or a usable span, and for an empty scope, which its WARNING already names.
     """
-    labels = []
-    if args.pid is not None:
-        labels.append(f"--pid {args.pid}")
-    if args.image is not None and args.image != "%":
-        labels.append(f"--image {args.image}")
+    labels = _scope_labels(args)
     if not labels or not sampler.interval_ms:
         return None
     meta = uprof_session.read_meta(args.session) or {}
@@ -3418,6 +3474,13 @@ def run_query_command(args: argparse.Namespace) -> None:
                 function_scope,
                 empty_scope=empty_scope,
             )
+            scope_base = (
+                None
+                if empty_scope
+                else _scope_base(connection, args, time_start != "0" or time_end != _ALL_NS)
+            )
+            if scope_base is not None:
+                legend["scope"] = scope_base
             fields = _header_fields(args, sampler, dump, has_tag, tag_available, system_wide)
             top_row = _top_row_precision(connection, args.by) if sampler.timer else None
             # The filter and its parent measurement precede the reading rule; both sit directly

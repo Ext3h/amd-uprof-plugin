@@ -172,6 +172,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   `<other third-party modules>`, `<other system modules>` and `<other unclassified modules>`
   instead of one `<other modules>` row with no classification, so the `isSystemModule = false`
   rows sum to the whole third-party share (issue #280).
+- A `profile` view under `--pid`/`--image` names the scope as its share base in `COLUMNS` and
+  states in `READ` and in the JSON `legend.scope` the scope's sample count and its fraction of
+  the capture, so a scoped share is no longer read as a share of the whole capture (issue #286).
 
 ## 2.1.0 — 2026-11-08
 

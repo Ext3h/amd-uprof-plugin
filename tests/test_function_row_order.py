@@ -92,7 +92,7 @@ class FunctionRowOrderTest(unittest.TestCase):
 
         rows = self.rows(path, "--top", "1")
 
-        self.assertEqual([row["function"] for row in rows], ["dup", "<other functions>"])
+        self.assertEqual([row["function"] for row in rows], ["dup", "<other functions in this module>"])
         self.assertEqual(rows[0]["hot_rva"], "0x1010")
 
 

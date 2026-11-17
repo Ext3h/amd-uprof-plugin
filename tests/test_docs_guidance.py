@@ -221,10 +221,11 @@ class SkillTest(unittest.TestCase):
                 with self.subTest(part=part, phrase=phrase):
                     self.assertIn(phrase, skill)
 
-    def test_skill_recommends_no_json_call(self):
-        # A small model copies a recommended `--json` call, and the instruction document then
-        # overflows the harness output limit (#430, #339). SKILL.md names `--json` only to forbid it.
-        self.assertEqual(SKILL.count("--json"), 1)
+    def test_skill_recommends_json_only_for_the_first_instruction_call(self):
+        # The compact instruction document with shared windows carries the IBS cause evidence, so
+        # the drill's first call is `--json`; a re-run with `--json` still costs a turn (#446).
+        self.assertEqual(SKILL.count("--json"), 2)
+        self.assertIn("`--by instruction --json`", SKILL)
         self.assertIn("do not re-run a view with `--json`", SKILL)
 
     def test_skill_self_contained(self):

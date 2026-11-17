@@ -224,7 +224,7 @@ class FunctionScopeProfileTest(unittest.TestCase):
         self.assertNotIn("parent_sample_share", instruction["legend"]["columns"])
         self.assertEqual(len(line["legend"]["next"]), 1)
         self.assertIn("--by instruction", line["legend"]["next"][0])
-        self.assertNotIn("--json", line["legend"]["next"][0])
+        self.assertIn("--json", line["legend"]["next"][0])
         self.assertNotIn("--function", line["legend"]["next"][0])
 
     def test_the_filter_is_rejected_without_an_explicit_scope(self):

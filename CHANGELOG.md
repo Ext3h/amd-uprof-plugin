@@ -85,6 +85,11 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   (issue #358): AMDuProfCLI keeps acquiring after the recorded schedule end, so valid captures
   sampled 21-38 ms past it and were rejected. Only a sample before the recorded span start is
   still an error; a system-wide overrun still counts toward the core-time bound.
+- A module name the capture maps to more than one image version is not symbolized, gets no
+  derived function range and no instruction context, and its IBS dump samples get no
+  `Function.id`: dump rows carry the module name, not `Module.id`, so no sample can be tied to
+  one build. `SYMBOL_COVERAGE` and, for a dump capture, `no_range_reason` name that cause. This
+  holds with or without the session cache, which is disabled for such a run (issue #108).
 - `SKILL.md` is cut from about 8,500 to fewer than 500 words: the entry point, the first call per
   question, the capture pipeline, the permissions and how to read the output. The meaning of each
   share, the next call and every cause come from the tool output; `--help` does not grow. A

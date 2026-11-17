@@ -228,14 +228,16 @@ def output_rows(
     legend: dict[str, object] | None = None,
     contexts: Sequence[object | None] | None = None,
     context_help: dict[str, object] | None = None,
+    windows: Sequence[dict[str, object]] | None = None,
 ) -> None:
     """Render an already fetched result with its header fields and write it.
 
     contexts adds the per-row context objects to JSON output only; context_help is the
-    once-per-document help. The Markdown bytes are the same with or without either.
+    once-per-document help and windows the shared decoded windows the contexts refer to. The
+    Markdown bytes are the same with or without any of them.
     """
     if json_mode:
-        text = json_document(fields, columns, rows, legend, contexts, context_help)
+        text = json_document(fields, columns, rows, legend, contexts, context_help, windows)
     else:
         text = header_text(fields) + markdown_table(columns, types, rows)
     write_payload(text, out_path)

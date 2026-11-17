@@ -961,6 +961,70 @@ def _source_runs(framed, context: dict[str, object]) -> list[dict[str, object]]:
     return runs
 
 
+def _framed_entries(context: dict[str, object]):
+    """Each window entry with its frame 0, read back from the context's runs."""
+    for source_run in context.get("runs") or ():
+        frame = (
+            source_run.get("function", context.get("function")),
+            source_run.get("file", context.get("file")),
+            source_run.get("line"),
+        )
+        for item in source_run.get("instructions") or ():
+            yield frame, item
+
+
+def share_windows(
+    modules: Sequence[object], contexts: Sequence[object | None]
+) -> tuple[list[object | None], list[dict[str, object]]]:
+    """Print overlapping context windows once and let their rows refer to them.
+
+    Rows of one function decode nearly the same instructions, so per-row windows repeat most
+    entries. Windows of one module whose address ranges overlap become one shared
+    window, its entries unique by RVA; an entry at one RVA of one module is the same in every
+    row's window. Each row keeps its anchor, build, function and file and names its shared
+    window and the first and last RVA of its own decode. Omitted and absent contexts pass
+    through.
+    """
+    spans: list[tuple[int, object, int, int]] = []
+    for index, (module, block) in enumerate(zip(modules, contexts)):
+        if isinstance(block, dict) and not block.get("omitted") and block.get("runs"):
+            rvas = [int(str(item["rva"]), 0) for _frame, item in _framed_entries(block)]
+            spans.append((index, module, min(rvas), max(rvas)))
+    # Merge overlapping spans per module in address order; windows keep first-row order.
+    groups: dict[int, int] = {}
+    merged: list[list[object]] = []
+    for index, module, low, high in sorted(spans, key=lambda span: (str(span[1]), span[2])):
+        last = merged[-1] if merged else None
+        if last is not None and last[0] == module and low <= last[2]:
+            last[2] = max(last[2], high)
+            last[3].append(index)
+        else:
+            merged.append([module, low, high, [index]])
+    merged.sort(key=lambda group: min(group[3]))
+    windows: list[dict[str, object]] = []
+    for number, (module, _low, _high, members) in enumerate(merged):
+        entries: dict[int, tuple[tuple, dict[str, object]]] = {}
+        for index in sorted(members):
+            groups[index] = number
+            for frame, item in _framed_entries(contexts[index]):
+                entries.setdefault(int(str(item["rva"]), 0), (frame, item))
+        framed = [entries[rva] for rva in sorted(entries)]
+        window: dict[str, object] = {"module": module}
+        window.update(_context_source(frame for frame, _item in framed))
+        window["runs"] = _source_runs(framed, window)
+        windows.append(window)
+    shared: list[object | None] = []
+    for index, block in enumerate(contexts):
+        if index not in groups:
+            shared.append(block)
+            continue
+        rvas = [str(item["rva"]) for _frame, item in _framed_entries(block)]
+        row = {key: value for key, value in block.items() if key != "runs"}
+        row["window"] = {"index": groups[index], "first": rvas[0], "last": rvas[-1]}
+        shared.append(row)
+    return shared, windows
+
+
 _CONTEXT_HELP_FIELDS: Final = {
     "anchor": (
         "the instruction boundary decoding starts from: kind is export, pdb_public, "
@@ -978,24 +1042,33 @@ _CONTEXT_HELP_FIELDS: Final = {
         "llvm-symbolizer frame 0 shared by most instructions of the window; "
         "absent when no instruction has one"
     ),
-    "runs": (
+    "window": (
+        "the row's decoded window: index into the top-level windows list, and first and last, "
+        "the lowest and highest rva the row's own decode covered in that window"
+    ),
+    "windows": (
+        "top-level list of decoded windows, each printed once and shared by every row whose "
+        "window overlaps it in the same module, entries unique by rva; each has module, the "
+        "frame-0 function and file most of its instructions share, and runs"
+    ),
+    "windows[].runs": (
         "the static decoded stream in ascending rva, grouped into runs of consecutive "
         "instructions with the same frame 0; each run has line and instructions, and "
-        "function or file only where the run's frame differs from the context; null means "
+        "function or file only where the run's frame differs from the window; null means "
         "the frame has none, and a run with function, file and line null has no frame"
     ),
-    "runs[].instructions": (
+    "windows[].runs[].instructions": (
         "each entry has rva, instruction (assembly), samples (raw count), "
         "sample_share (fraction) and optional import and ibs; instruction "
         "may include llvm-objdump's nearest-symbol <...> decoration, which "
         "is not the frame-0 symbol, so use the run's function for the real "
         "frame"
     ),
-    "runs[].instructions[].import": (
+    "windows[].runs[].instructions[].import": (
         "the IAT target of a call through a slot: dll, name and "
         "slot_rva; absent for register or non-IAT targets"
     ),
-    "runs[].instructions[].ibs": (
+    "windows[].runs[].instructions[].ibs": (
         "IBS OP aggregates for the same PID, image and time window as the "
         "row's samples: DataSrc, CacheHitSt and IbsOpMemWidth are value "
         "histograms; IbsDcMiss, IbsOpBrnMisp and IbsDcLockedOp are nonzero "
@@ -1090,8 +1163,10 @@ _CONTEXT_HELP_OMISSIONS: Final = {
 }
 
 
-def _context_keys(contexts: Sequence[object]) -> tuple[set[str], set[str]]:
-    """The help field names and the omission reasons that occur in the contexts."""
+def _context_keys(
+    contexts: Sequence[object], windows: Sequence[dict[str, object]]
+) -> tuple[set[str], set[str]]:
+    """The help field names and the omission reasons that occur in the contexts and windows."""
     present: set[str] = set()
     reasons: set[str] = set()
     for context in contexts:
@@ -1100,19 +1175,28 @@ def _context_keys(contexts: Sequence[object]) -> tuple[set[str], set[str]]:
         if context.get("omitted"):
             present.add("omitted")
             reasons.add(str(context.get("reason")))
-        present.update(key for key in ("anchor", "build", "runs") if key in context)
+        present.update(key for key in ("anchor", "build", "window") if key in context)
         if "function" in context or "file" in context:
             present.add("function, file")
-        for source_run in context.get("runs") or ():
+    if windows:
+        present.update(("windows", "windows[].runs"))
+    for window in windows:
+        for source_run in window.get("runs") or ():
             for entry in source_run.get("instructions") or ():
-                present.add("runs[].instructions")
+                present.add("windows[].runs[].instructions")
                 present.update(
-                    f"runs[].instructions[].{key}" for key in ("import", "ibs") if key in entry
+                    f"windows[].runs[].instructions[].{key}"
+                    for key in ("import", "ibs")
+                    if key in entry
                 )
     return present, reasons
 
 
-def context_help(legend: dict[str, Any], contexts: Sequence[object]) -> dict[str, Any]:
+def context_help(
+    legend: dict[str, Any],
+    contexts: Sequence[object],
+    windows: Sequence[dict[str, object]] = (),
+) -> dict[str, Any]:
     """Once-per-document help for the context blocks; JSON only, in a fixed key order.
 
     The share unit and denominator come from the document's legend rather than a second scale,
@@ -1120,13 +1204,14 @@ def context_help(legend: dict[str, Any], contexts: Sequence[object]) -> dict[str
     the fields and omission reasons that occur in the document's contexts, so each document
     pays only for the help its own contexts need.
     """
-    present, reasons = _context_keys(contexts)
+    present, reasons = _context_keys(contexts, windows)
     fields = {name: text for name, text in _CONTEXT_HELP_FIELDS.items() if name in present}
     columns = legend.get("columns") or {}
     if "attribution" in columns:
         fields["row.attribution"] = columns["attribution"]
     read = (
-        "The instruction entry whose rva equals the row's rva is the sampled instruction. "
+        "The entry of the row's window (windows[context.window.index]) whose rva equals the "
+        "row's rva is the sampled instruction. "
         "sample_share is the raw share for this capture mode: read its meaning from "
         "legend.columns.sample_share and its fraction unit and denominator from "
         "legend.share_unit, legend.share_scale and legend.denominators.sample_share; it is "

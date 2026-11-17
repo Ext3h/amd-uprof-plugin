@@ -109,12 +109,13 @@ def json_document(
     legend: dict[str, object] | None = None,
     contexts: Sequence[object | None] | None = None,
     context_help: dict[str, object] | None = None,
+    windows: Sequence[dict[str, object]] | None = None,
 ) -> str:
     """One object with the header fields, the legend and a rows array keyed by column names.
 
     contexts, when given, holds one entry per row; a non-None entry becomes that row's
-    "context" object. context_help is emitted once, before the rows. Markdown rendering never
-    receives either.
+    "context" object. context_help is emitted once, before the rows, and windows, the decoded
+    windows the contexts refer to, after it. Markdown rendering never receives any of them.
     """
     if contexts is not None and len(contexts) != len(rows):
         raise ValueError(f"{len(contexts)} contexts for {len(rows)} rows")
@@ -123,6 +124,8 @@ def json_document(
         payload["legend"] = legend
     if context_help is not None:
         payload["context_help"] = context_help
+    if windows is not None:
+        payload["windows"] = list(windows)
     records: list[dict[str, object]] = []
     for index, row in enumerate(rows):
         record = {column: _json_value(value) for column, value in zip(columns, row)}

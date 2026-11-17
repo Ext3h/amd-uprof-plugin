@@ -83,7 +83,7 @@ class InstructionColumnTest(unittest.TestCase):
         row = document["rows"][0]
         entry = next(
             item
-            for run in row["context"]["runs"]
+            for run in document["windows"][row["context"]["window"]["index"]]["runs"]
             for item in run["instructions"]
             if item["rva"] == row["rva"]
         )

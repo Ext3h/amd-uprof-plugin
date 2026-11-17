@@ -360,6 +360,42 @@ class ModuleProfileTest(unittest.TestCase):
         self.assertIsNone(rows[-1]["isSystemModule"])
         self.assertIsNotNone(rows[-1]["cpu_seconds"])
 
+    def test_truncated_remainder_keeps_the_third_party_total_summable(self):
+        # 21 third-party modules, 3 system modules and one module missing from the catalog. With
+        # --top 20 the tail holds third-party, system and unclassified samples; summing the
+        # isSystemModule = false rows must still give the full third-party share (#280).
+        modules = [(i, f"c:\\app\\m{i}.dll", False) for i in range(1, 22)]
+        modules += [(22, "c:\\os\\s22.dll", True), (23, "c:\\os\\s23.dll", True)]
+        modules += [(24, "c:\\os\\s24.dll", True)]
+        counts = {f"c:\\app\\m{i}.dll": 50 - i for i in range(1, 22)}
+        counts.update({"c:\\os\\s22.dll": 100, "c:\\os\\s23.dll": 90, "c:\\os\\s24.dll": 2})
+        counts["c:\\app\\stray.dll"] = 1
+        body = []
+        tick = 0
+        for module, count in counts.items():
+            for _ in range(count):
+                tick += 1_000_000
+                body.append(f"{tick},0,1,100,4096,{module},10")
+        session = self.session("remainder-classes", modules=modules, body=body)
+        total = sum(counts.values())
+        third_party = sum(50 - i for i in range(1, 22))
+
+        rows = self.document(session, "module", "--top", "20")["rows"]
+        self.assertAlmostEqual(
+            sum(row["sample_share"] for row in rows if row["isSystemModule"] is False),
+            third_party / total,
+        )
+        tail = [(row["module"], row["isSystemModule"], row["samples"]) for row in rows[20:]]
+        self.assertEqual(
+            tail,
+            [
+                ("<other third-party modules>", False, 31 + 30 + 29),
+                ("<other system modules>", True, 2),
+                ("<other unclassified modules>", None, 1),
+            ],
+        )
+        self.assertNotIn("<other modules>", [row["module"] for row in rows])
+
 
 if __name__ == "__main__":
     unittest.main()

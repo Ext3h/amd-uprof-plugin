@@ -94,6 +94,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - The `cpu_seconds` legend names the clock it converts at and its error interval: this host's
   reported clock (the session records none), and that boost makes the true CPU time lower by up
   to max/reported clock, as a number where the host reports its boost maximum (issue #275).
+- The `ACHIEVED` requested text of a cycle interval names the host clock: `profile` points to
+  the `cpu_seconds` legend for it, `translate --ascii` states the clock and boost error in full
+  (issue #76).
 - `--json` prints one compact line, without indentation or separator padding; keys, order and
   values are unchanged. The `--by instruction --top 1 --json` document on the defect lab's
   chain.ibs capture shrinks from 35,313 to 20,768 characters (issue #339).

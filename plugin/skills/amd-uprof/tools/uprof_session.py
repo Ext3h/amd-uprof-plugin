@@ -586,7 +586,8 @@ def requested_interval(
 
     interval_s is None for a work/fetch count or a cycle interval with no usable core frequency.
     frequency_hz reuses a frequency the caller already read; None reads the machine's reported
-    one.
+    one. A caller that passes frequency_hz states the clock and its error in the cpu_seconds
+    legend, so the text points there instead of repeating it; a self-read clock states it here.
     """
     if sampler.timer and sampler.interval_ms:
         interval_s = sampler.interval_ms / 1000.0
@@ -602,11 +603,13 @@ def requested_interval(
             if frequency_hz is None:
                 from uprof_collect import _core_frequency
 
-                hertz, display, _source = _core_frequency()
+                hertz = float(_core_frequency()[0])
+                clock = host_clock_text(hertz)
             else:
-                hertz, display = float(frequency_hz), f"{frequency_hz / 1e6:g} MHz"
+                hertz = float(frequency_hz)
+                clock = f"{hertz / 1e6:g} MHz (host clock, as cpu_seconds)"
             interval_s = sampler.interval / hertz
-            requested = f"{sampler.interval} cycles at {display} = {format_duration(interval_s)}"
+            requested = f"{sampler.interval} cycles at {clock} = {format_duration(interval_s)}"
             return interval_s, requested, f"; ideal {1.0 / interval_s:,.0f}/s per CPU"
         except Exception:  # noqa: BLE001 - any failure reads as an unknown frequency
             return None, f"{sampler.interval} cycles (core frequency unavailable)", ""

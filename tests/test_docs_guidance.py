@@ -155,6 +155,17 @@ class DocsGuidanceTest(unittest.TestCase):
             _flat(REFERENCE),
         )
 
+    def test_the_view_table_names_every_view_of_views_sql(self):
+        # A reader looks a view up in the reference's view table; a view views.sql creates but
+        # the table omits (such as a file-backed artifact source) cannot be found there.
+        views_sql = (TOOLS_DIR / "views.sql").read_text(encoding="utf-8")
+        created = re.findall(r"CREATE OR REPLACE TEMP (?:VIEW|TABLE) (\w+)", views_sql)
+        self.assertTrue(created)
+        for name in sorted(set(created)):
+            with self.subTest(view=name):
+                row = re.search(rf"(?m)^\| `{name}` \|", REFERENCE)
+                self.assertIsNotNone(row, f"no row for `{name}` in docs/reference.md")
+
 
 # One phrase per part of SKILL.md: entry point, first call, capture pipeline, permissions and
 # reading the output.

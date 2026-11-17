@@ -67,20 +67,25 @@ class HeaderRepeatsTest(unittest.TestCase):
 
         cls.tmp = tempfile.TemporaryDirectory()
         cls.sessions = build_captures.build(Path(cls.tmp.name) / "c", list(SESSIONS))
+        cls.results = {}
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
     def run_profile(self, session: str, *args) -> str:
-        result = subprocess.run(
-            [sys.executable, str(UPROF), "profile", "--session", str(self.sessions[session])]
-            + list(args),
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
+        """The output of one profile call; the same (session, args) runs once per class."""
+        key = (session, *args)
+        if key not in self.results:
+            self.results[key] = subprocess.run(
+                [sys.executable, str(UPROF), "profile", "--session", str(self.sessions[session])]
+                + list(args),
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+        result = self.results[key]
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 

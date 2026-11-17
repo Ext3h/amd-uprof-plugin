@@ -216,6 +216,13 @@ def dump_row(tick_ns, cpu, pid, module, tag=None):
 
 
 class OutputLegendTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(tmp.cleanup)
+        cls.shared_root = Path(tmp.name)
+        cls.texts = {}
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -425,6 +432,19 @@ class OutputLegendTest(unittest.TestCase):
         )
         return session
 
+    def text(self, mode):
+        """The process view text of mode, run once per class on a session no test modifies."""
+        if mode not in self.texts:
+            session = self.shared_root / mode
+            if not session.is_dir():
+                session.mkdir()
+                if mode.startswith("pmc"):
+                    self._write_pmc(session, mode)
+                else:
+                    self._write_ibs(session, mode)
+            self.texts[mode] = self.profile(session)
+        return self.texts[mode]
+
     def profile(self, session, *extra, by="process"):
         result = subprocess.run(
             [
@@ -466,7 +486,7 @@ class OutputLegendTest(unittest.TestCase):
     def test_markdown_legend_per_mode(self):
         for mode in MODES:
             with self.subTest(mode=mode):
-                output = self.profile(self.session(mode))
+                output = self.text(mode)
                 lines = output.splitlines()
                 metric = next(line for line in lines if line.startswith("METRIC: "))
                 self.assertIn(expected_columns(mode, metric), lines)
@@ -518,7 +538,7 @@ class OutputLegendTest(unittest.TestCase):
     def test_metric_per_mode(self):
         for mode, spec in MODES.items():
             with self.subTest(mode=mode):
-                output = self.profile(self.session(mode))
+                output = self.text(mode)
                 metric = next(line for line in output.splitlines() if line.startswith("METRIC: "))
                 for fragment in spec["metric"]:
                     self.assertIn(fragment, metric)

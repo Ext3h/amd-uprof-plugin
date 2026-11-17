@@ -151,6 +151,9 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
   `Function.id`s join it instead of adding look-alike rows, so `--function '<unresolved>'
   --module <m>` selects it. Rows that tie on every measure and name order by range start,
   `Function.id` and group key, so `--top` keeps the same rows on every run (issue #83).
+- `profile --by line` orders its rows and cuts `--top` by the capture's primary measure, as the
+  function and instruction views do; a sample_share capture no longer ranks lines by gap weight,
+  and the JSON `legend.impact` names `primary_measure` for the line view (issue #93).
 
 ## 2.1.0 — 2026-11-08
 

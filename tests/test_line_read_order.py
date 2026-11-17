@@ -24,7 +24,7 @@ TIME_READ = (
 CYCLE_READ = (
     "sample_share is the busy core-cycle share, so the sample order ranks where cycles were spent"
 )
-TAIL = "; the <other ...> row is last, not ranked"
+TAIL = "; the <other ...> rows are last, not ranked"
 
 
 def _read(sampler, dump):

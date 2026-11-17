@@ -743,6 +743,38 @@ class JsonDocumentTest(unittest.TestCase):
         self.assertEqual(text.count('"context_help"'), 1)
         self.assertEqual(document["context_help"], help_text)
 
+    def test_instruction_document_is_compact_and_keeps_its_content(self):
+        # An agent harness cuts long tool output, so the document carries no indentation or
+        # separator padding; only whitespace differs, the parsed document is unchanged.
+        legend = ContextHelpTest.LEGEND
+        contexts = [ContextHelpTest.CONTEXTS[0], None]
+        help_text = uprof_context.context_help(legend, contexts)
+
+        text = uprof_output.json_document(
+            [("METRIC", "x, y: z")],
+            ["module", "rva", "instruction"],
+            [("a", "0x1", "nop"), ("b", "0x2", None)],
+            legend=legend,
+            contexts=contexts,
+            context_help=help_text,
+        )
+
+        expected = {
+            "METRIC": "x, y: z",
+            "legend": legend,
+            "context_help": help_text,
+            "rows": [
+                {"module": "a", "rva": "0x1", "instruction": "nop", "context": contexts[0]},
+                {"module": "b", "rva": "0x2", "instruction": None},
+            ],
+        }
+        document = json.loads(text)
+        self.assertEqual(document, expected)
+        self.assertEqual(list(document), list(expected))
+        self.assertEqual(
+            text, json.dumps(expected, ensure_ascii=False, separators=(",", ":")) + "\n"
+        )
+
     def test_no_context_help_keeps_the_existing_document(self):
         without = uprof_output.json_document([("METRIC", "x")], ["rva"], [("0x1",)])
 

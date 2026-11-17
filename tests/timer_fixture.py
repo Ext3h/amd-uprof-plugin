@@ -26,43 +26,55 @@ def meta() -> dict:
     return json.loads((FIXTURE / "session.uprof").read_text(encoding="utf-8"))
 
 
-def build(
+def build(session: Path) -> Path:
+    """Write the fixture session into session (created); return it."""
+    import duckdb
+
+    session.mkdir(parents=True)
+    shutil.copyfile(FIXTURE / "session.uprof", session / "session.uprof")
+    connection = duckdb.connect(str(session / "cpu.db"))
+    try:
+        for name, table in tables().items():
+            columns = ", ".join(f'"{column}" {kind}' for column, kind in table["columns"])
+            connection.execute(f'CREATE TABLE "{name}" ({columns})')
+            rows = table["rows"]
+            if rows:
+                # One multi-row INSERT: executemany costs seconds for the sample table.
+                row = "(" + ", ".join("?" for _ in table["columns"]) + ")"
+                connection.execute(
+                    f'INSERT INTO "{name}" VALUES ' + ", ".join(row for _ in rows),
+                    [value for source in rows for value in source],
+                )
+    finally:
+        connection.close()
+    return session
+
+
+def derive(
+    base: Path,
     session: Path,
     meta_override: dict | None = None,
     drop_columns: tuple[str, ...] = (),
     keep_rows: int | None = None,
 ) -> Path:
-    """Write the fixture session into session (created); return it.
+    """Copy the built session base into session (created) and apply one variant; return it.
 
-    meta_override replaces session.uprof; drop_columns leaves those UnifiedSampleSeries columns
-    out of cpu.db; keep_rows keeps only that many UnifiedSampleSeries rows.
+    meta_override replaces session.uprof; drop_columns removes those UnifiedSampleSeries
+    columns from cpu.db; keep_rows keeps only the first that many UnifiedSampleSeries rows.
     """
     import duckdb
 
-    session.mkdir(parents=True)
-    if meta_override is None:
-        shutil.copyfile(FIXTURE / "session.uprof", session / "session.uprof")
-    else:
+    shutil.copytree(base, session)
+    if meta_override is not None:
         (session / "session.uprof").write_text(json.dumps(meta_override), encoding="utf-8")
-    connection = duckdb.connect(str(session / "cpu.db"))
-    try:
-        for name, table in tables().items():
-            keep = [
-                index
-                for index, (column, _kind) in enumerate(table["columns"])
-                if not (name == "UnifiedSampleSeries" and column in drop_columns)
-            ]
-            columns = ", ".join(
-                f'"{table["columns"][i][0]}" {table["columns"][i][1]}' for i in keep
-            )
-            connection.execute(f'CREATE TABLE "{name}" ({columns})')
-            source = table["rows"]
-            if name == "UnifiedSampleSeries" and keep_rows is not None:
-                source = source[:keep_rows]
-            rows = [[row[i] for i in keep] for row in source]
-            if rows:
-                marks = ", ".join("?" for _ in keep)
-                connection.executemany(f'INSERT INTO "{name}" VALUES ({marks})', rows)
-    finally:
-        connection.close()
+    if drop_columns or keep_rows is not None:
+        connection = duckdb.connect(str(session / "cpu.db"))
+        try:
+            for column in drop_columns:
+                connection.execute(f'ALTER TABLE UnifiedSampleSeries DROP COLUMN "{column}"')
+            if keep_rows is not None:
+                # build inserts the rows in cpu_tables.json order, so rowid is that order.
+                connection.execute("DELETE FROM UnifiedSampleSeries WHERE rowid >= ?", [keep_rows])
+        finally:
+            connection.close()
     return session

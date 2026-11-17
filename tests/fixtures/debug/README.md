@@ -54,7 +54,9 @@ both on Windows. Run the commands from one neutral build directory that contains
 `fixture_debug.c`; the recipes use relative source and output paths so no user or checkout path
 enters the DWARF. `-fdebug-compilation-dir=/build`
 makes CodeView and DWARF record `/build/fixture_debug.c`. The PE debug directory does embed the
-absolute PDB path of whichever directory built it; only its basename is used at lookup time.
+absolute PDB path of whichever directory built it. Production probes that recorded path
+after the image's own directory, so whether it exists depends on the host; the trace
+capture writes it as `<RECORDED_PDB> [host-dependent]` and omits its probe line.
 
 ```console
 mkdir pe elf

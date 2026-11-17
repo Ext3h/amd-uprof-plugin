@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import functools
 import os
 import re
 import shutil
@@ -23,7 +24,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "plugin" / "skills" / "amd-uprof" / "tools"))
@@ -167,9 +168,36 @@ def replace_spellings(text: str, paths, placeholder: str) -> str:
     return text
 
 
+RECORDED_PDB = "<RECORDED_PDB>"
+
+
+@functools.cache
+def recorded_pdbs() -> tuple[str, ...]:
+    """The absolute PDB paths the PE fixtures' CodeView entries record.
+
+    They name the directory that built the fixtures, outside the checkout, so whether one exists
+    depends on the host; a trace keeps that it was searched, never what the probe found.
+    """
+    paths = set()
+    for case in CASES:
+        if case.image.suffix.lower() in {".exe", ".dll"}:
+            text = run_tool(F.READOBJ, "--coff-debug-directory", case.image)
+            paths.update(re.findall(r"^\s+PDBFileName: (.+?)\s*$", text, re.MULTILINE))
+    return tuple(sorted(path for path in paths if PureWindowsPath(path).is_absolute()))
+
+
+def is_recorded_pdb(path) -> bool:
+    return os.path.normcase(str(path)) in {os.path.normcase(pdb) for pdb in recorded_pdbs()}
+
+
 def normalize(text: str) -> str:
-    """Replace checkout-specific fixture spellings; nothing else varies by machine."""
-    return replace_spellings(text, (F.DEBUG,), "<FIXTURES>")
+    """Replace checkout-specific fixture spellings and hide the host-dependent outcome of
+    probing a recorded PDB path; nothing else varies by machine."""
+    text = replace_spellings(text, (F.DEBUG,), "<FIXTURES>")
+    for path in recorded_pdbs():
+        text = re.sub(re.escape(path) + r" \[[^\]]*\]", f"{RECORDED_PDB} [host-dependent]", text)
+        text = text.replace(path, RECORDED_PDB)
+    return text
 
 
 def readobj_section(case: Case) -> list[str]:
@@ -353,7 +381,7 @@ def production_section(case: Case) -> list[str]:
     ]
     if module.evidence.search:
         for probe in module.evidence.search.probes:
-            if probe.status != "not_found":
+            if probe.status != "not_found" and not is_recorded_pdb(probe.path):
                 facts.append(f"probe {Path(probe.path).name} status={probe.status}")
     folds = re.search(r"FOLDS: (\d+ shared starts of \d+)", stream)
     if folds:

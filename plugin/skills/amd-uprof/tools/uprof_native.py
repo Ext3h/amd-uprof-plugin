@@ -50,9 +50,10 @@ TRANSLATE_CEILING: Final = 95 * 60
 TRANSLATE_OUTPUTS: Final = ("cpu.db", "callstack.db", *DUMP_FILENAMES.values())
 # Oldest releases the tools work with: uProf 5.3 writes cpu.db as DuckDB by default (older
 # releases write SQLite), and LLVM 23 added llvm-symbolizer --pdb and llvm-objdump
-# --no-symbolize-operands. A tool below its minimum stops the command that needs it.
+# --no-symbolize-operands; 23.1.0 is its first release, a 23.0.x version is a development
+# snapshot. A tool below its minimum stops the command that needs it.
 UPROF_MINIMUM: Final = (5, 3)
-LLVM_MINIMUM: Final = (23,)
+LLVM_MINIMUM: Final = (23, 1, 0)
 
 
 # ---------------------------------------------------------------- tool discovery
@@ -208,7 +209,7 @@ def find_sibling(symbolizer: Path | None, name: str) -> Path | None:
 # Installing a toolchain as root is the user's decision, so the remedy names what to install and
 # where it comes from instead of a runnable root command.
 LINUX_LLVM_INSTALL: Final = (
-    "ask the user to install LLVM 23 or later (the distribution's llvm-23 packages, or the "
+    "ask the user to install LLVM 23.1.0 or later (the distribution's llvm-23 packages, or the "
     "instructions at https://apt.llvm.org)"
 )
 

@@ -5,7 +5,7 @@ description: Analyse AMD uProf CPU captures (cycle, IBS OP or timer sampling) on
 
 # AMD uProf
 
-Run every command as `python <SKILL_DIR>/tools/uprof.py <command> ...`; `<SKILL_DIR>` is the directory of this file. Use plain `python`, never `-I` or `-P`. Needs Python 3.9+ with `duckdb` 2.x, AMD uProf 5.3 and LLVM 23. `<command> --help` lists the options. A missing tool reports itself; run `tools` only then.
+Run every command as `python <SKILL_DIR>/tools/uprof.py <command> ...`; `<SKILL_DIR>` is the directory of this file. Use plain `python`, never `-I` or `-P`. Needs Python 3.9+ with `duckdb` 2.x, AMD uProf 5.3 and LLVM 23.1. `<command> --help` lists the options. A missing tool reports itself; run `tools` only then.
 
 ## First call
 

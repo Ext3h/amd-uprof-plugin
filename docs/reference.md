@@ -224,7 +224,9 @@ An empty scope prints one `WARNING: no samples in the selected scope` on stderr 
 
 `profile` and `translate --ascii` print one `ACHIEVED:` line for every capture, from the same query
 over the translated session, so both print the same text; the tail is present only when
-per-context statistics are available.
+per-context statistics are available. A cycle interval's `requested` time and ideal rate are
+converted at this host's reported clock, since the session records none; the text says so and
+states the boost error the same way as the `cpu_seconds` legend.
 
 Samples are counted over the whole capture, not the `--image`/`--pid` scope; CPUs come from the
 dump's `CPU_Number`, or from `UnifiedSampleSeries.coreId` for a PMC capture. The per-CPU figure divides by every CPU, so it is not the delivered cadence. For an attached

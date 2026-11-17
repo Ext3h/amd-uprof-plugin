@@ -602,11 +602,14 @@ def requested_interval(
             if frequency_hz is None:
                 from uprof_collect import _core_frequency
 
-                hertz, display, _source = _core_frequency()
+                hertz = float(_core_frequency()[0])
             else:
-                hertz, display = float(frequency_hz), f"{frequency_hz / 1e6:g} MHz"
+                hertz = float(frequency_hz)
             interval_s = sampler.interval / hertz
-            requested = f"{sampler.interval} cycles at {display} = {format_duration(interval_s)}"
+            requested = (
+                f"{sampler.interval} cycles at {host_clock_text(hertz)} = "
+                f"{format_duration(interval_s)}"
+            )
             return interval_s, requested, f"; ideal {1.0 / interval_s:,.0f}/s per CPU"
         except Exception:  # noqa: BLE001 - any failure reads as an unknown frequency
             return None, f"{sampler.interval} cycles (core frequency unavailable)", ""

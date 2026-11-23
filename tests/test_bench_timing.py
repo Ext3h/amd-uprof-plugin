@@ -9,10 +9,13 @@ Run from the repository root: python tests/run_tests.py test_bench_timing
 """
 
 import argparse
+import ast
 import contextlib
+import inspect
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -21,6 +24,7 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
+TOOLS = REPO / "plugin" / "skills" / "amd-uprof" / "tools"
 sys.path.insert(0, str(REPO / "bench"))
 import bench_timing
 
@@ -114,6 +118,27 @@ class CommandLabelTest(unittest.TestCase):
             "AMDuProfCLI:translate,--ascii",
         )
         self.assertEqual(bench_timing._command_label([]), "?")
+
+
+class StageFunctionsTest(unittest.TestCase):
+    def test_every_stage_function_resolves_to_a_def_in_the_named_file(self):
+        cache: dict[Path, set[str]] = {}
+        for func, file_part, _ in bench_timing.STAGE_FUNCTIONS:
+            with self.subTest(func=func, file=file_part):
+                if file_part == "subprocess.py":
+                    source = inspect.getsourcefile(subprocess) or subprocess.__file__
+                    path = Path(source).with_suffix(".py")
+                else:
+                    path = TOOLS / file_part
+                if path not in cache:
+                    self.assertTrue(path.is_file(), f"{path} does not exist")
+                    tree = ast.parse(path.read_text(encoding="utf-8"))
+                    cache[path] = {
+                        node.name
+                        for node in ast.walk(tree)
+                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    }
+                self.assertIn(func, cache[path], f"def {func} not found in {path.name}")
 
 
 class DuckdbProxyTest(unittest.TestCase):

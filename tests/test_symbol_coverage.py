@@ -450,7 +450,8 @@ class CoverageChannelsTest(unittest.TestCase):
             text,
         )
         self.assertIn("cause by module: fixture.exe: llvm-symbolizer failed: exit status 1", text)
-        self.assertIn(NO_NAMED_STOP, text)
+        self.assertNotIn(NO_NAMED_STOP, text)
+        self.assertNotIn(UNRESOLVED_STOP, text)
         self.assertIn("remedy: pass profile --symbol-path", text)
 
     def test_instruction_scope_prints_symbolizer_channel_even_without_flags(self):
@@ -467,7 +468,8 @@ class CoverageChannelsTest(unittest.TestCase):
         self.assertIn("uProf DB 30/30 samples (100.0%) resolve to a named function", text)
         self.assertIn("profile symbolizer 0/30 samples (0.0%) resolve below module/RVA", text)
         self.assertIn("cause by module: fixture.exe: no PDB found", text)
-        self.assertIn(NO_NAMED_STOP, text)
+        self.assertNotIn(NO_NAMED_STOP, text)
+        self.assertNotIn(UNRESOLVED_STOP, text)
         self.assertIn("remedy: pass profile --symbol-path", text)
 
     def test_json_legend_line_scope_records_zero_resolved_when_symbolizer_resolved_nothing(self):
@@ -566,7 +568,8 @@ class FailingSymbolizerTest(unittest.TestCase):
                     line,
                 )
                 self.assertIn("llvm-symbolizer exited 1", line)
-                self.assertIn(NO_NAMED_STOP, line)
+                self.assertNotIn(NO_NAMED_STOP, line)
+                self.assertNotIn(UNRESOLVED_STOP, line)
                 self.assertIn("remedy: pass profile --symbol-path", line)
 
 

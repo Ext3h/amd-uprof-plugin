@@ -180,7 +180,7 @@ class CacheTest(unittest.TestCase):
         connection.execute(
             "COPY (SELECT 'a.dll' AS module_name, '16' AS address, 'f' AS function, "
             "'f' AS function_short, 'f' AS containing_function, 'x.c' AS file, "
-            "1 AS line, false AS nearest_symbol) TO ? (FORMAT parquet)",
+            "1 AS line, true AS nearest_symbol) TO ? (FORMAT parquet)",
             [str(self.symbols)],
         )
         connection.close()
@@ -237,9 +237,9 @@ class CacheTest(unittest.TestCase):
         replay.create_range_view("k1")
         self.assertEqual(
             reader.execute(
-                "SELECT module_name, address, function FROM uprof_symbols_source"
+                "SELECT module_name, address, function, nearest_symbol FROM uprof_symbols_source"
             ).fetchall(),
-            [("a.dll", "16", "f")],
+            [("a.dll", "16", "f", True)],
         )
         self.assertEqual(
             reader.execute(
@@ -720,6 +720,7 @@ class EndToEndHitTest(unittest.TestCase):
         connection.close()
         self.module_name = str(FIXTURE).replace("\\", "/").lower()
         self.calls = 0
+        self.nearest_symbol = False
 
     def fake_symbolize(self, modules, out_dir, **kwargs):
         self.calls += 1
@@ -730,8 +731,8 @@ class EndToEndHitTest(unittest.TestCase):
         connection.execute(
             "COPY (SELECT ? AS module_name, '0x101B' AS address, 'fixture_hot' AS function, "
             "'fixture_hot' AS function_short, 'fixture_hot' AS containing_function, "
-            "'fixture.s' AS file, 27 AS line, false AS nearest_symbol) TO ? (FORMAT parquet)",
-            [self.module_name, str(symbols)],
+            "'fixture.s' AS file, 27 AS line, ? AS nearest_symbol) TO ? (FORMAT parquet)",
+            [self.module_name, self.nearest_symbol, str(symbols)],
         )
         connection.close()
         publics = out / "symbols.publics.csv"
@@ -772,6 +773,17 @@ class EndToEndHitTest(unittest.TestCase):
         _third_out, third_err = self.run_cli()
         self.assertIn("ARTIFACTS=", third_err)
         self.assertEqual(self.calls, 2)
+
+    def test_nearest_symbol_row_is_served_as_derived_through_cache_hit(self):
+        self.nearest_symbol = True
+        first_out, first_err = self.run_cli()
+        self.assertIn("ARTIFACTS=", first_err)
+        self.assertIn("| derived |", first_out)
+        second_out, second_err = self.run_cli()
+        self.assertEqual(second_out, first_out)
+        self.assertNotIn("ARTIFACTS=", second_err)
+        self.assertEqual(self.calls, 1)
+        self.assertIn("| derived |", second_out)
 
 
 class EndToEndHitInsideSrvCacheTest(EndToEndHitTest):

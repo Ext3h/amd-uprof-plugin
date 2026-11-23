@@ -153,5 +153,42 @@ class TranslateWindowTest(unittest.TestCase):
         self.assertIn("6000 samples, 5.000 s, 1 CPUs", self.achieved("10:15"))
 
 
+class CaptureSpanTest(unittest.TestCase):
+    """The achieved field selects the capture span from v_capture_span on the connection."""
+
+    def test_achieved_field_reads_span_from_v_capture_span(self):
+        sampler = cycle_sampler(ibs_dump_kind="ibsop-event-dump")
+        args = argparse.Namespace(session=Path("session"))
+        connection = mock.MagicMock()
+        connection.sql.return_value.fetchall.return_value = [(15_000_000_000.0, "elapsed")]
+        with (
+            mock.patch.object(uprof_session, "cycle_frequency_hz", return_value=4.7e9),
+            mock.patch.object(uprof_session, "system_wide", return_value=True),
+            mock.patch.object(uprof_query, "_capture_scan", return_value=(6000, 1, None)),
+            mock.patch.object(uprof_query, "_dump_contexts", return_value=[]),
+        ):
+            (_name, text), _samples, _kernel = uprof_query._achieved_field(
+                connection, True, args, sampler, None, uprof_session.cycle_frequency_hz(sampler)
+            )
+        connection.sql.assert_called_with("SELECT expected_ns, span_label FROM v_capture_span")
+        self.assertIn("6000 samples, 15.000 s, 1 CPUs", text)
+
+    def test_profile_duration_is_used_when_elapsed_is_absent(self):
+        sampler = cycle_sampler(ibs_dump_kind="ibsop-event-dump")
+        args = argparse.Namespace(session=Path("session"))
+        meta = {"collection": {"schedule": {"profileDuration": 15}}}
+        with (
+            mock.patch.object(uprof_session, "cycle_frequency_hz", return_value=4.7e9),
+            mock.patch.object(uprof_session, "read_meta", return_value=meta),
+            mock.patch.object(uprof_session, "system_wide", return_value=True),
+            mock.patch.object(uprof_query, "_capture_scan", return_value=(6000, 1, None)),
+            mock.patch.object(uprof_query, "_dump_contexts", return_value=[]),
+        ):
+            (_name, text), _samples, _kernel = uprof_query._achieved_field(
+                None, True, args, sampler, None, uprof_session.cycle_frequency_hz(sampler)
+            )
+        self.assertIn("6000 samples, 15.000 s, 1 CPUs", text)
+
+
 if __name__ == "__main__":
     unittest.main()

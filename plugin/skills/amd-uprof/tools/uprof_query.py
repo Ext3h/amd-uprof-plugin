@@ -999,8 +999,10 @@ _PROCESS_COVERAGE_STOP: Final = (
 )
 _RANGE_UNRESOLVED_STOP: Final = (
     "no named or derived range covers these samples; no_range_reason and "
-    "legend.function_ranges.absent_by_module name why, and --by region is the page fallback "
-    "where no boundary source exists"
+    "legend.function_ranges.absent_by_module name why"
+)
+_RANGE_REGION_FALLBACK: Final = (
+    ", and --by region is the page fallback where no boundary source exists"
 )
 _SYMBOL_PATH_REMEDY: Final = (
     "; remedy: pass profile --symbol-path <file|dir> for a symbol or debug file or a search root, "
@@ -2755,7 +2757,10 @@ def _coverage_field(
             ]
         if causes:
             text += f"; cause by module: {_causes_by_module(causes)}"
-        return [("SYMBOL_COVERAGE", f"{text}; {_RANGE_UNRESOLVED_STOP}{_coverage_remedy(causes)}")]
+        stop = _RANGE_UNRESOLVED_STOP
+        if row_attribution.get("unresolved_with_image", 0) > 0:
+            stop += _RANGE_REGION_FALLBACK
+        return [("SYMBOL_COVERAGE", f"{text}; {stop}{_coverage_remedy(causes)}")]
     scoped = (
         int(symbolizer["scoped_samples"])
         if (symbolized or by in FUNCTION_SCOPED) and symbolizer
@@ -2801,6 +2806,8 @@ def _coverage_field(
             ]
         if causes:
             text += f"; cause by module: {_causes_by_module(causes)}"
+        if by in FUNCTION_SCOPED:
+            return [("SYMBOL_COVERAGE", f"{text}{_coverage_remedy(causes)}")]
         stop = _NO_NAMED_FUNCTION_STOP if resolved == 0 else _UNRESOLVED_FUNCTION_STOP
         return [("SYMBOL_COVERAGE", f"{text}; {stop}{_coverage_remedy(causes)}")]
     unresolved = [value for value in values if int(value["samples"]) > int(value["named_samples"])]

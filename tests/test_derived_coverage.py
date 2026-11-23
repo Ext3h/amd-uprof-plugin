@@ -132,6 +132,36 @@ class LineCoverageTest(unittest.TestCase):
 
         self.assertIn("derived=1 addresses, 4 samples", text)
 
+    def test_unresolved_line_drill_omits_function_stop(self):
+        text = uprof_query._coverage_field(
+            None,
+            {"a.dll": "no PDB found"},
+            symbolizer(10, 4, 0),
+            True,
+            [],
+            COVERAGE,
+            by="line",
+        )[0][1]
+
+        self.assertNotIn("use profile --by function", text)
+        self.assertIn("cause by module: a.dll: no PDB found", text)
+        self.assertIn("remedy: pass profile --symbol-path", text)
+
+    def test_unresolved_instruction_drill_omits_function_stop(self):
+        text = uprof_query._coverage_field(
+            None,
+            {"a.dll": "no PDB found"},
+            symbolizer(10, 4, 0),
+            True,
+            [],
+            COVERAGE,
+            by="instruction",
+        )[0][1]
+
+        self.assertNotIn("use profile --by function", text)
+        self.assertIn("cause by module: a.dll: no PDB found", text)
+        self.assertIn("remedy: pass profile --symbol-path", text)
+
 
 class RangeCoverageTest(unittest.TestCase):
     def test_the_range_split_says_derived_includes_nearest_symbol_names(self):
@@ -145,6 +175,36 @@ class RangeCoverageTest(unittest.TestCase):
 
         self.assertIn("nearest-symbol name", text)
         self.assertIn("nearest symbol", agreement)
+
+    def test_unresolved_function_rows_with_image_name_region_fallback(self):
+        rows = {
+            "scoped": 4,
+            "named": 0,
+            "derived": 0,
+            "unresolved": 4,
+            "unresolved_with_image": 4,
+        }
+        text = uprof_query._coverage_field(
+            None, {}, None, True, [], COVERAGE, by="function", row_attribution=rows
+        )[0][1]
+
+        self.assertIn("no named or derived range covers these samples", text)
+        self.assertIn("--by region is the page fallback where no boundary source exists", text)
+
+    def test_unresolved_function_rows_without_image_omit_region_fallback(self):
+        rows = {
+            "scoped": 4,
+            "named": 0,
+            "derived": 0,
+            "unresolved": 4,
+            "unresolved_with_image": 0,
+        }
+        text = uprof_query._coverage_field(
+            None, {}, None, True, [], COVERAGE, by="function", row_attribution=rows
+        )[0][1]
+
+        self.assertIn("no named or derived range covers these samples", text)
+        self.assertNotIn("--by region is the page fallback", text)
 
     def test_the_function_view_counts_a_nearest_name_as_derived(self):
         rows = query(

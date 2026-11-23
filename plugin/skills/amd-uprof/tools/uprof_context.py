@@ -1207,12 +1207,10 @@ def context_help(
     read = (
         "The row's window entry whose rva equals the row's rva is the sampled instruction. "
         "sample_share is the raw share for this capture mode: read its meaning from "
-        "legend.columns.sample_share and its fraction unit and denominator from "
-        "legend.share_unit, legend.share_scale and legend.denominators.sample_share; it is "
-        "not a per-op cost. The table orders rows by legend.impact.order_by, the mode's "
-        "primary measure: when that measure is sample_share the first row is the sample-hot "
-        "instruction, and when it is time_share the table is not a sample-hot ranking. "
-        "Imports and symbol frames identify the work kind."
+        "legend.columns.sample_share; it is not a per-op cost. The table orders rows by "
+        "legend.impact.order_by, the mode's primary measure: when that measure is sample_share "
+        "the first row is the sample-hot instruction, and when it is time_share the table is "
+        "not a sample-hot ranking. Imports and symbol frames identify the work kind."
     )
     if "tag_to_retire_share" in columns:
         read += (
@@ -1236,7 +1234,7 @@ def context_help(
             reason: text for reason, text in _CONTEXT_HELP_OMISSIONS.items() if reason in reasons
         },
         "read": read,
-        "next": ("Use legend.next to change scope or granularity. Rank by legend.impact.order_by."),
+        "next": "Rank by legend.impact.order_by.",
     }
 
 

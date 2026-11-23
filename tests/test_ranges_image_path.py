@@ -93,6 +93,27 @@ class RangesKeyTest(unittest.TestCase):
         self.assertNotEqual(without, first)
         self.assertNotEqual(first, second)
 
+    def test_the_range_key_stats_a_remote_image_path_image(self):
+        unc_image = "//host/share/fixture.exe"
+        rows = [("fixture.exe", "//capture/share/fixture.exe", 1, 1)]
+        stats = [
+            mock.Mock(st_size=100, st_mtime_ns=100_000_000),
+            mock.Mock(st_size=200, st_mtime_ns=200_000_000),
+        ]
+        with (
+            mock.patch.object(uprof_cache.uprof_db, "fetch", return_value=(None, rows)),
+            mock.patch.object(uprof_cache, "module_identity_rows", return_value=[]),
+            mock.patch.object(uprof_cache, "tool_identities", return_value={"readobj": []}),
+            mock.patch.object(Path, "is_file", return_value=True),
+            mock.patch.object(Path, "stat", side_effect=stats),
+        ):
+            without = uprof_cache.build_ranges_key(None, "symbols")
+            first = uprof_cache.build_ranges_key(None, "symbols", [unc_image])
+            second = uprof_cache.build_ranges_key(None, "symbols", [unc_image])
+
+        self.assertNotEqual(without, first)
+        self.assertNotEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

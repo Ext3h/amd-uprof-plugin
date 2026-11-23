@@ -267,12 +267,15 @@ def search_identity(
     }
 
 
-def _disk_identity(paths: list[str]) -> list[list[object]]:
-    """[path, exists, size, mtime_ns] per capture module path; a remote path is never statted
-    and records None for all three."""
+def _disk_identity(
+    paths: list[str], *, capture_paths: set[str] | list[str] | None = None
+) -> list[list[object]]:
+    """[path, exists, size, mtime_ns] per path; a remote path from a capture is never statted
+    and records None for all three, while a resolved --image-path image is statted unconditionally."""
     result: list[list[object]] = []
+    capture = set(capture_paths) if capture_paths is not None else None
     for path in sorted(set(paths)):
-        if is_remote_path(path):
+        if (capture is None or path in capture) and is_remote_path(path):
             result.append([path, None, None, None])
             continue
         try:
@@ -441,22 +444,32 @@ def build_ranges_key(
     """The range-derivation cache key, bound to the symbolization state it consumes.
 
     The on-disk identity covers the image each module resolves to, so an --image-path image
-    that appears or changes misses.
+    that appears or changes misses. A remote capture path is never statted, but a resolved
+    --image-path image is statted unconditionally.
     """
     _, rows = uprof_db.fetch(connection, TOOLS_DIR / "profile-function-modules.sql")
     modules = [[str(row[0]), str(row[1] or "")] for row in rows]
     probed = uprof_symbols.probe_paths(None, image_path)
     paths = []
+    capture_paths: set[str] = set()
     for name, path in modules:
-        resolved, _source = uprof_symbols.resolve_image(
+        resolved, source = uprof_symbols.resolve_image(
             name, path or None, probed.image_files, probed.image_dirs
         )
-        paths.append(os.fspath(resolved) if resolved is not None else path)
+        if resolved is not None:
+            chosen = os.fspath(resolved)
+            if source is None:
+                capture_paths.add(chosen)
+        else:
+            chosen = path
+            if chosen:
+                capture_paths.add(chosen)
+        paths.append(chosen)
     paths = [path for path in paths if path]
     return ranges_key(
         modules,
         module_identity_rows(connection, [name for name, _path in modules]),
-        _disk_identity(paths),
+        _disk_identity(paths, capture_paths=capture_paths),
         tool_identities()["readobj"],
         symbols_key,
     )

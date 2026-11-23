@@ -268,9 +268,9 @@ class FunctionRangeProfileTest(unittest.TestCase):
         agreement = next(
             line for line in result.stdout.splitlines() if line.startswith("AGREEMENT: ")
         )
-        self.assertIn("named 0 samples", agreement)
-        self.assertIn("derived 9 samples", agreement)
-        self.assertIn("unresolved 0 samples", agreement)
+        self.assertNotIn("sample attribution", agreement)
+        self.assertIn("mismatch_rate=", agreement)
+        self.assertIn("name_mismatches=", agreement)
         self.assertNotIn("unresolved=", agreement)
 
         legend = self.document(self.fixture_session("derived-json"))["legend"]["symbol_coverage"]

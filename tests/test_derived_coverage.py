@@ -144,7 +144,8 @@ class RangeCoverageTest(unittest.TestCase):
         )
 
         self.assertIn("nearest-symbol name", text)
-        self.assertIn("nearest symbol", agreement)
+        self.assertNotIn("sample attribution", agreement)
+        self.assertIn("mismatch_rate=", agreement)
 
     def test_the_function_view_counts_a_nearest_name_as_derived(self):
         rows = query(

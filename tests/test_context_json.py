@@ -511,7 +511,9 @@ class ContextHelpTest(unittest.TestCase):
         self.assertIn("legend.impact", help_text["read"])
         self.assertIn("not a per-op cost", help_text["read"])
         self.assertIn("tag-to-retire dwell", help_text["read"])
-        self.assertIn("legend.next", help_text["next"])
+        self.assertNotIn("legend.share_unit", help_text["read"])
+        self.assertIn("legend.impact.order_by", help_text["next"])
+        self.assertNotIn("legend.next", help_text["next"])
         self.assertNotIn("pct", json.dumps(help_text))
         self.assertNotIn("131070", json.dumps(help_text))
 

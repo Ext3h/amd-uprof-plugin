@@ -2379,15 +2379,32 @@ def _achieved_field(
     The same scan returns the whole-capture sample count and, when check_kernel is set, whether
     any sample landed in a kernel image, so the kernel-coverage check adds no query of its own.
     """
-    meta = uprof_session.read_meta(args.session) or {}
-    collection = uprof_session.meta_section(meta, "collection", "collection")
-    elapsed_ms = uprof_session.meta_section(collection, "schedule", "collection.schedule").get(
-        "elapsed"
+    rows = (
+        connection.sql("SELECT expected_ns, span_label FROM v_capture_span").fetchall()
+        if connection is not None and hasattr(connection, "sql")
+        else []
     )
-    try:
-        elapsed_s = None if elapsed_ms is None else Decimal(int(elapsed_ms)) / 1000
-    except (TypeError, ValueError):
-        elapsed_s = None
+    span = rows[0] if rows else None
+    if span is not None and span[0] is not None:
+        span_s = Decimal(str(span[0])) / Decimal("1e9")
+    else:
+        meta = uprof_session.read_meta(args.session) or {}
+        collection = uprof_session.meta_section(meta, "collection", "collection")
+        schedule = uprof_session.meta_section(collection, "schedule", "collection.schedule")
+        elapsed_ms = schedule.get("elapsed")
+        duration_s = schedule.get("profileDuration")
+        if elapsed_ms is not None:
+            try:
+                span_s = Decimal(int(elapsed_ms)) / 1000
+            except (TypeError, ValueError):
+                span_s = None
+        elif duration_s is not None:
+            try:
+                span_s = Decimal(int(duration_s))
+            except (TypeError, ValueError):
+                span_s = None
+        else:
+            span_s = None
     contexts: list[uprof_session.ContextCadence] = []
     label = "CPU"
     window_s: float | None = None
@@ -2400,7 +2417,7 @@ def _achieved_field(
             bounds = util.parse_time_filter(dump.time_filter)
             if bounds is not None:
                 # The dump holds no samples past the capture end, so the window stops there.
-                end = bounds[1] if elapsed_s is None else min(bounds[1], elapsed_s)
+                end = bounds[1] if span_s is None else min(bounds[1], span_s)
                 window_s = float(end - bounds[0])
     elif sampler.timer:
         contexts = (
@@ -2415,8 +2432,8 @@ def _achieved_field(
         ).fetchall()
         contexts = [uprof_session.ContextCadence(int(row[1] or 0)) for row in per_core]
         label = "core"
-    if window_s is None and elapsed_s is not None:
-        window_s = float(elapsed_s)
+    if window_s is None and span_s is not None:
+        window_s = float(span_s)
     field = (
         "ACHIEVED",
         uprof_session.achieved_summary(

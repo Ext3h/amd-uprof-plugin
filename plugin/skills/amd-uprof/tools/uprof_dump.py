@@ -33,7 +33,7 @@ from uprof_native import (
     ToolTimeout,
     failure,
     failure_detail,
-    parse_symbol_path,
+    parse_nt_symbol_path,
     require_uprof,
     run_watched,
     symbol_cache_dir,
@@ -516,17 +516,28 @@ def _make_dump(
         copy_session(session_dir, staging)
         command = translate_command(uprof, staging, time_filter=time_filter, ascii_kind=kind)
         log = CliLog()
-        # The same call translate runs, so the same stall and ceiling bounds stop it; AMDuProfCLI
-        # reads its symbol sources from the inherited _NT_SYMBOL_PATH here.
-        env_cache, env_servers = parse_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
+        # The dump translate runs with local symbol sources only (SPEC-48): symbol servers are
+        # stripped from _NT_SYMBOL_PATH so AMDuProfCLI never contacts a remote symbol server.
+        parsed = parse_nt_symbol_path(os.environ.get("_NT_SYMBOL_PATH"))
+        env_cache, env_servers = parsed.download_cache, list(parsed.servers)
         symbol_cache = Path(env_cache) if env_cache else symbol_cache_dir()
+        local_entries = [*(f"cache*{c}" for c in parsed.caches), *parsed.dirs]
+        if not local_entries:
+            local_entries = [f"cache*{symbol_cache}"]
+        child_env = os.environ.copy()
+        child_env["_NT_SYMBOL_PATH"] = ";".join(local_entries)
+        child_env.pop("_NT_ALT_SYMBOL_PATH", None)
 
         def progress() -> tuple[object, ...]:
             return (tuple(log.sizes_now()), tree_size(staging), tree_size(symbol_cache))
 
         try:
             completed = run_watched(
-                command, progress=progress, stall_s=TRANSLATE_STALL, ceiling_s=TRANSLATE_CEILING
+                command,
+                progress=progress,
+                stall_s=TRANSLATE_STALL,
+                ceiling_s=TRANSLATE_CEILING,
+                env=child_env,
             )
         except (ToolStalled, ToolTimeout) as exc:
             raise translate_stopped(

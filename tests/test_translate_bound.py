@@ -13,6 +13,7 @@ Run from the repository root: python tests/run_tests.py test_translate_bound
 
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -243,6 +244,9 @@ class DumpTranslateStallTest(unittest.TestCase):
             kwargs = watched.call_args.kwargs
             self.assertEqual(kwargs["stall_s"], uprof_native.TRANSLATE_STALL)
             self.assertEqual(kwargs["ceiling_s"], uprof_native.TRANSLATE_CEILING)
+            self.assertEqual(kwargs["env"]["_NT_SYMBOL_PATH"], "cache*c:\\sym")
+            self.assertNotIn("\\\\slow\\share", kwargs["env"]["_NT_SYMBOL_PATH"])
+            self.assertNotIn("_NT_ALT_SYMBOL_PATH", kwargs["env"])
             message = str(raised.exception)
             alternative = next(
                 line for line in message.splitlines() if line.startswith("ALTERNATIVE: ")
@@ -267,6 +271,57 @@ class DumpTranslateStallTest(unittest.TestCase):
         message = self.failure(uprof_native.ToolTimeout("timed out"))
         minutes = uprof_native.TRANSLATE_CEILING // 60
         self.assertIn(f"translate did not finish within {minutes} min", message)
+
+    def test_dump_translate_environment_strips_servers_and_keeps_local_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(os.path.realpath(directory))
+            session = root / "capture"
+            session.mkdir()
+            (session / "session.uprof").write_text("{}", encoding="utf-8")
+
+            def fake_run(command, **kwargs):
+                staging_path = Path(command[command.index("-i") + 1])
+                (staging_path / "IbsFetchDump.csv").write_text("header\n", encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            # 1. With symbol servers and plain directories in _NT_SYMBOL_PATH and an alt path:
+            with (
+                mock.patch.object(uprof_dump, "require_uprof", return_value=Path("AMDuProfCLI")),
+                mock.patch.object(uprof_dump, "run_watched", side_effect=fake_run) as watched,
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "_NT_SYMBOL_PATH": r"srv*C:\sym*https://msdl.microsoft.com;D:\local_pdbs",
+                        "_NT_ALT_SYMBOL_PATH": "srv*https://alt.example",
+                    },
+                ),
+                redirect_stderr(io.StringIO()),
+            ):
+                uprof_dump._make_dump(
+                    session, "ibsfetch-event-dump", "1:2", root / "cache" / "dump", None
+                )
+            child_env = watched.call_args.kwargs["env"]
+            self.assertEqual(child_env["_NT_SYMBOL_PATH"], r"cache*C:\sym;D:\local_pdbs")
+            self.assertNotIn("https://msdl.microsoft.com", child_env["_NT_SYMBOL_PATH"])
+            self.assertNotIn("_NT_ALT_SYMBOL_PATH", child_env)
+
+            # 2. When _NT_SYMBOL_PATH is unset, defaults to local cache directory:
+            env_clean = dict(os.environ)
+            env_clean.pop("_NT_SYMBOL_PATH", None)
+            env_clean.pop("_NT_ALT_SYMBOL_PATH", None)
+            with (
+                mock.patch.object(uprof_dump, "require_uprof", return_value=Path("AMDuProfCLI")),
+                mock.patch.object(uprof_dump, "run_watched", side_effect=fake_run) as watched,
+                mock.patch.dict(os.environ, env_clean, clear=True),
+                redirect_stderr(io.StringIO()),
+            ):
+                uprof_dump._make_dump(
+                    session, "ibsfetch-event-dump", "1:2", root / "cache" / "dump", None
+                )
+            child_env = watched.call_args.kwargs["env"]
+            self.assertEqual(
+                child_env["_NT_SYMBOL_PATH"], f"cache*{uprof_native.symbol_cache_dir()}"
+            )
 
 
 if __name__ == "__main__":

@@ -294,7 +294,7 @@ predicate.
 
 ### Agreement metric
 
-`agreement.sql` joins scoped addresses to `v_symbol_frames` and compares uProf's `Function.name` with the symbolizer's `containing_function`; a nearest-symbol frame is counted `derived`, not compared; an inline instance therefore matches its containing function by construction. For `function` and `region`, the AGREEMENT text quotes the emitted rows' sample attribution instead of the symbolizer's unresolved count: a derived range is an attribution, so counting it as unresolved would contradict the rows. The mismatch statistics still use this join.
+`agreement.sql` joins scoped addresses to `v_symbol_frames` and compares uProf's `Function.name` with the symbolizer's `containing_function`; a nearest-symbol frame is counted `derived`, not compared; an inline instance therefore matches its containing function by construction. For `function` and `region`, the AGREEMENT text carries the mismatch statistics only (the symbolizer's unresolved count is omitted because a derived range is an attribution, so counting it as unresolved would contradict the rows, and the emitted rows' sample attribution is already reported in SYMBOL_COVERAGE; SPEC-124). The mismatch statistics still use this join.
 
 | Field | Definition |
 |---|---|

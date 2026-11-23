@@ -144,7 +144,8 @@ class RangeCoverageTest(unittest.TestCase):
         )
 
         self.assertIn("nearest-symbol name", text)
-        self.assertIn("nearest symbol", agreement)
+        self.assertNotIn("sample attribution", agreement)
+        self.assertIn("mismatch_rate=", agreement)
 
     def test_the_function_view_counts_a_nearest_name_as_derived(self):
         rows = query(
@@ -274,12 +275,13 @@ class CrossViewTest(unittest.TestCase):
                 self.assertEqual(function["rows_drillable"], drill["rows_drillable"])
 
     def test_agreement_counts_the_same_derived_samples(self):
-        function = self.profile("--by", "function")["AGREEMENT"]
+        function = self.profile("--by", "function")
         line = self.profile("--by", "line")["AGREEMENT"]
         derived = re.search(r"derived=\d+ addresses, (\d+) samples", line)
 
         self.assertIsNotNone(derived, line)
-        self.assertIn(f"derived {derived.group(1)} samples", function)
+        self.assertIn(f"derived {derived.group(1)}/", function["SYMBOL_COVERAGE"])
+        self.assertNotIn("sample attribution", function["AGREEMENT"])
 
     def test_a_name_gets_one_category_in_every_view(self):
         function = self.categories(self.profile("--by", "function")["rows"])

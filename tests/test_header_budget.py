@@ -47,7 +47,7 @@ CEILINGS = {
     },
     "function": {
         "ACHIEVED": 41,
-        "AGREEMENT": 67,
+        "AGREEMENT": 34,
         "COLUMNS": 216,
         "DUMP": 7,
         "HOT_RVA": 35,

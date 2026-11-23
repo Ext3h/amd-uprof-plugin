@@ -2990,42 +2990,24 @@ def _agreement_text(
     row_attribution: dict[str, int] | None = None,
 ) -> str | None:
     values = values if values is not None else _agreement_values(connection)
-    if by in RANGE_SCOPES and row_attribution is not None and row_attribution["scoped"] > 0:
-        scoped = row_attribution["scoped"]
-        text = (
-            f"sample attribution from the emitted rows: named {row_attribution['named']} "
-            f"samples (unique or shared; uProf Function.name or a named binary range), "
-            f"derived {row_attribution['derived']} samples (synthetic range or nearest symbol), "
-            f"unresolved {row_attribution['unresolved']} samples (<no symbol>), of "
-            f"{scoped} scoped"
-            + (
-                "; region rows count each page's samples under its hot-RVA attribution"
-                if by == "region"
-                else ""
-            )
-        )
-        if values is None:
-            return text
-        return text + (
-            "; symbolizer names are the containing function (llvm-symbolizer's "
-            "outermost frame), the name uProf Function.id carries, so inline "
-            "instances are not counted as mismatches; "
-            f"mismatch_rate={_percent_text(values, 'mismatch_rate')} (sample-weighted "
-            f"mismatched_samples/compared_samples = {values['mismatched_samples']}/"
-            f"{values['compared_samples']}); name_mismatches={values['name_mismatches']} "
-            f"addresses of {values['compared_addresses']} compared"
-        )
     if values is None:
         return None
 
-    return (
-        "line/instruction coordinates are the innermost (executed) frame; symbolizer names are "
-        "the containing function (llvm-symbolizer's outermost frame), the name uProf "
-        "Function.id carries, so inline instances are not counted as mismatches; "
+    mismatch = (
+        "symbolizer names are the containing function (llvm-symbolizer's "
+        "outermost frame), the name uProf Function.id carries, so inline "
+        "instances are not counted as mismatches; "
         f"mismatch_rate={_percent_text(values, 'mismatch_rate')} (sample-weighted "
         f"mismatched_samples/compared_samples = {values['mismatched_samples']}/"
         f"{values['compared_samples']}); name_mismatches={values['name_mismatches']} "
-        f"addresses of {values['compared_addresses']} compared; unresolved="
+        f"addresses of {values['compared_addresses']} compared"
+    )
+    if by in RANGE_SCOPES:
+        return mismatch
+
+    return (
+        "line/instruction coordinates are the innermost (executed) frame; "
+        f"{mismatch}; unresolved="
         f"{values['unresolved']} addresses, {values['unresolved_samples']} samples "
         f"(<no symbol>, {_percent_text(values, 'unresolved_pct')} of "
         f"{values['scoped_samples']} scoped)"

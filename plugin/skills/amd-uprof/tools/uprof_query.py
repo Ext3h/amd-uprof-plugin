@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import tempfile
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from decimal import Decimal
@@ -1105,13 +1106,19 @@ def _cpu_seconds_interval(
     return interval_s
 
 
-def _command_arg(value: str, placeholder: str, data: dict[str, str]) -> str:
+def _command_arg(
+    value: str,
+    placeholder: str,
+    data: dict[str, str],
+    *,
+    arg_fn: Callable[[str, str], tuple[str, str | None]] = uprof_shell.path_arg,
+) -> str:
     """value as one argument of a printed command, or the placeholder when it is not plain.
 
     A value that is not plain (see uprof_shell) never enters the command; data records it under
     the placeholder name, numbered when the same placeholder already holds another value.
     """
-    text, line = uprof_shell.path_arg(value, placeholder)
+    text, line = arg_fn(value, placeholder)
     if line is None:
         return text
     name = placeholder.strip("<>")
@@ -1150,7 +1157,10 @@ def _profile_command(
     elif args.image == _IMAGE_PLACEHOLDER:
         parts += ["--image", _IMAGE_PLACEHOLDER]
     elif args.image is not None and args.image != "%":
-        parts += ["--image", _command_arg(args.image, "<IMAGE>", data)]
+        parts += [
+            "--image",
+            _command_arg(args.image, "<IMAGE>", data, arg_fn=uprof_shell.image_arg),
+        ]
     if args.time_filter:
         parts += ["--time-filter", _command_arg(args.time_filter, "<TIME_FILTER>", data)]
     if getattr(args, "function", None):

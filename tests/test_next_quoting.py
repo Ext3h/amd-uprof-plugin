@@ -62,6 +62,11 @@ class PlaceholderTest(unittest.TestCase):
                 "%work$(x)%",
             ),
             (
+                ["--session", ROOT, "--by", "module", "--image", "%workload%"],
+                "<IMAGE>",
+                "%workload%",
+            ),
+            (
                 ["--session", ROOT, "--by", "module", "--symbol-path", os.path.join(ROOT, "`id`")],
                 "<SYMBOL_PATH>",
                 os.path.join(ROOT, "`id`"),
@@ -92,6 +97,17 @@ class PlaceholderTest(unittest.TestCase):
         )
         self.assertEqual(data, {})
         self.assertNotIn("<", " ".join(calls))
+
+        # A leading % image pattern without a closing % is plain in cmd/bash/PS (#608).
+        calls, data = calls_and_data(
+            "--session", ROOT, "--by", "module", "--image", "%defect_lab.exe"
+        )
+        self.assertEqual(data, {})
+        self.assertIn("--image %defect_lab.exe", calls[0])
+
+        calls, data = calls_and_data("--session", ROOT, "--by", "module", "--image", "%my app.exe")
+        self.assertEqual(data, {})
+        self.assertIn('--image "%my app.exe"', calls[0])
 
 
 class RealShellNextTest(unittest.TestCase):
@@ -155,11 +171,52 @@ class RealShellNextTest(unittest.TestCase):
         ]
         return line, expected
 
+    def image_line_and_expected(self):
+        session = os.path.join(self.temp.name, "it's & run (1) [x]{y}")
+        args = uprof.build_parser().parse_args(
+            [
+                "profile",
+                "--session",
+                session,
+                "--by",
+                "module",
+                "--image",
+                "%defect_lab.exe",
+            ]
+        )
+        data = {}
+        call = uprof_query._next_calls(args, {}, data=data)[0]
+        self.assertEqual(data, {})
+        tool = uprof_shell.quote(str(uprof_query.TOOLS_DIR / "uprof.py"))
+        self.assertTrue(call.startswith(f"python {tool} "), call)
+        for part in (sys.executable, str(self.script)):
+            if not uprof_shell.is_plain(part):
+                self.skipTest(HOST_SKIP + f"the interpreter or temp path is not plain: {part!r}")
+        line = (
+            f"{uprof_shell.quote(sys.executable)} {uprof_shell.quote(str(self.script))} "
+            + call[len(f"python {tool} ") :]
+        )
+        expected = [
+            "profile",
+            "--session",
+            str(absolute(session)),
+            "--by",
+            "function",
+            "--image",
+            "%defect_lab.exe",
+        ]
+        return line, expected
+
     def check(self, run):
         line, expected = self.line_and_expected()
         completed = run(line)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(completed.stdout), expected, completed.stdout)
+
+        img_line, img_expected = self.image_line_and_expected()
+        img_completed = run(img_line)
+        self.assertEqual(img_completed.returncode, 0, img_completed.stderr)
+        self.assertEqual(json.loads(img_completed.stdout), img_expected, img_completed.stdout)
 
     @unittest.skipIf(os.name == "nt", HOST_SKIP + "bash runs on the POSIX CI host")
     def test_bash(self):

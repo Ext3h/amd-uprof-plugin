@@ -150,6 +150,11 @@ class CatalogueTest(unittest.TestCase):
                     entry["fields"]["Answer"] or entry["parts"], f"{scn}: Answer is empty"
                 )
 
+    def test_known_gaps_do_not_reference_closed_issues(self):
+        for scn, entry in self.scenarios.items():
+            gaps = entry["fields"].get("Known gaps", "")
+            self.assertNotIn("#339", gaps, f"{scn} still references closed #339")
+
     def test_answers_on_a_session_have_every_contract_part(self):
         for scn, entry in self.scenarios.items():
             fields = entry["fields"]

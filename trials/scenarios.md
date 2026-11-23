@@ -131,7 +131,6 @@ A trial run passes when both hold:
   - **Cost:** 0.093 of the capture's core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
   - **Confidence:** ±33% (9 samples).
   - **Saving:** at most that line's `cpu_seconds`.
-- **Known gaps:** #339 (the instruction JSON can exceed a harness's output limit on a real capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by line --function fixture_entry --module <OWN_MODULE>`
@@ -185,7 +184,6 @@ A trial run passes when both hold:
   - **Cost:** 0.093 of the core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
   - **Confidence:** ±33% (9 samples).
   - **Saving:** at most that instruction's `cpu_seconds`, if the load stops missing.
-- **Known gaps:** #339 (the instruction JSON can exceed a harness's output limit on a real capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`
@@ -246,7 +244,6 @@ A trial run passes when both hold:
   - **Cost:** 0.093 of the core cycles; `cpu_seconds` = 9 × 4.7 M cycles / core frequency.
   - **Confidence:** ±33% (9 samples).
   - **Saving:** at most that instruction's `cpu_seconds`.
-- **Known gaps:** #339 (the instruction JSON can exceed a harness's output limit on a real capture).
 - **Minimal calls:**
   1. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by function`
   2. `python <SKILL_DIR>/tools/uprof.py profile --session <CAPTURE> --by instruction --function fixture_entry --module <OWN_MODULE> --json`

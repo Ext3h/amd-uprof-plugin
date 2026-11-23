@@ -4,7 +4,7 @@ The unit suites replace the LLVM calls; these tests run them on fixtures/fixture
 readobj, objdump and symbolizer text formats stay exercised. Build commands and provenance are
 in fixtures/README.md. Run from the repository root: python tests/run_tests.py test_context_fixture
 """
-# Spec: SPEC-86, SPEC-87, SPEC-88, SPEC-89, SPEC-90
+# Spec: SPEC-86, SPEC-88, SPEC-89, SPEC-90
 
 from __future__ import annotations
 

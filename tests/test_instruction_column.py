@@ -5,7 +5,7 @@ document, because the text view printed no instruction (#385). The row now carri
 `instruction` column, the llvm-objdump decode at the row's RVA from the same context build the
 JSON window uses; it is NULL where the row's context omits. The context block stays JSON-only.
 The view needs no NEXT back to `--by line`, and the line view's NEXT names the instruction view
-without `--json`.
+with `--json`.
 
 Runs on Windows with LLVM and skips elsewhere, with a reason that UPROF_REQUIRE_TOOLS=1 turns
 into a failure. Run from the repository root: python tests/run_tests.py test_instruction_column

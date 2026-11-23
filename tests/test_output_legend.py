@@ -34,7 +34,7 @@ SAMPLE_PMC_UNSUPPORTED = (
     "sample_share a core-cycle share"
 )
 TIME_ABSENT_PMC = (
-    "this export aggregates PMC samples per window; capture with --event ibs-op "
+    "this export aggregates PMC samples per aggregation interval; capture with --event ibs-op "
     "(IBS OP with per-sample timestamps) to get time_share"
 )
 SAMPLE_OP_CYCLES = "core-cycle share (fixed cycles per sample), not wall time"

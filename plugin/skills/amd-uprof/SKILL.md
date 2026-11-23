@@ -24,7 +24,7 @@ New capture: `collect --out-dir <new dir> --seconds 30 [--process PID] [--event 
 
 ## Permissions
 
-- The harness must allow `python <SKILL_DIR>/tools/uprof.py` in the shell. `profile` reads the capture, writes only in the temp directory and the per-user cache (`%LOCALAPPDATA%\Symbols`, `~/.cache/amd-uprof`), and starts LLVM tools and, for a missing dump, AMDuProfCLI. `translate` writes `--out-dir` and may download symbols from the `_NT_SYMBOL_PATH` servers (Microsoft's by default on Windows).
+- The harness must allow `python <SKILL_DIR>/tools/uprof.py` in the shell. `profile` reads the capture, writes only in the temp directory and the per-user cache roots (`$UPROF_SESSION_CACHE_ROOT`, `$XDG_CACHE_HOME/amd-uprof`, and the `_NT_SYMBOL_PATH` cache), and starts LLVM tools and, for a missing dump, AMDuProfCLI. `translate` writes `--out-dir` and may download symbols from the `_NT_SYMBOL_PATH` servers (Microsoft's by default on Windows).
 - `collect` runs unelevated. Ask the user to elevate it only for kernel samples or an elevated target process; run every other command unelevated.
 - Installing software, `sudo`, and VBS, Hyper-V or boot changes are the user's decision: report the remedy and ask.
 

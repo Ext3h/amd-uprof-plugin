@@ -197,7 +197,7 @@ class TimerAlternativesTest(unittest.TestCase):
     def test_no_data_line_names_a_placeholder_no_alternative_uses(self):
         # A uProf path that is not plain once became <AMDUPROFCLI> plus a data line; no
         # alternative runs AMDuProfCLI any more, so that data line names nothing.
-        labels = ["timer capture", "timer capture (launch)", "Zen host", "whole capture"]
+        labels = ["timer capture", "timer capture (launch)", "IBS capture", "whole capture"]
         with mock.patch.object(
             uprof_native, "find_uprof", return_value=Path("C:/uProf$5/AMDuProfCLI.exe")
         ):

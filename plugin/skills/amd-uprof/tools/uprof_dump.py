@@ -638,7 +638,7 @@ def resolve_dump(session_dir: Path | str, sampler: Sampler) -> DumpInfo:
     if not sampler.ibs_dump_kind:
         raise failure(
             "session.uprof records no IBS, PMC or timer event",
-            ["timer capture", "timer capture (launch)", "Zen host"],
+            ["timer capture", "timer capture (launch)", "IBS capture"],
         )
     dump_name = DUMP_FILENAMES[sampler.ibs_dump_kind]
     path = Path(session_dir) / dump_name

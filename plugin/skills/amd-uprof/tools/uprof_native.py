@@ -16,7 +16,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -521,6 +521,7 @@ def run_watched(
     stall_s: float,
     ceiling_s: float,
     poll_s: float = 5.0,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a native tool that may hang without output; stop it when it makes no progress.
 
@@ -536,6 +537,8 @@ def run_watched(
         "encoding": "utf-8",
         "errors": "replace",
     }
+    if env is not None:
+        kwargs["env"] = dict(env)
     if IS_WINDOWS:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:

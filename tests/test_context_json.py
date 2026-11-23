@@ -636,6 +636,11 @@ class ContextHelpTest(unittest.TestCase):
         )
         self.assertTrue(all(reasons.values()))
 
+    def test_module_missing_remedy_names_image_path(self):
+        reasons = uprof_context.context_help(self.LEGEND, self.CONTEXTS)["omission_reasons"]
+        self.assertIn("pass profile --image-path <file|dir>", reasons["module_missing"])
+        self.assertNotIn("copy the module", reasons["module_missing"])
+
     def test_context_omission_summary_is_one_symbolizer_fact(self):
         contexts = [
             {"omitted": True, "reason": "symbolizer_failed", "detail": "llvm-symbolizer: no PDB"}

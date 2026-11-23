@@ -1081,7 +1081,7 @@ _CONTEXT_HELP_FIELDS: Final = {
 _CONTEXT_HELP_OMISSIONS: Final = {
     "module_missing": (
         "the capture records no module path, or the file is absent on this host; "
-        "remedy: copy the module to the recorded path or capture on this host"
+        "remedy: pass profile --image-path <file|dir> naming the module image"
     ),
     "readobj_missing": (
         "llvm-readobj is unavailable; remedy: install LLVM so llvm-readobj sits "

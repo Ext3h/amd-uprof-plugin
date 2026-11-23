@@ -69,3 +69,18 @@ def app_arg(value: str, placeholder: str) -> tuple[str, str | None]:
         quoted = value if all(char in _BARE for char in value) else f'"{value}"'
         return quoted, None
     return placeholder, f"{placeholder.strip('<>')}={value!r}"
+
+
+def image_arg(value: str, placeholder: str = "<IMAGE>") -> tuple[str, str | None]:
+    """(argument, data line) for an --image filter pattern.
+
+    A plain string enters the command quoted as usual. A caller-typed pattern whose only
+    non-plain character is a leading % also passes through: inert in cmd.exe without a
+    closing %, and plain in bash and PowerShell.
+    """
+    if is_plain(value):
+        return quote(value), None
+    if value.startswith("%") and is_plain(value[1:]):
+        quoted = value if all(char in _BARE for char in value[1:]) else f'"{value}"'
+        return quoted, None
+    return placeholder, f"{placeholder.strip('<>')}={value!r}"

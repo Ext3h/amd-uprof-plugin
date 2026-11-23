@@ -91,6 +91,26 @@ class PlainSetTest(unittest.TestCase):
         argument, data = uprof_shell.path_arg("C:\\caps\\run 1", "<SESSION_DIR>")
         self.assertEqual((argument, data), ('"C:\\caps\\run 1"', None))
 
+    def test_image_arg_passes_leading_percent_plain_patterns(self):
+        # A pattern with a single leading % and plain characters passes literally (#608).
+        self.assertEqual(
+            uprof_shell.image_arg("%defect_lab.exe", "<IMAGE>"), ("%defect_lab.exe", None)
+        )
+        self.assertEqual(uprof_shell.image_arg("%my app.exe", "<IMAGE>"), ('"%my app.exe"', None))
+        self.assertEqual(uprof_shell.image_arg("app.exe", "<IMAGE>"), ("app.exe", None))
+        self.assertEqual(
+            uprof_shell.image_arg("%workload%", "<IMAGE>"),
+            ("<IMAGE>", "IMAGE='%workload%'"),
+        )
+        self.assertEqual(
+            uprof_shell.image_arg("%work$(x)%", "<IMAGE>"),
+            ("<IMAGE>", "IMAGE='%work$(x)%'"),
+        )
+        self.assertEqual(
+            uprof_shell.image_arg("%", "<IMAGE>"),
+            ("<IMAGE>", "IMAGE='%'"),
+        )
+
 
 class RealShellTest(unittest.TestCase):
     """The printed command `python <echo script> <quoted case>` run as a pasted line."""

@@ -18,17 +18,18 @@ import uprof_util
 from test_context_annotate import DUMP
 from test_dump_parquet_cache import ROWS, TOOLS_DIR, VARIABLES, _dump, _info, _session
 
+LITERAL_PATH_MACRO = next(
+    line
+    for line in (TOOLS_DIR / "views.sql").read_text(encoding="utf-8").splitlines()
+    if line.startswith("CREATE OR REPLACE TEMP MACRO literal_path(")
+)
+
 
 class LiteralPathTest(unittest.TestCase):
     def test_the_python_and_sql_twins_escape_alike(self):
-        macro = next(
-            line
-            for line in (TOOLS_DIR / "views.sql").read_text(encoding="utf-8").splitlines()
-            if line.startswith("CREATE OR REPLACE TEMP MACRO literal_path(")
-        )
         connection = duckdb.connect()
         self.addCleanup(connection.close)
-        connection.execute(macro)
+        connection.execute(LITERAL_PATH_MACRO)
         for path, expected in (
             (r"C:\captures\run", r"C:\captures\run"),
             (r"C:\capture[1]\d.csv", r"C:\capture[[]1]\d.csv"),
@@ -114,6 +115,7 @@ class IbsRowsTest(_Siblings):
         connection.execute(
             "CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')"
         )
+        connection.execute(LITERAL_PATH_MACRO)
         connection.execute(
             "CREATE OR REPLACE TEMP MACRO image_matches(name, pattern) AS "
             "COALESCE(name, '') ILIKE pattern"

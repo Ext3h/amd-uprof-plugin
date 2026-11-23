@@ -13,6 +13,20 @@ from unittest import mock
 
 import uprof_context
 
+VIEWS = (
+    Path(__file__).resolve().parent.parent
+    / "plugin"
+    / "skills"
+    / "amd-uprof"
+    / "tools"
+    / "views.sql"
+)
+LITERAL_PATH_MACRO = next(
+    line
+    for line in VIEWS.read_text(encoding="utf-8").splitlines()
+    if line.startswith("CREATE OR REPLACE TEMP MACRO literal_path(")
+)
+
 SYMBOLS = """\
 {"Address":"0x1010","ModuleName":"fixture.exe","Symbol":[{"Column":5,"FileName":"src\\\\main.cpp","FunctionName":"main","Line":12,"StartAddress":"0x140001000","StartFileName":"","StartLine":12}]}
 {"Address":"0x1014","ModuleName":"fixture.exe","Symbol":[]}
@@ -242,6 +256,7 @@ class IbsScopeTest(unittest.TestCase):
         self.connection.execute(
             "CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')"
         )
+        self.connection.execute(LITERAL_PATH_MACRO)
         self.connection.execute(
             "CREATE OR REPLACE TEMP MACRO image_matches(name, pattern) AS "
             "COALESCE(name, '') ILIKE pattern "
@@ -296,6 +311,7 @@ class ModuleRowTest(unittest.TestCase):
         self.connection.execute(
             "CREATE OR REPLACE TEMP MACRO module_key(p) AS replace(lower(p), chr(92), '/')"
         )
+        self.connection.execute(LITERAL_PATH_MACRO)
         self.connection.execute(
             "CREATE OR REPLACE TEMP MACRO image_matches(name, pattern) AS "
             "COALESCE(name, '') ILIKE pattern "

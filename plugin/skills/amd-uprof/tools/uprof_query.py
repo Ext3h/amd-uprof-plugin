@@ -1570,7 +1570,11 @@ def _legend(
             "unique / shared (folded names) / derived (nearest-symbol name) / unresolved (no symbol)"
         )
         if args.by == "instruction":
-            columns["instruction"] = "decode at rva; empty where omitted"
+            columns["instruction"] = (
+                "decode at rva; empty where omitted"
+                if args.json
+                else "decode at rva; the instruction cell is empty where omitted and on a remainder row"
+            )
         if function_scope is not None:
             columns["parent_sample_share"] = (
                 "row samples as a share of the selected parent function's samples, not the capture"
@@ -1613,7 +1617,7 @@ def _legend(
         absent["tag_to_retire_share"] = _TIMER_ABSENT_TAG
     elif dump is None:
         absent["time_share"] = (
-            "this export aggregates PMC samples per window; capture with "
+            "this export aggregates PMC samples per aggregation interval; capture with "
             "--event ibs-op (IBS OP with per-sample timestamps) to get "
             "time_share"
         )
@@ -1832,7 +1836,10 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         elif measure == "sample_share":
             read = "sample_share orders the functions"
         else:
-            read = f"rows are ordered by raw sample count: {reason}"
+            read = (
+                "sample_share is not established for this event; rows are ordered by raw sample "
+                "count only, not a time or impact claim"
+            )
         if sample.startswith(("dispatched-op", "fetch-sample")):
             read += f"; {_SAMPLE_CAVEAT}"
         read += "; the <other ...> rows are last, not ranked"
@@ -1845,7 +1852,10 @@ def _read_text(legend: dict[str, Any], system_wide: bool, sampler: uprof_session
         elif measure == "sample_share":
             read = "sample_share orders the pages"
         else:
-            read = f"rows are ordered by raw sample count: {reason}"
+            read = (
+                "sample_share is not established for this event; rows are ordered by raw sample "
+                "count only, not a time or impact claim"
+            )
         hot_desc = (
             "hot_rva is the most precise attribution available inside the page"
             f"{_hot_rva_suffix(sampler)}"
@@ -3081,11 +3091,18 @@ def _write_profile(
         )
         summary = uprof_context.context_omission_summary(contexts)
         if summary:
+            if not args.json:
+                summary = summary.replace(
+                    "instruction contexts omitted", "instruction cells are empty"
+                ).replace(
+                    "instruction context is optional",
+                    "instruction cell is optional (and empty on a remainder row)",
+                )
             print(f"CONTEXT: {summary}", file=sys.stderr)
         rva_at = columns.index("rva") + 1
         columns = [*columns[:rva_at], "instruction", *columns[rva_at:]]
         types = [*types[:rva_at], "VARCHAR", *types[rva_at:]]
-        # Empty in Markdown where the context omits; JSON keeps null (SPEC-87).
+        # Empty in Markdown where the context omits; JSON keeps null.
         missing = None if args.json else ""
         rows = [
             (*row[:rva_at], uprof_context.row_instruction(context, row[rva_at - 1]) or missing)
@@ -3287,9 +3304,9 @@ def run_query_command(args: argparse.Namespace) -> None:
         if args.time_filter:
             raise uprof_native.failure(
                 "--time-filter cannot be applied to a PMC capture: this export aggregates PMC "
-                "samples per window and carries no per-sample timestamps, so the window cannot "
-                "be selected; an --event ibs-op capture supports --time-filter",
-                ["whole capture", "Zen host"],
+                "samples per aggregation interval and carries no per-sample timestamps, so the "
+                "window cannot be selected; an --event ibs-op capture supports --time-filter",
+                ["whole capture", "IBS capture"],
                 session=session,
             )
         dump = None

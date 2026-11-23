@@ -21,8 +21,8 @@ All notable changes to this plugin. Format: Keep a Changelog; versioning: SemVer
 - `profile --by instruction` rows carry an `instruction` column after `rva`, in Markdown and
   JSON: the decoded instruction at the row's RVA, empty (JSON `null`) where its context omits. The text view
   now runs llvm-readobj and llvm-objdump like the `--json` view. A line view's `NEXT` names the
-  instruction view with `--top 1` and without `--json`, and a function-scoped instruction view
-  has no `NEXT` back to `--by line` (issue #385).
+  instruction view, and a function-scoped instruction view has no `NEXT` back to `--by line`
+  (issue #385).
 
 - The `--top` remainder of `profile --by function`, `--by region` and unscoped `--by line` tells
   the shown module's rest from other modules (issue #332). When every shown row is in one module

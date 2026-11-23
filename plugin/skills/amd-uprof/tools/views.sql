@@ -67,7 +67,8 @@ CREATE OR REPLACE TEMP MACRO remainder_part(module, shown_min, shown_max) AS CAS
 -- The plain identifier a function name carries: before the first '@' of a decorated MSVC public
 -- ('?f@@YAHH@Z', '?m@K@ns@@...', '??$f@H@@...' for a template), else the last identifier of a
 -- demangled spelling once template arguments and the parameter list are removed
--- ('int __cdecl ns::f<float>(int)' -> 'f'). Empty when there is none (operators, constructors).
+-- ('int __cdecl ns::f<float>(int)' -> 'f'). Empty for decorated operators/constructors and
+-- symbolic operator names.
 CREATE OR REPLACE TEMP MACRO name_identifier(n) AS CASE
   WHEN n LIKE '?%' THEN regexp_extract(n, '^\?(\?\$)?([A-Za-z_][A-Za-z0-9_]*)@', 2)
   ELSE regexp_extract(
@@ -76,11 +77,6 @@ CREATE OR REPLACE TEMP MACRO name_identifier(n) AS CASE
                                          '<[^<>]*>', '', 'g'), '<[^<>]*>', '', 'g'),
            '\(.*$', ''),
          '([A-Za-z_][A-Za-z0-9_]*)$', 1) END;
--- A folded public start (several names at one address) labels an address 'shared' unless the
--- symbolizer frame there names a function outside the fold: a static function after the folded
--- body matches the start too, because the start is joined ASOF. The frame is outside only when
--- every folded name and the frame have an identifier and none agrees; a truncated name list
--- ('... (+N more)') cannot show that.
 -- The name a derived range gives a row: its export or public name, else the visibly synthetic
 -- pdata_0x<start>/sub_0x<start>; NULL outside every range.
 CREATE OR REPLACE TEMP MACRO range_label(range_name, source, start) AS
@@ -88,6 +84,11 @@ CREATE OR REPLACE TEMP MACRO range_label(range_name, source, start) AS
        WHEN range_name IS NOT NULL THEN range_name
        WHEN source = 'pdata' THEN printf('pdata_0x%X', start)
        ELSE printf('sub_0x%X', start) END;
+-- A folded public start (several names at one address) labels an address 'shared' unless the
+-- symbolizer frame there names a function outside the fold: a static function after the folded
+-- body matches the start too, because the start is joined ASOF. The frame is outside only when
+-- every folded name and the frame have an identifier and none agrees; a truncated name list
+-- ('... (+N more)') cannot show that.
 CREATE OR REPLACE TEMP MACRO fold_holds(name_count, names, frame) AS COALESCE(
   COALESCE(name_count, 1) > 1
   AND (COALESCE(frame, '') = ''
@@ -932,13 +933,15 @@ LEFT JOIN v_symbol_frames s ON s.module_name = w.module_name AND s.rva = w.rva;
 -- Function shares. A sample is grouped by the derived function range that covers its RVA (from
 -- v_function_ranges) when one exists; the range name, else the uProf Function.name, else a visibly
 -- synthetic pdata_0x<start>/sub_0x<start> names the row, and a name names it only when the
--- range's samples agree on it. Samples outside every derived range fall
--- back to Function.id, so a module whose binary is unavailable keeps its uProf naming. hot_rva is
--- the highest-sample RVA in the row; attribution 'derived' marks a synthetic binary name or a
--- row over a nearest-symbol frame, not a source symbol, and 'shared' a range whose start carries several public names. Rows and --top follow uprof_primary_measure: gap weight for a time-based capture,
--- otherwise the sample count (the same order as sample_share). This view is uncapped, so the
--- parent lookup of a function-scoped instruction or line view is not hidden by --top; the public
--- v_function_rows adds the cap and the remainder rows.
+-- range's samples agree on it. Samples outside every derived range fall back to a named
+-- Function.id, else the symbolizer's containing function, else Function.id, so a module whose
+-- binary is unavailable keeps its uProf naming. hot_rva is the highest-sample RVA in the row;
+-- attribution 'derived' marks a synthetic binary name or a row over a nearest-symbol frame, not
+-- a source symbol, and 'shared' a range whose start carries several public names. Rows and --top
+-- follow uprof_primary_measure: gap weight for a time-based capture, otherwise the sample count
+-- (the same order as sample_share). This view is uncapped, so the parent lookup of a
+-- function-scoped instruction or line view is not hidden by --top; the public v_function_rows adds
+-- the cap and the remainder rows.
 CREATE OR REPLACE TEMP VIEW v_function_measured AS
 WITH keyed AS (
   SELECT w.module_label AS module_name, w.rva, w.function_id, w.samples, w.weight,

@@ -80,9 +80,9 @@ class PmcTimeFilterTest(unittest.TestCase):
             for line in result.stderr.splitlines()
             if line.startswith("ALTERNATIVE: ")
         ]
-        self.assertEqual([label for label, _ in alternatives], ["whole capture", "Zen host"])
+        self.assertEqual([label for label, _ in alternatives], ["IBS capture", "whole capture"])
         self.assertTrue(all(command.startswith("python ") for _, command in alternatives))
-        self.assertIn("--event <ibs-op|cycles>", alternatives[1][1])
+        self.assertIn("--event <ibs-op|cycles>", alternatives[0][1])
 
 
 class TranslateSessionLinesTest(unittest.TestCase):

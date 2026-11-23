@@ -577,7 +577,7 @@ class TimerFailureTest(_Session):
             uprof_dump.resolve_dump(session, uprof_session.derive_sampler(session))
         text = str(raised.exception)
         self.assertEqual(text.splitlines()[0], "session.uprof records no IBS, PMC or timer event")
-        self.assertEqual(_labels(text), ["timer capture", "timer capture (launch)", "Zen host"])
+        self.assertEqual(_labels(text), ["IBS capture", "timer capture", "timer capture (launch)"])
         self.assertNotIn("schema", text)
 
     def test_unreadable_session_meta_names_the_file_not_the_sampler(self):
@@ -599,8 +599,8 @@ class TimerFailureTest(_Session):
 
     def test_shared_alternatives_are_identical(self):
         with mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)):
-            first = str(uprof_native.failure("a", ["timer capture (launch)", "Zen host"]))
-            second = str(uprof_native.failure("b", ["Zen host", "timer capture (launch)"]))
+            first = str(uprof_native.failure("a", ["timer capture (launch)", "IBS capture"]))
+            second = str(uprof_native.failure("b", ["IBS capture", "timer capture (launch)"]))
         self.assertEqual(_alternatives(first), _alternatives(second))
         self.assertIn("ALTERNATIVE: timer capture (launch): python ", first)
         self.assertIn(
@@ -655,17 +655,17 @@ class CollectRejectionTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     _labels(text),
-                    ["timer capture", "timer capture (launch)", "whole capture", "Zen host"],
+                    ["IBS capture", "timer capture", "timer capture (launch)", "whole capture"],
                 )
                 # The timer alternatives do not retry the rejected cycle or IBS sampler.
-                for line in _alternatives(text)[:3]:
+                for line in [l for l in _alternatives(text) if "timer capture" in l]:
                     self.assertNotIn("--event cycles", line)
                     self.assertNotIn("--event ibs-op", line)
                 # The same option is the same text wherever it is offered.
                 with mock.patch.object(uprof_native, "find_uprof", return_value=Path(FAKE_CLI)):
                     no_sampler = str(
                         uprof_native.failure(
-                            "x", ["timer capture", "timer capture (launch)", "Zen host"]
+                            "x", ["timer capture", "timer capture (launch)", "IBS capture"]
                         )
                     )
                 shared = [
@@ -675,7 +675,8 @@ class CollectRejectionTest(unittest.TestCase):
                 ]
                 self.assertEqual(shared, _alternatives(no_sampler))
                 self.assertIn(
-                    "collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer;", shared[0]
+                    "collect --out-dir <NEW_OUT_DIR> --seconds <S> --event timer;",
+                    next(l for l in shared if "ALTERNATIVE: timer capture:" in l),
                 )
 
 

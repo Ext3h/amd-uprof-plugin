@@ -336,7 +336,7 @@ def failure(
             f"{tool} profile --session <NEW_TR_DIR> --by process"
         ),
         "whole capture": f"{tool} profile --session {known} --by process",
-        "Zen host": (
+        "IBS capture": (
             f"{tool} collect --out-dir <NEW_OUT_DIR> --seconds <S> --process <PID> "
             "--event <ibs-op|cycles>" + then
         ),
